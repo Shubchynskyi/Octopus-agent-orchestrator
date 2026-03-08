@@ -1,0 +1,66 @@
+---
+name: skill-builder
+description: Build and wire additional live-only specialist skills after initialization. Use for requests like "add new skill", "create api-review", "add test-review", "add more agents", or "extend review pipeline". Do NOT use for normal task implementation.
+allowed-tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash(pwsh:*)
+  - Edit
+  - Write
+metadata:
+  author: Octopus-agent-orchestrator
+  version: 1.0.0
+  runtime_requirement: PowerShell 7+ (pwsh) for gate scripts
+---
+
+# Skill Builder
+
+Use this skill to create project-specific specialist skills in `Octopus-agent-orchestrator/live/skills/**` only.
+Never write generated specialist skills into `Octopus-agent-orchestrator/template/**`.
+
+## Inputs
+- User-approved skill list (for example: `api-review`, `test-review`, `performance-review`, `infra-review`, `dependency-review`, or custom).
+- Desired strictness (`mandatory gate` or `manual/optional review`).
+- Target trigger semantics.
+
+## Mandatory Questions
+1. Which specialist skills should be added now?
+2. Should each skill be `mandatory` or `optional`?
+3. Should triggering be strict (high recall) or conservative (low noise)?
+
+## Workflow
+1. Load references:
+   - `references/skill-template.md`
+   - `references/frontmatter-guide.md`
+   - `references/wiring-checklist.md`
+2. For each approved skill, create:
+   - `Octopus-agent-orchestrator/live/skills/<skill-name>/SKILL.md`
+   - `Octopus-agent-orchestrator/live/skills/<skill-name>/references/<checklist>.md`
+   - optional `Octopus-agent-orchestrator/live/skills/<skill-name>/agents/openai.yaml`
+3. Update catalog:
+   - append new skill path in `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md`
+4. Update trigger documentation:
+   - add trigger section in `Octopus-agent-orchestrator/live/skills/orchestration/references/review-trigger-matrix.md`
+5. Configure gate capability flags:
+   - set `true` for supported skill keys in `Octopus-agent-orchestrator/live/config/review-capabilities.json`
+   - supported keys: `api`, `test`, `performance`, `infra`, `dependency`
+6. Mandatory-gate wiring rules:
+   - if skill is mandatory and key is supported, ensure preflight trigger exists in `classify-change.ps1` and verdict check exists in `required-reviews-check.ps1`
+   - if skill is custom and unsupported by gate scripts, mark as optional review and document limitation in catalog
+7. Validation:
+   - run `pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<source-of-truth>"`
+   - run `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md`
+
+## Hard Stops
+- Do not modify `Octopus-agent-orchestrator/template/**` for project-specific specialist skills.
+- Do not enable capability flags for skills that were not created.
+- Do not mark custom unsupported skill as mandatory gate.
+- Do not leave catalog/trigger docs out of sync with created skills.
+
+## Output Contract
+- List created `live/skills/*` paths.
+- List updated wiring files.
+- Capability flags changed.
+- Validation results (`PASS`/`FAIL`).
+

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Security Review"
+  short_description: "Security review for auth, payments, and secrets"
+  default_prompt: "Use $security-review to analyze security-impacting changes and return findings, security checklist evidence, and a pass/fail verdict."
+policy:
+  allow_implicit_invocation: false
+

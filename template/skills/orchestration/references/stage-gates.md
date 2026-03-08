@@ -1,0 +1,58 @@
+# Stage Gates
+
+## Gate 1: Task Selection
+Pass criteria:
+- Task exists in `TODO` and moved to `IN_PROGRESS`.
+
+## Gate 2: Plan
+Pass criteria:
+- Plan covers scope, files, risks, and checks.
+
+## Gate 3: Preflight Classification
+Pass criteria:
+- Preflight artifact exists: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json`.
+- Path mode is declared by script output: `FAST_PATH` or `FULL_PATH`.
+- Required reviews are declared by preflight output.
+
+## Gate 4: Tests or Validation
+Pass criteria:
+- `FULL_PATH` runtime code: required tests defined and currently meaningful.
+- `FAST_PATH` runtime code or non-runtime tasks: explicit validation checklist exists.
+
+## Gate 5: Implementation
+Pass criteria:
+- Changes satisfy planned scope without unrelated edits.
+
+## Gate 6: Checks
+Pass criteria:
+- Required checks passed.
+
+## Gate 7: Independent Reviews
+Pass criteria:
+- Task moved to `IN_REVIEW`.
+- Code review verdict `REVIEW PASSED` when `required_reviews.code=true`, otherwise `NOT_REQUIRED`.
+- DB review verdict `DB REVIEW PASSED` when `required_reviews.db=true`, otherwise `NOT_REQUIRED`.
+- Security review verdict `SECURITY REVIEW PASSED` when `required_reviews.security=true`, otherwise `NOT_REQUIRED`.
+- Refactor review verdict `REFACTOR REVIEW PASSED` when `required_reviews.refactor=true`, otherwise `NOT_REQUIRED`.
+- Review artifacts satisfy `TASK.md` artifact contract.
+- `required-reviews-check.ps1` result is pass.
+
+## Gate 8: Documentation Finalization
+Pass criteria:
+- Documentation impact assessed.
+- Required docs updated for impacted behavior.
+- Changelog updated for runtime behavior changes.
+
+## Gate 9: Completion
+Pass criteria:
+- All required gates passed.
+- Task marked `DONE`.
+- Artifact contract fields are valid for path mode, required verdicts, and evidence.
+- User report and commit message suggestion prepared.
+
+## Failure Policy
+- Any failed gate blocks next gates.
+- Set task status to `BLOCKED` when gate cannot be satisfied now.
+- Resume only after blocker is resolved.
+
+

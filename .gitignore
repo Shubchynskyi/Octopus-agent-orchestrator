@@ -1,0 +1,17 @@
+# IDE
+.idea/
+*.iml
+.vscode/
+.claude/
+
+# Generated at install/init time
+live/
+runtime/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# PowerShell
+*.ps1xml

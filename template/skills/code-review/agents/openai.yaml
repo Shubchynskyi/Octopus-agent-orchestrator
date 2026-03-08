@@ -1,0 +1,7 @@
+interface:
+  display_name: "Code Review"
+  short_description: "Independent code review with strict evidence gates"
+  default_prompt: "Use $code-review to perform an independent review of changed files and return findings, rule checklist with evidence, and a pass/fail verdict."
+policy:
+  allow_implicit_invocation: false
+

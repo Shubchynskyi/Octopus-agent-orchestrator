@@ -1,0 +1,7 @@
+---
+framework: openai
+role: specialist
+name: skill-builder
+version: 1.0.0
+description: Live-only specialist skill creation and wiring assistant.
+---
