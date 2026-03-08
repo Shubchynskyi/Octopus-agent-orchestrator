@@ -1,12 +1,12 @@
 # Structure and Documentation
 
-Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
+Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default template).
 
 ## Repository Structure
 ```text
 <ProjectRoot>/
-├── CLAUDE.md                     # Canonical entry point (tracked)
-├── AGENTS.md                     # Agent entrypoint (recommended gitignored)
+├── CLAUDE.md                     # Claude entrypoint; canonical only when source-of-truth=Claude
+├── AGENTS.md                     # Codex entrypoint; canonical only when source-of-truth=Codex (recommended gitignored)
 ├── TASK.md                       # Task queue for orchestration (recommended gitignored)
 ├── .antigravity/rules.md         # Platform instruction file (recommended gitignored)
 ├── .github/copilot-instructions.md
@@ -17,7 +17,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
     ├── live/                     # Active rule and skill set for this project
     │   ├── config/review-capabilities.json # Optional specialist-review capability flags
     │   ├── config/paths.json     # Runtime roots and preflight trigger regexes
-    │   ├── docs/agent-rules/**   # Canonical rule set used by CLAUDE.md routing
+    │   ├── docs/agent-rules/**   # Canonical rule set used by selected source-of-truth routing
     │   ├── docs/changes/CHANGELOG.md
     │   ├── docs/reviews/TEMPLATE.md
     │   ├── docs/tasks/TASKS.md
@@ -36,8 +36,9 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 ```
 
 ## Core Documents
-- `CLAUDE.md` - canonical entry point for all agent rules.
-- `AGENTS.md` - agent entrypoint redirect.
+- Source-of-truth entrypoint file (selected at install): canonical routing index for agent rules.
+- `CLAUDE.md` - Claude entrypoint (canonical only when selected).
+- `AGENTS.md` - Codex entrypoint (canonical only when selected).
 - `TASK.md` - canonical task list for agent execution workflow.
 - `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md` - feature and behavior change log.
 - `Octopus-agent-orchestrator/live/docs/reviews/TEMPLATE.md` - canonical review artifact template.
