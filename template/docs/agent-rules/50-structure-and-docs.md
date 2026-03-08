@@ -21,7 +21,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
     │   ├── docs/changes/CHANGELOG.md
     │   ├── docs/reviews/TEMPLATE.md
     │   ├── docs/tasks/TASKS.md
-    │   ├── scripts/agent-gates/**# Gate scripts
+    │   ├── scripts/agent-gates/**# Gate scripts (`.ps1` + `.sh`)
     │   ├── skills/**             # Orchestration and review skills
     │   ├── project-discovery.md  # Auto-detected stack and command signals
     │   ├── init-report.md        # Init execution report

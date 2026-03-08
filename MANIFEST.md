@@ -32,6 +32,7 @@ Kept inside bundle:
 - scripts/init.ps1
 - scripts/verify.ps1
 - README.md
+- LICENSE
 - AGENT_INIT_PROMPT.md
 - MANIFEST.md
 

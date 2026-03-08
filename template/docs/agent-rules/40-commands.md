@@ -51,12 +51,30 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-
 pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath "Octopus-agent-orchestrator/MANIFEST.md"
 ```
 
+```bash
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh --changed-file "src/<example-file>" --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --metrics-path "Octopus-agent-orchestrator/runtime/metrics.jsonl"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --metrics-path "Octopus-agent-orchestrator/runtime/metrics.jsonl"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --code-review-verdict "SKIPPED_BY_OVERRIDE" --skip-reviews "code" --skip-reason "1-line config hotfix; rollback plan exists"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "Octopus-agent-orchestrator/MANIFEST.md"
+```
+
+```bash
+# Gate runner auto-detection pattern (preferred in agent workflows)
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1 -UseStaged -TaskIntent "<task summary>" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"
+else
+  bash Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"
+fi
+```
+
 Notes:
+- Bash gate scripts require a Python runtime in PATH (`python3`, `python`, or `py -3`).
 - In a dirty workspace, prefer `-UseStaged` after staging task-related tracked files.
-- `-UseStaged` includes untracked files by default (`-IncludeUntracked=$true`), so new files are classified even before `git add`.
-- For maximum precision, pass planned task file list via `-ChangedFiles`.
-- In a clean workspace, `classify-change.ps1` can auto-detect changed files from git without additional flags.
-- `required-reviews-check.ps1` supports audited override only for code review in tiny low-risk scopes; all other review overrides are rejected.
+- `-UseStaged` includes untracked files by default (`-IncludeUntracked=$true` for `ps1`, `--include-untracked true` for `sh`), so new files are classified even before `git add`.
+- For maximum precision, pass planned task file list via `-ChangedFiles` (`ps1`) or repeated `--changed-file` (`sh`).
+- In a clean workspace, `classify-change.ps1` and `classify-change.sh` can auto-detect changed files from git without additional flags.
+- `required-reviews-check.ps1` and `required-reviews-check.sh` support audited override only for code review in tiny low-risk scopes; all other review overrides are rejected.
 - Classification roots and trigger regexes are configurable in `Octopus-agent-orchestrator/live/config/paths.json`.
 - Optional specialist reviews (`api`, `test`, `performance`, `infra`, `dependency`) become required only when enabled in `Octopus-agent-orchestrator/live/config/review-capabilities.json`.
 - Gate scripts can append JSONL metrics to `Octopus-agent-orchestrator/runtime/metrics.jsonl` for threshold tuning.

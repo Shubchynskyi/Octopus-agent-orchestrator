@@ -66,6 +66,10 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 - Do not migrate files by moving/removing them.
 - Keep changes minimal and deterministic.
 - After `<assistant-language>` is collected, continue all following user-facing questions and reports in `<assistant-language>`.
+- For gate scripts during task execution, auto-detect environment:
+  - prefer `.ps1` via `pwsh` when `pwsh` is available;
+  - otherwise use `.sh` equivalents via `bash`.
+- When using `.sh` gate scripts, ensure a Python runtime is available in PATH (`python3`, `python`, or `py -3`).
 - If any check fails, fix the issue and rerun checks until PASS.
 
 ## Final Report Format

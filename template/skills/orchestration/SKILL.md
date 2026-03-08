@@ -11,7 +11,7 @@ allowed-tools:
 metadata:
   author: Octopus-agent-orchestrator
   version: 1.3.0
-  runtime_requirement: PowerShell 7+ (pwsh) for gate scripts
+  runtime_requirement: PowerShell 7+ (pwsh) or Bash + Python 3 for gate scripts
 ---
 
 # Orchestration
@@ -43,6 +43,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 5. Run preflight:
    - `classify-change.ps1` with `-ChangedFiles` for precise scope, or
    - `-UseStaged` in dirty workspaces.
+   - environment selection: use `.ps1` via `pwsh` when available, otherwise use `.sh` bash equivalents.
 6. Apply depth escalation from preflight output when required.
 7. Execute implementation path:
    - `FULL_PATH` runtime => tests first, then implementation.
@@ -69,6 +70,8 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Supported only for code review and only for tiny low-risk scopes.
 - Command pattern:
   `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1 ... -SkipReviews "code" -SkipReason "<reason>"`
+- Bash equivalent:
+  `bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "<path>" --code-review-verdict "SKIPPED_BY_OVERRIDE" --skip-reviews "code" --skip-reason "<reason>"`
 - Guardrails enforced by script:
   - only `code` can be skipped,
   - `db/security/refactor` overrides are forbidden,
