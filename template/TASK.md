@@ -14,6 +14,6 @@ This file is intentionally expected to be gitignored.
 ## Active Queue
 | ID | Status | Priority | Area | Title | Owner | Updated | Depth | Notes |
 |---|---|---|---|---|---|---|---|---|
-| T-001 | TODO | P1 | process | Verify orchestrator operation, full rule set, and workflow gates | unassigned | 2026-03-06 | 2 | Run install, verify, preflight classification, and review-gate checks end-to-end |
+| T-001 | DONE | P1 | process | Verify orchestrator operation, full rule set, and workflow gates | unassigned | {{DEPLOYMENT_DATE}} | 2 | Completed during full orchestrator setup: install, verify, preflight classification, and review-gate checks. |
 <!-- Octopus-agent-orchestrator:managed-end -->
 

@@ -1,7 +1,11 @@
 param(
     [string]$TargetRoot,
     [ValidateSet('Claude', 'Codex', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')]
-    [string]$SourceOfTruth = 'Claude'
+    [Parameter(Mandatory = $true)]
+    [string]$SourceOfTruth,
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$InitAnswersPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,7 +22,101 @@ if ([string]::IsNullOrWhiteSpace($TargetRoot)) {
     $TargetRoot = Split-Path -Parent $bundleRoot
 }
 $TargetRoot = (Resolve-Path $TargetRoot).Path
-$sourceOfTruthKey = $SourceOfTruth.Trim().ToUpperInvariant().Replace(' ', '')
+$SourceOfTruth = $SourceOfTruth.Trim()
+$sourceOfTruthKey = $SourceOfTruth.ToUpperInvariant().Replace(' ', '')
+
+function Get-InitAnswerValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Answers,
+        [Parameter(Mandatory = $true)]
+        [string]$LogicalName
+    )
+
+    $targetKey = $LogicalName.ToLowerInvariant().Replace('_', '').Replace('-', '')
+    foreach ($property in $Answers.PSObject.Properties) {
+        $propertyKey = $property.Name.ToLowerInvariant().Replace('_', '').Replace('-', '')
+        if ($propertyKey -eq $targetKey) {
+            if ($null -eq $property.Value) {
+                return $null
+            }
+            return [string]$property.Value
+        }
+    }
+
+    return $null
+}
+
+$initAnswersContractViolations = @()
+$initAnswersCandidatePath = $InitAnswersPath
+if (-not [System.IO.Path]::IsPathRooted($initAnswersCandidatePath)) {
+    $initAnswersCandidatePath = Join-Path $TargetRoot $initAnswersCandidatePath
+}
+
+$initAnswersResolvedPath = $null
+$artifactAssistantLanguage = $null
+$artifactAssistantBrevity = $null
+$artifactSourceOfTruth = $null
+
+if (-not (Test-Path -LiteralPath $initAnswersCandidatePath -PathType Leaf)) {
+    $initAnswersContractViolations += "Init answers artifact missing: $initAnswersCandidatePath"
+} else {
+    $initAnswersResolvedPath = (Resolve-Path -LiteralPath $initAnswersCandidatePath).Path
+    $initAnswersRaw = Get-Content -LiteralPath $initAnswersResolvedPath -Raw
+    if ([string]::IsNullOrWhiteSpace($initAnswersRaw)) {
+        $initAnswersContractViolations += "Init answers artifact is empty: $initAnswersResolvedPath"
+    } else {
+        try {
+            $initAnswers = $initAnswersRaw | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+            $initAnswersContractViolations += "Init answers artifact is not valid JSON: $initAnswersResolvedPath"
+        }
+
+        if ($null -ne $initAnswers) {
+            $artifactAssistantLanguage = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'AssistantLanguage'
+            if ([string]::IsNullOrWhiteSpace($artifactAssistantLanguage)) {
+                $initAnswersContractViolations += "Init answers artifact missing AssistantLanguage: $initAnswersResolvedPath"
+            } else {
+                $artifactAssistantLanguage = $artifactAssistantLanguage.Trim()
+            }
+
+            $artifactAssistantBrevity = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'AssistantBrevity'
+            if ([string]::IsNullOrWhiteSpace($artifactAssistantBrevity)) {
+                $initAnswersContractViolations += "Init answers artifact missing AssistantBrevity: $initAnswersResolvedPath"
+            } else {
+                $artifactAssistantBrevity = $artifactAssistantBrevity.Trim().ToLowerInvariant()
+                $allowedBrevity = @('concise', 'detailed')
+                if ($allowedBrevity -notcontains $artifactAssistantBrevity) {
+                    $initAnswersContractViolations += "Init answers artifact has unsupported AssistantBrevity '$artifactAssistantBrevity'. Allowed values: concise, detailed."
+                }
+            }
+
+            $artifactSourceOfTruth = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'SourceOfTruth'
+            if ([string]::IsNullOrWhiteSpace($artifactSourceOfTruth)) {
+                $initAnswersContractViolations += "Init answers artifact missing SourceOfTruth: $initAnswersResolvedPath"
+            } else {
+                $artifactSourceOfTruth = $artifactSourceOfTruth.Trim()
+                $artifactSourceOfTruthKey = $artifactSourceOfTruth.ToUpperInvariant().Replace(' ', '')
+                if ($artifactSourceOfTruthKey -ne $sourceOfTruthKey) {
+                    $initAnswersContractViolations += "Init answers SourceOfTruth '$artifactSourceOfTruth' does not match verification SourceOfTruth '$SourceOfTruth'."
+                }
+            }
+
+            $artifactCollectedVia = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'CollectedVia'
+            if ([string]::IsNullOrWhiteSpace($artifactCollectedVia)) {
+                $initAnswersContractViolations += "Init answers artifact must include CollectedVia='AGENT_INIT_PROMPT.md': $initAnswersResolvedPath"
+            } elseif (-not [string]::Equals($artifactCollectedVia.Trim(), 'AGENT_INIT_PROMPT.md', [System.StringComparison]::OrdinalIgnoreCase)) {
+                $initAnswersContractViolations += "Init answers CollectedVia must be 'AGENT_INIT_PROMPT.md'. Current value: '$artifactCollectedVia'."
+            }
+        }
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($initAnswersResolvedPath)) {
+    $initAnswersResolvedPath = $initAnswersCandidatePath
+}
+
 $sourceToEntrypoint = @{
     'CLAUDE' = 'CLAUDE.md'
     'CODEX' = 'AGENTS.md'
@@ -246,6 +344,20 @@ if (Test-Path $coreRulePath) {
     if ($coreContent -notmatch '(?m)^Default response brevity: .+\.$') {
         $coreRuleContractViolations += '00-core.md must define configured assistant response brevity sentence.'
     }
+
+    if (-not [string]::IsNullOrWhiteSpace($artifactAssistantLanguage)) {
+        $expectedLanguageLine = "Respond in $artifactAssistantLanguage for explanations and assistance."
+        if ($coreContent -notmatch ("(?m)^" + [regex]::Escape($expectedLanguageLine) + "$")) {
+            $coreRuleContractViolations += "00-core.md language does not match init answers artifact. Expected: '$expectedLanguageLine'."
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($artifactAssistantBrevity)) {
+        $expectedBrevityLine = "Default response brevity: $artifactAssistantBrevity."
+        if ($coreContent -notmatch ("(?m)^" + [regex]::Escape($expectedBrevityLine) + "$")) {
+            $coreRuleContractViolations += "00-core.md response brevity does not match init answers artifact. Expected: '$expectedBrevityLine'."
+        }
+    }
 } else {
     $coreRuleContractViolations += '00-core.md missing; core contract validation failed.'
 }
@@ -296,6 +408,7 @@ foreach ($redirectEntrypoint in $redirectEntrypoints) {
 Write-Output "TargetRoot: $TargetRoot"
 Write-Output "TemplateRoot: $sourceRoot"
 Write-Output "SourceOfTruth: $SourceOfTruth"
+Write-Output "InitAnswersPath: $initAnswersResolvedPath"
 Write-Output "CanonicalEntrypoint: $canonicalEntrypoint"
 Write-Output "RequiredPathsChecked: $($requiredPaths.Count)"
 Write-Output "MissingPathCount: $($missingPaths.Count)"
@@ -304,6 +417,7 @@ Write-Output "StyleViolationCount: $($styleViolations.Count)"
 Write-Output "TaskContractViolationCount: $($taskContractViolations.Count)"
 Write-Output "RuleFileViolationCount: $($ruleFileViolations.Count)"
 Write-Output "TemplatePlaceholderViolationCount: $($templatePlaceholderViolations.Count)"
+Write-Output "InitAnswersContractViolationCount: $($initAnswersContractViolations.Count)"
 Write-Output "CoreRuleContractViolationCount: $($coreRuleContractViolations.Count)"
 Write-Output "EntrypointContractViolationCount: $($entrypointContractViolations.Count)"
 Write-Output "GitignoreMissingCount: $($gitignoreMissing.Count)"
@@ -344,6 +458,13 @@ if ($templatePlaceholderViolations.Count -gt 0) {
     }
 }
 
+if ($initAnswersContractViolations.Count -gt 0) {
+    Write-Output 'InitAnswersContractViolations:'
+    foreach ($item in $initAnswersContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
 if ($coreRuleContractViolations.Count -gt 0) {
     Write-Output 'CoreRuleContractViolations:'
     foreach ($item in $coreRuleContractViolations) {
@@ -375,6 +496,7 @@ if (
     $taskContractViolations.Count -gt 0 -or
     $ruleFileViolations.Count -gt 0 -or
     $templatePlaceholderViolations.Count -gt 0 -or
+    $initAnswersContractViolations.Count -gt 0 -or
     $coreRuleContractViolations.Count -gt 0 -or
     $entrypointContractViolations.Count -gt 0 -or
     $gitignoreMissing.Count -gt 0 -or

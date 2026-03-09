@@ -13,7 +13,9 @@ The setup prompt tells the agent to run installation and verification automatica
 Before installation, the agent must ask you:
 - which language should be used for assistant explanations;
 - which default response brevity should be used (`concise` or `detailed`).
-- which file should be source of truth (`Claude`, `Codex`, `GitHubCopilot`, `Windsurf`, `Junie`, or `Antigravity`).
+- which file should be source of truth: `Claude (CLAUDE.md) | Codex (AGENTS.md) | GitHubCopilot (.github/copilot-instructions.md) | Windsurf (.windsurf/rules/rules.md) | Junie (.junie/guidelines.md) | Antigravity (.antigravity/rules.md)`; all non-selected entrypoint files will redirect to the selected file.
+- hard-stop if any of these 3 answers is missing.
+After collecting all 3 answers, the agent must write `Octopus-agent-orchestrator/runtime/init-answers.json` and pass it to `install.ps1` and `verify.ps1` through `-InitAnswersPath`.
 After install/init, the agent must use `Octopus-agent-orchestrator/live/project-discovery.md` to fill context rules for this repository.
 After successful setup, the agent must provide a short `Usage Instructions` section in the language you selected.
 After verification, the agent should optionally ask whether you want to add extra specialist skills (live-only).
@@ -56,10 +58,11 @@ Depth behavior:
 - Canonical agent workflow rules remain under `Octopus-agent-orchestrator/live/`.
 - Additional specialist skills are created only in `Octopus-agent-orchestrator/live/skills/**` when explicitly requested.
 
-## 6. Optional Manual Run (if no setup agent is used)
+## 6. Post-Init Validation Commands
+Initialization must be run through `AGENT_INIT_PROMPT.md` (not by direct `install.ps1` call).
+
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/install.ps1 -AssistantLanguage "<language>" -AssistantBrevity "<concise|detailed>" -SourceOfTruth "<Claude|Codex|GitHubCopilot|Windsurf|Junie|Antigravity>"
-pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<Claude|Codex|GitHubCopilot|Windsurf|Junie|Antigravity>"
+pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<Claude|Codex|GitHubCopilot|Windsurf|Junie|Antigravity>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md
 ```
 

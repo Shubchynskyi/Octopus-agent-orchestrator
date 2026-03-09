@@ -49,7 +49,7 @@ Never write generated specialist skills into `Octopus-agent-orchestrator/templat
    - if skill is mandatory and key is supported, ensure preflight trigger exists in `classify-change.ps1` and verdict check exists in `required-reviews-check.ps1`
    - if skill is custom and unsupported by gate scripts, mark as optional review and document limitation in catalog
 7. Validation:
-   - run `pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<source-of-truth>"`
+   - run `pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<source-of-truth>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`
    - run `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md`
 
 ## Hard Stops

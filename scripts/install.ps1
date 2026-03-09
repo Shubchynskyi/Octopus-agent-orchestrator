@@ -4,10 +4,18 @@ param(
     [bool]$PreserveExisting = $true,
     [bool]$AlignExisting = $true,
     [bool]$RunInit = $true,
-    [string]$AssistantLanguage = 'English',
-    [string]$AssistantBrevity = 'concise',
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$AssistantLanguage,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('concise', 'detailed')]
+    [string]$AssistantBrevity,
     [ValidateSet('Claude', 'Codex', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')]
-    [string]$SourceOfTruth = 'Claude'
+    [Parameter(Mandatory = $true)]
+    [string]$SourceOfTruth,
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$InitAnswersPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,7 +32,103 @@ if ([string]::IsNullOrWhiteSpace($TargetRoot)) {
     $TargetRoot = Split-Path -Parent $bundleRoot
 }
 $TargetRoot = (Resolve-Path $TargetRoot).Path
+
+$AssistantLanguage = $AssistantLanguage.Trim()
+if ([string]::IsNullOrWhiteSpace($AssistantLanguage)) {
+    throw 'AssistantLanguage must not be empty.'
+}
+
+$AssistantBrevity = $AssistantBrevity.Trim().ToLowerInvariant()
+$SourceOfTruth = $SourceOfTruth.Trim()
+
+function Get-InitAnswerValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Answers,
+        [Parameter(Mandatory = $true)]
+        [string]$LogicalName
+    )
+
+    $targetKey = $LogicalName.ToLowerInvariant().Replace('_', '').Replace('-', '')
+    foreach ($property in $Answers.PSObject.Properties) {
+        $propertyKey = $property.Name.ToLowerInvariant().Replace('_', '').Replace('-', '')
+        if ($propertyKey -eq $targetKey) {
+            if ($null -eq $property.Value) {
+                return $null
+            }
+            return [string]$property.Value
+        }
+    }
+
+    return $null
+}
+
+$initAnswersCandidatePath = $InitAnswersPath
+if (-not [System.IO.Path]::IsPathRooted($initAnswersCandidatePath)) {
+    $initAnswersCandidatePath = Join-Path $TargetRoot $initAnswersCandidatePath
+}
+
+if (-not (Test-Path -LiteralPath $initAnswersCandidatePath -PathType Leaf)) {
+    throw "Init answers artifact not found: $initAnswersCandidatePath"
+}
+
+$initAnswersResolvedPath = (Resolve-Path -LiteralPath $initAnswersCandidatePath).Path
+$initAnswersRaw = Get-Content -LiteralPath $initAnswersResolvedPath -Raw
+if ([string]::IsNullOrWhiteSpace($initAnswersRaw)) {
+    throw "Init answers artifact is empty: $initAnswersResolvedPath"
+}
+
+try {
+    $initAnswers = $initAnswersRaw | ConvertFrom-Json -ErrorAction Stop
+}
+catch {
+    throw "Init answers artifact is not valid JSON: $initAnswersResolvedPath"
+}
+
+$artifactAssistantLanguage = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'AssistantLanguage'
+if ([string]::IsNullOrWhiteSpace($artifactAssistantLanguage)) {
+    throw "Init answers artifact missing AssistantLanguage: $initAnswersResolvedPath"
+}
+$artifactAssistantLanguage = $artifactAssistantLanguage.Trim()
+
+$artifactAssistantBrevity = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'AssistantBrevity'
+if ([string]::IsNullOrWhiteSpace($artifactAssistantBrevity)) {
+    throw "Init answers artifact missing AssistantBrevity: $initAnswersResolvedPath"
+}
+$artifactAssistantBrevity = $artifactAssistantBrevity.Trim().ToLowerInvariant()
+$allowedBrevity = @('concise', 'detailed')
+if ($allowedBrevity -notcontains $artifactAssistantBrevity) {
+    throw "Init answers artifact has unsupported AssistantBrevity '$artifactAssistantBrevity'. Allowed values: concise, detailed."
+}
+
+$artifactSourceOfTruth = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'SourceOfTruth'
+if ([string]::IsNullOrWhiteSpace($artifactSourceOfTruth)) {
+    throw "Init answers artifact missing SourceOfTruth: $initAnswersResolvedPath"
+}
+$artifactSourceOfTruth = $artifactSourceOfTruth.Trim()
+
+$artifactCollectedVia = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'CollectedVia'
+if ([string]::IsNullOrWhiteSpace($artifactCollectedVia)) {
+    throw "Init answers artifact must include CollectedVia='AGENT_INIT_PROMPT.md': $initAnswersResolvedPath"
+}
+if (-not [string]::Equals($artifactCollectedVia.Trim(), 'AGENT_INIT_PROMPT.md', [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Init answers artifact CollectedVia must be 'AGENT_INIT_PROMPT.md'. Current value: '$artifactCollectedVia'."
+}
+
 $sourceOfTruthKey = $SourceOfTruth.Trim().ToUpperInvariant().Replace(' ', '')
+$artifactSourceOfTruthKey = $artifactSourceOfTruth.ToUpperInvariant().Replace(' ', '')
+if ($sourceOfTruthKey -ne $artifactSourceOfTruthKey) {
+    throw "SourceOfTruth parameter '$SourceOfTruth' does not match init answers artifact value '$artifactSourceOfTruth'."
+}
+
+if (-not [string]::Equals($AssistantLanguage, $artifactAssistantLanguage, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "AssistantLanguage parameter '$AssistantLanguage' does not match init answers artifact value '$artifactAssistantLanguage'."
+}
+
+if ($AssistantBrevity -ne $artifactAssistantBrevity) {
+    throw "AssistantBrevity parameter '$AssistantBrevity' does not match init answers artifact value '$artifactAssistantBrevity'."
+}
+
 $sourceToEntrypoint = @{
     'CLAUDE' = 'CLAUDE.md'
     'CODEX' = 'AGENTS.md'
@@ -77,11 +181,15 @@ $directoryPrefixes = @()
 
 $managedStart = '<!-- Octopus-agent-orchestrator:managed-start -->'
 $managedEnd = '<!-- Octopus-agent-orchestrator:managed-end -->'
+$taskDeploymentDatePlaceholder = '{{DEPLOYMENT_DATE}}'
+$deploymentDate = (Get-Date).ToString('yyyy-MM-dd')
 
-function Get-ManagedBlockFromTemplate {
+function Get-TemplateContent {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$SourcePath
+        [string]$SourcePath,
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath
     )
 
     if (-not (Test-Path $SourcePath)) {
@@ -89,6 +197,56 @@ function Get-ManagedBlockFromTemplate {
     }
 
     $content = Get-Content -Path $SourcePath -Raw
+    if ([string]::IsNullOrWhiteSpace($content)) {
+        return $null
+    }
+
+    $relativePathNormalized = $RelativePath.Replace('\', '/')
+    if ($relativePathNormalized -eq 'TASK.md') {
+        $content = $content.Replace($taskDeploymentDatePlaceholder, $deploymentDate)
+    }
+
+    return $content
+}
+
+function Copy-TemplateFileToDestination {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourcePath,
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath,
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath
+    )
+
+    $relativePathNormalized = $RelativePath.Replace('\', '/')
+    if ($relativePathNormalized -eq 'TASK.md') {
+        $content = Get-TemplateContent -SourcePath $SourcePath -RelativePath $RelativePath
+        if ([string]::IsNullOrWhiteSpace($content)) {
+            throw "Template content is empty: $SourcePath"
+        }
+
+        if (-not $DryRun) {
+            Set-Content -Path $DestinationPath -Value $content
+        }
+
+        return
+    }
+
+    if (-not $DryRun) {
+        Copy-Item -Path $SourcePath -Destination $DestinationPath -Force
+    }
+}
+
+function Get-ManagedBlockFromTemplate {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourcePath,
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath
+    )
+
+    $content = Get-TemplateContent -SourcePath $SourcePath -RelativePath $RelativePath
     if ([string]::IsNullOrWhiteSpace($content)) {
         return $null
     }
@@ -108,7 +266,7 @@ function Build-CanonicalManagedBlock {
         [string]$CanonicalFile
     )
 
-    $baseBlock = Get-ManagedBlockFromTemplate -SourcePath (Join-Path $sourceRoot 'CLAUDE.md')
+    $baseBlock = Get-ManagedBlockFromTemplate -SourcePath (Join-Path $sourceRoot 'CLAUDE.md') -RelativePath 'CLAUDE.md'
     if ([string]::IsNullOrWhiteSpace($baseBlock)) {
         throw 'Template CLAUDE.md managed block is missing; cannot build canonical entrypoint.'
     }
@@ -293,9 +451,7 @@ foreach ($file in $files) {
     if (Test-Path $destination) {
         if ($isForceOverwrite) {
             Backup-DestinationFile -DestinationPath $destination -RelativePath $relative
-            if (-not $DryRun) {
-                Copy-Item -Path $file.FullName -Destination $destination -Force
-            }
+            Copy-TemplateFileToDestination -SourcePath $file.FullName -RelativePath $relativeNormalized -DestinationPath $destination
             $deployed++
             $forcedOverwrites++
             continue
@@ -305,7 +461,7 @@ foreach ($file in $files) {
             $skippedExisting++
 
             if ($AlignExisting -and ($managedEntryFiles -contains $relativeNormalized)) {
-                $managedBlock = Get-ManagedBlockFromTemplate -SourcePath $file.FullName
+                $managedBlock = Get-ManagedBlockFromTemplate -SourcePath $file.FullName -RelativePath $relativeNormalized
                 if (-not [string]::IsNullOrWhiteSpace($managedBlock)) {
                     $wasAligned = Sync-ManagedBlock -DestinationPath $destination -RelativePath $relative -ManagedBlock $managedBlock
                     if ($wasAligned) {
@@ -320,9 +476,7 @@ foreach ($file in $files) {
         Backup-DestinationFile -DestinationPath $destination -RelativePath $relative
     }
 
-    if (-not $DryRun) {
-        Copy-Item -Path $file.FullName -Destination $destination -Force
-    }
+    Copy-TemplateFileToDestination -SourcePath $file.FullName -RelativePath $relativeNormalized -DestinationPath $destination
     $deployed++
 }
 
@@ -393,6 +547,8 @@ Write-Output "TemplateRoot: $sourceRoot"
 Write-Output "PreserveExisting: $PreserveExisting"
 Write-Output "AlignExisting: $AlignExisting"
 Write-Output "RunInit: $RunInit"
+Write-Output "InitAnswersPath: $initAnswersResolvedPath"
+Write-Output "DeploymentDate: $deploymentDate"
 Write-Output "AssistantLanguage: $AssistantLanguage"
 Write-Output "AssistantBrevity: $AssistantBrevity"
 Write-Output "SourceOfTruth: $SourceOfTruth"

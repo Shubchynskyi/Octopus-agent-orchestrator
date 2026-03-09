@@ -45,17 +45,17 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 3. Agent asks the user for:
    - preferred assistant response language;
    - preferred default response brevity (`concise` or `detailed`).
-   - preferred source-of-truth entrypoint (`Claude|Codex|GitHubCopilot|Windsurf|Junie|Antigravity`).
-4. Agent executes install and init, then reads `live/project-discovery.md`.
-5. Agent updates context rules (`10/20/30/40/60`) and `live/config/paths.json` to match the real repository.
-6. Agent runs verify and manifest validation.
-7. Agent returns `Usage Instructions` in the selected assistant language.
-8. Agent asks whether to add optional specialist skills (live-only) and, if approved, uses `live/skills/skill-builder`.
+   - preferred source-of-truth entrypoint: `Claude (CLAUDE.md) | Codex (AGENTS.md) | GitHubCopilot (.github/copilot-instructions.md) | Windsurf (.windsurf/rules/rules.md) | Junie (.junie/guidelines.md) | Antigravity (.antigravity/rules.md)`; all non-selected entrypoint files will redirect to the selected file.
+4. Agent must hard-stop setup unless all 3 answers are collected, then writes `Octopus-agent-orchestrator/runtime/init-answers.json`.
+5. Agent executes install and init with `-InitAnswersPath`, then reads `live/project-discovery.md`.
+6. Agent updates context rules (`10/20/30/40/60`) and `live/config/paths.json` to match the real repository.
+7. Agent runs verify and manifest validation with the same `-InitAnswersPath`.
+8. Agent returns `Usage Instructions` in the selected assistant language.
+9. Agent asks whether to add optional specialist skills (live-only) and, if approved, uses `live/skills/skill-builder`.
 
-## Manual Commands (if needed)
+## Post-Init Validation Commands
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/install.ps1 -AssistantLanguage "<language>" -AssistantBrevity "<concise|detailed>" -SourceOfTruth "<Claude|Codex|GitHubCopilot|Windsurf|Junie|Antigravity>"
-pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<Claude|Codex|GitHubCopilot|Windsurf|Junie|Antigravity>"
+pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<Claude|Codex|GitHubCopilot|Windsurf|Junie|Antigravity>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md
 ```
 
@@ -66,6 +66,8 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "O
 ```
 
 ## Important
+- Run initialization only through `AGENT_INIT_PROMPT.md`; do not run `scripts/install.ps1` directly.
+- `scripts/install.ps1` and `scripts/verify.ps1` require `Octopus-agent-orchestrator/runtime/init-answers.json` with collected init answers.
 - Installer defaults to non-destructive mode for non-canonical entry files.
 - Selected source-of-truth entrypoint is intentionally refreshed to keep routing canonical.
 - Installer creates backups in `Octopus-agent-orchestrator/runtime/backups/<timestamp>/`.

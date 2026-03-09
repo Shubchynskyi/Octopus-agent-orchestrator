@@ -13,28 +13,38 @@ Create a fully working agent orchestration workspace where canonical rules live 
    - Immediately switch all subsequent user-facing messages to `<assistant-language>`, starting with the next question.
    - In `<assistant-language>`, ask: `What response brevity should be default: concise or detailed?`
    - Wait for answer and store as `<assistant-brevity>`.
-   - In `<assistant-language>`, ask: `Which file should be the source of truth for rules: Claude, Codex, GitHubCopilot, Windsurf, Junie, or Antigravity?`
+   - In `<assistant-language>`, ask: `Which source-of-truth file should be canonical for rules: Claude (CLAUDE.md), Codex (AGENTS.md), GitHubCopilot (.github/copilot-instructions.md), Windsurf (.windsurf/rules/rules.md), Junie (.junie/guidelines.md), or Antigravity (.antigravity/rules.md)? All non-selected entrypoint files will redirect to this selected file.`
    - Wait for answer and store as `<source-of-truth>`.
-3. Run installer (this also runs init automatically):
-```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/install.ps1 -AssistantLanguage "<assistant-language>" -AssistantBrevity "<assistant-brevity>" -SourceOfTruth "<source-of-truth>"
+   - Hard-stop rule: **if all 3 answers are not collected, do not run installation**.
+3. Save required init answers artifact to `Octopus-agent-orchestrator/runtime/init-answers.json`:
+```json
+{
+  "AssistantLanguage": "<assistant-language>",
+  "AssistantBrevity": "<assistant-brevity>",
+  "SourceOfTruth": "<source-of-truth>",
+  "CollectedVia": "AGENT_INIT_PROMPT.md"
+}
 ```
-4. Read discovery artifact and update project-context rules for this real project:
+4. Run installer (this also runs init automatically):
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/install.ps1 -AssistantLanguage "<assistant-language>" -AssistantBrevity "<assistant-brevity>" -SourceOfTruth "<source-of-truth>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+5. Read discovery artifact and update project-context rules for this real project:
    - `Octopus-agent-orchestrator/live/project-discovery.md`
    - update `10-project-context.md`, `20-architecture.md`, `30-code-style.md`, `40-commands.md`, `60-operating-rules.md` with repository-specific facts.
    - tune `Octopus-agent-orchestrator/live/config/paths.json` when default path roots or trigger regexes do not fit this repository.
-5. Run verification:
+6. Run verification:
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<source-of-truth>"
+pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<source-of-truth>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
-6. Validate manifest uniqueness:
+7. Validate manifest uniqueness:
 ```powershell
 pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md
 ```
-7. Confirm task execution contract supports depth:
+8. Confirm task execution contract supports depth:
    - accepted command shape: `Execute task <task-id> depth=<1|2|3>`
    - default depth when omitted: `2`
-8. Optional post-init specialization:
+9. Optional post-init specialization:
    - ask user: `Do you want to add additional specialist skills now? (yes/no)`
    - if `yes`, ask:
      - `Which skills should be added now? (api-review, test-review, performance-review, infra-review, dependency-review, or custom names)`
@@ -65,6 +75,8 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 - Read existing project docs and legacy agent files as input context.
 - Do not migrate files by moving/removing them.
 - Keep changes minimal and deterministic.
+- Never run `install.ps1` before writing `Octopus-agent-orchestrator/runtime/init-answers.json` with all 3 required answers.
+- Never run initialization by directly calling `install.ps1` outside this prompt flow.
 - After `<assistant-language>` is collected, continue all following user-facing questions and reports in `<assistant-language>`.
 - For gate scripts during task execution, auto-detect environment:
   - prefer `.ps1` via `pwsh` when `pwsh` is available;
