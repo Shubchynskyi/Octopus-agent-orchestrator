@@ -4,6 +4,7 @@ param(
     [string[]]$ChangedFiles,
     [switch]$UseStaged,
     [bool]$IncludeUntracked = $true,
+    [string]$TaskId = '',
     [string]$TaskIntent = '',
     [int]$FastPathMaxFiles = 2,
     [int]$FastPathMaxChangedLines = 40,
@@ -94,6 +95,73 @@ function Append-MetricsEvent {
         Add-Content -Path $Path -Value $line
     } catch {
         Write-Verbose "Metrics append failed: $($_.Exception.Message)"
+    }
+}
+
+function Resolve-TaskId {
+    param(
+        [string]$ExplicitTaskId,
+        [string]$OutputPathHint
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitTaskId)) {
+        return $ExplicitTaskId.Trim()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($OutputPathHint)) {
+        return $null
+    }
+
+    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($OutputPathHint)
+    if ([string]::IsNullOrWhiteSpace($baseName)) {
+        return $null
+    }
+
+    $candidate = $baseName -replace '-preflight$', ''
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        return $null
+    }
+
+    return $candidate.Trim()
+}
+
+function Append-TaskEvent {
+    param(
+        [string]$RepoRootPath,
+        [string]$TaskId,
+        [string]$EventType,
+        [string]$Outcome = 'INFO',
+        [string]$Message = '',
+        [object]$Details = $null
+    )
+
+    if ([string]::IsNullOrWhiteSpace($TaskId)) {
+        return
+    }
+
+    try {
+        $eventsDir = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/task-events'
+        if (-not (Test-Path $eventsDir)) {
+            New-Item -Path $eventsDir -ItemType Directory -Force | Out-Null
+        }
+
+        $event = [ordered]@{
+            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+            task_id = $TaskId
+            event_type = $EventType
+            outcome = $Outcome
+            message = $Message
+            details = $Details
+        }
+
+        $line = $event | ConvertTo-Json -Depth 12 -Compress
+        $taskFilePath = Join-Path $eventsDir "$TaskId.jsonl"
+        $allTasksPath = Join-Path $eventsDir 'all-tasks.jsonl'
+
+        Add-Content -Path $taskFilePath -Value $line
+        Add-Content -Path $allTasksPath -Value $line
+    } catch {
+        Write-Verbose "Task-event append failed: $($_.Exception.Message)"
     }
 }
 
@@ -576,6 +644,8 @@ $requiredTestReview = $testTriggered -and [bool]$reviewCapabilities.test
 $requiredPerformanceReview = $performanceTriggered -and [bool]$reviewCapabilities.performance
 $requiredInfraReview = $infraTriggered -and [bool]$reviewCapabilities.infra
 $requiredDependencyReview = $dependencyTriggered -and [bool]$reviewCapabilities.dependency
+$resolvedTaskId = Resolve-TaskId -ExplicitTaskId $TaskId -OutputPathHint $OutputPath
+$normalizedOutputPath = $(if ([string]::IsNullOrWhiteSpace($OutputPath)) { $null } else { $OutputPath.Replace('\', '/') })
 
 $result = [ordered]@{
     detection_source = $detectionSource
@@ -627,6 +697,10 @@ $result = [ordered]@{
     changed_files = $normalizedFiles
 }
 
+if (-not [string]::IsNullOrWhiteSpace($resolvedTaskId)) {
+    $result.task_id = $resolvedTaskId
+}
+
 $json = $result | ConvertTo-Json -Depth 8
 
 if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
@@ -641,10 +715,20 @@ $metricsEvent = [ordered]@{
     timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
     event_type = 'preflight_classification'
     repo_root = $RepoRoot.Replace('\', '/')
-    output_path = $(if ([string]::IsNullOrWhiteSpace($OutputPath)) { $null } else { $OutputPath.Replace('\', '/') })
+    task_id = $resolvedTaskId
+    output_path = $normalizedOutputPath
     result = $result
 }
 Append-MetricsEvent -Path $MetricsPath -EventObject $metricsEvent
+
+$taskEventDetails = [ordered]@{
+    mode = $mode
+    output_path = $normalizedOutputPath
+    changed_files_count = $normalizedFiles.Count
+    changed_lines_total = $changedLinesTotal
+    required_reviews = $result.required_reviews
+}
+Append-TaskEvent -RepoRootPath $RepoRoot -TaskId $resolvedTaskId -EventType 'PREFLIGHT_CLASSIFIED' -Outcome 'INFO' -Message "Preflight completed with mode $mode." -Details $taskEventDetails
 
 Write-Output $json
 

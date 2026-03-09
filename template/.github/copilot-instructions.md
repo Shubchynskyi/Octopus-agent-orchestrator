@@ -1,8 +1,9 @@
 <!-- Octopus-agent-orchestrator:managed-start -->
 # Agent Instructions
 
-All project rules, coding standards, architecture, and documentation are defined in `CLAUDE.md` - the single source of truth. Read it first.
+For task execution and review workflow, use `.github/agents/orchestrator.md`.
+Do not execute tasks with ad-hoc or default reviewer instructions that bypass orchestrator gates.
 
-After opening `CLAUDE.md`, follow its routing links and read only the rule files required for the current task.
+Hard stop: before any task work, open `.github/agents/orchestrator.md` and `TASK.md`.
 <!-- Octopus-agent-orchestrator:managed-end -->
 

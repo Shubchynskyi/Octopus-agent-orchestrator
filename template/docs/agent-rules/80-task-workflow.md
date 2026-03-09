@@ -11,6 +11,13 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 ## Task Lifecycle
 - Task queue source: `TASK.md`.
 - Status lifecycle: `TODO -> IN_PROGRESS -> IN_REVIEW -> DONE` or `BLOCKED`.
+- Visual markers in `TASK.md` status are allowed (`🟦 TODO`, `🟨 IN_PROGRESS`, `🟧 IN_REVIEW`, `🟩 DONE`, `🟥 BLOCKED`), but canonical status token must remain present.
+- If provider-native agent directories are present, use their orchestrator bridge profile before any implementation:
+  - `.github/agents/orchestrator.md`
+  - `.windsurf/agents/orchestrator.md`
+  - `.junie/agents/orchestrator.md`
+  - `.antigravity/agents/orchestrator.md`
+- Provider bridges must refresh skill routing from `90-skill-catalog.md` and `review-capabilities.json`, including specialist skills added after init.
 - One task in active execution at a time.
 - Path mode values: `FAST_PATH` or `FULL_PATH`.
 - Path mode is assigned only by:
@@ -29,6 +36,8 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Required reviews must be launched only from preflight `required_reviews.*`.
 - Review gate script must pass before `DONE`:
   `Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1`.
+- Task timeline log must be updated for lifecycle stages and gate outcomes:
+  `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - Documentation impact updates are required when behavior/contracts/ops docs changed.
 - Reviewer and specialist agents must be closed after verdict capture.
 

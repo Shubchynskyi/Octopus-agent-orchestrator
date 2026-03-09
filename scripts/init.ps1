@@ -3,7 +3,7 @@ param(
     [switch]$DryRun,
     [string]$AssistantLanguage = 'English',
     [string]$AssistantBrevity = 'concise',
-    [ValidateSet('Claude', 'Codex', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')]
+    [ValidateSet('Claude', 'Codex', 'Gemini', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')]
     [string]$SourceOfTruth = 'Claude'
 )
 
@@ -46,6 +46,21 @@ if ($allowedBrevity -notcontains $AssistantBrevity) {
 }
 
 $SourceOfTruth = $SourceOfTruth.Trim()
+$sourceOfTruthKey = $SourceOfTruth.ToUpperInvariant().Replace(' ', '')
+$sourceToEntrypoint = @{
+    'CLAUDE' = 'CLAUDE.md'
+    'CODEX' = 'AGENTS.md'
+    'GEMINI' = 'GEMINI.md'
+    'GITHUBCOPILOT' = '.github/copilot-instructions.md'
+    'WINDSURF' = '.windsurf/rules/rules.md'
+    'JUNIE' = '.junie/guidelines.md'
+    'ANTIGRAVITY' = '.antigravity/rules.md'
+}
+$canonicalEntrypoint = if ($sourceToEntrypoint.ContainsKey($sourceOfTruthKey)) {
+    $sourceToEntrypoint[$sourceOfTruthKey]
+} else {
+    'CLAUDE.md'
+}
 
 $ruleFiles = @(
     '00-core.md',
@@ -526,6 +541,22 @@ foreach ($relativeDirectory in $supportDirectories) {
 $legacyEntrypoints = @(
     'CLAUDE.md',
     'AGENTS.md',
+    'GEMINI.md',
+    '.github/agents/orchestrator.md',
+    '.github/agents/reviewer.md',
+    '.github/agents/code-review.md',
+    '.github/agents/db-review.md',
+    '.github/agents/security-review.md',
+    '.github/agents/refactor-review.md',
+    '.github/agents/api-review.md',
+    '.github/agents/test-review.md',
+    '.github/agents/performance-review.md',
+    '.github/agents/infra-review.md',
+    '.github/agents/dependency-review.md',
+    '.windsurf/agents/orchestrator.md',
+    '.junie/agents/orchestrator.md',
+    '.antigravity/agents/orchestrator.md',
+    '.qwen/settings.json',
     'TASK.md',
     '.antigravity/rules.md',
     '.junie/guidelines.md',
@@ -670,6 +701,11 @@ if (-not $DryRun) {
             '- `depth=1`: simple or low-risk change.',
             '- `depth=2`: default for most tasks.',
             '- `depth=3`: high-risk or cross-cutting work.',
+            '',
+            "Canonical instructions entrypoint for orchestration: `$canonicalEntrypoint`.",
+            "Hard stop: first open `$canonicalEntrypoint` and follow its routing links. Only then execute any task from `TASK.md`.",
+            'Orchestrator mode starts when task execution is requested from this file (`TASK.md`).',
+            'If needed, the agent can add new tasks from user requests and then execute them in orchestrator mode.',
             '',
             'Tasks are managed in root `TASK.md`.',
             'This file can be replaced by the setup agent with project-specific instructions.'

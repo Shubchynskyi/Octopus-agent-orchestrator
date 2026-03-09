@@ -10,7 +10,7 @@ allowed-tools:
   - Write
 metadata:
   author: Octopus-agent-orchestrator
-  version: 1.3.0
+  version: 1.4.0
   runtime_requirement: PowerShell 7+ (pwsh) or Bash + Python 3 for gate scripts
 ---
 
@@ -40,31 +40,49 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 2. If no `TODO` exists, create a task from current user request, then move it to `IN_PROGRESS`.
 3. Resolve requested depth and record requested/effective depth in `TASK.md` notes.
 4. Build concise plan: scope, files, risks, tests or validation strategy.
+   - Log event: `PLAN_CREATED`.
 5. Run preflight:
    - `classify-change.ps1` with `-ChangedFiles` for precise scope, or
    - `-UseStaged` in dirty workspaces.
    - environment selection: use `.ps1` via `pwsh` when available, otherwise use `.sh` bash equivalents.
+   - `classify-change` writes task-scoped event `PREFLIGHT_CLASSIFIED` automatically.
 6. Apply depth escalation from preflight output when required.
 7. Execute implementation path:
    - `FULL_PATH` runtime => tests first, then implementation.
    - non-runtime or `FAST_PATH` runtime => objective validations, then implementation.
 8. Run checks for changed scope (or explicitly report pending restricted checks).
 9. Move task to `IN_REVIEW`.
+   - Log event: `REVIEW_PHASE_STARTED`.
 10. Run only required independent reviews from preflight:
    - preferred when available: clean-context reviewer agents
    - fallback for single-agent platforms: sequential independent review passes with explicit reviewer role prompt and isolated checklist per pass
    - baseline: `code`, `db`, `security`, `refactor`
    - optional when enabled in `Octopus-agent-orchestrator/live/config/review-capabilities.json`: `api`, `test`, `performance`, `infra`, `dependency`
+   - Log event per reviewer invocation: `REVIEW_REQUESTED`.
 11. Run `required-reviews-check.ps1` and treat result as release gate.
+   - `required-reviews-check` writes task-scoped event `REVIEW_GATE_PASSED` or `REVIEW_GATE_FAILED` automatically.
 12. Fix blocking findings and repeat required reviews + gate check until pass.
+   - On failed gate and return to coding, log event: `REWORK_STARTED`.
 13. Update required docs and changelog when behavior changed.
 14. Record artifacts and evidence in `TASK.md`.
 15. Set final status:
    - `DONE` only when all mandatory gates passed.
    - `BLOCKED` when any mandatory gate failed or cannot run.
-16. Report to user: implementation summary, depth, path mode, review verdicts, docs updated, commit message suggestion.
+   - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
+16. Report to user: implementation summary, depth, path mode, review verdicts, docs updated, and optional commit message suggestion.
 17. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
 18. Never commit unless user explicitly requests commit.
+
+## Task Event Logging Commands
+- PowerShell:
+  `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1 -TaskId "<task-id>" -EventType "<event-type>" -Outcome "INFO|PASS|FAIL|BLOCKED" -Message "<short message>" -Actor "orchestrator"`
+- Bash:
+  `bash Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.sh --task-id "<task-id>" --event-type "<event-type>" --outcome "INFO|PASS|FAIL|BLOCKED" --message "<short message>" --actor "orchestrator"`
+- Task event logs:
+  - `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`
+  - `Octopus-agent-orchestrator/runtime/task-events/all-tasks.jsonl`
+- Human-readable summary:
+  - `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1 -TaskId "<task-id>"`
 
 ## Escape Hatch Policy (Audited Override)
 - Supported only for code review and only for tiny low-risk scopes.
@@ -91,6 +109,8 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Preflight artifact: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json`.
 - Required review artifacts and verdicts.
 - Gate check result (`REVIEW_GATE_PASSED` or `REVIEW_GATE_PASSED_WITH_OVERRIDE`).
+- Task event trace: `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
+- Optional timeline summary for final report: `task-events-summary.ps1` output.
 - Documentation impact result and updated doc list.
 - Final user report.
 

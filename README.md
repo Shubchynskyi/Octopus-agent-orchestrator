@@ -10,8 +10,9 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 
 ## Design
 - Canonical rule set lives only in `Octopus-agent-orchestrator/live/docs/agent-rules/*`.
-- Source-of-truth entrypoint is selected at setup (`Claude`, `Codex`, `GitHubCopilot`, `Windsurf`, `Junie`, or `Antigravity`).
+- Source-of-truth entrypoint is selected at setup (`Claude`, `Codex`, `Gemini`, `GitHubCopilot`, `Windsurf`, `Junie`, or `Antigravity`).
 - Selected entrypoint contains canonical routing index; all other entrypoint files are redirects.
+- Provider-native agent directories are bridged to the same Octopus `live/skills/*` contracts.
 - Context rules are initialized as generic templates and then filled using project discovery signals.
 - Existing project docs and legacy agent files are read as context input only.
 - No automatic moving or deleting of legacy files.
@@ -19,10 +20,26 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 ## What Is Deployed To Project Root
 - `CLAUDE.md` (always refreshed from template)
 - `AGENTS.md`
+- `GEMINI.md`
+- `.qwen/settings.json` (Qwen context bootstrap with `AGENTS.md` + `TASK.md`)
 - `TASK.md`
 - `.antigravity/rules.md`
+- `.github/agents/orchestrator.md`
+- `.github/agents/reviewer.md`
+- `.github/agents/code-review.md`
+- `.github/agents/db-review.md`
+- `.github/agents/security-review.md`
+- `.github/agents/refactor-review.md`
+- `.github/agents/api-review.md`
+- `.github/agents/test-review.md`
+- `.github/agents/performance-review.md`
+- `.github/agents/infra-review.md`
+- `.github/agents/dependency-review.md`
 - `.junie/guidelines.md`
+- `.junie/agents/orchestrator.md`
 - `.windsurf/rules/rules.md`
+- `.windsurf/agents/orchestrator.md`
+- `.antigravity/agents/orchestrator.md`
 - `.github/copilot-instructions.md`
 
 ## What Is Materialized Inside Orchestrator
@@ -45,7 +62,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 3. Agent asks the user for:
    - preferred assistant response language;
    - preferred default response brevity (`concise` or `detailed`).
-   - preferred source-of-truth entrypoint: `Claude (CLAUDE.md) | Codex (AGENTS.md) | GitHubCopilot (.github/copilot-instructions.md) | Windsurf (.windsurf/rules/rules.md) | Junie (.junie/guidelines.md) | Antigravity (.antigravity/rules.md)`; all non-selected entrypoint files will redirect to the selected file.
+   - preferred source-of-truth entrypoint: `Claude (CLAUDE.md) | Codex (AGENTS.md) | Gemini (GEMINI.md) | GitHubCopilot (.github/copilot-instructions.md) | Windsurf (.windsurf/rules/rules.md) | Junie (.junie/guidelines.md) | Antigravity (.antigravity/rules.md)`; all non-selected entrypoint files will redirect to the selected file.
 4. Agent must hard-stop setup unless all 3 answers are collected, then writes `Octopus-agent-orchestrator/runtime/init-answers.json`.
 5. Agent executes install and init with `-InitAnswersPath`, then reads `live/project-discovery.md`.
 6. Agent updates context rules (`10/20/30/40/60`) and `live/config/paths.json` to match the real repository.
@@ -55,7 +72,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 
 ## Post-Init Validation Commands
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<Claude|Codex|GitHubCopilot|Windsurf|Junie|Antigravity>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<Claude|Codex|Gemini|GitHubCopilot|Windsurf|Junie|Antigravity>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md
 ```
 
@@ -63,6 +80,55 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "Octopus-agent-orchestrator/MANIFEST.md"
+```
+
+## Work Example
+Example feature request:
+- User asks: `Create a task in TASK.md for feature "Invoice CSV export with email delivery".`
+
+Agent splits it into three tasks in `TASK.md`:
+
+| ID | Status | Priority | Area | Title | Owner | Updated | Depth | Notes |
+|---|---|---|---|---|---|---|---|---|
+| T-201 | 🟦 TODO | P1 | backend | Add invoice CSV export API and service | unassigned | 2026-03-09 | 3 | Requires runtime + API review path |
+| T-202 | 🟦 TODO | P1 | worker | Add async email delivery job for exported CSV | unassigned | 2026-03-09 | 3 | Requires security review for outbound attachment flow |
+| T-203 | 🟦 TODO | P2 | docs | Update docs/changelog and user-facing usage notes | unassigned | 2026-03-09 | 2 | Depends on T-201 and T-202 |
+
+Then user asks:
+- `Execute task T-201 depth=3`
+
+Typical agent lifecycle:
+1. Creates plan and logs `PLAN_CREATED`.
+2. Runs preflight and gets `FULL_PATH` with required reviews.
+3. Implements code, adds tests, updates docs where required.
+4. Runs independent reviews.
+5. Receives failed review or failed gate (`REVIEW_GATE_FAILED`), returns to code, logs `REWORK_STARTED`.
+6. Fixes findings, reruns required reviews, receives `REVIEW_GATE_PASSED`.
+7. Marks task `DONE`, logs `TASK_DONE`, and returns summary + commit message suggestion.
+
+Task timeline log commands:
+```powershell
+pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1 -TaskId "T-201"
+```
+
+Example summary output:
+```text
+Task: T-201
+Events: 8
+Timeline:
+[01] ... | PLAN_CREATED | INFO | actor=orchestrator
+[02] ... | PREFLIGHT_CLASSIFIED | INFO
+[03] ... | REVIEW_PHASE_STARTED | INFO
+[04] ... | REVIEW_REQUESTED | INFO | actor=code-review
+[05] ... | REVIEW_GATE_FAILED | FAIL
+[06] ... | REWORK_STARTED | INFO
+[07] ... | REVIEW_GATE_PASSED | PASS
+[08] ... | TASK_DONE | PASS
+```
+
+Optional commit message suggestion returned by agent:
+```text
+feat(invoices): add CSV export endpoint with async email delivery hooks
 ```
 
 ## Important
@@ -76,6 +142,9 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "O
 - Gate scripts support both `pwsh` (`*.ps1`) and `bash` (`*.sh`); agent should auto-detect environment.
 - Bash gate scripts require a Python runtime in PATH (`python3`, `python`, or `py -3`).
 - Specialist skills added after init are project-specific and should be created only in `Octopus-agent-orchestrator/live/skills/**`.
+- Copilot bridge profiles re-read `live/docs/agent-rules/90-skill-catalog.md` and `live/config/review-capabilities.json`, so post-init specialist skills are included in routing.
+- Task timeline logs are written per task id to `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl` (plus aggregate `all-tasks.jsonl`).
+- Commit message text is a recommended output only; it is not a mandatory gate for task completion.
 
 ## License
 MIT License. See `LICENSE`.

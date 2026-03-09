@@ -47,6 +47,35 @@ def append_metrics_event(path: Path, event_obj: dict, emit_metrics: bool):
         fh.write(json.dumps(event_obj, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
+def resolve_task_id(explicit_task_id: str, preflight_path: Path):
+    if explicit_task_id and explicit_task_id.strip():
+        return explicit_task_id.strip()
+    base_name = preflight_path.stem
+    candidate = re.sub(r"-preflight$", "", base_name).strip()
+    return candidate or None
+
+
+def append_task_event(repo_root: Path, task_id: str, event_type: str, outcome: str, message: str, details: dict):
+    if not task_id:
+        return
+    events_dir = (repo_root / "Octopus-agent-orchestrator/runtime/task-events").resolve()
+    events_dir.mkdir(parents=True, exist_ok=True)
+
+    event = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "task_id": task_id,
+        "event_type": event_type,
+        "outcome": outcome,
+        "message": message,
+        "details": details,
+    }
+    line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+    with (events_dir / f"{task_id}.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+    with (events_dir / "all-tasks.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+
+
 def parse_skip_reviews(value: str):
     if not value or not value.strip():
         return []
@@ -80,6 +109,7 @@ def test_expected_verdict(errors, label, required, skipped_by_override, actual_v
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--preflight-path", required=True)
+parser.add_argument("--task-id", default="")
 parser.add_argument("--code-review-verdict", default="NOT_REQUIRED")
 parser.add_argument("--db-review-verdict", default="NOT_REQUIRED")
 parser.add_argument("--security-review-verdict", default="NOT_REQUIRED")
@@ -109,6 +139,7 @@ if not preflight_path.exists():
     sys.exit(1)
 
 preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+resolved_task_id = resolve_task_id(args.task_id, preflight_path)
 required_reviews = preflight.get("required_reviews", {})
 metrics = preflight.get("metrics", {})
 
@@ -188,6 +219,7 @@ if errors:
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "event_type": "review_gate_check",
         "status": "FAILED",
+        "task_id": resolved_task_id,
         "preflight_path": normalize_path(preflight_path),
         "mode": preflight.get("mode"),
         "skip_reviews": skip_reviews_list,
@@ -195,6 +227,20 @@ if errors:
         "violations": errors,
     }
     append_metrics_event(metrics_path, failure_event, emit_metrics)
+    append_task_event(
+        repo_root=repo_root,
+        task_id=resolved_task_id,
+        event_type="REVIEW_GATE_FAILED",
+        outcome="FAIL",
+        message="Required reviews gate failed.",
+        details={
+            "preflight_path": normalize_path(preflight_path),
+            "mode": preflight.get("mode"),
+            "skip_reviews": skip_reviews_list,
+            "skip_reason": skip_reason,
+            "violations": errors,
+        },
+    )
 
     print("REVIEW_GATE_FAILED")
     print(f"Mode: {preflight.get('mode')}")
@@ -240,6 +286,7 @@ success_event = {
     "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     "event_type": "review_gate_check",
     "status": "PASSED",
+    "task_id": resolved_task_id,
     "preflight_path": normalize_path(preflight_path),
     "mode": preflight.get("mode"),
     "skip_reviews": skip_reviews_list,
@@ -249,11 +296,39 @@ success_event = {
 append_metrics_event(metrics_path, success_event, emit_metrics)
 
 if skip_code:
+    append_task_event(
+        repo_root=repo_root,
+        task_id=resolved_task_id,
+        event_type="REVIEW_GATE_PASSED_WITH_OVERRIDE",
+        outcome="PASS",
+        message="Required reviews gate passed with audited override.",
+        details={
+            "preflight_path": normalize_path(preflight_path),
+            "mode": preflight.get("mode"),
+            "skip_reviews": skip_reviews_list,
+            "skip_reason": skip_reason,
+            "override_artifact": normalize_path(override_artifact_path) if override_artifact_path else None,
+        },
+    )
     print("REVIEW_GATE_PASSED_WITH_OVERRIDE")
     print(f"Mode: {preflight.get('mode')}")
     print("SkippedReviews: code")
     print(f"OverrideArtifact: {override_artifact_path}")
 else:
+    append_task_event(
+        repo_root=repo_root,
+        task_id=resolved_task_id,
+        event_type="REVIEW_GATE_PASSED",
+        outcome="PASS",
+        message="Required reviews gate passed.",
+        details={
+            "preflight_path": normalize_path(preflight_path),
+            "mode": preflight.get("mode"),
+            "skip_reviews": skip_reviews_list,
+            "skip_reason": skip_reason,
+            "override_artifact": normalize_path(override_artifact_path) if override_artifact_path else None,
+        },
+    )
     print("REVIEW_GATE_PASSED")
     print(f"Mode: {preflight.get('mode')}")
 PY

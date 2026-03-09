@@ -12,7 +12,7 @@ Single source of active engineering tasks for agent execution.
 ## Artifact Contract
 Use this format in the `Artifacts` column for `IN_REVIEW`, `DONE`, and `BLOCKED` tasks:
 
-`path_mode=<FAST_PATH|FULL_PATH>; preflight_artifact=<path|n/a>; code_review_agent_label=<CODE_REVIEW|NOT_REQUIRED>; code_review_agent_id=<agent-id|n/a>; code_review_verdict=<REVIEW PASSED|REVIEW FAILED|NOT_REQUIRED>; code_review_artifact=<path|n/a>; rule_coverage_artifact=<path|n/a>; db_review_agent_label=<DB_REVIEW|NOT_REQUIRED>; db_review_agent_id=<agent-id|n/a>; db_review_verdict=<DB REVIEW PASSED|DB REVIEW FAILED|NOT_REQUIRED>; db_review_artifact=<path|n/a>; security_review_agent_label=<SECURITY_REVIEW|NOT_REQUIRED>; security_review_agent_id=<agent-id|n/a>; security_review_verdict=<SECURITY REVIEW PASSED|SECURITY REVIEW FAILED|NOT_REQUIRED>; security_review_artifact=<path|n/a>; refactor_review_agent_label=<REFACTOR_REVIEW|NOT_REQUIRED>; refactor_review_agent_id=<agent-id|n/a>; refactor_review_verdict=<REFACTOR REVIEW PASSED|REFACTOR REVIEW FAILED|NOT_REQUIRED>; refactor_review_artifact=<path|n/a>; doc_impact_artifact=<path|n/a>; changelog_entry=<path|NOT_REQUIRED>; blocked_reason_code=<code|n/a>`
+`path_mode=<FAST_PATH|FULL_PATH>; preflight_artifact=<path|n/a>; code_review_agent_label=<CODE_REVIEW|NOT_REQUIRED>; code_review_agent_id=<agent-id|n/a>; code_review_verdict=<REVIEW PASSED|REVIEW FAILED|NOT_REQUIRED>; code_review_artifact=<path|n/a>; rule_coverage_artifact=<path|n/a>; db_review_agent_label=<DB_REVIEW|NOT_REQUIRED>; db_review_agent_id=<agent-id|n/a>; db_review_verdict=<DB REVIEW PASSED|DB REVIEW FAILED|NOT_REQUIRED>; db_review_artifact=<path|n/a>; security_review_agent_label=<SECURITY_REVIEW|NOT_REQUIRED>; security_review_agent_id=<agent-id|n/a>; security_review_verdict=<SECURITY REVIEW PASSED|SECURITY REVIEW FAILED|NOT_REQUIRED>; security_review_artifact=<path|n/a>; refactor_review_agent_label=<REFACTOR_REVIEW|NOT_REQUIRED>; refactor_review_agent_id=<agent-id|n/a>; refactor_review_verdict=<REFACTOR REVIEW PASSED|REFACTOR REVIEW FAILED|NOT_REQUIRED>; refactor_review_artifact=<path|n/a>; doc_impact_artifact=<path|n/a>; changelog_entry=<path|NOT_REQUIRED>; task_event_log=<path|n/a>; blocked_reason_code=<code|n/a>`
 
 Completion constraints:
 - `DONE` requires valid `path_mode`.
@@ -36,6 +36,7 @@ Completion constraints:
   - `infra_review_verdict` / `infra_review_artifact` (`INFRA REVIEW PASSED`)
   - `dependency_review_verdict` / `dependency_review_artifact` (`DEPENDENCY REVIEW PASSED`)
 - `DONE` requires `doc_impact_artifact` and `changelog_entry` according to documentation gate rules.
+- `DONE` requires `task_event_log` pointing to `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - `BLOCKED` requires a non-empty `blocked_reason_code`.
 - Recommended review artifact path pattern:
   - `Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json`
@@ -48,6 +49,7 @@ Completion constraints:
   - `Octopus-agent-orchestrator/runtime/reviews/<task-id>-performance-review.md`
   - `Octopus-agent-orchestrator/runtime/reviews/<task-id>-infra-review.md`
   - `Octopus-agent-orchestrator/runtime/reviews/<task-id>-dependency-review.md`
+  - `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`
 
 ## BLOCKED Reason Codes
 - `MISSING_ENV`

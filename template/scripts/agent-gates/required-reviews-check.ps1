@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$PreflightPath,
+    [string]$TaskId = '',
     [string]$CodeReviewVerdict = 'NOT_REQUIRED',
     [string]$DbReviewVerdict = 'NOT_REQUIRED',
     [string]$SecurityReviewVerdict = 'NOT_REQUIRED',
@@ -55,6 +56,83 @@ function Append-MetricsEvent {
         Add-Content -Path $Path -Value $line
     } catch {
         Write-Verbose "Metrics append failed: $($_.Exception.Message)"
+    }
+}
+
+function Normalize-Path {
+    param([string]$PathValue)
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return $null
+    }
+
+    return $PathValue.Replace('\', '/')
+}
+
+function Resolve-TaskId {
+    param(
+        [string]$ExplicitTaskId,
+        [string]$PreflightPathValue
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitTaskId)) {
+        return $ExplicitTaskId.Trim()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($PreflightPathValue)) {
+        return $null
+    }
+
+    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($PreflightPathValue)
+    if ([string]::IsNullOrWhiteSpace($baseName)) {
+        return $null
+    }
+
+    $candidate = $baseName -replace '-preflight$', ''
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        return $null
+    }
+
+    return $candidate.Trim()
+}
+
+function Append-TaskEvent {
+    param(
+        [string]$RepoRootPath,
+        [string]$TaskId,
+        [string]$EventType,
+        [string]$Outcome = 'INFO',
+        [string]$Message = '',
+        [object]$Details = $null
+    )
+
+    if ([string]::IsNullOrWhiteSpace($TaskId)) {
+        return
+    }
+
+    try {
+        $eventsDir = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/task-events'
+        if (-not (Test-Path $eventsDir)) {
+            New-Item -Path $eventsDir -ItemType Directory -Force | Out-Null
+        }
+
+        $event = [ordered]@{
+            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+            task_id = $TaskId
+            event_type = $EventType
+            outcome = $Outcome
+            message = $Message
+            details = $Details
+        }
+
+        $line = $event | ConvertTo-Json -Depth 12 -Compress
+        $taskFilePath = Join-Path $eventsDir "$TaskId.jsonl"
+        $allTasksPath = Join-Path $eventsDir 'all-tasks.jsonl'
+
+        Add-Content -Path $taskFilePath -Value $line
+        Add-Content -Path $allTasksPath -Value $line
+    } catch {
+        Write-Verbose "Task-event append failed: $($_.Exception.Message)"
     }
 }
 
@@ -124,6 +202,7 @@ if (-not (Test-Path $PreflightPath)) {
 }
 
 $preflight = Get-Content -Raw $PreflightPath | ConvertFrom-Json
+$resolvedTaskId = Resolve-TaskId -ExplicitTaskId $TaskId -PreflightPathValue $PreflightPath
 $errors = @()
 $skipReviewsList = Parse-SkipReviews -SkipValue $SkipReviews
 $allowedSkips = @('code')
@@ -186,13 +265,23 @@ if ($errors.Count -gt 0) {
         timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
         event_type = 'review_gate_check'
         status = 'FAILED'
-        preflight_path = $PreflightPath.Replace('\', '/')
+        task_id = $resolvedTaskId
+        preflight_path = Normalize-Path $PreflightPath
         mode = $preflight.mode
         skip_reviews = $skipReviewsList
         skip_reason = $SkipReason
         violations = $errors
     }
     Append-MetricsEvent -Path $MetricsPath -EventObject $failureEvent
+
+    $taskFailureDetails = [ordered]@{
+        preflight_path = Normalize-Path $PreflightPath
+        mode = $preflight.mode
+        skip_reviews = $skipReviewsList
+        skip_reason = $SkipReason
+        violations = $errors
+    }
+    Append-TaskEvent -RepoRootPath (Resolve-ProjectRoot) -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_FAILED' -Outcome 'FAIL' -Message 'Required reviews gate failed.' -Details $taskFailureDetails
 
     Write-Output 'REVIEW_GATE_FAILED'
     Write-Output "Mode: $($preflight.mode)"
@@ -241,15 +330,25 @@ $successEvent = [ordered]@{
     timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
     event_type = 'review_gate_check'
     status = 'PASSED'
-    preflight_path = $PreflightPath.Replace('\', '/')
+    task_id = $resolvedTaskId
+    preflight_path = Normalize-Path $PreflightPath
     mode = $preflight.mode
     skip_reviews = $skipReviewsList
     skip_reason = $SkipReason
-    override_artifact = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { $OverrideArtifactPath.Replace('\', '/') })
+    override_artifact = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
 }
 Append-MetricsEvent -Path $MetricsPath -EventObject $successEvent
 
+$taskSuccessDetails = [ordered]@{
+    preflight_path = Normalize-Path $PreflightPath
+    mode = $preflight.mode
+    skip_reviews = $skipReviewsList
+    skip_reason = $SkipReason
+    override_artifact = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
+}
+
 if ($skipCode) {
+    Append-TaskEvent -RepoRootPath (Resolve-ProjectRoot) -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_PASSED_WITH_OVERRIDE' -Outcome 'PASS' -Message 'Required reviews gate passed with audited override.' -Details $taskSuccessDetails
     Write-Output 'REVIEW_GATE_PASSED_WITH_OVERRIDE'
     Write-Output "Mode: $($preflight.mode)"
     Write-Output 'SkippedReviews: code'
@@ -257,6 +356,7 @@ if ($skipCode) {
     exit 0
 }
 
+Append-TaskEvent -RepoRootPath (Resolve-ProjectRoot) -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_PASSED' -Outcome 'PASS' -Message 'Required reviews gate passed.' -Details $taskSuccessDetails
 Write-Output 'REVIEW_GATE_PASSED'
 Write-Output "Mode: $($preflight.mode)"
 

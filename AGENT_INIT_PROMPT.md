@@ -13,7 +13,7 @@ Create a fully working agent orchestration workspace where canonical rules live 
    - Immediately switch all subsequent user-facing messages to `<assistant-language>`, starting with the next question.
    - In `<assistant-language>`, ask: `What response brevity should be default: concise or detailed?`
    - Wait for answer and store as `<assistant-brevity>`.
-   - In `<assistant-language>`, ask: `Which source-of-truth file should be canonical for rules: Claude (CLAUDE.md), Codex (AGENTS.md), GitHubCopilot (.github/copilot-instructions.md), Windsurf (.windsurf/rules/rules.md), Junie (.junie/guidelines.md), or Antigravity (.antigravity/rules.md)? All non-selected entrypoint files will redirect to this selected file.`
+   - In `<assistant-language>`, ask: `Which source-of-truth file should be canonical for rules: Claude (CLAUDE.md), Codex (AGENTS.md), Gemini (GEMINI.md), GitHubCopilot (.github/copilot-instructions.md), Windsurf (.windsurf/rules/rules.md), Junie (.junie/guidelines.md), or Antigravity (.antigravity/rules.md)? All non-selected entrypoint files will redirect to this selected file.`
    - Wait for answer and store as `<source-of-truth>`.
    - Hard-stop rule: **if all 3 answers are not collected, do not run installation**.
 3. Save required init answers artifact to `Octopus-agent-orchestrator/runtime/init-answers.json`:
@@ -69,6 +69,9 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 - `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md` exists.
 - `Octopus-agent-orchestrator/live/USAGE.md` exists with usage instructions in `<assistant-language>`.
 - Root `TASK.md` contains `Depth` column in active queue.
+- Provider-native bridge profiles exist and map back to canonical skills (`.github/agents/*.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`).
+- Copilot bridge profiles include specialist skills added after initialization by re-reading `live/docs/agent-rules/90-skill-catalog.md` and `live/config/review-capabilities.json`.
+- Task workflow supports per-task timeline logs at `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - Existing project docs and legacy agent files are not moved or deleted.
 
 ## Behavior Requirements
@@ -93,6 +96,9 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
   - using default depth (`Execute task <task-id>`);
   - when to use `depth=1`, `depth=2`, and `depth=3`.
   - where tasks are defined: tasks are managed in the root `TASK.md` file.
+- Explicit orchestration note:
+  - orchestrator mode starts when the agent executes a task from `TASK.md`;
+  - if needed, the agent may create new tasks from user requests and then execute them through the orchestrator workflow.
 - Save the full `Usage Instructions` section to `Octopus-agent-orchestrator/live/USAGE.md` so the user can reference it later.
 - If optional specialist skills were requested:
   - list newly created `Octopus-agent-orchestrator/live/skills/*` paths;

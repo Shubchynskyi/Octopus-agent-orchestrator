@@ -73,6 +73,38 @@ def append_metrics_event(path: Path, event_obj: dict, emit_metrics: bool):
         fh.write(json.dumps(event_obj, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
+def resolve_task_id(explicit_task_id: str, output_path_hint: str):
+    if explicit_task_id and explicit_task_id.strip():
+        return explicit_task_id.strip()
+    if not output_path_hint or not output_path_hint.strip():
+        return None
+    base_name = Path(output_path_hint).stem
+    candidate = re.sub(r"-preflight$", "", base_name)
+    candidate = candidate.strip()
+    return candidate or None
+
+
+def append_task_event(repo_root: Path, task_id: str, event_type: str, outcome: str, message: str, details: dict):
+    if not task_id:
+        return
+    events_dir = (repo_root / "Octopus-agent-orchestrator/runtime/task-events").resolve()
+    events_dir.mkdir(parents=True, exist_ok=True)
+
+    event = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "task_id": task_id,
+        "event_type": event_type,
+        "outcome": outcome,
+        "message": message,
+        "details": details,
+    }
+    line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+    with (events_dir / f"{task_id}.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+    with (events_dir / "all-tasks.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+
+
 def run_git(repo_root: Path, args):
     completed = subprocess.run(
         ["git", "-C", str(repo_root), *args],
@@ -284,6 +316,7 @@ parser.add_argument("--changed-file", action="append", default=[])
 parser.add_argument("--changed-files", default="")
 parser.add_argument("--use-staged", action="store_true")
 parser.add_argument("--include-untracked", default="true")
+parser.add_argument("--task-id", default="")
 parser.add_argument("--task-intent", default="")
 parser.add_argument("--fast-path-max-files", type=int, default=2)
 parser.add_argument("--fast-path-max-changed-lines", type=int, default=40)
@@ -517,6 +550,7 @@ required_test_review = test_triggered and bool(review_capabilities.get("test"))
 required_performance_review = performance_triggered and bool(review_capabilities.get("performance"))
 required_infra_review = infra_triggered and bool(review_capabilities.get("infra"))
 required_dependency_review = dependency_triggered and bool(review_capabilities.get("dependency"))
+resolved_task_id = resolve_task_id(args.task_id, args.output_path)
 
 result = {
     "detection_source": detection_source,
@@ -568,6 +602,9 @@ result = {
     "changed_files": normalized_files,
 }
 
+if resolved_task_id:
+    result["task_id"] = resolved_task_id
+
 json_output = json.dumps(result, ensure_ascii=False, indent=2)
 
 resolved_output_path = None
@@ -583,10 +620,27 @@ metrics_event = {
     "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     "event_type": "preflight_classification",
     "repo_root": to_posix(repo_root),
+    "task_id": resolved_task_id,
     "output_path": to_posix(resolved_output_path) if resolved_output_path else None,
     "result": result,
 }
 append_metrics_event(metrics_path, metrics_event, emit_metrics)
+
+task_event_details = {
+    "mode": mode,
+    "output_path": to_posix(resolved_output_path) if resolved_output_path else None,
+    "changed_files_count": len(normalized_files),
+    "changed_lines_total": changed_lines_total,
+    "required_reviews": result["required_reviews"],
+}
+append_task_event(
+    repo_root=repo_root,
+    task_id=resolved_task_id,
+    event_type="PREFLIGHT_CLASSIFIED",
+    outcome="INFO",
+    message=f"Preflight completed with mode {mode}.",
+    details=task_event_details,
+)
 
 print(json_output)
 PY

@@ -5,13 +5,20 @@
 # Octopus Agent Orchestrator Rule Index
 
 This file can serve as the source of truth for agent workflow rules.
-At setup, source of truth is selected via `-SourceOfTruth` (`Claude`, `Codex`, `GitHubCopilot`, `Windsurf`, `Junie`, or `Antigravity`).
+At setup, source of truth is selected via `-SourceOfTruth` (`Claude`, `Codex`, `Gemini`, `GitHubCopilot`, `Windsurf`, `Junie`, or `Antigravity`).
 Non-selected entrypoint files must only redirect to the selected source-of-truth file.
 
 ## How To Use This File
 1. Always read `Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md`.
 2. Read only the linked rule files required for the current task.
 3. Avoid loading unrelated rule files to save context and tokens.
+
+## Hard Stop For Task Execution
+- Before implementing any task, open `TASK.md`.
+- Do not execute task work until this canonical file and `TASK.md` are both read.
+- Execute tasks only through orchestration workflow (`Execute task <task-id> depth=<1|2|3>`), with preflight and required review gates.
+- If provider-native agent directories are available, execute through provider bridge profiles (`.github/agents/orchestrator.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`).
+- Provider bridge profiles must resolve skills from `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md` and `Octopus-agent-orchestrator/live/config/review-capabilities.json` (including skills added after init).
 
 ## Rule Routing
 | Task context | File to read |

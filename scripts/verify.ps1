@@ -1,6 +1,6 @@
 param(
     [string]$TargetRoot,
-    [ValidateSet('Claude', 'Codex', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')]
+    [ValidateSet('Claude', 'Codex', 'Gemini', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')]
     [Parameter(Mandatory = $true)]
     [string]$SourceOfTruth,
     [Parameter(Mandatory = $true)]
@@ -120,6 +120,7 @@ if ([string]::IsNullOrWhiteSpace($initAnswersResolvedPath)) {
 $sourceToEntrypoint = @{
     'CLAUDE' = 'CLAUDE.md'
     'CODEX' = 'AGENTS.md'
+    'GEMINI' = 'GEMINI.md'
     'GITHUBCOPILOT' = '.github/copilot-instructions.md'
     'WINDSURF' = '.windsurf/rules/rules.md'
     'JUNIE' = '.junie/guidelines.md'
@@ -132,6 +133,7 @@ $canonicalEntrypoint = $sourceToEntrypoint[$sourceOfTruthKey]
 $entrypointFiles = @(
     'CLAUDE.md',
     'AGENTS.md',
+    'GEMINI.md',
     '.github/copilot-instructions.md',
     '.windsurf/rules/rules.md',
     '.junie/guidelines.md',
@@ -156,9 +158,25 @@ $ruleFiles = @(
 $requiredPaths = @(
     'CLAUDE.md',
     'AGENTS.md',
+    'GEMINI.md',
+    '.qwen/settings.json',
     'TASK.md',
     '.antigravity/rules.md',
     '.github/copilot-instructions.md',
+    '.github/agents/orchestrator.md',
+    '.github/agents/reviewer.md',
+    '.github/agents/code-review.md',
+    '.github/agents/db-review.md',
+    '.github/agents/security-review.md',
+    '.github/agents/refactor-review.md',
+    '.github/agents/api-review.md',
+    '.github/agents/test-review.md',
+    '.github/agents/performance-review.md',
+    '.github/agents/infra-review.md',
+    '.github/agents/dependency-review.md',
+    '.windsurf/agents/orchestrator.md',
+    '.junie/agents/orchestrator.md',
+    '.antigravity/agents/orchestrator.md',
     '.junie/guidelines.md',
     '.windsurf/rules/rules.md',
     'Octopus-agent-orchestrator/MANIFEST.md',
@@ -169,6 +187,9 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.sh',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh',
     'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md',
     'Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md',
@@ -192,6 +213,8 @@ $gitignoreEntries = @(
     'Octopus-agent-orchestrator/',
     'AGENTS.md',
     'TASK.md',
+    '.qwen/',
+    '.github/agents/',
     '.antigravity/',
     '.junie/',
     '.windsurf/',
@@ -289,9 +312,63 @@ if (Test-Path $taskPath) {
         if ($taskManagedBlock -notmatch '\|\s*ID\s*\|\s*Status\s*\|\s*Priority\s*\|\s*Area\s*\|\s*Title\s*\|\s*Owner\s*\|\s*Updated\s*\|\s*Depth\s*\|\s*Notes\s*\|') {
             $taskContractViolations += 'TASK.md queue header must include `Depth` column.'
         }
+        if ($taskManagedBlock -match '\{\{CANONICAL_ENTRYPOINT\}\}') {
+            $taskContractViolations += 'TASK.md contains unresolved `{{CANONICAL_ENTRYPOINT}}` placeholder.'
+        }
+
+        $expectedTaskCanonicalLine = "Canonical instructions entrypoint for orchestration: ``$canonicalEntrypoint``."
+        if ($taskManagedBlock -notmatch [regex]::Escape($expectedTaskCanonicalLine)) {
+            $taskContractViolations += "TASK.md must reference canonical instructions entrypoint '$canonicalEntrypoint'."
+        }
+
+        $expectedHardStopLine = "Hard stop: first open ``$canonicalEntrypoint`` and follow its routing links. Only then execute any task from ``TASK.md``."
+        if ($taskManagedBlock -notmatch [regex]::Escape($expectedHardStopLine)) {
+            $taskContractViolations += "TASK.md must include hard-stop instruction to read '$canonicalEntrypoint' before task execution."
+        }
+
+        if ($taskManagedBlock -notmatch [regex]::Escape('Orchestrator mode starts when task execution is requested from this file (`TASK.md`).')) {
+            $taskContractViolations += 'TASK.md must include explicit orchestrator start note.'
+        }
     }
 } else {
     $taskContractViolations += 'TASK.md missing.'
+}
+
+$qwenSettingsViolations = @()
+$qwenSettingsPath = Join-Path $TargetRoot '.qwen/settings.json'
+if (Test-Path $qwenSettingsPath) {
+    try {
+        $qwenSettings = Get-Content -Path $qwenSettingsPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $configuredFileNames = @()
+        if ($null -ne $qwenSettings.PSObject.Properties['context']) {
+            $contextValue = $qwenSettings.context
+            if ($null -ne $contextValue -and $null -ne $contextValue.PSObject.Properties['fileName']) {
+                foreach ($item in @($contextValue.fileName)) {
+                    if ($null -eq $item) {
+                        continue
+                    }
+
+                    $text = [string]$item
+                    if ([string]::IsNullOrWhiteSpace($text)) {
+                        continue
+                    }
+
+                    $configuredFileNames += $text.Trim()
+                }
+            }
+        }
+
+        $configuredFileNames = @($configuredFileNames | Sort-Object -Unique)
+        if ($configuredFileNames -notcontains 'AGENTS.md') {
+            $qwenSettingsViolations += '.qwen/settings.json must include context.fileName entry `AGENTS.md`.'
+        }
+        if ($configuredFileNames -notcontains 'TASK.md') {
+            $qwenSettingsViolations += '.qwen/settings.json must include context.fileName entry `TASK.md`.'
+        }
+    }
+    catch {
+        $qwenSettingsViolations += ".qwen/settings.json is not valid JSON: $($_.Exception.Message)"
+    }
 }
 
 $gitignoreMissing = @()
@@ -403,6 +480,235 @@ foreach ($redirectEntrypoint in $redirectEntrypoints) {
     if ($redirectContent -notmatch [regex]::Escape($expectedRedirectLine)) {
         $entrypointContractViolations += "$redirectEntrypoint must redirect to $canonicalEntrypoint."
     }
+
+    $expectedRedirectHardStopLine = "Hard stop: before any task execution, open ``TASK.md`` and ``$canonicalEntrypoint``."
+    if ($redirectContent -notmatch [regex]::Escape($expectedRedirectHardStopLine)) {
+        $entrypointContractViolations += "$redirectEntrypoint must include hard-stop instruction for TASK.md + $canonicalEntrypoint."
+    }
+
+    $expectedRedirectGateLine = 'Do not implement tasks directly without orchestration preflight and required review gates.'
+    if ($redirectContent -notmatch [regex]::Escape($expectedRedirectGateLine)) {
+        $entrypointContractViolations += "$redirectEntrypoint must include direct-implementation prohibition for orchestration gates."
+    }
+
+    $expectedProviderBridgeLines = @(
+        'For GitHub Copilot Agents, run task execution through `.github/agents/orchestrator.md`.',
+        'For Windsurf Agents, run task execution through `.windsurf/agents/orchestrator.md`.',
+        'For Junie Agents, run task execution through `.junie/agents/orchestrator.md`.',
+        'For Antigravity Agents, run task execution through `.antigravity/agents/orchestrator.md`.'
+    )
+    foreach ($providerLine in $expectedProviderBridgeLines) {
+        if ($redirectContent -notmatch [regex]::Escape($providerLine)) {
+            $entrypointContractViolations += "$redirectEntrypoint must include provider bridge line: $providerLine"
+        }
+    }
+}
+
+$providerOrchestratorProfiles = @(
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/orchestrator.md'
+        ProviderLabel = 'GitHub Copilot'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.windsurf/agents/orchestrator.md'
+        ProviderLabel = 'Windsurf'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.junie/agents/orchestrator.md'
+        ProviderLabel = 'Junie'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.antigravity/agents/orchestrator.md'
+        ProviderLabel = 'Antigravity'
+    }
+)
+
+$providerSkillPaths = @(
+    'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md',
+    'Octopus-agent-orchestrator/live/skills/code-review/SKILL.md',
+    'Octopus-agent-orchestrator/live/skills/db-review/SKILL.md',
+    'Octopus-agent-orchestrator/live/skills/security-review/SKILL.md',
+    'Octopus-agent-orchestrator/live/skills/refactor-review/SKILL.md'
+)
+
+$providerAgentContractViolations = @()
+foreach ($profile in $providerOrchestratorProfiles) {
+    $profilePath = Join-Path $TargetRoot $profile.RelativePath
+    if (-not (Test-Path $profilePath)) {
+        $providerAgentContractViolations += "$($profile.RelativePath) missing."
+        continue
+    }
+
+    $profileContent = Get-Content -Path $profilePath -Raw
+    $expectedCanonicalLine = "Canonical source of truth for agent workflow rules: ``$canonicalEntrypoint``."
+    if ($profileContent -notmatch [regex]::Escape($expectedCanonicalLine)) {
+        $providerAgentContractViolations += "$($profile.RelativePath) must reference canonical entrypoint '$canonicalEntrypoint'."
+    }
+
+    $expectedHardStopLine = "Hard stop: first open ``$canonicalEntrypoint`` and ``TASK.md``."
+    if ($profileContent -notmatch [regex]::Escape($expectedHardStopLine)) {
+        $providerAgentContractViolations += "$($profile.RelativePath) must include hard-stop instruction for canonical entrypoint + TASK.md."
+    }
+
+    $expectedGateLine = 'Do not implement tasks directly without orchestration preflight and required review gates.'
+    if ($profileContent -notmatch [regex]::Escape($expectedGateLine)) {
+        $providerAgentContractViolations += "$($profile.RelativePath) must include direct-implementation prohibition for orchestration gates."
+    }
+
+    foreach ($skillPath in $providerSkillPaths) {
+        if ($profileContent -notmatch [regex]::Escape($skillPath)) {
+            $providerAgentContractViolations += "$($profile.RelativePath) must route to skill '$skillPath'."
+        }
+    }
+
+    if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md')) {
+        $providerAgentContractViolations += "$($profile.RelativePath) must reference dynamic skill source '90-skill-catalog.md'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/live/config/review-capabilities.json')) {
+        $providerAgentContractViolations += "$($profile.RelativePath) must reference optional capability flags file 'review-capabilities.json'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/live/skills/**')) {
+        $providerAgentContractViolations += "$($profile.RelativePath) must allow specialist skills under 'Octopus-agent-orchestrator/live/skills/**'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape('log-task-event.ps1')) {
+        $providerAgentContractViolations += "$($profile.RelativePath) must reference task event logger 'log-task-event.ps1'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl')) {
+        $providerAgentContractViolations += "$($profile.RelativePath) must reference task timeline log path 'runtime/task-events/<task-id>.jsonl'."
+    }
+}
+
+$githubSkillBridgeProfiles = @(
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/reviewer.md'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md'
+        ReviewRequirement = 'Use preflight `required_reviews.*` flags from orchestrator.'
+        CapabilityFlag = 'always-on'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/code-review.md'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.code=true'
+        CapabilityFlag = 'always-on'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/db-review.md'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/db-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.db=true'
+        CapabilityFlag = 'always-on'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/security-review.md'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/security-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.security=true'
+        CapabilityFlag = 'always-on'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/refactor-review.md'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/refactor-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.refactor=true'
+        CapabilityFlag = 'always-on'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/api-review.md'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/api-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.api=true'
+        CapabilityFlag = 'review-capabilities.api=true'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/test-review.md'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/test-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.test=true'
+        CapabilityFlag = 'review-capabilities.test=true'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/performance-review.md'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/performance-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.performance=true'
+        CapabilityFlag = 'review-capabilities.performance=true'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/infra-review.md'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/infra-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.infra=true'
+        CapabilityFlag = 'review-capabilities.infra=true'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/dependency-review.md'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/dependency-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.dependency=true'
+        CapabilityFlag = 'review-capabilities.dependency=true'
+    }
+)
+
+$githubSkillBridgeContractViolations = @()
+foreach ($profile in $githubSkillBridgeProfiles) {
+    $profilePath = Join-Path $TargetRoot $profile.RelativePath
+    if (-not (Test-Path $profilePath)) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) missing."
+        continue
+    }
+
+    $profileContent = Get-Content -Path $profilePath -Raw
+    $expectedCanonicalLine = "Canonical source of truth for agent workflow rules: ``$canonicalEntrypoint``."
+    if ($profileContent -notmatch [regex]::Escape($expectedCanonicalLine)) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must reference canonical entrypoint '$canonicalEntrypoint'."
+    }
+
+    $expectedHardStopLine = "Hard stop: first open ``.github/agents/orchestrator.md``, ``$canonicalEntrypoint``, and ``TASK.md``."
+    if ($profileContent -notmatch [regex]::Escape($expectedHardStopLine)) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must include hard-stop instruction for orchestrator + canonical entrypoint + TASK.md."
+    }
+
+    $expectedGateLine = 'Do not implement tasks directly without orchestration preflight and required review gates.'
+    if ($profileContent -notmatch [regex]::Escape($expectedGateLine)) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must include direct-implementation prohibition for orchestration gates."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape($profile.SkillPath)) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must route to skill '$($profile.SkillPath)'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape($profile.ReviewRequirement)) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must include review selector '$($profile.ReviewRequirement)'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape($profile.CapabilityFlag)) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must include capability selector '$($profile.CapabilityFlag)'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md')) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must reference dynamic skill source '90-skill-catalog.md'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/live/config/review-capabilities.json')) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must reference optional capability flags file 'review-capabilities.json'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/live/skills/**')) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must allow specialist skills under 'Octopus-agent-orchestrator/live/skills/**'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape('log-task-event.ps1')) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must reference task event logger 'log-task-event.ps1'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl')) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must reference task timeline log path 'runtime/task-events/<task-id>.jsonl'."
+    }
+}
+
+$copilotInstructionContractViolations = @()
+$copilotInstructionsPath = Join-Path $TargetRoot '.github/copilot-instructions.md'
+if (Test-Path $copilotInstructionsPath) {
+    $copilotInstructionsContent = Get-Content -Path $copilotInstructionsPath -Raw
+    if ($copilotInstructionsContent -notmatch [regex]::Escape('.github/agents/orchestrator.md')) {
+        $copilotInstructionContractViolations += '.github/copilot-instructions.md must route task execution to .github/agents/orchestrator.md.'
+    }
 }
 
 Write-Output "TargetRoot: $TargetRoot"
@@ -415,11 +721,15 @@ Write-Output "MissingPathCount: $($missingPaths.Count)"
 Write-Output "ManagedFilesChecked: $($strictManagedFiles.Count + 1 + $entrypointFiles.Count)"
 Write-Output "StyleViolationCount: $($styleViolations.Count)"
 Write-Output "TaskContractViolationCount: $($taskContractViolations.Count)"
+Write-Output "QwenSettingsViolationCount: $($qwenSettingsViolations.Count)"
 Write-Output "RuleFileViolationCount: $($ruleFileViolations.Count)"
 Write-Output "TemplatePlaceholderViolationCount: $($templatePlaceholderViolations.Count)"
 Write-Output "InitAnswersContractViolationCount: $($initAnswersContractViolations.Count)"
 Write-Output "CoreRuleContractViolationCount: $($coreRuleContractViolations.Count)"
 Write-Output "EntrypointContractViolationCount: $($entrypointContractViolations.Count)"
+Write-Output "ProviderAgentContractViolationCount: $($providerAgentContractViolations.Count)"
+Write-Output "GitHubSkillBridgeContractViolationCount: $($githubSkillBridgeContractViolations.Count)"
+Write-Output "CopilotInstructionContractViolationCount: $($copilotInstructionContractViolations.Count)"
 Write-Output "GitignoreMissingCount: $($gitignoreMissing.Count)"
 Write-Output "TaskSeedPresent: $taskSeedPresent"
 
@@ -440,6 +750,13 @@ if ($styleViolations.Count -gt 0) {
 if ($taskContractViolations.Count -gt 0) {
     Write-Output 'TaskContractViolations:'
     foreach ($item in $taskContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($qwenSettingsViolations.Count -gt 0) {
+    Write-Output 'QwenSettingsViolations:'
+    foreach ($item in $qwenSettingsViolations) {
         Write-Output " - $item"
     }
 }
@@ -479,6 +796,27 @@ if ($entrypointContractViolations.Count -gt 0) {
     }
 }
 
+if ($providerAgentContractViolations.Count -gt 0) {
+    Write-Output 'ProviderAgentContractViolations:'
+    foreach ($item in $providerAgentContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($githubSkillBridgeContractViolations.Count -gt 0) {
+    Write-Output 'GitHubSkillBridgeContractViolations:'
+    foreach ($item in $githubSkillBridgeContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($copilotInstructionContractViolations.Count -gt 0) {
+    Write-Output 'CopilotInstructionContractViolations:'
+    foreach ($item in $copilotInstructionContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
 if ($gitignoreMissing.Count -gt 0) {
     Write-Output 'MissingGitignoreEntries:'
     foreach ($item in $gitignoreMissing) {
@@ -494,11 +832,15 @@ if (
     $missingPaths.Count -gt 0 -or
     $styleViolations.Count -gt 0 -or
     $taskContractViolations.Count -gt 0 -or
+    $qwenSettingsViolations.Count -gt 0 -or
     $ruleFileViolations.Count -gt 0 -or
     $templatePlaceholderViolations.Count -gt 0 -or
     $initAnswersContractViolations.Count -gt 0 -or
     $coreRuleContractViolations.Count -gt 0 -or
     $entrypointContractViolations.Count -gt 0 -or
+    $providerAgentContractViolations.Count -gt 0 -or
+    $githubSkillBridgeContractViolations.Count -gt 0 -or
+    $copilotInstructionContractViolations.Count -gt 0 -or
     $gitignoreMissing.Count -gt 0 -or
     -not $taskSeedPresent
 ) {

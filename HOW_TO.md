@@ -13,7 +13,7 @@ The setup prompt tells the agent to run installation and verification automatica
 Before installation, the agent must ask you:
 - which language should be used for assistant explanations;
 - which default response brevity should be used (`concise` or `detailed`).
-- which file should be source of truth: `Claude (CLAUDE.md) | Codex (AGENTS.md) | GitHubCopilot (.github/copilot-instructions.md) | Windsurf (.windsurf/rules/rules.md) | Junie (.junie/guidelines.md) | Antigravity (.antigravity/rules.md)`; all non-selected entrypoint files will redirect to the selected file.
+- which file should be source of truth: `Claude (CLAUDE.md) | Codex (AGENTS.md) | Gemini (GEMINI.md) | GitHubCopilot (.github/copilot-instructions.md) | Windsurf (.windsurf/rules/rules.md) | Junie (.junie/guidelines.md) | Antigravity (.antigravity/rules.md)`; all non-selected entrypoint files will redirect to the selected file.
 - hard-stop if any of these 3 answers is missing.
 After collecting all 3 answers, the agent must write `Octopus-agent-orchestrator/runtime/init-answers.json` and pass it to `install.ps1` and `verify.ps1` through `-InitAnswersPath`.
 After install/init, the agent must use `Octopus-agent-orchestrator/live/project-discovery.md` to fill context rules for this repository.
@@ -22,7 +22,10 @@ After verification, the agent should optionally ask whether you want to add extr
 
 ## 3. Expected Result
 After successful setup:
-- Root entry points exist and route correctly (`CLAUDE.md`, `AGENTS.md`, `TASK.md`, platform files).
+- Root entry points exist and route correctly (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.qwen/settings.json`, `.github/agents/orchestrator.md`, `TASK.md`, platform files).
+- Provider-native bridge profiles exist and route to canonical skills (`.github/agents/*.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`).
+- Copilot bridge profiles account for specialist skills added after init by reading `live/docs/agent-rules/90-skill-catalog.md` and `live/config/review-capabilities.json`.
+- Task timeline logs are stored per task id in `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - Selected source-of-truth entrypoint contains canonical routing index.
 - All non-selected entrypoint files redirect to the selected source-of-truth entrypoint.
 - Canonical rules are available under `Octopus-agent-orchestrator/live/docs/agent-rules/`.
@@ -62,7 +65,7 @@ Depth behavior:
 Initialization must be run through `AGENT_INIT_PROMPT.md` (not by direct `install.ps1` call).
 
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<Claude|Codex|GitHubCopilot|Windsurf|Junie|Antigravity>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<Claude|Codex|Gemini|GitHubCopilot|Windsurf|Junie|Antigravity>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md
 ```
 

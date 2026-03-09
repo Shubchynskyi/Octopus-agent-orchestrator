@@ -10,7 +10,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('concise', 'detailed')]
     [string]$AssistantBrevity,
-    [ValidateSet('Claude', 'Codex', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')]
+    [ValidateSet('Claude', 'Codex', 'Gemini', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')]
     [Parameter(Mandatory = $true)]
     [string]$SourceOfTruth,
     [Parameter(Mandatory = $true)]
@@ -132,6 +132,7 @@ if ($AssistantBrevity -ne $artifactAssistantBrevity) {
 $sourceToEntrypoint = @{
     'CLAUDE' = 'CLAUDE.md'
     'CODEX' = 'AGENTS.md'
+    'GEMINI' = 'GEMINI.md'
     'GITHUBCOPILOT' = '.github/copilot-instructions.md'
     'WINDSURF' = '.windsurf/rules/rules.md'
     'JUNIE' = '.junie/guidelines.md'
@@ -144,6 +145,7 @@ $canonicalEntryFile = $sourceToEntrypoint[$sourceOfTruthKey]
 $entrypointFiles = @(
     'CLAUDE.md',
     'AGENTS.md',
+    'GEMINI.md',
     '.github/copilot-instructions.md',
     '.windsurf/rules/rules.md',
     '.junie/guidelines.md',
@@ -157,6 +159,7 @@ $backupRoot = Join-Path $bundleRoot "runtime/backups/$timestamp"
 $exactFiles = @(
     'CLAUDE.md',
     'AGENTS.md',
+    'GEMINI.md',
     'TASK.md',
     '.antigravity/rules.md',
     '.github/copilot-instructions.md',
@@ -170,6 +173,7 @@ $forceOverwriteFiles = @(
 
 $managedEntryFiles = @(
     'AGENTS.md',
+    'GEMINI.md',
     'TASK.md',
     '.antigravity/rules.md',
     '.github/copilot-instructions.md',
@@ -182,6 +186,8 @@ $directoryPrefixes = @()
 $managedStart = '<!-- Octopus-agent-orchestrator:managed-start -->'
 $managedEnd = '<!-- Octopus-agent-orchestrator:managed-end -->'
 $taskDeploymentDatePlaceholder = '{{DEPLOYMENT_DATE}}'
+$taskCanonicalEntrypointPlaceholder = '{{CANONICAL_ENTRYPOINT}}'
+$qwenSettingsRelativePath = '.qwen/settings.json'
 $deploymentDate = (Get-Date).ToString('yyyy-MM-dd')
 
 function Get-TemplateContent {
@@ -204,6 +210,7 @@ function Get-TemplateContent {
     $relativePathNormalized = $RelativePath.Replace('\', '/')
     if ($relativePathNormalized -eq 'TASK.md') {
         $content = $content.Replace($taskDeploymentDatePlaceholder, $deploymentDate)
+        $content = $content.Replace($taskCanonicalEntrypointPlaceholder, $canonicalEntryFile)
     }
 
     return $content
@@ -292,6 +299,12 @@ This file is a redirect.
 Canonical source of truth for agent workflow rules: `{CANONICAL_FILE}`.
 
 Read `{CANONICAL_FILE}` first, then follow its routing links.
+Hard stop: before any task execution, open `TASK.md` and `{CANONICAL_FILE}`.
+Do not implement tasks directly without orchestration preflight and required review gates.
+For GitHub Copilot Agents, run task execution through `.github/agents/orchestrator.md`.
+For Windsurf Agents, run task execution through `.windsurf/agents/orchestrator.md`.
+For Junie Agents, run task execution through `.junie/agents/orchestrator.md`.
+For Antigravity Agents, run task execution through `.antigravity/agents/orchestrator.md`.
 {MANAGED_END}
 '@
 
@@ -299,6 +312,127 @@ Read `{CANONICAL_FILE}` first, then follow its routing links.
         Replace('{TITLE}', $title).
         Replace('{CANONICAL_FILE}', $CanonicalFile).
         Replace('{MANAGED_END}', $managedEnd)
+}
+
+function Get-QwenSettingsContent {
+    $json = @'
+{
+  "context": {
+    "fileName": [
+      "AGENTS.md",
+      "TASK.md"
+    ]
+  }
+}
+'@
+
+    return $json.Trim()
+}
+
+function Get-ProviderOrchestratorAgentContent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProviderLabel,
+        [Parameter(Mandatory = $true)]
+        [string]$CanonicalFile,
+        [Parameter(Mandatory = $true)]
+        [string]$BridgePath
+    )
+
+    $content = @'
+{MANAGED_START}
+# {PROVIDER_LABEL} Agent: Orchestrator
+
+Canonical source of truth for agent workflow rules: `{CANONICAL_FILE}`.
+
+Hard stop: first open `{CANONICAL_FILE}` and `TASK.md`.
+Do not implement tasks directly without orchestration preflight and required review gates.
+This provider profile is a strict bridge to Octopus skills and gate scripts.
+Do not execute task or review workflow with provider-default reviewer agents that bypass this bridge.
+
+## Required Execution Contract
+1. Read `{CANONICAL_FILE}` and its routing links before making changes.
+2. Read `TASK.md` and select/create a task row before implementation.
+3. Execute task workflow only in orchestrator mode: `Execute task <task-id> depth=<1|2|3>`.
+4. Run preflight classification before implementation (`classify-change.ps1` or `.sh`).
+5. Run required independent reviews and gate check (`required-reviews-check.ps1` or `.sh`) before marking `DONE`.
+6. Update task status and artifacts in `TASK.md`.
+7. Log lifecycle events by task id (`log-task-event.ps1` or `.sh`) into `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
+
+## Skill Routing
+- Orchestration: `Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md`
+- Code review: `Octopus-agent-orchestrator/live/skills/code-review/SKILL.md`
+- DB review: `Octopus-agent-orchestrator/live/skills/db-review/SKILL.md`
+- Security review: `Octopus-agent-orchestrator/live/skills/security-review/SKILL.md`
+- Refactor review: `Octopus-agent-orchestrator/live/skills/refactor-review/SKILL.md`
+
+## Dynamic Skill Discovery (Required)
+- Canonical skill list: `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md`
+- Optional-skill capability flags: `Octopus-agent-orchestrator/live/config/review-capabilities.json`
+- Include specialist skills added after initialization from `Octopus-agent-orchestrator/live/skills/**` when required by preflight and capability flags.
+
+## Task Timeline Logging (Required)
+- Event logger: `Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1` or `.sh`
+- Log file (per task): `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`
+- Aggregate log: `Octopus-agent-orchestrator/runtime/task-events/all-tasks.jsonl`
+
+Bridge path for this provider: `{BRIDGE_PATH}`.
+{MANAGED_END}
+'@
+
+    return $content.Replace('{MANAGED_START}', $managedStart).
+        Replace('{PROVIDER_LABEL}', $ProviderLabel).
+        Replace('{CANONICAL_FILE}', $CanonicalFile).
+        Replace('{BRIDGE_PATH}', $BridgePath).
+        Replace('{MANAGED_END}', $managedEnd).
+        Trim()
+}
+
+function Get-GitHubSkillBridgeAgentContent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProfileTitle,
+        [Parameter(Mandatory = $true)]
+        [string]$CanonicalFile,
+        [Parameter(Mandatory = $true)]
+        [string]$SkillPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ReviewRequirement,
+        [Parameter(Mandatory = $true)]
+        [string]$CapabilityFlag
+    )
+
+    $content = @'
+{MANAGED_START}
+# GitHub Agent: {PROFILE_TITLE}
+
+Canonical source of truth for agent workflow rules: `{CANONICAL_FILE}`.
+
+Hard stop: first open `.github/agents/orchestrator.md`, `{CANONICAL_FILE}`, and `TASK.md`.
+Do not implement tasks directly without orchestration preflight and required review gates.
+
+## Skill Bridge Contract
+- Use this profile only as a bridge to skill: `{SKILL_PATH}`
+- Required review selector: `{REVIEW_REQUIREMENT}`
+- Capability flag gate: `{CAPABILITY_FLAG}`
+- Re-read `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md` before execution.
+- Re-read `Octopus-agent-orchestrator/live/config/review-capabilities.json` before execution.
+- Honor specialist skills added after initialization under `Octopus-agent-orchestrator/live/skills/**`.
+- Log review invocation and outcomes via `log-task-event.ps1` or `.sh` into task timeline.
+- Task timeline path (per task): `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
+- Review verdicts and completion status are recorded only through orchestrator workflow.
+- Never mark task `DONE` from this profile; hand off to `.github/agents/orchestrator.md`.
+{MANAGED_END}
+'@
+
+    return $content.Replace('{MANAGED_START}', $managedStart).
+        Replace('{PROFILE_TITLE}', $ProfileTitle).
+        Replace('{CANONICAL_FILE}', $CanonicalFile).
+        Replace('{SKILL_PATH}', $SkillPath).
+        Replace('{REVIEW_REQUIREMENT}', $ReviewRequirement).
+        Replace('{CAPABILITY_FLAG}', $CapabilityFlag).
+        Replace('{MANAGED_END}', $managedEnd).
+        Trim()
 }
 
 $backedUpSet = @{}
@@ -488,10 +622,136 @@ foreach ($redirectFile in $redirectEntryFiles) {
     Apply-EntrypointManagedBlock -RelativePath $redirectFile -ManagedBlock $redirectManagedBlock
 }
 
+$qwenSettingsPath = Join-Path $TargetRoot $qwenSettingsRelativePath
+$qwenSettingsDir = Split-Path -Parent $qwenSettingsPath
+$qwenSettingsContent = Get-QwenSettingsContent
+
+if (Test-Path $qwenSettingsPath) {
+    if (-not $PreserveExisting) {
+        Backup-DestinationFile -DestinationPath $qwenSettingsPath -RelativePath $qwenSettingsRelativePath
+        if (-not $DryRun) {
+            Set-Content -Path $qwenSettingsPath -Value $qwenSettingsContent
+        }
+        $deployed++
+    }
+} else {
+    if (-not $DryRun) {
+        if ($qwenSettingsDir -and -not (Test-Path $qwenSettingsDir)) {
+            New-Item -ItemType Directory -Path $qwenSettingsDir -Force | Out-Null
+        }
+        Set-Content -Path $qwenSettingsPath -Value $qwenSettingsContent
+    }
+    $deployed++
+}
+
+$providerOrchestratorProfiles = @(
+    [PSCustomObject]@{
+        ProviderLabel = 'GitHub Copilot'
+        RelativePath = '.github/agents/orchestrator.md'
+    },
+    [PSCustomObject]@{
+        ProviderLabel = 'Windsurf'
+        RelativePath = '.windsurf/agents/orchestrator.md'
+    },
+    [PSCustomObject]@{
+        ProviderLabel = 'Junie'
+        RelativePath = '.junie/agents/orchestrator.md'
+    },
+    [PSCustomObject]@{
+        ProviderLabel = 'Antigravity'
+        RelativePath = '.antigravity/agents/orchestrator.md'
+    }
+)
+
+foreach ($profile in $providerOrchestratorProfiles) {
+    $managedBlock = Get-ProviderOrchestratorAgentContent -ProviderLabel $profile.ProviderLabel -CanonicalFile $canonicalEntryFile -BridgePath $profile.RelativePath
+    Apply-EntrypointManagedBlock -RelativePath $profile.RelativePath -ManagedBlock $managedBlock
+}
+
+$githubSkillBridgeProfiles = @(
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/reviewer.md'
+        ProfileTitle = 'Reviewer Bridge'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md'
+        ReviewRequirement = 'Use preflight `required_reviews.*` flags from orchestrator.'
+        CapabilityFlag = 'always-on'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/code-review.md'
+        ProfileTitle = 'Code Review Bridge'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.code=true'
+        CapabilityFlag = 'always-on'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/db-review.md'
+        ProfileTitle = 'DB Review Bridge'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/db-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.db=true'
+        CapabilityFlag = 'always-on'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/security-review.md'
+        ProfileTitle = 'Security Review Bridge'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/security-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.security=true'
+        CapabilityFlag = 'always-on'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/refactor-review.md'
+        ProfileTitle = 'Refactor Review Bridge'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/refactor-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.refactor=true'
+        CapabilityFlag = 'always-on'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/api-review.md'
+        ProfileTitle = 'API Review Bridge'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/api-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.api=true'
+        CapabilityFlag = 'review-capabilities.api=true'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/test-review.md'
+        ProfileTitle = 'Test Review Bridge'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/test-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.test=true'
+        CapabilityFlag = 'review-capabilities.test=true'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/performance-review.md'
+        ProfileTitle = 'Performance Review Bridge'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/performance-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.performance=true'
+        CapabilityFlag = 'review-capabilities.performance=true'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/infra-review.md'
+        ProfileTitle = 'Infra Review Bridge'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/infra-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.infra=true'
+        CapabilityFlag = 'review-capabilities.infra=true'
+    },
+    [PSCustomObject]@{
+        RelativePath = '.github/agents/dependency-review.md'
+        ProfileTitle = 'Dependency Review Bridge'
+        SkillPath = 'Octopus-agent-orchestrator/live/skills/dependency-review/SKILL.md'
+        ReviewRequirement = 'required_reviews.dependency=true'
+        CapabilityFlag = 'review-capabilities.dependency=true'
+    }
+)
+
+foreach ($profile in $githubSkillBridgeProfiles) {
+    $managedBlock = Get-GitHubSkillBridgeAgentContent -ProfileTitle $profile.ProfileTitle -CanonicalFile $canonicalEntryFile -SkillPath $profile.SkillPath -ReviewRequirement $profile.ReviewRequirement -CapabilityFlag $profile.CapabilityFlag
+    Apply-EntrypointManagedBlock -RelativePath $profile.RelativePath -ManagedBlock $managedBlock
+}
+
 $gitignoreEntries = @(
     'Octopus-agent-orchestrator/',
     'AGENTS.md',
     'TASK.md',
+    '.qwen/',
+    '.github/agents/',
     '.antigravity/',
     '.junie/',
     '.windsurf/',

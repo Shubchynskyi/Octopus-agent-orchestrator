@@ -37,6 +37,20 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 
 ## Invocation Contract
 - Always start task execution with `orchestration`.
+- Provider-native agent profiles are only bridges and must route to this same skill catalog:
+  - `.github/agents/orchestrator.md`
+  - `.github/agents/reviewer.md`
+  - `.github/agents/code-review.md`
+  - `.github/agents/db-review.md`
+  - `.github/agents/security-review.md`
+  - `.github/agents/refactor-review.md`
+  - `.windsurf/agents/orchestrator.md`
+  - `.junie/agents/orchestrator.md`
+  - `.antigravity/agents/orchestrator.md`
+- For GitHub Copilot bridge profiles, always refresh routing from:
+  - `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md`
+  - `Octopus-agent-orchestrator/live/config/review-capabilities.json`
+  - `Octopus-agent-orchestrator/live/skills/**` (including specialist skills added after init)
 - Invoke review skills only when required by preflight:
   - `code-review` for `required_reviews.code=true`
   - `db-review` for `required_reviews.db=true`
@@ -71,6 +85,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Missing required skill invocation blocks progression.
 - Missing required verdict blocks completion.
 - Missing review gate check pass blocks completion.
+- Missing task timeline evidence in `runtime/task-events/<task-id>.jsonl` blocks completion.
 - Missing required docs/changelog updates blocks completion for doc-impacting changes.
 - Reviewer/specialist agents must be closed after verdict capture.
 
