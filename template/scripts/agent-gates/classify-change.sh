@@ -89,8 +89,12 @@ def count_file_lines(path: Path):
     if not path.exists() or not path.is_file():
         return 0
     try:
-        with path.open("rb") as fh:
-            return sum(1 for _ in fh)
+        count = 0
+        with path.open("r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                if line.rstrip("\r\n") != "":
+                    count += 1
+        return count
     except OSError:
         return 0
 
@@ -298,9 +302,13 @@ classification_config = get_classification_config(repo_root)
 metrics_path_raw = args.metrics_path.strip() if args.metrics_path else ""
 if not metrics_path_raw:
     metrics_path_raw = classification_config["metrics_path"]
-metrics_path = Path(metrics_path_raw)
-if not metrics_path.is_absolute():
-    metrics_path = (repo_root / metrics_path_raw).resolve()
+    metrics_path = Path(metrics_path_raw)
+    if not metrics_path.is_absolute():
+        metrics_path = (repo_root / metrics_path_raw).resolve()
+else:
+    metrics_path = Path(metrics_path_raw)
+    if not metrics_path.is_absolute():
+        metrics_path = metrics_path.resolve()
 
 include_untracked = parse_bool(args.include_untracked)
 emit_metrics = parse_bool(args.emit_metrics)
@@ -562,10 +570,12 @@ result = {
 
 json_output = json.dumps(result, ensure_ascii=False, indent=2)
 
+resolved_output_path = None
 if args.output_path:
     out_path = Path(args.output_path)
     if not out_path.is_absolute():
-        out_path = (repo_root / out_path).resolve()
+        out_path = out_path.resolve()
+    resolved_output_path = out_path
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json_output + "\n", encoding="utf-8")
 
@@ -573,7 +583,7 @@ metrics_event = {
     "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     "event_type": "preflight_classification",
     "repo_root": to_posix(repo_root),
-    "output_path": to_posix(Path(args.output_path).resolve()) if args.output_path and Path(args.output_path).is_absolute() else (to_posix((repo_root / args.output_path).resolve()) if args.output_path else None),
+    "output_path": to_posix(resolved_output_path) if resolved_output_path else None,
     "result": result,
 }
 append_metrics_event(metrics_path, metrics_event, emit_metrics)

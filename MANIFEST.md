@@ -29,8 +29,11 @@ Materialized inside `Octopus-agent-orchestrator/live` by `scripts/init.ps1`:
 Kept inside bundle:
 - template/**
 - scripts/install.ps1
+- scripts/install.sh
 - scripts/init.ps1
+- scripts/init.sh
 - scripts/verify.ps1
+- scripts/verify.sh
 - README.md
 - LICENSE
 - AGENT_INIT_PROMPT.md

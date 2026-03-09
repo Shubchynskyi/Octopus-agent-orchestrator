@@ -103,7 +103,7 @@ repo_root = project_root_candidate if project_root_candidate.exists() else fallb
 
 preflight_path = Path(args.preflight_path)
 if not preflight_path.is_absolute():
-    preflight_path = (repo_root / preflight_path).resolve()
+    preflight_path = preflight_path.resolve()
 if not preflight_path.exists():
     print(f"Preflight artifact not found: {preflight_path}", file=sys.stderr)
     sys.exit(1)
@@ -115,9 +115,13 @@ metrics = preflight.get("metrics", {})
 metrics_path_raw = args.metrics_path.strip() if args.metrics_path else ""
 if not metrics_path_raw:
     metrics_path_raw = "Octopus-agent-orchestrator/runtime/metrics.jsonl"
-metrics_path = Path(metrics_path_raw)
-if not metrics_path.is_absolute():
-    metrics_path = (repo_root / metrics_path).resolve()
+    metrics_path = Path(metrics_path_raw)
+    if not metrics_path.is_absolute():
+        metrics_path = (repo_root / metrics_path).resolve()
+else:
+    metrics_path = Path(metrics_path_raw)
+    if not metrics_path.is_absolute():
+        metrics_path = metrics_path.resolve()
 emit_metrics = parse_bool(args.emit_metrics)
 
 errors = []
@@ -208,7 +212,7 @@ if skip_code:
         override_artifact_path = str(preflight_dir / f"{base_name}-override.json")
     override_path = Path(override_artifact_path)
     if not override_path.is_absolute():
-        override_path = (repo_root / override_path).resolve()
+        override_path = override_path.resolve()
     override_path.parent.mkdir(parents=True, exist_ok=True)
     override_artifact = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
