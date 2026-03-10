@@ -60,6 +60,11 @@ All notable changes to this bundle are documented in this file.
 - `verify.ps1` now requires `validate-manifest.ps1` alongside shell manifest validator.
 - `init.ps1` discovery overlay policy aligned for context file set `10/20/30/40/50/60`.
 
+### Fixed
+- `check-update.ps1` no longer removes `Octopus-agent-orchestrator/scripts` while running from that directory on Windows.
+- Script bundle sync now updates `scripts` in-place and skips the currently executing `check-update.ps1` to avoid file-lock failures.
+- Sync rollback for `scripts` now restores content in-place (with the same lock-safe behavior) instead of deleting the directory root.
+
 ## [1.0.0] - 2026-03-09
 
 ### Added

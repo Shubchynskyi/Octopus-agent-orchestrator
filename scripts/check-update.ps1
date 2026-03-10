@@ -52,6 +52,8 @@ if ([string]::IsNullOrWhiteSpace($currentVersion)) {
     throw "Current VERSION file is empty: $currentVersionPath"
 }
 
+$currentCheckUpdateScriptPath = [System.IO.Path]::GetFullPath($MyInvocation.MyCommand.Path)
+
 function Compare-VersionStrings {
     param(
         [Parameter(Mandatory = $true)]
@@ -82,6 +84,48 @@ function Compare-VersionStrings {
     }
 }
 
+function Copy-DirectoryContentMerge {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceDirectory,
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationDirectory,
+        [string[]]$SkipDestinationFiles = @()
+    )
+
+    if (-not (Test-Path -LiteralPath $DestinationDirectory -PathType Container)) {
+        New-Item -ItemType Directory -Path $DestinationDirectory -Force | Out-Null
+    }
+
+    $skipSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($skipFile in $SkipDestinationFiles) {
+        if ([string]::IsNullOrWhiteSpace($skipFile)) {
+            continue
+        }
+        [void]$skipSet.Add([System.IO.Path]::GetFullPath($skipFile))
+    }
+
+    $sourceRoot = [System.IO.Path]::GetFullPath($SourceDirectory)
+    foreach ($sourceFile in Get-ChildItem -LiteralPath $SourceDirectory -Recurse -File) {
+        $relativePath = [System.IO.Path]::GetRelativePath($sourceRoot, $sourceFile.FullName)
+        if ([string]::IsNullOrWhiteSpace($relativePath) -or $relativePath -eq '.') {
+            continue
+        }
+
+        $destinationFile = [System.IO.Path]::GetFullPath((Join-Path $DestinationDirectory $relativePath))
+        if ($skipSet.Contains($destinationFile)) {
+            continue
+        }
+
+        $destinationParent = Split-Path -Parent $destinationFile
+        if ($destinationParent -and -not (Test-Path -LiteralPath $destinationParent -PathType Container)) {
+            New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+        }
+
+        Copy-Item -LiteralPath $sourceFile.FullName -Destination $destinationFile -Force
+    }
+}
+
 function Restore-SyncedItemsFromBackup {
     param(
         [Parameter(Mandatory = $true)]
@@ -89,7 +133,9 @@ function Restore-SyncedItemsFromBackup {
         [Parameter(Mandatory = $true)]
         [string]$BackupRoot,
         [Parameter(Mandatory = $true)]
-        [hashtable]$PreexistingMap
+        [hashtable]$PreexistingMap,
+        [AllowNull()]
+        [string]$RunningScriptPath
     )
 
     foreach ($item in $PreexistingMap.Keys) {
@@ -100,6 +146,23 @@ function Restore-SyncedItemsFromBackup {
             $backupPath = Join-Path $BackupRoot $item
             if (-not (Test-Path -LiteralPath $backupPath)) {
                 throw "Missing backup entry for '$item': $backupPath"
+            }
+
+            $isScriptsDirectory = [string]::Equals($item, 'scripts', [System.StringComparison]::OrdinalIgnoreCase)
+            if ($isScriptsDirectory -and (Test-Path -LiteralPath $backupPath -PathType Container)) {
+                if (-not (Test-Path -LiteralPath $destinationPath -PathType Container)) {
+                    if (Test-Path -LiteralPath $destinationPath) {
+                        Remove-Item -LiteralPath $destinationPath -Recurse -Force
+                    }
+                    New-Item -ItemType Directory -Path $destinationPath -Force | Out-Null
+                }
+
+                $skipPaths = @()
+                if (-not [string]::IsNullOrWhiteSpace($RunningScriptPath)) {
+                    $skipPaths += [System.IO.Path]::GetFullPath($RunningScriptPath)
+                }
+                Copy-DirectoryContentMerge -SourceDirectory $backupPath -DestinationDirectory $destinationPath -SkipDestinationFiles $skipPaths
+                continue
             }
 
             if (Test-Path -LiteralPath $destinationPath) {
@@ -223,13 +286,31 @@ try {
                     New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
                 }
 
-                if (Test-Path -LiteralPath $destinationPath -PathType Container) {
-                    Remove-Item -LiteralPath $destinationPath -Recurse -Force
-                }
+                $sourceIsDirectory = Test-Path -LiteralPath $sourcePath -PathType Container
+                $isScriptsDirectory = [string]::Equals($item, 'scripts', [System.StringComparison]::OrdinalIgnoreCase)
+                if ($sourceIsDirectory) {
+                    if ($isScriptsDirectory) {
+                        if (-not (Test-Path -LiteralPath $destinationPath -PathType Container)) {
+                            if (Test-Path -LiteralPath $destinationPath) {
+                                Remove-Item -LiteralPath $destinationPath -Recurse -Force
+                            }
+                            New-Item -ItemType Directory -Path $destinationPath -Force | Out-Null
+                        }
 
-                if (Test-Path -LiteralPath $sourcePath -PathType Container) {
-                    Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Recurse -Force
+                        $skipPaths = @($currentCheckUpdateScriptPath)
+                        Copy-DirectoryContentMerge -SourceDirectory $sourcePath -DestinationDirectory $destinationPath -SkipDestinationFiles $skipPaths
+                    } else {
+                        if (Test-Path -LiteralPath $destinationPath -PathType Container) {
+                            Remove-Item -LiteralPath $destinationPath -Recurse -Force
+                        } elseif (Test-Path -LiteralPath $destinationPath) {
+                            Remove-Item -LiteralPath $destinationPath -Force
+                        }
+                        Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Recurse -Force
+                    }
                 } else {
+                    if (Test-Path -LiteralPath $destinationPath -PathType Container) {
+                        Remove-Item -LiteralPath $destinationPath -Recurse -Force
+                    }
                     Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
                 }
 
@@ -271,7 +352,7 @@ try {
                 $rollbackFailed = $false
                 $rollbackError = $null
                 try {
-                    Restore-SyncedItemsFromBackup -TargetBundleRoot $deployedBundleRoot -BackupRoot $syncBackupRoot -PreexistingMap $syncPreexistingMap
+                    Restore-SyncedItemsFromBackup -TargetBundleRoot $deployedBundleRoot -BackupRoot $syncBackupRoot -PreexistingMap $syncPreexistingMap -RunningScriptPath $currentCheckUpdateScriptPath
                     $syncRollbackStatus = 'SUCCESS'
                 }
                 catch {
