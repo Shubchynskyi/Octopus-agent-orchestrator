@@ -41,10 +41,18 @@ Materialized inside `Octopus-agent-orchestrator/live` by `scripts/init.ps1`:
 - live/source-inventory.md
 - live/init-report.md
 - live/project-discovery.md
+- live/version.json
 
 Generated during task execution:
 - runtime/reviews/**
 - runtime/task-events/**
+
+Generated during updates:
+- runtime/update-reports/**
+- runtime/bundle-backups/**
+
+Configured when `EnforceNoAutoCommit=true`:
+- .git/hooks/pre-commit (managed guard block)
 
 Kept inside bundle:
 - template/**
@@ -54,8 +62,14 @@ Kept inside bundle:
 - scripts/init.sh
 - scripts/verify.ps1
 - scripts/verify.sh
+- scripts/update.ps1
+- scripts/update.sh
+- scripts/check-update.ps1
+- scripts/check-update.sh
 - README.md
+- CHANGELOG.md
 - LICENSE
 - AGENT_INIT_PROMPT.md
 - MANIFEST.md
+- VERSION
 

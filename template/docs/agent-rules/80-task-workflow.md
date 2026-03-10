@@ -5,6 +5,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 ## Canonical Workflow Source
 - Canonical execution flow is defined in:
   - `Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md`
+- Reviewer-agent execution mechanics are defined in `orchestration/SKILL.md` section `Reviewer Agent Execution (Claude Code)`.
 - This file defines lifecycle semantics and hard-stop contracts only.
 - Do not maintain parallel step-by-step workflow variants in multiple files.
 
@@ -39,6 +40,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
   `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - Documentation impact updates are required when behavior/contracts/ops docs changed.
+- Final user report must include commit message suggestion plus explicit commit decision question (`Do you want me to commit now? (yes/no)`).
 - Reviewer and specialist agents must be closed after verdict capture.
 
 ## Escape Hatch Contract
@@ -53,6 +55,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 ## Reviewer Independence
 - Preferred mode: reviewers are spawned with clean context (`fork_context=false`) when platform supports sub-agents.
 - Fallback mode (single-agent platforms): run independent review passes sequentially, each with explicit scope and isolated checklist, before final verdict aggregation.
+- Fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewers.
 - Reviewer verdict is a release gate, not optional advice.
 - Required verdicts:
   - code: `REVIEW PASSED`

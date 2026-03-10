@@ -63,6 +63,37 @@ function Get-InitAnswerValue {
     return $null
 }
 
+function Convert-ToBooleanAnswer {
+    param(
+        [AllowNull()]
+        [string]$Value,
+        [Parameter(Mandatory = $true)]
+        [string]$FieldName,
+        [bool]$DefaultValue = $false
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $DefaultValue
+    }
+
+    $normalized = $Value.Trim().ToLowerInvariant()
+    switch ($normalized) {
+        '1' { return $true }
+        '0' { return $false }
+        'true' { return $true }
+        'false' { return $false }
+        'yes' { return $true }
+        'no' { return $false }
+        'y' { return $true }
+        'n' { return $false }
+        'да' { return $true }
+        'нет' { return $false }
+        default {
+            throw "Init answers artifact has unsupported $FieldName '$Value'. Allowed values: true, false, yes, no, 1, 0."
+        }
+    }
+}
+
 $initAnswersCandidatePath = $InitAnswersPath
 if (-not [System.IO.Path]::IsPathRooted($initAnswersCandidatePath)) {
     $initAnswersCandidatePath = Join-Path $TargetRoot $initAnswersCandidatePath
@@ -106,6 +137,9 @@ if ([string]::IsNullOrWhiteSpace($artifactSourceOfTruth)) {
     throw "Init answers artifact missing SourceOfTruth: $initAnswersResolvedPath"
 }
 $artifactSourceOfTruth = $artifactSourceOfTruth.Trim()
+
+$artifactEnforceNoAutoCommitRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'EnforceNoAutoCommit'
+$enforceNoAutoCommit = Convert-ToBooleanAnswer -Value $artifactEnforceNoAutoCommitRaw -FieldName 'EnforceNoAutoCommit' -DefaultValue $false
 
 $artifactCollectedVia = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'CollectedVia'
 if ([string]::IsNullOrWhiteSpace($artifactCollectedVia)) {
@@ -174,7 +208,6 @@ $forceOverwriteFiles = @(
 $managedEntryFiles = @(
     'AGENTS.md',
     'GEMINI.md',
-    'TASK.md',
     '.antigravity/rules.md',
     '.github/copilot-instructions.md',
     '.junie/guidelines.md',
@@ -189,6 +222,23 @@ $taskDeploymentDatePlaceholder = '{{DEPLOYMENT_DATE}}'
 $taskCanonicalEntrypointPlaceholder = '{{CANONICAL_ENTRYPOINT}}'
 $qwenSettingsRelativePath = '.qwen/settings.json'
 $deploymentDate = (Get-Date).ToString('yyyy-MM-dd')
+$preCommitHookRelativePath = '.git/hooks/pre-commit'
+$commitGuardStart = '# Octopus-agent-orchestrator:commit-guard-start'
+$commitGuardEnd = '# Octopus-agent-orchestrator:commit-guard-end'
+$commitGuardEnvName = 'OCTOPUS_ALLOW_COMMIT'
+$bundleVersionRelativePath = 'Octopus-agent-orchestrator/VERSION'
+$bundleVersionFilePath = Join-Path $bundleRoot 'VERSION'
+$liveVersionRelativePath = 'Octopus-agent-orchestrator/live/version.json'
+$liveVersionPath = Join-Path $bundleRoot 'live/version.json'
+
+if (-not (Test-Path -LiteralPath $bundleVersionFilePath -PathType Leaf)) {
+    throw "Bundle version file not found: $bundleVersionFilePath"
+}
+
+$bundleVersion = (Get-Content -LiteralPath $bundleVersionFilePath -Raw).Trim()
+if ([string]::IsNullOrWhiteSpace($bundleVersion)) {
+    throw "Bundle version file is empty: $bundleVersionFilePath"
+}
 
 function Get-TemplateContent {
     param(
@@ -265,6 +315,281 @@ function Get-ManagedBlockFromTemplate {
     }
 
     return $match.Value
+}
+
+function Get-ManagedBlockFromFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        return $null
+    }
+
+    $content = Get-Content -Path $Path -Raw
+    if ([string]::IsNullOrWhiteSpace($content)) {
+        return $null
+    }
+
+    $pattern = '(?s)' + [regex]::Escape($managedStart) + '.*?' + [regex]::Escape($managedEnd)
+    $match = [regex]::Match($content, $pattern)
+    if (-not $match.Success) {
+        return $null
+    }
+
+    return $match.Value
+}
+
+function Get-TaskQueueTableRange {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ManagedBlock
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ManagedBlock)) {
+        return $null
+    }
+
+    $normalized = $ManagedBlock -replace "`r`n", "`n" -replace "`r", "`n"
+    $lines = @($normalized -split "`n")
+    if ($lines.Count -eq 0) {
+        return $null
+    }
+
+    $activeQueueIndex = -1
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ($lines[$index].Trim() -eq '## Active Queue') {
+            $activeQueueIndex = $index
+            break
+        }
+    }
+    if ($activeQueueIndex -lt 0) {
+        return $null
+    }
+
+    $headerIndex = -1
+    for ($index = $activeQueueIndex + 1; $index -lt $lines.Count; $index++) {
+        $trimmed = $lines[$index].Trim()
+        if ($trimmed.StartsWith('|')) {
+            $headerIndex = $index
+            break
+        }
+    }
+    if ($headerIndex -lt 0) {
+        return $null
+    }
+
+    $separatorIndex = -1
+    if ($headerIndex + 1 -lt $lines.Count) {
+        $separatorCandidate = $lines[$headerIndex + 1].Trim()
+        if ($separatorCandidate.StartsWith('|')) {
+            $separatorIndex = $headerIndex + 1
+        }
+    }
+    if ($separatorIndex -lt 0) {
+        return $null
+    }
+
+    $rowsStartIndex = $separatorIndex + 1
+    $rowsEndIndex = $rowsStartIndex
+    while ($rowsEndIndex -lt $lines.Count) {
+        $trimmed = $lines[$rowsEndIndex].Trim()
+        if ($trimmed.StartsWith('|')) {
+            $rowsEndIndex++
+            continue
+        }
+        break
+    }
+
+    return [PSCustomObject]@{
+        Lines = $lines
+        RowsStartIndex = $rowsStartIndex
+        RowsEndIndex = $rowsEndIndex
+    }
+}
+
+function Get-TaskQueueRowsFromManagedBlock {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ManagedBlock
+    )
+
+    $range = Get-TaskQueueTableRange -ManagedBlock $ManagedBlock
+    if ($null -eq $range) {
+        return @()
+    }
+
+    $rows = @()
+    for ($index = $range.RowsStartIndex; $index -lt $range.RowsEndIndex; $index++) {
+        $line = $range.Lines[$index]
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+        $rows += $line
+    }
+
+    return $rows
+}
+
+function Set-TaskQueueRowsInManagedBlock {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ManagedBlock,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Rows
+    )
+
+    $range = Get-TaskQueueTableRange -ManagedBlock $ManagedBlock
+    if ($null -eq $range) {
+        return $ManagedBlock
+    }
+
+    $prefix = @()
+    if ($range.RowsStartIndex -gt 0) {
+        $prefix = $range.Lines[0..($range.RowsStartIndex - 1)]
+    }
+
+    $suffix = @()
+    if ($range.RowsEndIndex -lt $range.Lines.Count) {
+        $suffix = $range.Lines[$range.RowsEndIndex..($range.Lines.Count - 1)]
+    }
+
+    $mergedLines = @($prefix + $Rows + $suffix)
+    return ($mergedLines -join "`r`n")
+}
+
+function Build-TaskManagedBlockWithExistingQueue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourcePath,
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath,
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath
+    )
+
+    $templateManagedBlock = Get-ManagedBlockFromTemplate -SourcePath $SourcePath -RelativePath $RelativePath
+    if ([string]::IsNullOrWhiteSpace($templateManagedBlock)) {
+        return $null
+    }
+
+    $existingManagedBlock = Get-ManagedBlockFromFile -Path $DestinationPath
+    if ([string]::IsNullOrWhiteSpace($existingManagedBlock)) {
+        return $templateManagedBlock
+    }
+
+    $existingRows = Get-TaskQueueRowsFromManagedBlock -ManagedBlock $existingManagedBlock
+    if ($existingRows.Count -eq 0) {
+        return $existingManagedBlock
+    }
+
+    return Set-TaskQueueRowsInManagedBlock -ManagedBlock $templateManagedBlock -Rows $existingRows
+}
+
+function Get-CommitGuardManagedBlock {
+    $block = @'
+{START}
+# Commit blocked by Octopus auto-commit guard.
+if [ "${{ENV_NAME}:-}" != "1" ]; then
+  echo "Commit blocked: auto-commit guard is enabled."
+  echo "Use human commit helper:"
+  echo "  pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.ps1 -m \"<message>\""
+  echo "or:"
+  echo "  bash Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.sh -m \"<message>\""
+  exit 1
+fi
+{END}
+'@
+
+    return $block.Replace('{START}', $commitGuardStart).
+        Replace('{END}', $commitGuardEnd).
+        Replace('{ENV_NAME}', $commitGuardEnvName).
+        Trim()
+}
+
+function Apply-CommitGuardHook {
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$Enabled
+    )
+
+    $gitDirPath = Join-Path $TargetRoot '.git'
+    if (-not (Test-Path -LiteralPath $gitDirPath -PathType Container)) {
+        return $false
+    }
+
+    $hookPath = Join-Path $TargetRoot $preCommitHookRelativePath
+    $hookDir = Split-Path -Parent $hookPath
+    $managedBlock = Get-CommitGuardManagedBlock
+    $pattern = '(?s)' + [regex]::Escape($commitGuardStart) + '.*?' + [regex]::Escape($commitGuardEnd)
+
+    if (-not (Test-Path -LiteralPath $hookPath -PathType Leaf)) {
+        if (-not $Enabled) {
+            return $false
+        }
+
+        if (-not $DryRun) {
+            if ($hookDir -and -not (Test-Path -LiteralPath $hookDir)) {
+                New-Item -ItemType Directory -Path $hookDir -Force | Out-Null
+            }
+
+            $hookContent = @(
+                '#!/usr/bin/env bash',
+                '',
+                $managedBlock,
+                ''
+            ) -join "`r`n"
+            Set-Content -Path $hookPath -Value $hookContent
+        }
+
+        return $true
+    }
+
+    $content = Get-Content -Path $hookPath -Raw
+    if ($null -eq $content) {
+        $content = ''
+    }
+
+    $updatedContent = $content
+    if ($Enabled) {
+        if ([regex]::IsMatch($content, $pattern)) {
+            $evaluator = [System.Text.RegularExpressions.MatchEvaluator]{
+                param($match)
+                return $managedBlock
+            }
+            $updatedContent = [regex]::Replace($content, $pattern, $evaluator)
+        } else {
+            if ([string]::IsNullOrWhiteSpace($content)) {
+                $updatedContent = @(
+                    '#!/usr/bin/env bash',
+                    '',
+                    $managedBlock,
+                    ''
+                ) -join "`r`n"
+            } else {
+                $updatedContent = $content.TrimEnd() + "`r`n`r`n" + $managedBlock + "`r`n"
+            }
+        }
+    } else {
+        if ([regex]::IsMatch($content, $pattern)) {
+            $updatedContent = [regex]::Replace($content, $pattern, '')
+            $updatedContent = $updatedContent.TrimEnd() + "`r`n"
+        } else {
+            return $false
+        }
+    }
+
+    if ($updatedContent -eq $content) {
+        return $false
+    }
+
+    Backup-DestinationFile -DestinationPath $hookPath -RelativePath $preCommitHookRelativePath
+    if (-not $DryRun) {
+        Set-Content -Path $hookPath -Value $updatedContent
+    }
+
+    return $true
 }
 
 function Build-CanonicalManagedBlock {
@@ -442,6 +767,7 @@ $skippedExisting = 0
 $aligned = 0
 $forcedOverwrites = 0
 $initInvoked = $false
+$commitGuardHookUpdated = $false
 
 function Backup-DestinationFile {
     param(
@@ -593,6 +919,17 @@ foreach ($file in $files) {
 
         if ($PreserveExisting) {
             $skippedExisting++
+
+            if ($relativeNormalized -eq 'TASK.md') {
+                $taskManagedBlock = Build-TaskManagedBlockWithExistingQueue -SourcePath $file.FullName -RelativePath $relativeNormalized -DestinationPath $destination
+                if (-not [string]::IsNullOrWhiteSpace($taskManagedBlock)) {
+                    $wasAligned = Sync-ManagedBlock -DestinationPath $destination -RelativePath $relative -ManagedBlock $taskManagedBlock
+                    if ($wasAligned) {
+                        $aligned++
+                    }
+                }
+                continue
+            }
 
             if ($AlignExisting -and ($managedEntryFiles -contains $relativeNormalized)) {
                 $managedBlock = Get-ManagedBlockFromTemplate -SourcePath $file.FullName -RelativePath $relativeNormalized
@@ -792,14 +1129,38 @@ if (-not $DryRun) {
     }
 }
 
+$commitGuardHookUpdated = Apply-CommitGuardHook -Enabled $enforceNoAutoCommit
+
 if ($RunInit -and -not $DryRun) {
     $initScriptPath = Join-Path $scriptDir 'init.ps1'
     if (-not (Test-Path $initScriptPath)) {
         throw "Init script not found: $initScriptPath"
     }
 
-    & $initScriptPath -TargetRoot $TargetRoot -AssistantLanguage $AssistantLanguage -AssistantBrevity $AssistantBrevity -SourceOfTruth $SourceOfTruth
+    & $initScriptPath -TargetRoot $TargetRoot -AssistantLanguage $AssistantLanguage -AssistantBrevity $AssistantBrevity -SourceOfTruth $SourceOfTruth -EnforceNoAutoCommit $enforceNoAutoCommit
     $initInvoked = $true
+}
+
+$liveVersionWritten = $false
+if (-not $DryRun) {
+    $liveVersionDir = Split-Path -Parent $liveVersionPath
+    if ($liveVersionDir -and -not (Test-Path $liveVersionDir)) {
+        New-Item -ItemType Directory -Path $liveVersionDir -Force | Out-Null
+    }
+
+    $liveVersionPayload = [ordered]@{
+        Version            = $bundleVersion
+        UpdatedAt          = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ssK')
+        SourceOfTruth      = $SourceOfTruth
+        CanonicalEntrypoint = $canonicalEntryFile
+        AssistantLanguage  = $AssistantLanguage
+        AssistantBrevity   = $AssistantBrevity
+        EnforceNoAutoCommit = $enforceNoAutoCommit
+        InitAnswersPath    = $initAnswersResolvedPath
+    }
+    $liveVersionJson = $liveVersionPayload | ConvertTo-Json -Depth 5
+    Set-Content -Path $liveVersionPath -Value $liveVersionJson
+    $liveVersionWritten = $true
 }
 
 Write-Output "TargetRoot: $TargetRoot"
@@ -809,9 +1170,12 @@ Write-Output "AlignExisting: $AlignExisting"
 Write-Output "RunInit: $RunInit"
 Write-Output "InitAnswersPath: $initAnswersResolvedPath"
 Write-Output "DeploymentDate: $deploymentDate"
+Write-Output "BundleVersion: $bundleVersion"
+Write-Output "BundleVersionPath: $bundleVersionRelativePath"
 Write-Output "AssistantLanguage: $AssistantLanguage"
 Write-Output "AssistantBrevity: $AssistantBrevity"
 Write-Output "SourceOfTruth: $SourceOfTruth"
+Write-Output "EnforceNoAutoCommit: $enforceNoAutoCommit"
 Write-Output "CanonicalEntrypoint: $canonicalEntryFile"
 Write-Output "FilesDeployed: $deployed"
 Write-Output "FilesForcedOverwrite: $forcedOverwrites"
@@ -820,6 +1184,10 @@ Write-Output "FilesAligned: $aligned"
 Write-Output "FilesBackedUp: $backedUp"
 Write-Output "GitignoreEntriesAdded: $gitignoreAdded"
 Write-Output "InitInvoked: $initInvoked"
+Write-Output "PreCommitHookPath: $preCommitHookRelativePath"
+Write-Output "PreCommitHookUpdated: $commitGuardHookUpdated"
+Write-Output "LiveVersionPath: $liveVersionRelativePath"
+Write-Output "LiveVersionWritten: $liveVersionWritten"
 if (-not $DryRun) {
     Write-Output "BackupRoot: $backupRoot"
 }

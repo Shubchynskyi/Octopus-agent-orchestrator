@@ -47,6 +47,62 @@ function Get-InitAnswerValue {
     return $null
 }
 
+function Get-ObjectPropertyString {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [object]$Object,
+        [Parameter(Mandatory = $true)]
+        [string]$PropertyName
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$PropertyName]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    if ($null -eq $property.Value) {
+        return $null
+    }
+
+    return [string]$property.Value
+}
+
+function Convert-ToBooleanAnswer {
+    param(
+        [AllowNull()]
+        [string]$Value,
+        [Parameter(Mandatory = $true)]
+        [string]$FieldName,
+        [bool]$DefaultValue = $false
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $DefaultValue
+    }
+
+    $normalized = $Value.Trim().ToLowerInvariant()
+    switch ($normalized) {
+        '1' { return $true }
+        '0' { return $false }
+        'true' { return $true }
+        'false' { return $false }
+        'yes' { return $true }
+        'no' { return $false }
+        'y' { return $true }
+        'n' { return $false }
+        'да' { return $true }
+        'нет' { return $false }
+        default {
+            throw "Init answers artifact has unsupported $FieldName '$Value'. Allowed values: true, false, yes, no, 1, 0."
+        }
+    }
+}
+
 $initAnswersContractViolations = @()
 $initAnswersCandidatePath = $InitAnswersPath
 if (-not [System.IO.Path]::IsPathRooted($initAnswersCandidatePath)) {
@@ -57,6 +113,7 @@ $initAnswersResolvedPath = $null
 $artifactAssistantLanguage = $null
 $artifactAssistantBrevity = $null
 $artifactSourceOfTruth = $null
+$artifactEnforceNoAutoCommit = $false
 
 if (-not (Test-Path -LiteralPath $initAnswersCandidatePath -PathType Leaf)) {
     $initAnswersContractViolations += "Init answers artifact missing: $initAnswersCandidatePath"
@@ -108,6 +165,14 @@ if (-not (Test-Path -LiteralPath $initAnswersCandidatePath -PathType Leaf)) {
                 $initAnswersContractViolations += "Init answers artifact must include CollectedVia='AGENT_INIT_PROMPT.md': $initAnswersResolvedPath"
             } elseif (-not [string]::Equals($artifactCollectedVia.Trim(), 'AGENT_INIT_PROMPT.md', [System.StringComparison]::OrdinalIgnoreCase)) {
                 $initAnswersContractViolations += "Init answers CollectedVia must be 'AGENT_INIT_PROMPT.md'. Current value: '$artifactCollectedVia'."
+            }
+
+            $artifactEnforceNoAutoCommitRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'EnforceNoAutoCommit'
+            try {
+                $artifactEnforceNoAutoCommit = Convert-ToBooleanAnswer -Value $artifactEnforceNoAutoCommitRaw -FieldName 'EnforceNoAutoCommit' -DefaultValue $false
+            }
+            catch {
+                $initAnswersContractViolations += $_.Exception.Message
             }
         }
     }
@@ -179,7 +244,13 @@ $requiredPaths = @(
     '.antigravity/agents/orchestrator.md',
     '.junie/guidelines.md',
     '.windsurf/rules/rules.md',
+    'Octopus-agent-orchestrator/VERSION',
+    'Octopus-agent-orchestrator/scripts/check-update.ps1',
+    'Octopus-agent-orchestrator/scripts/check-update.sh',
+    'Octopus-agent-orchestrator/scripts/update.ps1',
+    'Octopus-agent-orchestrator/scripts/update.sh',
     'Octopus-agent-orchestrator/MANIFEST.md',
+    'Octopus-agent-orchestrator/live/version.json',
     'Octopus-agent-orchestrator/live/config/review-capabilities.json',
     'Octopus-agent-orchestrator/live/config/paths.json',
     'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
@@ -190,6 +261,8 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.ps1',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh',
     'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md',
     'Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md',
@@ -221,10 +294,11 @@ $gitignoreEntries = @(
     '.github/copilot-instructions.md'
 )
 
-$taskSeedText = 'Verify orchestrator operation, full rule set, and workflow gates'
 $managedStart = '<!-- Octopus-agent-orchestrator:managed-start -->'
 $managedEnd = '<!-- Octopus-agent-orchestrator:managed-end -->'
 $templatePlaceholderPattern = '\{\{[A-Z0-9_]+\}\}'
+$bundleVersionRelativePath = 'Octopus-agent-orchestrator/VERSION'
+$liveVersionRelativePath = 'Octopus-agent-orchestrator/live/version.json'
 
 function Normalize-Text {
     param(
@@ -268,6 +342,70 @@ foreach ($relativePath in $requiredPaths) {
     $path = Join-Path $TargetRoot $relativePath
     if (-not (Test-Path $path)) {
         $missingPaths += $relativePath
+    }
+}
+
+$versionContractViolations = @()
+$bundleVersion = $null
+$bundleVersionPath = Join-Path $TargetRoot $bundleVersionRelativePath
+if (Test-Path -LiteralPath $bundleVersionPath -PathType Leaf) {
+    $bundleVersion = (Get-Content -LiteralPath $bundleVersionPath -Raw).Trim()
+    if ([string]::IsNullOrWhiteSpace($bundleVersion)) {
+        $versionContractViolations += "$bundleVersionRelativePath must not be empty."
+    }
+}
+
+$liveVersionPath = Join-Path $TargetRoot $liveVersionRelativePath
+if (Test-Path -LiteralPath $liveVersionPath -PathType Leaf) {
+    try {
+        $liveVersionObject = Get-Content -LiteralPath $liveVersionPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        $versionContractViolations += "$liveVersionRelativePath must contain valid JSON."
+        $liveVersionObject = $null
+    }
+
+    if ($null -ne $liveVersionObject) {
+        $liveVersion = Get-ObjectPropertyString -Object $liveVersionObject -PropertyName 'Version'
+        if ([string]::IsNullOrWhiteSpace($liveVersion)) {
+            $versionContractViolations += "$liveVersionRelativePath must include non-empty Version."
+        } else {
+            $liveVersion = $liveVersion.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($bundleVersion) -and -not [string]::Equals($liveVersion, $bundleVersion, [System.StringComparison]::Ordinal)) {
+                $versionContractViolations += "$liveVersionRelativePath Version '$liveVersion' must match $bundleVersionRelativePath '$bundleVersion'."
+            }
+        }
+
+        $liveSourceOfTruth = Get-ObjectPropertyString -Object $liveVersionObject -PropertyName 'SourceOfTruth'
+        if ([string]::IsNullOrWhiteSpace($liveSourceOfTruth)) {
+            $versionContractViolations += "$liveVersionRelativePath must include non-empty SourceOfTruth."
+        } else {
+            $liveSourceOfTruth = $liveSourceOfTruth.Trim()
+            if (-not [string]::Equals($liveSourceOfTruth, $SourceOfTruth, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $versionContractViolations += "$liveVersionRelativePath SourceOfTruth '$liveSourceOfTruth' must match verification SourceOfTruth '$SourceOfTruth'."
+            }
+        }
+
+        $liveCanonicalEntrypoint = Get-ObjectPropertyString -Object $liveVersionObject -PropertyName 'CanonicalEntrypoint'
+        if ([string]::IsNullOrWhiteSpace($liveCanonicalEntrypoint)) {
+            $versionContractViolations += "$liveVersionRelativePath must include non-empty CanonicalEntrypoint."
+        } else {
+            $liveCanonicalEntrypoint = $liveCanonicalEntrypoint.Trim()
+            if (-not [string]::Equals($liveCanonicalEntrypoint, $canonicalEntrypoint, [System.StringComparison]::Ordinal)) {
+                $versionContractViolations += "$liveVersionRelativePath CanonicalEntrypoint '$liveCanonicalEntrypoint' must match expected '$canonicalEntrypoint'."
+            }
+        }
+
+        $liveEnforceNoAutoCommitRaw = Get-ObjectPropertyString -Object $liveVersionObject -PropertyName 'EnforceNoAutoCommit'
+        try {
+            $liveEnforceNoAutoCommit = Convert-ToBooleanAnswer -Value $liveEnforceNoAutoCommitRaw -FieldName 'EnforceNoAutoCommit' -DefaultValue $false
+            if ($liveEnforceNoAutoCommit -ne $artifactEnforceNoAutoCommit) {
+                $versionContractViolations += "$liveVersionRelativePath EnforceNoAutoCommit '$liveEnforceNoAutoCommit' must match init answers value '$artifactEnforceNoAutoCommit'."
+            }
+        }
+        catch {
+            $versionContractViolations += $_.Exception.Message
+        }
     }
 }
 
@@ -384,15 +522,6 @@ if (-not (Test-Path $gitignorePath)) {
     }
 }
 
-$taskSeedPresent = $false
-$taskPath = Join-Path $TargetRoot 'TASK.md'
-if (Test-Path $taskPath) {
-    $taskContent = Get-Content -Path $taskPath -Raw
-    if ($taskContent -like "*$taskSeedText*") {
-        $taskSeedPresent = $true
-    }
-}
-
 $ruleFileViolations = @()
 $templatePlaceholderViolations = @()
 foreach ($ruleFile in $ruleFiles) {
@@ -415,23 +544,23 @@ $coreRuleContractViolations = @()
 $coreRulePath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md'
 if (Test-Path $coreRulePath) {
     $coreContent = Get-Content -Path $coreRulePath -Raw
-    if ($coreContent -notmatch '(?m)^Respond in .+ for explanations and assistance\.$') {
+    if ($coreContent -notmatch '(?m)^Respond in .+ for explanations and assistance\.\r?$') {
         $coreRuleContractViolations += '00-core.md must define configured assistant language sentence.'
     }
-    if ($coreContent -notmatch '(?m)^Default response brevity: .+\.$') {
+    if ($coreContent -notmatch '(?m)^Default response brevity: .+\.\r?$') {
         $coreRuleContractViolations += '00-core.md must define configured assistant response brevity sentence.'
     }
 
     if (-not [string]::IsNullOrWhiteSpace($artifactAssistantLanguage)) {
         $expectedLanguageLine = "Respond in $artifactAssistantLanguage for explanations and assistance."
-        if ($coreContent -notmatch ("(?m)^" + [regex]::Escape($expectedLanguageLine) + "$")) {
+        if ($coreContent -notmatch ("(?m)^" + [regex]::Escape($expectedLanguageLine) + "\r?$")) {
             $coreRuleContractViolations += "00-core.md language does not match init answers artifact. Expected: '$expectedLanguageLine'."
         }
     }
 
     if (-not [string]::IsNullOrWhiteSpace($artifactAssistantBrevity)) {
         $expectedBrevityLine = "Default response brevity: $artifactAssistantBrevity."
-        if ($coreContent -notmatch ("(?m)^" + [regex]::Escape($expectedBrevityLine) + "$")) {
+        if ($coreContent -notmatch ("(?m)^" + [regex]::Escape($expectedBrevityLine) + "\r?$")) {
             $coreRuleContractViolations += "00-core.md response brevity does not match init answers artifact. Expected: '$expectedBrevityLine'."
         }
     }
@@ -444,7 +573,7 @@ $canonicalEntrypointPath = Join-Path $TargetRoot $canonicalEntrypoint
 if (Test-Path $canonicalEntrypointPath) {
     $canonicalContent = Get-Content -Path $canonicalEntrypointPath -Raw
 
-    if ($canonicalContent -notmatch '(?m)^# Octopus Agent Orchestrator Rule Index$') {
+    if ($canonicalContent -notmatch '(?m)^# Octopus Agent Orchestrator Rule Index\r?$') {
         $entrypointContractViolations += "$canonicalEntrypoint must contain canonical rule index content."
     }
 
@@ -711,13 +840,80 @@ if (Test-Path $copilotInstructionsPath) {
     }
 }
 
+$commitGuardContractViolations = @()
+$commitGuardStart = '# Octopus-agent-orchestrator:commit-guard-start'
+$commitGuardEnd = '# Octopus-agent-orchestrator:commit-guard-end'
+if ($artifactEnforceNoAutoCommit) {
+    $gitDirPath = Join-Path $TargetRoot '.git'
+    if (-not (Test-Path -LiteralPath $gitDirPath -PathType Container)) {
+        $commitGuardContractViolations += 'EnforceNoAutoCommit=true but .git directory is missing, cannot enforce pre-commit guard.'
+    } else {
+        $preCommitHookPath = Join-Path $TargetRoot '.git/hooks/pre-commit'
+        if (-not (Test-Path -LiteralPath $preCommitHookPath -PathType Leaf)) {
+            $commitGuardContractViolations += 'EnforceNoAutoCommit=true but .git/hooks/pre-commit is missing.'
+        } else {
+            $preCommitHookContent = Get-Content -Path $preCommitHookPath -Raw
+            if ($preCommitHookContent -notmatch [regex]::Escape($commitGuardStart) -or $preCommitHookContent -notmatch [regex]::Escape($commitGuardEnd)) {
+                $commitGuardContractViolations += 'EnforceNoAutoCommit=true but pre-commit hook does not contain Octopus managed guard block.'
+            }
+        }
+    }
+}
+
+$reviewerExecutionContractViolations = @()
+$orchestrationSkillPath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md'
+if (Test-Path -LiteralPath $orchestrationSkillPath -PathType Leaf) {
+    $orchestrationSkillContent = Get-Content -Path $orchestrationSkillPath -Raw
+    $requiredSkillSnippets = @(
+        '## Reviewer Agent Execution (Claude Code)',
+        'Launch reviewer via Agent tool using clean context (`fork_context=false`).',
+        'review artifact write path: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.',
+        'required-reviews-check.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',
+        '-CodeReviewVerdict "<...>"',
+        '-DbReviewVerdict "<...>"',
+        '-SecurityReviewVerdict "<...>"',
+        '-RefactorReviewVerdict "<...>"',
+        '-ApiReviewVerdict "<...>"',
+        '-TestReviewVerdict "<...>"',
+        '-PerformanceReviewVerdict "<...>"',
+        '-InfraReviewVerdict "<...>"',
+        '-DependencyReviewVerdict "<...>"',
+        'single-agent fallback mode (no Agent tool)'
+    )
+
+    foreach ($snippet in $requiredSkillSnippets) {
+        if ($orchestrationSkillContent -notmatch [regex]::Escape($snippet)) {
+            $reviewerExecutionContractViolations += "Missing reviewer execution contract snippet in live/skills/orchestration/SKILL.md: $snippet"
+        }
+    }
+}
+
+$taskWorkflowRulePath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md'
+if (Test-Path -LiteralPath $taskWorkflowRulePath -PathType Leaf) {
+    $taskWorkflowRuleContent = Get-Content -Path $taskWorkflowRulePath -Raw
+    $requiredWorkflowSnippets = @(
+        'Reviewer-agent execution mechanics are defined in `orchestration/SKILL.md` section `Reviewer Agent Execution (Claude Code)`.',
+        'Fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewers.',
+        'Do you want me to commit now? (yes/no)'
+    )
+
+    foreach ($snippet in $requiredWorkflowSnippets) {
+        if ($taskWorkflowRuleContent -notmatch [regex]::Escape($snippet)) {
+            $reviewerExecutionContractViolations += "Missing reviewer execution linkage in live/docs/agent-rules/80-task-workflow.md: $snippet"
+        }
+    }
+}
+
 Write-Output "TargetRoot: $TargetRoot"
 Write-Output "TemplateRoot: $sourceRoot"
 Write-Output "SourceOfTruth: $SourceOfTruth"
 Write-Output "InitAnswersPath: $initAnswersResolvedPath"
+Write-Output "EnforceNoAutoCommit: $artifactEnforceNoAutoCommit"
 Write-Output "CanonicalEntrypoint: $canonicalEntrypoint"
 Write-Output "RequiredPathsChecked: $($requiredPaths.Count)"
 Write-Output "MissingPathCount: $($missingPaths.Count)"
+Write-Output "BundleVersion: $bundleVersion"
+Write-Output "VersionContractViolationCount: $($versionContractViolations.Count)"
 Write-Output "ManagedFilesChecked: $($strictManagedFiles.Count + 1 + $entrypointFiles.Count)"
 Write-Output "StyleViolationCount: $($styleViolations.Count)"
 Write-Output "TaskContractViolationCount: $($taskContractViolations.Count)"
@@ -730,12 +926,19 @@ Write-Output "EntrypointContractViolationCount: $($entrypointContractViolations.
 Write-Output "ProviderAgentContractViolationCount: $($providerAgentContractViolations.Count)"
 Write-Output "GitHubSkillBridgeContractViolationCount: $($githubSkillBridgeContractViolations.Count)"
 Write-Output "CopilotInstructionContractViolationCount: $($copilotInstructionContractViolations.Count)"
+Write-Output "CommitGuardContractViolationCount: $($commitGuardContractViolations.Count)"
 Write-Output "GitignoreMissingCount: $($gitignoreMissing.Count)"
-Write-Output "TaskSeedPresent: $taskSeedPresent"
 
 if ($missingPaths.Count -gt 0) {
     Write-Output 'MissingPaths:'
     foreach ($item in $missingPaths) {
+        Write-Output " - $item"
+    }
+}
+
+if ($versionContractViolations.Count -gt 0) {
+    Write-Output 'VersionContractViolations:'
+    foreach ($item in $versionContractViolations) {
         Write-Output " - $item"
     }
 }
@@ -817,6 +1020,13 @@ if ($copilotInstructionContractViolations.Count -gt 0) {
     }
 }
 
+if ($commitGuardContractViolations.Count -gt 0) {
+    Write-Output 'CommitGuardContractViolations:'
+    foreach ($item in $commitGuardContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
 if ($gitignoreMissing.Count -gt 0) {
     Write-Output 'MissingGitignoreEntries:'
     foreach ($item in $gitignoreMissing) {
@@ -824,12 +1034,9 @@ if ($gitignoreMissing.Count -gt 0) {
     }
 }
 
-if (-not $taskSeedPresent) {
-    Write-Output "MissingTaskSeedText: $taskSeedText"
-}
-
 if (
     $missingPaths.Count -gt 0 -or
+    $versionContractViolations.Count -gt 0 -or
     $styleViolations.Count -gt 0 -or
     $taskContractViolations.Count -gt 0 -or
     $qwenSettingsViolations.Count -gt 0 -or
@@ -841,8 +1048,8 @@ if (
     $providerAgentContractViolations.Count -gt 0 -or
     $githubSkillBridgeContractViolations.Count -gt 0 -or
     $copilotInstructionContractViolations.Count -gt 0 -or
-    $gitignoreMissing.Count -gt 0 -or
-    -not $taskSeedPresent
+    $commitGuardContractViolations.Count -gt 0 -or
+    $gitignoreMissing.Count -gt 0
 ) {
     throw 'Verification failed. Resolve listed issues and rerun.'
 }

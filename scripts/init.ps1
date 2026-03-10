@@ -4,7 +4,8 @@ param(
     [string]$AssistantLanguage = 'English',
     [string]$AssistantBrevity = 'concise',
     [ValidateSet('Claude', 'Codex', 'Gemini', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')]
-    [string]$SourceOfTruth = 'Claude'
+    [string]$SourceOfTruth = 'Claude',
+    [bool]$EnforceNoAutoCommit = $false
 )
 
 $ErrorActionPreference = 'Stop'
@@ -657,6 +658,7 @@ $initReportLines += '- Support directories synced into `Octopus-agent-orchestrat
 $initReportLines += '- Assistant response language: ' + $AssistantLanguage
 $initReportLines += '- Assistant response brevity: ' + $AssistantBrevity
 $initReportLines += '- Source of truth entrypoint: ' + $SourceOfTruth
+$initReportLines += '- Hard no-auto-commit guard: ' + ($(if ($EnforceNoAutoCommit) { 'enabled' } else { 'disabled' }))
 $initReportLines += '- Project discovery source: ' + $projectDiscovery.source
 $initReportLines += '- Project discovery stack signals: ' + $discoveredStackSummary
 $initReportLines += '- Project discovery top-level directories: ' + $discoveredDirectorySummary
@@ -702,10 +704,19 @@ if (-not $DryRun) {
             '- `depth=2`: default for most tasks.',
             '- `depth=3`: high-risk or cross-cutting work.',
             '',
+            '## Update Workspace',
+            '- Check/update (recommended): `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`',
+            '- Manual fallback: `pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`',
+            '',
             "Canonical instructions entrypoint for orchestration: `$canonicalEntrypoint`.",
             "Hard stop: first open `$canonicalEntrypoint` and follow its routing links. Only then execute any task from `TASK.md`.",
             'Orchestrator mode starts when task execution is requested from this file (`TASK.md`).',
             'If needed, the agent can add new tasks from user requests and then execute them in orchestrator mode.',
+            $(if ($EnforceNoAutoCommit) {
+                'Hard no-auto-commit guard is enabled. For manual commits use: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.ps1 -m "<message>"`.'
+            } else {
+                'Hard no-auto-commit guard is disabled.'
+            }),
             '',
             'Tasks are managed in root `TASK.md`.',
             'This file can be replaced by the setup agent with project-specific instructions.'
@@ -720,6 +731,7 @@ Write-Output "LiveRoot: $liveRoot"
 Write-Output "AssistantLanguage: $AssistantLanguage"
 Write-Output "AssistantBrevity: $AssistantBrevity"
 Write-Output "SourceOfTruth: $SourceOfTruth"
+Write-Output "EnforceNoAutoCommit: $EnforceNoAutoCommit"
 Write-Output "RuleFilesMaterialized: $($ruleFiles.Count)"
 Write-Output "SupportDirectoriesSynced: $copiedSupportDirs"
 Write-Output "DocFilesDiscovered: $docCount"

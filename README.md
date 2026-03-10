@@ -7,6 +7,19 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 ## Quick Start
 - User guide: `HOW_TO.md`
 - Agent setup prompt: `AGENT_INIT_PROMPT.md`
+- Full changelog: `CHANGELOG.md`
+
+## Version
+- Current bundle version: `1.0.0` (source: `VERSION`)
+- Last documentation update: `2026-03-10`
+
+## Recent Changes (Short)
+- Added update workflow with version check and optional auto-apply from git (`scripts/check-update.ps1`, `scripts/update.ps1`).
+- Added deployment version metadata (`live/version.json`) and verification contract for version consistency.
+- Added optional hard no-auto-commit guard (`.git/hooks/pre-commit`) controlled by init answer `EnforceNoAutoCommit`.
+- Added manual commit helpers (`live/scripts/agent-gates/human-commit.ps1` and `.sh`) when guard is enabled.
+- Improved TASK upgrade behavior: apply latest template while migrating existing queue rows.
+- Clarified orchestration review mechanics: mandatory fallback self-review and explicit final commit decision prompt.
 
 ## Design
 - Canonical rule set lives only in `Octopus-agent-orchestrator/live/docs/agent-rules/*`.
@@ -54,6 +67,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 - `Octopus-agent-orchestrator/live/source-inventory.md`
 - `Octopus-agent-orchestrator/live/init-report.md`
 - `Octopus-agent-orchestrator/live/project-discovery.md`
+- `Octopus-agent-orchestrator/live/version.json`
 
 ## Single-Agent Flow (Recommended)
 1. Copy `Octopus-agent-orchestrator/` into target project root.
@@ -63,7 +77,8 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
    - preferred assistant response language;
    - preferred default response brevity (`concise` or `detailed`).
    - preferred source-of-truth entrypoint: `Claude (CLAUDE.md) | Codex (AGENTS.md) | Gemini (GEMINI.md) | GitHubCopilot (.github/copilot-instructions.md) | Windsurf (.windsurf/rules/rules.md) | Junie (.junie/guidelines.md) | Antigravity (.antigravity/rules.md)`; all non-selected entrypoint files will redirect to the selected file.
-4. Agent must hard-stop setup unless all 3 answers are collected, then writes `Octopus-agent-orchestrator/runtime/init-answers.json`.
+   - whether to enforce hard no-auto-commit guard (`yes` or `no`).
+4. Agent must hard-stop setup unless all 4 answers are collected, then writes `Octopus-agent-orchestrator/runtime/init-answers.json`.
 5. Agent executes install and init with `-InitAnswersPath`, then reads `live/project-discovery.md`.
 6. Agent updates context rules (`10/20/30/40/60`) and `live/config/paths.json` to match the real repository.
 7. Agent runs verify and manifest validation with the same `-InitAnswersPath`.
@@ -81,6 +96,49 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh --us
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "Octopus-agent-orchestrator/MANIFEST.md"
 ```
+
+## Updating Existing Deployment
+Preferred flow (auto-check + optional auto-apply from git):
+
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+```bash
+bash Octopus-agent-orchestrator/scripts/check-update.sh -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+Behavior:
+- if current version equals latest: reports `UP_TO_DATE`;
+- if newer version exists: asks `Apply now? (y/N)` and updates on confirmation;
+- in non-interactive mode use `-Apply -NoPrompt`.
+
+Auto-apply without prompt:
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -Apply -NoPrompt -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+By default, `check-update.ps1` uses the orchestrator repository:
+`https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git`
+
+To use your fork or mirror, pass source explicitly:
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -RepoUrl "<git-url>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+Manual fallback (if you already replaced bundle files yourself):
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+Update flow:
+- checks versions by `VERSION` file;
+- syncs bundle files (`template`, `scripts`, docs, `VERSION`) with backup to `runtime/bundle-backups/<timestamp>/`;
+- runs `update.ps1` (install/init sync, verify, manifest validation);
+- rebuilds `TASK.md` from latest template and migrates existing task rows from previous `TASK.md` queue;
+- if queue migration cannot be parsed safely, keeps existing `TASK.md` managed block unchanged;
+- writes deployed version metadata to `Octopus-agent-orchestrator/live/version.json`;
+- writes update report to `Octopus-agent-orchestrator/runtime/update-reports/update-<timestamp>.md`.
 
 ## Work Example
 Example feature request:
@@ -134,9 +192,12 @@ feat(invoices): add CSV export endpoint with async email delivery hooks
 ## Important
 - Run initialization only through `AGENT_INIT_PROMPT.md`; do not run `scripts/install.ps1` directly.
 - `scripts/install.ps1` and `scripts/verify.ps1` require `Octopus-agent-orchestrator/runtime/init-answers.json` with collected init answers.
+- For upgrades, use `scripts/check-update.ps1` (or `scripts/update.ps1` if bundle already replaced).
 - Installer defaults to non-destructive mode for non-canonical entry files.
+- During upgrades, `TASK.md` uses latest template and migrates existing queue rows (tasks are preserved).
 - Selected source-of-truth entrypoint is intentionally refreshed to keep routing canonical.
 - Installer creates backups in `Octopus-agent-orchestrator/runtime/backups/<timestamp>/`.
+- If `EnforceNoAutoCommit=true`, installer configures `.git/hooks/pre-commit` guard and manual commit helpers in `live/scripts/agent-gates/human-commit.*`.
 - Installer updates `.gitignore` with managed agent entries.
 - Preflight roots and trigger regexes are configurable in `live/config/paths.json`.
 - Gate scripts support both `pwsh` (`*.ps1`) and `bash` (`*.sh`); agent should auto-detect environment.

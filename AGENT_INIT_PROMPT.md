@@ -15,13 +15,16 @@ Create a fully working agent orchestration workspace where canonical rules live 
    - Wait for answer and store as `<assistant-brevity>`.
    - In `<assistant-language>`, ask: `Which source-of-truth file should be canonical for rules: Claude (CLAUDE.md), Codex (AGENTS.md), Gemini (GEMINI.md), GitHubCopilot (.github/copilot-instructions.md), Windsurf (.windsurf/rules/rules.md), Junie (.junie/guidelines.md), or Antigravity (.antigravity/rules.md)? All non-selected entrypoint files will redirect to this selected file.`
    - Wait for answer and store as `<source-of-truth>`.
-   - Hard-stop rule: **if all 3 answers are not collected, do not run installation**.
+   - In `<assistant-language>`, ask (4th mandatory question): `Нужно ли усилить запрет на автокоммит? (yes/no)`
+   - Wait for answer and store as `<enforce-no-auto-commit>`.
+   - Hard-stop rule: **if all 4 answers are not collected, do not run installation**.
 3. Save required init answers artifact to `Octopus-agent-orchestrator/runtime/init-answers.json`:
 ```json
 {
   "AssistantLanguage": "<assistant-language>",
   "AssistantBrevity": "<assistant-brevity>",
   "SourceOfTruth": "<source-of-truth>",
+  "EnforceNoAutoCommit": "<enforce-no-auto-commit>",
   "CollectedVia": "AGENT_INIT_PROMPT.md"
 }
 ```
@@ -64,6 +67,8 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 - `Octopus-agent-orchestrator/live/init-report.md` exists.
 - `Octopus-agent-orchestrator/live/project-discovery.md` exists.
 - `Octopus-agent-orchestrator/live/source-inventory.md` exists.
+- `Octopus-agent-orchestrator/live/version.json` exists and matches `Octopus-agent-orchestrator/VERSION`.
+- if `<enforce-no-auto-commit>` is true: `.git/hooks/pre-commit` contains Octopus managed commit guard block.
 - `Octopus-agent-orchestrator/live/config/review-capabilities.json` exists.
 - `Octopus-agent-orchestrator/live/config/paths.json` exists.
 - `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md` exists.
@@ -78,7 +83,7 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 - Read existing project docs and legacy agent files as input context.
 - Do not migrate files by moving/removing them.
 - Keep changes minimal and deterministic.
-- Never run `install.ps1` before writing `Octopus-agent-orchestrator/runtime/init-answers.json` with all 3 required answers.
+- Never run `install.ps1` before writing `Octopus-agent-orchestrator/runtime/init-answers.json` with all 4 required answers.
 - Never run initialization by directly calling `install.ps1` outside this prompt flow.
 - After `<assistant-language>` is collected, continue all following user-facing questions and reports in `<assistant-language>`.
 - For gate scripts during task execution, auto-detect environment:
@@ -96,6 +101,9 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
   - using default depth (`Execute task <task-id>`);
   - when to use `depth=1`, `depth=2`, and `depth=3`.
   - where tasks are defined: tasks are managed in the root `TASK.md` file.
+  - updating orchestrator workspace:
+    - `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`
+    - manual fallback: `pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`
 - Explicit orchestration note:
   - orchestrator mode starts when the agent executes a task from `TASK.md`;
   - if needed, the agent may create new tasks from user requests and then execute them through the orchestrator workflow.

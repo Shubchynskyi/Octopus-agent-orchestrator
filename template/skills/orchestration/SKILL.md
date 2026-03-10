@@ -10,7 +10,7 @@ allowed-tools:
   - Write
 metadata:
   author: Octopus-agent-orchestrator
-  version: 1.4.0
+  version: 1.5.0
   runtime_requirement: PowerShell 7+ (pwsh) or Bash + Python 3 for gate scripts
 ---
 
@@ -55,7 +55,8 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - Log event: `REVIEW_PHASE_STARTED`.
 10. Run only required independent reviews from preflight:
    - preferred when available: clean-context reviewer agents
-   - fallback for single-agent platforms: sequential independent review passes with explicit reviewer role prompt and isolated checklist per pass
+   - fallback for single-agent platforms: sequential independent review passes with explicit reviewer role prompt and isolated checklist per pass.
+   - fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewer and do not require extra user confirmation to start review passes.
    - baseline: `code`, `db`, `security`, `refactor`
    - optional when enabled in `Octopus-agent-orchestrator/live/config/review-capabilities.json`: `api`, `test`, `performance`, `infra`, `dependency`
    - Log event per reviewer invocation: `REVIEW_REQUESTED`.
@@ -69,9 +70,40 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - `DONE` only when all mandatory gates passed.
    - `BLOCKED` when any mandatory gate failed or cannot run.
    - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
-16. Report to user: implementation summary, depth, path mode, review verdicts, docs updated, and optional commit message suggestion.
+16. Report to user: implementation summary, depth, path mode, review verdicts, docs updated, and commit message suggestion.
+    - Always ask explicit follow-up question: `Do you want me to commit now? (yes/no)`.
 17. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
 18. Never commit unless user explicitly requests commit.
+
+## Reviewer Agent Execution (Claude Code)
+- Apply this section when platform supports Agent tool/sub-agents.
+- For each required review where preflight `required_reviews.<type>=true`:
+  1. Launch reviewer via Agent tool using clean context (`fork_context=false`).
+  2. Prompt must include:
+     - task id and task goal;
+     - changed files list from preflight artifact;
+     - diff summary (or exact staged diff if available);
+     - mandatory skill path for this review type;
+     - required output contract:
+       - verdict token (`... PASSED` or `... FAILED`);
+       - findings list with file evidence;
+       - review artifact write path: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.
+  3. Parse verdict token from reviewer output.
+  4. If verdict is failed, fix findings and rerun the same reviewer until pass.
+- Reviewer mapping contract:
+  - `required_reviews.code=true` => skill `Octopus-agent-orchestrator/live/skills/code-review/SKILL.md` => pass token `REVIEW PASSED` => gate parameter `-CodeReviewVerdict`
+  - `required_reviews.db=true` => skill `Octopus-agent-orchestrator/live/skills/db-review/SKILL.md` => pass token `DB REVIEW PASSED` => gate parameter `-DbReviewVerdict`
+  - `required_reviews.security=true` => skill `Octopus-agent-orchestrator/live/skills/security-review/SKILL.md` => pass token `SECURITY REVIEW PASSED` => gate parameter `-SecurityReviewVerdict`
+  - `required_reviews.refactor=true` => skill `Octopus-agent-orchestrator/live/skills/refactor-review/SKILL.md` => pass token `REFACTOR REVIEW PASSED` => gate parameter `-RefactorReviewVerdict`
+  - `required_reviews.api=true` => skill `Octopus-agent-orchestrator/live/skills/api-review/SKILL.md` => pass token `API REVIEW PASSED` => gate parameter `-ApiReviewVerdict`
+  - `required_reviews.test=true` => skill `Octopus-agent-orchestrator/live/skills/test-review/SKILL.md` => pass token `TEST REVIEW PASSED` => gate parameter `-TestReviewVerdict`
+  - `required_reviews.performance=true` => skill `Octopus-agent-orchestrator/live/skills/performance-review/SKILL.md` => pass token `PERFORMANCE REVIEW PASSED` => gate parameter `-PerformanceReviewVerdict`
+  - `required_reviews.infra=true` => skill `Octopus-agent-orchestrator/live/skills/infra-review/SKILL.md` => pass token `INFRA REVIEW PASSED` => gate parameter `-InfraReviewVerdict`
+  - `required_reviews.dependency=true` => skill `Octopus-agent-orchestrator/live/skills/dependency-review/SKILL.md` => pass token `DEPENDENCY REVIEW PASSED` => gate parameter `-DependencyReviewVerdict`
+- After all required verdicts are collected, run gate script with all verdict parameters:
+  - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1 -PreflightPath "<path>" -TaskId "<task-id>" -CodeReviewVerdict "<...>" -DbReviewVerdict "<...>" -SecurityReviewVerdict "<...>" -RefactorReviewVerdict "<...>" -ApiReviewVerdict "<...>" -TestReviewVerdict "<...>" -PerformanceReviewVerdict "<...>" -InfraReviewVerdict "<...>" -DependencyReviewVerdict "<...>"`
+  - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "<path>" --task-id "<task-id>" --code-review-verdict "<...>" --db-review-verdict "<...>" --security-review-verdict "<...>" --refactor-review-verdict "<...>" --api-review-verdict "<...>" --test-review-verdict "<...>" --performance-review-verdict "<...>" --infra-review-verdict "<...>" --dependency-review-verdict "<...>"`
+- In single-agent fallback mode (no Agent tool), run the same review scopes sequentially with explicit role prompts and use the same verdict tokens and artifact contract.
 
 ## Task Event Logging Commands
 - PowerShell:
@@ -102,6 +134,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Do not move to implementation without plan.
 - Do not bypass required reviews without deterministic gate override contract.
 - Do not set `DONE` without passing `required-reviews-check.ps1`.
+- Do not skip explicit final user prompt about commit decision after reporting commit message suggestion.
 - Do not leave reviewer/specialist agents open after review completion (when platform supports agent lifecycle controls).
 
 ## Mandatory Outputs

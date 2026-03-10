@@ -14,8 +14,9 @@ Before installation, the agent must ask you:
 - which language should be used for assistant explanations;
 - which default response brevity should be used (`concise` or `detailed`).
 - which file should be source of truth: `Claude (CLAUDE.md) | Codex (AGENTS.md) | Gemini (GEMINI.md) | GitHubCopilot (.github/copilot-instructions.md) | Windsurf (.windsurf/rules/rules.md) | Junie (.junie/guidelines.md) | Antigravity (.antigravity/rules.md)`; all non-selected entrypoint files will redirect to the selected file.
-- hard-stop if any of these 3 answers is missing.
-After collecting all 3 answers, the agent must write `Octopus-agent-orchestrator/runtime/init-answers.json` and pass it to `install.ps1` and `verify.ps1` through `-InitAnswersPath`.
+- whether hard no-auto-commit guard should be enabled (`yes`/`no`).
+- hard-stop if any of these 4 answers is missing.
+After collecting all 4 answers, the agent must write `Octopus-agent-orchestrator/runtime/init-answers.json` and pass it to `install.ps1` and `verify.ps1` through `-InitAnswersPath`.
 After install/init, the agent must use `Octopus-agent-orchestrator/live/project-discovery.md` to fill context rules for this repository.
 After successful setup, the agent must provide a short `Usage Instructions` section in the language you selected.
 After verification, the agent should optionally ask whether you want to add extra specialist skills (live-only).
@@ -36,6 +37,8 @@ After successful setup:
 - Live capability config exists: `Octopus-agent-orchestrator/live/config/review-capabilities.json`
 - Preflight path and trigger config exists: `Octopus-agent-orchestrator/live/config/paths.json`
 - Discovery report exists: `Octopus-agent-orchestrator/live/project-discovery.md`
+- Deployment version metadata exists: `Octopus-agent-orchestrator/live/version.json`
+- If enabled in init answers, hard no-auto-commit guard exists in `.git/hooks/pre-commit`.
 - Builder skill exists: `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md`
 
 Note:
@@ -78,7 +81,50 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "O
 Agent policy: auto-detect environment and run `.ps1` with `pwsh` when available, otherwise run `.sh` with `bash`.
 Bash gate scripts require a Python runtime in PATH (`python3`, `python`, or `py -3`).
 
-## 7. Adding Specialist Skills After Init
+## 7. Update Existing Deployment
+Preferred flow (check + optional apply from git):
+
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+```bash
+bash Octopus-agent-orchestrator/scripts/check-update.sh -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+Behavior:
+- if latest version is already installed: reports `UP_TO_DATE`;
+- if update is available: asks `Apply now? (y/N)`;
+- for CI/non-interactive mode: use `-Apply -NoPrompt`.
+
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -Apply -NoPrompt -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+By default, `check-update.ps1` uses:
+`https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git`
+
+To use your fork or mirror, provide repository URL:
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -RepoUrl "<git-url>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+What update pipeline does:
+- compares local and remote `VERSION`;
+- syncs bundle files with backup to `Octopus-agent-orchestrator/runtime/bundle-backups/<timestamp>/`;
+- reads `AssistantLanguage`, `AssistantBrevity`, and `SourceOfTruth` from `runtime/init-answers.json`;
+- runs install/init sync, verification, and manifest validation;
+- rebuilds `TASK.md` from latest template and migrates existing queue rows from previous `TASK.md`;
+- if queue migration cannot be parsed safely, keeps existing `TASK.md` managed block unchanged;
+- updates `Octopus-agent-orchestrator/live/version.json`;
+- writes `Octopus-agent-orchestrator/runtime/update-reports/update-<timestamp>.md`.
+
+Dry-run preview:
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -DryRun -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+## 8. Adding Specialist Skills After Init
 To add specialist skills later, ask your agent for example:
 - `Add api-review skill`
 - `Create a test-review agent`
