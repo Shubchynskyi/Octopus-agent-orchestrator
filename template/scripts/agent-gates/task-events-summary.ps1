@@ -29,6 +29,22 @@ function Normalize-Path {
     return $PathValue.Replace('\', '/')
 }
 
+function Assert-ValidTaskId {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw 'TaskId must not be empty.'
+    }
+
+    if ($Value.Length -gt 128) {
+        throw 'TaskId must be 128 characters or fewer.'
+    }
+
+    if ($Value -notmatch '^[A-Za-z0-9._-]+$') {
+        throw "TaskId '$Value' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$"
+    }
+}
+
 function Get-EventTimestamp {
     param([object]$EventRecord)
 
@@ -79,9 +95,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 
 $TaskId = $TaskId.Trim()
-if ([string]::IsNullOrWhiteSpace($TaskId)) {
-    throw 'TaskId must not be empty.'
-}
+Assert-ValidTaskId -Value $TaskId
 
 if ([string]::IsNullOrWhiteSpace($EventsRoot)) {
     $EventsRoot = Join-Path $RepoRoot 'Octopus-agent-orchestrator/runtime/task-events'

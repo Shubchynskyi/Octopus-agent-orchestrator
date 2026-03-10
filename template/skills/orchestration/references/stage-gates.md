@@ -25,7 +25,9 @@ Pass criteria:
 
 ## Gate 6: Checks
 Pass criteria:
-- Required checks passed.
+- Compile gate passed before review phase:
+  - `compile-gate.ps1` / `compile-gate.sh` result is pass.
+  - Task timeline contains `COMPILE_GATE_PASSED`.
 
 ## Gate 7: Independent Reviews
 Pass criteria:
@@ -35,7 +37,8 @@ Pass criteria:
 - Security review verdict `SECURITY REVIEW PASSED` when `required_reviews.security=true`, otherwise `NOT_REQUIRED`.
 - Refactor review verdict `REFACTOR REVIEW PASSED` when `required_reviews.refactor=true`, otherwise `NOT_REQUIRED`.
 - Review artifacts satisfy `TASK.md` artifact contract.
-- `required-reviews-check.ps1` result is pass.
+- `required-reviews-check.ps1` / `.sh` result is pass.
+- `required-reviews-check` compile-evidence check is pass for same task id.
 
 ## Gate 8: Documentation Finalization
 Pass criteria:

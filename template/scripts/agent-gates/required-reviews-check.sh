@@ -22,6 +22,7 @@ import json
 import os
 import re
 import sys
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,7 +37,24 @@ def parse_bool(value: str) -> bool:
 
 
 def normalize_path(path_value: str):
+    if path_value is None:
+        return None
     return str(path_value).replace("\\", "/")
+
+
+def assert_valid_task_id(value: str):
+    if not value or not value.strip():
+        raise ValueError("TaskId must not be empty.")
+    task_id = value.strip()
+    if len(task_id) > 128:
+        raise ValueError("TaskId must be 128 characters or fewer.")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", task_id):
+        raise ValueError(f"TaskId '{task_id}' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$")
+    return task_id
+
+
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest().lower()
 
 
 def append_metrics_event(path: Path, event_obj: dict, emit_metrics: bool):
@@ -47,17 +65,10 @@ def append_metrics_event(path: Path, event_obj: dict, emit_metrics: bool):
         fh.write(json.dumps(event_obj, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
-def resolve_task_id(explicit_task_id: str, preflight_path: Path):
-    if explicit_task_id and explicit_task_id.strip():
-        return explicit_task_id.strip()
-    base_name = preflight_path.stem
-    candidate = re.sub(r"-preflight$", "", base_name).strip()
-    return candidate or None
-
-
 def append_task_event(repo_root: Path, task_id: str, event_type: str, outcome: str, message: str, details: dict):
     if not task_id:
         return
+    task_id = assert_valid_task_id(task_id)
     events_dir = (repo_root / "Octopus-agent-orchestrator/runtime/task-events").resolve()
     events_dir.mkdir(parents=True, exist_ok=True)
 
@@ -83,12 +94,6 @@ def parse_skip_reviews(value: str):
     return sorted(set(parts))
 
 
-def get_required_flag(required_reviews: dict, key: str) -> bool:
-    if not isinstance(required_reviews, dict):
-        return False
-    return bool(required_reviews.get(key, False))
-
-
 def test_expected_verdict(errors, label, required, skipped_by_override, actual_verdict, pass_verdict):
     if required and not skipped_by_override:
         if actual_verdict != pass_verdict:
@@ -107,6 +112,165 @@ def test_expected_verdict(errors, label, required, skipped_by_override, actual_v
     errors.append(f"{label} is not required. Expected 'NOT_REQUIRED' or '{pass_verdict}', got '{actual_verdict}'.")
 
 
+def get_non_negative_int(metrics: dict, key: str):
+    value = metrics.get(key)
+    if isinstance(value, bool):
+        raise ValueError
+    if isinstance(value, int):
+        if value < 0:
+            raise ValueError
+        return value
+    if isinstance(value, float):
+        if value < 0 or int(value) != value:
+            raise ValueError
+        return int(value)
+    raise ValueError
+
+
+def validate_preflight(preflight_path: Path, explicit_task_id: str):
+    try:
+        preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    except Exception:
+        raise RuntimeError(f"Preflight artifact is not valid JSON: {preflight_path}")
+
+    errors = []
+    resolved_task_id = None
+    if explicit_task_id and explicit_task_id.strip():
+        try:
+            resolved_task_id = assert_valid_task_id(explicit_task_id)
+        except Exception as exc:
+            errors.append(str(exc))
+
+    preflight_task_id = None
+    raw_task_id = preflight.get("task_id")
+    if raw_task_id is not None and str(raw_task_id).strip():
+        try:
+            preflight_task_id = assert_valid_task_id(str(raw_task_id))
+        except Exception as exc:
+            errors.append(f"preflight.task_id: {exc}")
+
+    if resolved_task_id and preflight_task_id and resolved_task_id != preflight_task_id:
+        errors.append(f"TaskId '{resolved_task_id}' does not match preflight.task_id '{preflight_task_id}'.")
+    if (not resolved_task_id) and preflight_task_id:
+        resolved_task_id = preflight_task_id
+    if not resolved_task_id:
+        errors.append("TaskId is required and must be provided either via --task-id or preflight.task_id.")
+
+    mode = str(preflight.get("mode", "")).strip().upper()
+    if mode not in {"FULL_PATH", "FAST_PATH"}:
+        errors.append(f"Preflight field `mode` has unsupported value '{mode or '<missing>'}'.")
+
+    required_reviews = preflight.get("required_reviews")
+    required_keys = ("code", "db", "security", "refactor", "api", "test", "performance", "infra", "dependency")
+    required_flags = {}
+    if not isinstance(required_reviews, dict):
+        errors.append("Preflight field `required_reviews` is required and must be an object.")
+        required_reviews = {}
+    for key in required_keys:
+        if key not in required_reviews or not isinstance(required_reviews[key], bool):
+            errors.append(f"Preflight field `required_reviews.{key}` is required and must be boolean.")
+            required_flags[key] = False
+        else:
+            required_flags[key] = bool(required_reviews[key])
+
+    metrics = preflight.get("metrics")
+    if not isinstance(metrics, dict):
+        errors.append("Preflight field `metrics` is required and must be an object.")
+        metrics = {}
+    try:
+        changed_files_count = get_non_negative_int(metrics, "changed_files_count")
+    except Exception:
+        changed_files_count = 0
+        errors.append("Preflight field `metrics.changed_files_count` is required and must be a non-negative integer.")
+    try:
+        changed_lines_total = get_non_negative_int(metrics, "changed_lines_total")
+    except Exception:
+        changed_lines_total = 0
+        errors.append("Preflight field `metrics.changed_lines_total` is required and must be a non-negative integer.")
+
+    return {
+        "preflight": preflight,
+        "resolved_task_id": resolved_task_id,
+        "mode": mode,
+        "required_reviews": required_flags,
+        "changed_files_count": changed_files_count,
+        "changed_lines_total": changed_lines_total,
+        "preflight_hash": file_sha256(preflight_path),
+        "errors": errors,
+    }
+
+
+def get_compile_gate_evidence(repo_root: Path, task_id: str, preflight_path: Path, preflight_hash: str, compile_evidence_path_arg: str):
+    result = {
+        "task_id": task_id,
+        "evidence_path": None,
+        "evidence_status": None,
+        "evidence_outcome": None,
+        "evidence_task_id": None,
+        "evidence_preflight_path": None,
+        "evidence_preflight_hash": None,
+        "evidence_source": None,
+        "status": "UNKNOWN",
+    }
+
+    if not task_id:
+        result["status"] = "TASK_ID_MISSING"
+        return result
+
+    if compile_evidence_path_arg and compile_evidence_path_arg.strip():
+        evidence_path = Path(compile_evidence_path_arg.strip())
+        if not evidence_path.is_absolute():
+            evidence_path = (repo_root / evidence_path).resolve()
+    else:
+        evidence_path = (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-compile-gate.json").resolve()
+
+    result["evidence_path"] = normalize_path(evidence_path)
+    if not evidence_path.exists():
+        result["status"] = "EVIDENCE_FILE_MISSING"
+        return result
+
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except Exception:
+        result["status"] = "EVIDENCE_INVALID_JSON"
+        return result
+
+    recorded_task_id = str(evidence.get("task_id", "")).strip()
+    recorded_status = str(evidence.get("status", "")).strip().upper()
+    recorded_outcome = str(evidence.get("outcome", "")).strip().upper()
+    recorded_preflight_hash = str(evidence.get("preflight_hash_sha256", "")).strip().lower()
+    recorded_preflight_path = normalize_path(evidence.get("preflight_path"))
+    recorded_source = str(evidence.get("event_source", "")).strip().lower()
+
+    result["evidence_task_id"] = recorded_task_id or None
+    result["evidence_status"] = recorded_status or None
+    result["evidence_outcome"] = recorded_outcome or None
+    result["evidence_preflight_hash"] = recorded_preflight_hash or None
+    result["evidence_preflight_path"] = recorded_preflight_path
+    result["evidence_source"] = recorded_source or None
+
+    if recorded_task_id != task_id:
+        result["status"] = "EVIDENCE_TASK_MISMATCH"
+        return result
+    if recorded_source != "compile-gate":
+        result["status"] = "EVIDENCE_SOURCE_INVALID"
+        return result
+    if recorded_preflight_hash != preflight_hash.strip().lower():
+        result["status"] = "EVIDENCE_PREFLIGHT_HASH_MISMATCH"
+        return result
+    expected_preflight_path = normalize_path(preflight_path.resolve())
+    if recorded_preflight_path and recorded_preflight_path.lower() != expected_preflight_path.lower():
+        result["status"] = "EVIDENCE_PREFLIGHT_PATH_MISMATCH"
+        return result
+
+    if recorded_status == "PASSED" and recorded_outcome == "PASS":
+        result["status"] = "PASS"
+        return result
+
+    result["status"] = "EVIDENCE_NOT_PASS"
+    return result
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--preflight-path", required=True)
 parser.add_argument("--task-id", default="")
@@ -122,6 +286,7 @@ parser.add_argument("--dependency-review-verdict", default="NOT_REQUIRED")
 parser.add_argument("--skip-reviews", default="")
 parser.add_argument("--skip-reason", default="")
 parser.add_argument("--override-artifact-path", default="")
+parser.add_argument("--compile-evidence-path", default="")
 parser.add_argument("--metrics-path", default="")
 parser.add_argument("--emit-metrics", default="true")
 args = parser.parse_args()
@@ -138,10 +303,16 @@ if not preflight_path.exists():
     print(f"Preflight artifact not found: {preflight_path}", file=sys.stderr)
     sys.exit(1)
 
-preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
-resolved_task_id = resolve_task_id(args.task_id, preflight_path)
-required_reviews = preflight.get("required_reviews", {})
-metrics = preflight.get("metrics", {})
+validated_preflight = validate_preflight(preflight_path, args.task_id)
+preflight = validated_preflight["preflight"]
+resolved_task_id = validated_preflight["resolved_task_id"]
+compile_gate_evidence = get_compile_gate_evidence(
+    repo_root=repo_root,
+    task_id=resolved_task_id,
+    preflight_path=preflight_path,
+    preflight_hash=validated_preflight["preflight_hash"],
+    compile_evidence_path_arg=args.compile_evidence_path,
+)
 
 metrics_path_raw = args.metrics_path.strip() if args.metrics_path else ""
 if not metrics_path_raw:
@@ -155,7 +326,7 @@ else:
         metrics_path = metrics_path.resolve()
 emit_metrics = parse_bool(args.emit_metrics)
 
-errors = []
+errors = list(validated_preflight["errors"])
 skip_reviews_list = parse_skip_reviews(args.skip_reviews)
 allowed_skips = {"code"}
 for skip_item in skip_reviews_list:
@@ -168,18 +339,39 @@ if skip_reviews_list and not skip_reason.strip():
 if skip_reason.strip() and len(skip_reason.strip()) < 12:
     errors.append("Skip-review reason is too short. Provide a concrete justification (>= 12 chars).")
 
-required_code = get_required_flag(required_reviews, "code")
-required_db = get_required_flag(required_reviews, "db")
-required_security = get_required_flag(required_reviews, "security")
-required_refactor = get_required_flag(required_reviews, "refactor")
-required_api = get_required_flag(required_reviews, "api")
-required_test = get_required_flag(required_reviews, "test")
-required_performance = get_required_flag(required_reviews, "performance")
-required_infra = get_required_flag(required_reviews, "infra")
-required_dependency = get_required_flag(required_reviews, "dependency")
+compile_status = compile_gate_evidence.get("status")
+if compile_status == "TASK_ID_MISSING":
+    errors.append("Compile gate evidence cannot be verified: task id is missing.")
+elif compile_status == "EVIDENCE_FILE_MISSING":
+    errors.append(f"Compile gate evidence missing: file not found at '{compile_gate_evidence.get('evidence_path')}'. Run compile-gate.ps1/.sh first.")
+elif compile_status == "EVIDENCE_INVALID_JSON":
+    errors.append(f"Compile gate evidence is invalid JSON at '{compile_gate_evidence.get('evidence_path')}'. Re-run compile-gate.ps1/.sh.")
+elif compile_status == "EVIDENCE_TASK_MISMATCH":
+    errors.append(f"Compile gate evidence task mismatch. Expected '{resolved_task_id}', got '{compile_gate_evidence.get('evidence_task_id')}'.")
+elif compile_status == "EVIDENCE_SOURCE_INVALID":
+    errors.append(f"Compile gate evidence source is invalid. Expected 'compile-gate', got '{compile_gate_evidence.get('evidence_source')}'.")
+elif compile_status == "EVIDENCE_PREFLIGHT_HASH_MISMATCH":
+    errors.append("Compile gate evidence preflight hash mismatch. Re-run compile-gate.ps1/.sh for the current preflight artifact.")
+elif compile_status == "EVIDENCE_PREFLIGHT_PATH_MISMATCH":
+    errors.append(f"Compile gate evidence preflight path mismatch. Evidence path='{compile_gate_evidence.get('evidence_preflight_path')}'.")
+elif compile_status == "EVIDENCE_NOT_PASS":
+    errors.append(
+        f"Compile gate did not pass. Evidence status='{compile_gate_evidence.get('evidence_status')}', "
+        f"outcome='{compile_gate_evidence.get('evidence_outcome')}'."
+    )
 
-changed_files_count = int(metrics.get("changed_files_count", 0))
-changed_lines_total = int(metrics.get("changed_lines_total", 0))
+required_code = bool(validated_preflight["required_reviews"]["code"])
+required_db = bool(validated_preflight["required_reviews"]["db"])
+required_security = bool(validated_preflight["required_reviews"]["security"])
+required_refactor = bool(validated_preflight["required_reviews"]["refactor"])
+required_api = bool(validated_preflight["required_reviews"]["api"])
+required_test = bool(validated_preflight["required_reviews"]["test"])
+required_performance = bool(validated_preflight["required_reviews"]["performance"])
+required_infra = bool(validated_preflight["required_reviews"]["infra"])
+required_dependency = bool(validated_preflight["required_reviews"]["dependency"])
+
+changed_files_count = int(validated_preflight["changed_files_count"])
+changed_lines_total = int(validated_preflight["changed_lines_total"])
 
 can_skip_code = (
     required_code
@@ -220,10 +412,11 @@ if errors:
         "event_type": "review_gate_check",
         "status": "FAILED",
         "task_id": resolved_task_id,
-        "preflight_path": normalize_path(preflight_path),
-        "mode": preflight.get("mode"),
+        "preflight_path": normalize_path(preflight_path.resolve()),
+        "mode": validated_preflight["mode"],
         "skip_reviews": skip_reviews_list,
         "skip_reason": skip_reason,
+        "compile_gate": compile_gate_evidence,
         "violations": errors,
     }
     append_metrics_event(metrics_path, failure_event, emit_metrics)
@@ -235,15 +428,16 @@ if errors:
         message="Required reviews gate failed.",
         details={
             "preflight_path": normalize_path(preflight_path),
-            "mode": preflight.get("mode"),
+            "mode": validated_preflight["mode"],
             "skip_reviews": skip_reviews_list,
             "skip_reason": skip_reason,
+            "compile_gate": compile_gate_evidence,
             "violations": errors,
         },
     )
 
     print("REVIEW_GATE_FAILED")
-    print(f"Mode: {preflight.get('mode')}")
+    print(f"Mode: {validated_preflight['mode']}")
     print("Violations:")
     for err in errors:
         print(f"- {err}")
@@ -263,7 +457,7 @@ if skip_code:
     override_artifact = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "preflight_path": normalize_path(preflight_path),
-        "mode": preflight.get("mode"),
+        "mode": validated_preflight["mode"],
         "skipped_reviews": ["code"],
         "reason": skip_reason.strip(),
         "guardrails": {
@@ -288,9 +482,10 @@ success_event = {
     "status": "PASSED",
     "task_id": resolved_task_id,
     "preflight_path": normalize_path(preflight_path),
-    "mode": preflight.get("mode"),
+    "mode": validated_preflight["mode"],
     "skip_reviews": skip_reviews_list,
     "skip_reason": skip_reason,
+    "compile_gate": compile_gate_evidence,
     "override_artifact": normalize_path(override_artifact_path) if override_artifact_path else None,
 }
 append_metrics_event(metrics_path, success_event, emit_metrics)
@@ -304,14 +499,15 @@ if skip_code:
         message="Required reviews gate passed with audited override.",
         details={
             "preflight_path": normalize_path(preflight_path),
-            "mode": preflight.get("mode"),
+            "mode": validated_preflight["mode"],
             "skip_reviews": skip_reviews_list,
             "skip_reason": skip_reason,
+            "compile_gate": compile_gate_evidence,
             "override_artifact": normalize_path(override_artifact_path) if override_artifact_path else None,
         },
     )
     print("REVIEW_GATE_PASSED_WITH_OVERRIDE")
-    print(f"Mode: {preflight.get('mode')}")
+    print(f"Mode: {validated_preflight['mode']}")
     print("SkippedReviews: code")
     print(f"OverrideArtifact: {override_artifact_path}")
 else:
@@ -323,12 +519,13 @@ else:
         message="Required reviews gate passed.",
         details={
             "preflight_path": normalize_path(preflight_path),
-            "mode": preflight.get("mode"),
+            "mode": validated_preflight["mode"],
             "skip_reviews": skip_reviews_list,
             "skip_reason": skip_reason,
+            "compile_gate": compile_gate_evidence,
             "override_artifact": normalize_path(override_artifact_path) if override_artifact_path else None,
         },
     )
     print("REVIEW_GATE_PASSED")
-    print(f"Mode: {preflight.get('mode')}")
+    print(f"Mode: {validated_preflight['mode']}")
 PY

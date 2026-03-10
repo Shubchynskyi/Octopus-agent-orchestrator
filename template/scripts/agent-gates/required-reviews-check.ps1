@@ -15,6 +15,7 @@ param(
     [string]$SkipReviews = '',
     [string]$SkipReason = '',
     [string]$OverrideArtifactPath,
+    [string]$CompileEvidencePath,
     [string]$MetricsPath,
     [bool]$EmitMetrics = $true
 )
@@ -69,31 +70,214 @@ function Normalize-Path {
     return $PathValue.Replace('\', '/')
 }
 
-function Resolve-TaskId {
+function Assert-ValidTaskId {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw 'TaskId must not be empty.'
+    }
+
+    if ($Value.Length -gt 128) {
+        throw 'TaskId must be 128 characters or fewer.'
+    }
+
+    if ($Value -notmatch '^[A-Za-z0-9._-]+$') {
+        throw "TaskId '$Value' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$"
+    }
+}
+
+function Get-FileSha256 {
     param(
-        [string]$ExplicitTaskId,
-        [string]$PreflightPathValue
+        [Parameter(Mandatory = $true)]
+        [string]$Path
     )
 
+    $hash = Get-FileHash -Path $Path -Algorithm SHA256
+    return $hash.Hash.ToLowerInvariant()
+}
+
+function Try-GetRequiredBoolean {
+    param(
+        [object]$RequiredReviews,
+        [string]$Key,
+        [ref]$ValueOut
+    )
+
+    $ValueOut.Value = $false
+    if ($null -eq $RequiredReviews) {
+        return $false
+    }
+
+    $property = $RequiredReviews.PSObject.Properties[$Key]
+    if ($null -eq $property) {
+        return $false
+    }
+
+    if ($property.Value -isnot [bool]) {
+        return $false
+    }
+
+    $ValueOut.Value = [bool]$property.Value
+    return $true
+}
+
+function Try-GetNonNegativeInt {
+    param(
+        [object]$ObjectValue,
+        [string]$PropertyName,
+        [ref]$ValueOut
+    )
+
+    $ValueOut.Value = 0
+    if ($null -eq $ObjectValue) {
+        return $false
+    }
+
+    $property = $ObjectValue.PSObject.Properties[$PropertyName]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return $false
+    }
+
+    $raw = $property.Value
+    if ($raw -is [int] -or $raw -is [long] -or $raw -is [short]) {
+        if ([long]$raw -lt 0) {
+            return $false
+        }
+        $ValueOut.Value = [int][long]$raw
+        return $true
+    }
+
+    if ($raw -is [double] -or $raw -is [decimal] -or $raw -is [single]) {
+        $doubleValue = [double]$raw
+        if ($doubleValue -lt 0 -or $doubleValue -ne [Math]::Floor($doubleValue)) {
+            return $false
+        }
+        $ValueOut.Value = [int]$doubleValue
+        return $true
+    }
+
+    return $false
+}
+
+function Get-ValidatedPreflightContext {
+    param(
+        [string]$PreflightPathValue,
+        [string]$ExplicitTaskId
+    )
+
+    if (-not (Test-Path -LiteralPath $PreflightPathValue -PathType Leaf)) {
+        throw "Preflight artifact not found: $PreflightPathValue"
+    }
+
+    try {
+        $preflightObject = Get-Content -Raw $PreflightPathValue | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Preflight artifact is not valid JSON: $PreflightPathValue"
+    }
+
+    $errors = @()
+    $resolvedTaskId = $null
+
     if (-not [string]::IsNullOrWhiteSpace($ExplicitTaskId)) {
-        return $ExplicitTaskId.Trim()
+        $resolvedTaskId = $ExplicitTaskId.Trim()
+        try {
+            Assert-ValidTaskId -Value $resolvedTaskId
+        } catch {
+            $errors += $_.Exception.Message
+        }
     }
 
-    if ([string]::IsNullOrWhiteSpace($PreflightPathValue)) {
-        return $null
+    $preflightTaskId = $null
+    if ($null -ne $preflightObject.PSObject.Properties['task_id']) {
+        $preflightTaskId = [string]$preflightObject.task_id
+        if (-not [string]::IsNullOrWhiteSpace($preflightTaskId)) {
+            $preflightTaskId = $preflightTaskId.Trim()
+            try {
+                Assert-ValidTaskId -Value $preflightTaskId
+            } catch {
+                $errors += "preflight.task_id: $($_.Exception.Message)"
+            }
+        } else {
+            $preflightTaskId = $null
+        }
     }
 
-    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($PreflightPathValue)
-    if ([string]::IsNullOrWhiteSpace($baseName)) {
-        return $null
+    if (-not [string]::IsNullOrWhiteSpace($resolvedTaskId) -and -not [string]::IsNullOrWhiteSpace($preflightTaskId)) {
+        if (-not [string]::Equals($resolvedTaskId, $preflightTaskId, [System.StringComparison]::Ordinal)) {
+            $errors += "TaskId '$resolvedTaskId' does not match preflight.task_id '$preflightTaskId'."
+        }
+    } elseif ([string]::IsNullOrWhiteSpace($resolvedTaskId) -and -not [string]::IsNullOrWhiteSpace($preflightTaskId)) {
+        $resolvedTaskId = $preflightTaskId
     }
 
-    $candidate = $baseName -replace '-preflight$', ''
-    if ([string]::IsNullOrWhiteSpace($candidate)) {
-        return $null
+    if ([string]::IsNullOrWhiteSpace($resolvedTaskId)) {
+        $errors += 'TaskId is required and must be provided either via -TaskId or preflight.task_id.'
     }
 
-    return $candidate.Trim()
+    $mode = $null
+    if ($null -eq $preflightObject.PSObject.Properties['mode'] -or [string]::IsNullOrWhiteSpace([string]$preflightObject.mode)) {
+        $errors += 'Preflight field `mode` is required.'
+    } else {
+        $mode = ([string]$preflightObject.mode).Trim().ToUpperInvariant()
+        if (@('FULL_PATH', 'FAST_PATH') -notcontains $mode) {
+            $errors += "Preflight field `mode` has unsupported value '$mode'."
+        }
+    }
+
+    $requiredReviewsObject = $null
+    if ($null -eq $preflightObject.PSObject.Properties['required_reviews']) {
+        $errors += 'Preflight field `required_reviews` is required.'
+    } else {
+        $requiredReviewsObject = $preflightObject.required_reviews
+        if ($null -eq $requiredReviewsObject) {
+            $errors += 'Preflight field `required_reviews` must be an object.'
+        }
+    }
+
+    $requiredReviewKeys = @('code', 'db', 'security', 'refactor', 'api', 'test', 'performance', 'infra', 'dependency')
+    $requiredReviewFlags = [ordered]@{}
+    foreach ($key in $requiredReviewKeys) {
+        $flagValue = $false
+        $isValid = Try-GetRequiredBoolean -RequiredReviews $requiredReviewsObject -Key $key -ValueOut ([ref]$flagValue)
+        if (-not $isValid) {
+            $errors += "Preflight field `required_reviews.$key` is required and must be boolean."
+        }
+        $requiredReviewFlags[$key] = [bool]$flagValue
+    }
+
+    $metricsObject = $null
+    if ($null -eq $preflightObject.PSObject.Properties['metrics']) {
+        $errors += 'Preflight field `metrics` is required.'
+    } else {
+        $metricsObject = $preflightObject.metrics
+        if ($null -eq $metricsObject) {
+            $errors += 'Preflight field `metrics` must be an object.'
+        }
+    }
+
+    $changedFilesCount = 0
+    $changedLinesTotal = 0
+    if (-not (Try-GetNonNegativeInt -ObjectValue $metricsObject -PropertyName 'changed_files_count' -ValueOut ([ref]$changedFilesCount))) {
+        $errors += 'Preflight field `metrics.changed_files_count` is required and must be a non-negative integer.'
+    }
+    if (-not (Try-GetNonNegativeInt -ObjectValue $metricsObject -PropertyName 'changed_lines_total' -ValueOut ([ref]$changedLinesTotal))) {
+        $errors += 'Preflight field `metrics.changed_lines_total` is required and must be a non-negative integer.'
+    }
+
+    $preflightResolvedPath = (Resolve-Path -LiteralPath $PreflightPathValue).Path
+    $preflightHash = Get-FileSha256 -Path $preflightResolvedPath
+
+    return [PSCustomObject]@{
+        preflight = $preflightObject
+        resolved_task_id = $resolvedTaskId
+        mode = $mode
+        required_reviews = $requiredReviewFlags
+        changed_files_count = $changedFilesCount
+        changed_lines_total = $changedLinesTotal
+        preflight_path = $preflightResolvedPath
+        preflight_hash = $preflightHash
+        errors = $errors
+    }
 }
 
 function Append-TaskEvent {
@@ -109,6 +293,7 @@ function Append-TaskEvent {
     if ([string]::IsNullOrWhiteSpace($TaskId)) {
         return
     }
+    Assert-ValidTaskId -Value $TaskId
 
     try {
         $eventsDir = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/task-events'
@@ -179,31 +364,117 @@ function Test-ExpectedVerdict {
     $script:errors += "$Label is not required. Expected 'NOT_REQUIRED' or '$PassVerdict', got '$ActualVerdict'."
 }
 
-function Get-RequiredFlag {
+function Get-CompileGateEvidence {
     param(
-        [object]$RequiredReviews,
-        [string]$Key
+        [string]$RepoRootPath,
+        [string]$ResolvedTaskId,
+        [string]$PreflightPathValue,
+        [string]$PreflightHashValue,
+        [string]$CompileEvidencePathValue
     )
 
-    if ($null -eq $RequiredReviews) {
-        return $false
+    $result = [ordered]@{
+        task_id = $ResolvedTaskId
+        evidence_path = $null
+        evidence_status = $null
+        evidence_outcome = $null
+        evidence_task_id = $null
+        evidence_preflight_path = $null
+        evidence_preflight_hash = $null
+        evidence_source = $null
+        status = 'UNKNOWN'
     }
 
-    $property = $RequiredReviews.PSObject.Properties[$Key]
-    if ($null -eq $property) {
-        return $false
+    if ([string]::IsNullOrWhiteSpace($ResolvedTaskId)) {
+        $result.status = 'TASK_ID_MISSING'
+        return $result
     }
 
-    return [bool]$property.Value
+    $resolvedEvidencePath = $null
+    if (-not [string]::IsNullOrWhiteSpace($CompileEvidencePathValue)) {
+        if ([System.IO.Path]::IsPathRooted($CompileEvidencePathValue)) {
+            $resolvedEvidencePath = $CompileEvidencePathValue
+        } else {
+            $resolvedEvidencePath = Join-Path $RepoRootPath $CompileEvidencePathValue
+        }
+    } else {
+        $resolvedEvidencePath = Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-compile-gate.json"
+    }
+    $result.evidence_path = Normalize-Path $resolvedEvidencePath
+
+    if (-not (Test-Path -LiteralPath $resolvedEvidencePath -PathType Leaf)) {
+        $result.status = 'EVIDENCE_FILE_MISSING'
+        return $result
+    }
+
+    try {
+        $evidenceObject = Get-Content -Raw -LiteralPath $resolvedEvidencePath | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        $result.status = 'EVIDENCE_INVALID_JSON'
+        return $result
+    }
+
+    if ($null -eq $evidenceObject) {
+        $result.status = 'EVIDENCE_INVALID_JSON'
+        return $result
+    }
+
+    $recordedTaskId = if ($null -ne $evidenceObject.PSObject.Properties['task_id']) { [string]$evidenceObject.task_id } else { '' }
+    $recordedStatus = if ($null -ne $evidenceObject.PSObject.Properties['status']) { [string]$evidenceObject.status } else { '' }
+    $recordedOutcome = if ($null -ne $evidenceObject.PSObject.Properties['outcome']) { [string]$evidenceObject.outcome } else { '' }
+    $recordedPreflightPath = if ($null -ne $evidenceObject.PSObject.Properties['preflight_path']) { [string]$evidenceObject.preflight_path } else { '' }
+    $recordedPreflightHash = if ($null -ne $evidenceObject.PSObject.Properties['preflight_hash_sha256']) { [string]$evidenceObject.preflight_hash_sha256 } else { '' }
+    $recordedSource = if ($null -ne $evidenceObject.PSObject.Properties['event_source']) { [string]$evidenceObject.event_source } else { '' }
+
+    $result.evidence_task_id = $recordedTaskId
+    $result.evidence_status = $recordedStatus
+    $result.evidence_outcome = $recordedOutcome
+    $result.evidence_preflight_path = Normalize-Path $recordedPreflightPath
+    $result.evidence_preflight_hash = $recordedPreflightHash
+    $result.evidence_source = $recordedSource
+
+    if ([string]::IsNullOrWhiteSpace($recordedTaskId) -or -not [string]::Equals($recordedTaskId.Trim(), $ResolvedTaskId, [System.StringComparison]::Ordinal)) {
+        $result.status = 'EVIDENCE_TASK_MISMATCH'
+        return $result
+    }
+
+    if (-not [string]::Equals($recordedSource.Trim(), 'compile-gate', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $result.status = 'EVIDENCE_SOURCE_INVALID'
+        return $result
+    }
+
+    if ([string]::IsNullOrWhiteSpace($recordedPreflightHash) -or -not [string]::Equals($recordedPreflightHash.Trim().ToLowerInvariant(), $PreflightHashValue.Trim().ToLowerInvariant(), [System.StringComparison]::Ordinal)) {
+        $result.status = 'EVIDENCE_PREFLIGHT_HASH_MISMATCH'
+        return $result
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($recordedPreflightPath)) {
+        $expectedPreflightPath = Normalize-Path (Resolve-Path -LiteralPath $PreflightPathValue).Path
+        if (-not [string]::Equals((Normalize-Path $recordedPreflightPath), $expectedPreflightPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $result.status = 'EVIDENCE_PREFLIGHT_PATH_MISMATCH'
+            return $result
+        }
+    }
+
+    $statusNormalized = $recordedStatus.Trim().ToUpperInvariant()
+    $outcomeNormalized = $recordedOutcome.Trim().ToUpperInvariant()
+    if ($statusNormalized -eq 'PASSED' -and $outcomeNormalized -eq 'PASS') {
+        $result.status = 'PASS'
+        return $result
+    }
+
+    $result.status = 'EVIDENCE_NOT_PASS'
+    return $result
 }
 
-if (-not (Test-Path $PreflightPath)) {
-    throw "Preflight artifact not found: $PreflightPath"
-}
+$validatedPreflight = Get-ValidatedPreflightContext -PreflightPathValue $PreflightPath -ExplicitTaskId $TaskId
+$repoRoot = Resolve-ProjectRoot
+$preflight = $validatedPreflight.preflight
+$resolvedTaskId = $validatedPreflight.resolved_task_id
+$compileGateEvidence = Get-CompileGateEvidence -RepoRootPath $repoRoot -ResolvedTaskId $resolvedTaskId -PreflightPathValue $validatedPreflight.preflight_path -PreflightHashValue $validatedPreflight.preflight_hash -CompileEvidencePathValue $CompileEvidencePath
 
-$preflight = Get-Content -Raw $PreflightPath | ConvertFrom-Json
-$resolvedTaskId = Resolve-TaskId -ExplicitTaskId $TaskId -PreflightPathValue $PreflightPath
 $errors = @()
+$errors += @($validatedPreflight.errors)
 $skipReviewsList = Parse-SkipReviews -SkipValue $SkipReviews
 $allowedSkips = @('code')
 
@@ -220,15 +491,42 @@ if (-not [string]::IsNullOrWhiteSpace($SkipReason) -and $SkipReason.Trim().Lengt
     $errors += 'Skip-review reason is too short. Provide a concrete justification (>= 12 chars).'
 }
 
-$requiredCode = Get-RequiredFlag -RequiredReviews $preflight.required_reviews -Key 'code'
-$requiredDb = Get-RequiredFlag -RequiredReviews $preflight.required_reviews -Key 'db'
-$requiredSecurity = Get-RequiredFlag -RequiredReviews $preflight.required_reviews -Key 'security'
-$requiredRefactor = Get-RequiredFlag -RequiredReviews $preflight.required_reviews -Key 'refactor'
-$requiredApi = Get-RequiredFlag -RequiredReviews $preflight.required_reviews -Key 'api'
-$requiredTest = Get-RequiredFlag -RequiredReviews $preflight.required_reviews -Key 'test'
-$requiredPerformance = Get-RequiredFlag -RequiredReviews $preflight.required_reviews -Key 'performance'
-$requiredInfra = Get-RequiredFlag -RequiredReviews $preflight.required_reviews -Key 'infra'
-$requiredDependency = Get-RequiredFlag -RequiredReviews $preflight.required_reviews -Key 'dependency'
+switch ($compileGateEvidence.status) {
+    'TASK_ID_MISSING' {
+        $errors += 'Compile gate evidence cannot be verified: task id is missing.'
+    }
+    'EVIDENCE_FILE_MISSING' {
+        $errors += "Compile gate evidence missing: file not found at '$($compileGateEvidence.evidence_path)'. Run compile-gate.ps1/.sh first."
+    }
+    'EVIDENCE_INVALID_JSON' {
+        $errors += "Compile gate evidence is invalid JSON at '$($compileGateEvidence.evidence_path)'. Re-run compile-gate.ps1/.sh."
+    }
+    'EVIDENCE_TASK_MISMATCH' {
+        $errors += "Compile gate evidence task mismatch. Expected '$resolvedTaskId', got '$($compileGateEvidence.evidence_task_id)'."
+    }
+    'EVIDENCE_SOURCE_INVALID' {
+        $errors += "Compile gate evidence source is invalid. Expected 'compile-gate', got '$($compileGateEvidence.evidence_source)'."
+    }
+    'EVIDENCE_PREFLIGHT_HASH_MISMATCH' {
+        $errors += 'Compile gate evidence preflight hash mismatch. Re-run compile-gate.ps1/.sh for the current preflight artifact.'
+    }
+    'EVIDENCE_PREFLIGHT_PATH_MISMATCH' {
+        $errors += "Compile gate evidence preflight path mismatch. Evidence path='$($compileGateEvidence.evidence_preflight_path)'."
+    }
+    'EVIDENCE_NOT_PASS' {
+        $errors += "Compile gate did not pass. Evidence status='$($compileGateEvidence.evidence_status)', outcome='$($compileGateEvidence.evidence_outcome)'."
+    }
+}
+
+$requiredCode = [bool]$validatedPreflight.required_reviews.code
+$requiredDb = [bool]$validatedPreflight.required_reviews.db
+$requiredSecurity = [bool]$validatedPreflight.required_reviews.security
+$requiredRefactor = [bool]$validatedPreflight.required_reviews.refactor
+$requiredApi = [bool]$validatedPreflight.required_reviews.api
+$requiredTest = [bool]$validatedPreflight.required_reviews.test
+$requiredPerformance = [bool]$validatedPreflight.required_reviews.performance
+$requiredInfra = [bool]$validatedPreflight.required_reviews.infra
+$requiredDependency = [bool]$validatedPreflight.required_reviews.dependency
 
 $canSkipCode = $requiredCode `
     -and -not $requiredDb `
@@ -239,8 +537,8 @@ $canSkipCode = $requiredCode `
     -and -not $requiredPerformance `
     -and -not $requiredInfra `
     -and -not $requiredDependency `
-    -and ([int]$preflight.metrics.changed_files_count -le 1) `
-    -and ([int]$preflight.metrics.changed_lines_total -le 8)
+    -and ($validatedPreflight.changed_files_count -le 1) `
+    -and ($validatedPreflight.changed_lines_total -le 8)
 
 $skipCode = $skipReviewsList -contains 'code'
 if ($skipCode -and -not $canSkipCode) {
@@ -266,25 +564,27 @@ if ($errors.Count -gt 0) {
         event_type = 'review_gate_check'
         status = 'FAILED'
         task_id = $resolvedTaskId
-        preflight_path = Normalize-Path $PreflightPath
-        mode = $preflight.mode
+        preflight_path = Normalize-Path $validatedPreflight.preflight_path
+        mode = $validatedPreflight.mode
         skip_reviews = $skipReviewsList
         skip_reason = $SkipReason
+        compile_gate = $compileGateEvidence
         violations = $errors
     }
     Append-MetricsEvent -Path $MetricsPath -EventObject $failureEvent
 
     $taskFailureDetails = [ordered]@{
-        preflight_path = Normalize-Path $PreflightPath
-        mode = $preflight.mode
+        preflight_path = Normalize-Path $validatedPreflight.preflight_path
+        mode = $validatedPreflight.mode
         skip_reviews = $skipReviewsList
         skip_reason = $SkipReason
+        compile_gate = $compileGateEvidence
         violations = $errors
     }
-    Append-TaskEvent -RepoRootPath (Resolve-ProjectRoot) -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_FAILED' -Outcome 'FAIL' -Message 'Required reviews gate failed.' -Details $taskFailureDetails
+    Append-TaskEvent -RepoRootPath $repoRoot -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_FAILED' -Outcome 'FAIL' -Message 'Required reviews gate failed.' -Details $taskFailureDetails
 
     Write-Output 'REVIEW_GATE_FAILED'
-    Write-Output "Mode: $($preflight.mode)"
+    Write-Output "Mode: $($validatedPreflight.mode)"
     Write-Output 'Violations:'
     $errors | ForEach-Object { Write-Output "- $_" }
     exit 1
@@ -293,16 +593,16 @@ if ($errors.Count -gt 0) {
 $overrideArtifact = $null
 if ($skipCode) {
     if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) {
-        $preflightDir = Split-Path -Parent $PreflightPath
-        $preflightName = [System.IO.Path]::GetFileNameWithoutExtension($PreflightPath)
+        $preflightDir = Split-Path -Parent $validatedPreflight.preflight_path
+        $preflightName = [System.IO.Path]::GetFileNameWithoutExtension($validatedPreflight.preflight_path)
         $baseName = $preflightName -replace '-preflight$', ''
         $OverrideArtifactPath = Join-Path $preflightDir "$baseName-override.json"
     }
 
     $overrideArtifact = [ordered]@{
         timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
-        preflight_path = $PreflightPath.Replace('\', '/')
-        mode = $preflight.mode
+        preflight_path = (Normalize-Path $validatedPreflight.preflight_path)
+        mode = $validatedPreflight.mode
         skipped_reviews = @('code')
         reason = $SkipReason.Trim()
         guardrails = [ordered]@{
@@ -314,8 +614,8 @@ if ($skipCode) {
             required_performance = $requiredPerformance
             required_infra = $requiredInfra
             required_dependency = $requiredDependency
-            changed_files_count = [int]$preflight.metrics.changed_files_count
-            changed_lines_total = [int]$preflight.metrics.changed_lines_total
+            changed_files_count = $validatedPreflight.changed_files_count
+            changed_lines_total = $validatedPreflight.changed_lines_total
         }
     }
 
@@ -331,32 +631,34 @@ $successEvent = [ordered]@{
     event_type = 'review_gate_check'
     status = 'PASSED'
     task_id = $resolvedTaskId
-    preflight_path = Normalize-Path $PreflightPath
-    mode = $preflight.mode
+    preflight_path = Normalize-Path $validatedPreflight.preflight_path
+    mode = $validatedPreflight.mode
     skip_reviews = $skipReviewsList
     skip_reason = $SkipReason
+    compile_gate = $compileGateEvidence
     override_artifact = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
 }
 Append-MetricsEvent -Path $MetricsPath -EventObject $successEvent
 
 $taskSuccessDetails = [ordered]@{
-    preflight_path = Normalize-Path $PreflightPath
-    mode = $preflight.mode
+    preflight_path = Normalize-Path $validatedPreflight.preflight_path
+    mode = $validatedPreflight.mode
     skip_reviews = $skipReviewsList
     skip_reason = $SkipReason
+    compile_gate = $compileGateEvidence
     override_artifact = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
 }
 
 if ($skipCode) {
-    Append-TaskEvent -RepoRootPath (Resolve-ProjectRoot) -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_PASSED_WITH_OVERRIDE' -Outcome 'PASS' -Message 'Required reviews gate passed with audited override.' -Details $taskSuccessDetails
+    Append-TaskEvent -RepoRootPath $repoRoot -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_PASSED_WITH_OVERRIDE' -Outcome 'PASS' -Message 'Required reviews gate passed with audited override.' -Details $taskSuccessDetails
     Write-Output 'REVIEW_GATE_PASSED_WITH_OVERRIDE'
-    Write-Output "Mode: $($preflight.mode)"
+    Write-Output "Mode: $($validatedPreflight.mode)"
     Write-Output 'SkippedReviews: code'
     Write-Output "OverrideArtifact: $OverrideArtifactPath"
     exit 0
 }
 
-Append-TaskEvent -RepoRootPath (Resolve-ProjectRoot) -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_PASSED' -Outcome 'PASS' -Message 'Required reviews gate passed.' -Details $taskSuccessDetails
+Append-TaskEvent -RepoRootPath $repoRoot -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_PASSED' -Outcome 'PASS' -Message 'Required reviews gate passed.' -Details $taskSuccessDetails
 Write-Output 'REVIEW_GATE_PASSED'
-Write-Output "Mode: $($preflight.mode)"
+Write-Output "Mode: $($validatedPreflight.mode)"
 

@@ -33,6 +33,81 @@ if ([string]::IsNullOrWhiteSpace($TargetRoot)) {
 }
 $TargetRoot = (Resolve-Path $TargetRoot).Path
 
+$normalizedTargetRoot = $TargetRoot.TrimEnd('\', '/')
+$normalizedBundleRoot = $bundleRoot.TrimEnd('\', '/')
+if ([string]::Equals($normalizedTargetRoot, $normalizedBundleRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "TargetRoot points to orchestrator bundle directory '$bundleRoot'. Use the project root parent directory instead."
+}
+
+function Get-NormalizedPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PathValue
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($PathValue)
+    $rootPath = [System.IO.Path]::GetPathRoot($fullPath)
+    if (-not [string]::IsNullOrWhiteSpace($rootPath) -and [string]::Equals($fullPath, $rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $fullPath
+    }
+
+    return $fullPath.TrimEnd('\', '/')
+}
+
+function Test-IsPathInsideRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RootPath,
+        [Parameter(Mandatory = $true)]
+        [string]$CandidatePath
+    )
+
+    $rootFull = Get-NormalizedPath -PathValue $RootPath
+    $candidateFull = Get-NormalizedPath -PathValue $CandidatePath
+    if ([string]::Equals($rootFull, $candidateFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+
+    $rootWithSeparator = if ($rootFull.EndsWith('\') -or $rootFull.EndsWith('/')) {
+        $rootFull
+    } else {
+        $rootFull + [System.IO.Path]::DirectorySeparatorChar
+    }
+    return $candidateFull.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Resolve-FilePathInsideRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RootPath,
+        [Parameter(Mandatory = $true)]
+        [string]$PathValue,
+        [Parameter(Mandatory = $true)]
+        [string]$Label
+    )
+
+    $candidatePath = $PathValue
+    if (-not [System.IO.Path]::IsPathRooted($candidatePath)) {
+        $candidatePath = Join-Path $RootPath $candidatePath
+    }
+
+    $candidatePath = [System.IO.Path]::GetFullPath($candidatePath)
+    if (-not (Test-IsPathInsideRoot -RootPath $RootPath -CandidatePath $candidatePath)) {
+        throw "$Label must resolve inside TargetRoot '$RootPath'. Resolved path: $candidatePath"
+    }
+
+    if (-not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) {
+        throw "$Label file not found: $candidatePath"
+    }
+
+    $resolvedPath = (Resolve-Path -LiteralPath $candidatePath).Path
+    if (-not (Test-IsPathInsideRoot -RootPath $RootPath -CandidatePath $resolvedPath)) {
+        throw "$Label must resolve inside TargetRoot '$RootPath'. Resolved path: $resolvedPath"
+    }
+
+    return $resolvedPath
+}
+
 $AssistantLanguage = $AssistantLanguage.Trim()
 if ([string]::IsNullOrWhiteSpace($AssistantLanguage)) {
     throw 'AssistantLanguage must not be empty.'
@@ -94,16 +169,7 @@ function Convert-ToBooleanAnswer {
     }
 }
 
-$initAnswersCandidatePath = $InitAnswersPath
-if (-not [System.IO.Path]::IsPathRooted($initAnswersCandidatePath)) {
-    $initAnswersCandidatePath = Join-Path $TargetRoot $initAnswersCandidatePath
-}
-
-if (-not (Test-Path -LiteralPath $initAnswersCandidatePath -PathType Leaf)) {
-    throw "Init answers artifact not found: $initAnswersCandidatePath"
-}
-
-$initAnswersResolvedPath = (Resolve-Path -LiteralPath $initAnswersCandidatePath).Path
+$initAnswersResolvedPath = Resolve-FilePathInsideRoot -RootPath $TargetRoot -PathValue $InitAnswersPath -Label 'InitAnswersPath'
 $initAnswersRaw = Get-Content -LiteralPath $initAnswersResolvedPath -Raw
 if ([string]::IsNullOrWhiteSpace($initAnswersRaw)) {
     throw "Init answers artifact is empty: $initAnswersResolvedPath"
@@ -481,7 +547,7 @@ function Build-TaskManagedBlockWithExistingQueue {
 
     $existingRows = Get-TaskQueueRowsFromManagedBlock -ManagedBlock $existingManagedBlock
     if ($existingRows.Count -eq 0) {
-        return $existingManagedBlock
+        return $templateManagedBlock
     }
 
     return Set-TaskQueueRowsInManagedBlock -ManagedBlock $templateManagedBlock -Rows $existingRows
@@ -516,6 +582,9 @@ function Apply-CommitGuardHook {
 
     $gitDirPath = Join-Path $TargetRoot '.git'
     if (-not (Test-Path -LiteralPath $gitDirPath -PathType Container)) {
+        if ($Enabled) {
+            throw "EnforceNoAutoCommit=true but .git directory is missing at '$gitDirPath'. Initialize git or set EnforceNoAutoCommit=false in init answers."
+        }
         return $false
     }
 
@@ -640,18 +709,81 @@ For Antigravity Agents, run task execution through `.antigravity/agents/orchestr
 }
 
 function Get-QwenSettingsContent {
-    $json = @'
-{
-  "context": {
-    "fileName": [
-      "AGENTS.md",
-      "TASK.md"
-    ]
-  }
-}
-'@
+    param(
+        [AllowNull()]
+        [string]$ExistingContent
+    )
 
-    return $json.Trim()
+    $requiredEntries = @('AGENTS.md', 'TASK.md')
+    $settingsMap = [ordered]@{}
+    $needsUpdate = $false
+    $parseMode = 'default'
+
+    if (-not [string]::IsNullOrWhiteSpace($ExistingContent)) {
+        try {
+            $parsed = $ExistingContent | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+            if ($parsed -is [System.Collections.IDictionary]) {
+                foreach ($key in $parsed.Keys) {
+                    $settingsMap[$key] = $parsed[$key]
+                }
+                $parseMode = 'merge-existing'
+            } else {
+                $needsUpdate = $true
+                $parseMode = 'invalid-root'
+            }
+        }
+        catch {
+            $needsUpdate = $true
+            $parseMode = 'invalid-json'
+        }
+    } else {
+        $needsUpdate = $true
+    }
+
+    if (-not $settingsMap.Contains('context') -or -not ($settingsMap['context'] -is [System.Collections.IDictionary])) {
+        $settingsMap['context'] = [ordered]@{}
+        $needsUpdate = $true
+    }
+
+    $contextMap = $settingsMap['context']
+    $currentEntries = @()
+    if ($contextMap.Contains('fileName')) {
+        foreach ($item in @($contextMap['fileName'])) {
+            if ($null -eq $item) {
+                continue
+            }
+
+            $text = [string]$item
+            if ([string]::IsNullOrWhiteSpace($text)) {
+                continue
+            }
+
+            $currentEntries += $text.Trim()
+        }
+    }
+
+    $existingEntrySet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($entry in $currentEntries) {
+        [void]$existingEntrySet.Add($entry)
+    }
+
+    foreach ($requiredEntry in $requiredEntries) {
+        if (-not $existingEntrySet.Contains($requiredEntry)) {
+            $currentEntries += $requiredEntry
+            [void]$existingEntrySet.Add($requiredEntry)
+            $needsUpdate = $true
+        }
+    }
+
+    $contextMap['fileName'] = $currentEntries
+    $settingsMap['context'] = $contextMap
+
+    $json = $settingsMap | ConvertTo-Json -Depth 20
+    return [PSCustomObject]@{
+        Content    = $json
+        NeedsUpdate = $needsUpdate
+        ParseMode  = $parseMode
+    }
 }
 
 function Get-ProviderOrchestratorAgentContent {
@@ -680,9 +812,10 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 2. Read `TASK.md` and select/create a task row before implementation.
 3. Execute task workflow only in orchestrator mode: `Execute task <task-id> depth=<1|2|3>`.
 4. Run preflight classification before implementation (`classify-change.ps1` or `.sh`).
-5. Run required independent reviews and gate check (`required-reviews-check.ps1` or `.sh`) before marking `DONE`.
-6. Update task status and artifacts in `TASK.md`.
-7. Log lifecycle events by task id (`log-task-event.ps1` or `.sh`) into `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
+5. Run compile gate before review (`compile-gate.ps1` or `.sh`) using `live/docs/agent-rules/40-commands.md`.
+6. Run required independent reviews and gate check (`required-reviews-check.ps1` or `.sh`) before marking `DONE`.
+7. Update task status and artifacts in `TASK.md`.
+8. Log lifecycle events by task id (`log-task-event.ps1` or `.sh`) into `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 
 ## Skill Routing
 - Orchestration: `Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md`
@@ -961,15 +1094,28 @@ foreach ($redirectFile in $redirectEntryFiles) {
 
 $qwenSettingsPath = Join-Path $TargetRoot $qwenSettingsRelativePath
 $qwenSettingsDir = Split-Path -Parent $qwenSettingsPath
-$qwenSettingsContent = Get-QwenSettingsContent
+$qwenSettingsExistingContent = $null
+if (Test-Path $qwenSettingsPath) {
+    $qwenSettingsExistingContent = Get-Content -Path $qwenSettingsPath -Raw
+}
+$qwenSettingsPlan = Get-QwenSettingsContent -ExistingContent $qwenSettingsExistingContent
+$qwenSettingsContent = $qwenSettingsPlan.Content
+$qwenSettingsNeedsUpdate = [bool]$qwenSettingsPlan.NeedsUpdate
+$qwenSettingsParseMode = [string]$qwenSettingsPlan.ParseMode
+$qwenSettingsUpdated = $false
 
 if (Test-Path $qwenSettingsPath) {
-    if (-not $PreserveExisting) {
+    if (-not $PreserveExisting -or $qwenSettingsNeedsUpdate) {
         Backup-DestinationFile -DestinationPath $qwenSettingsPath -RelativePath $qwenSettingsRelativePath
         if (-not $DryRun) {
             Set-Content -Path $qwenSettingsPath -Value $qwenSettingsContent
         }
-        $deployed++
+        $qwenSettingsUpdated = $true
+        if ($PreserveExisting) {
+            $aligned++
+        } else {
+            $deployed++
+        }
     }
 } else {
     if (-not $DryRun) {
@@ -978,6 +1124,7 @@ if (Test-Path $qwenSettingsPath) {
         }
         Set-Content -Path $qwenSettingsPath -Value $qwenSettingsContent
     }
+    $qwenSettingsUpdated = $true
     $deployed++
 }
 
@@ -1183,6 +1330,9 @@ Write-Output "FilesSkippedExisting: $skippedExisting"
 Write-Output "FilesAligned: $aligned"
 Write-Output "FilesBackedUp: $backedUp"
 Write-Output "GitignoreEntriesAdded: $gitignoreAdded"
+Write-Output "QwenSettingsParseMode: $qwenSettingsParseMode"
+Write-Output "QwenSettingsNeedsUpdate: $qwenSettingsNeedsUpdate"
+Write-Output "QwenSettingsUpdated: $qwenSettingsUpdated"
 Write-Output "InitInvoked: $initInvoked"
 Write-Output "PreCommitHookPath: $preCommitHookRelativePath"
 Write-Output "PreCommitHookUpdated: $commitGuardHookUpdated"

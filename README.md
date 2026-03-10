@@ -10,7 +10,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 - Full changelog: `CHANGELOG.md`
 
 ## Version
-- Current bundle version: `1.0.0` (source: `VERSION`)
+- Current bundle version: `1.0.1` (source: `VERSION`)
 - Last documentation update: `2026-03-10`
 
 ## Recent Changes (Short)
@@ -20,6 +20,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 - Added manual commit helpers (`live/scripts/agent-gates/human-commit.ps1` and `.sh`) when guard is enabled.
 - Improved TASK upgrade behavior: apply latest template while migrating existing queue rows.
 - Clarified orchestration review mechanics: mandatory fallback self-review and explicit final commit decision prompt.
+- Added hard compile gate before review phase (`live/scripts/agent-gates/compile-gate.ps1` and `.sh`) driven by `live/docs/agent-rules/40-commands.md`.
 
 ## Design
 - Canonical rule set lives only in `Octopus-agent-orchestrator/live/docs/agent-rules/*`.
@@ -83,7 +84,11 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 6. Agent updates context rules (`10/20/30/40/60`) and `live/config/paths.json` to match the real repository.
 7. Agent runs verify and manifest validation with the same `-InitAnswersPath`.
 8. Agent returns `Usage Instructions` in the selected assistant language.
-9. Agent asks whether to add optional specialist skills (live-only) and, if approved, uses `live/skills/skill-builder`.
+9. Agent presents optional specialization summary (live-only):
+   - already configured specialist skills;
+   - available skills that can be enabled/created now;
+   - recommended set for this specific project.
+   Then asks `Do you want to add additional specialist skills now? (yes/no)` and, if approved, uses `live/skills/skill-builder`.
 
 ## Post-Init Validation Commands
 ```powershell
@@ -93,7 +98,8 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 
 ```bash
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"
-bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "Octopus-agent-orchestrator/MANIFEST.md"
 ```
 
@@ -131,6 +137,8 @@ Manual fallback (if you already replaced bundle files yourself):
 pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
+If you pass `-TargetRoot` manually, use the project root path (parent directory that contains `Octopus-agent-orchestrator/`), not the bundle directory itself.
+
 Update flow:
 - checks versions by `VERSION` file;
 - syncs bundle files (`template`, `scripts`, docs, `VERSION`) with backup to `runtime/bundle-backups/<timestamp>/`;
@@ -159,10 +167,11 @@ Typical agent lifecycle:
 1. Creates plan and logs `PLAN_CREATED`.
 2. Runs preflight and gets `FULL_PATH` with required reviews.
 3. Implements code, adds tests, updates docs where required.
-4. Runs independent reviews.
-5. Receives failed review or failed gate (`REVIEW_GATE_FAILED`), returns to code, logs `REWORK_STARTED`.
-6. Fixes findings, reruns required reviews, receives `REVIEW_GATE_PASSED`.
-7. Marks task `DONE`, logs `TASK_DONE`, and returns summary + commit message suggestion.
+4. Runs mandatory compile gate and gets `COMPILE_GATE_PASSED`.
+5. Runs independent reviews.
+6. Receives failed review or failed gate (`REVIEW_GATE_FAILED`), returns to code, logs `REWORK_STARTED`.
+7. Fixes findings, reruns compile/reviews, receives `REVIEW_GATE_PASSED`.
+8. Marks task `DONE`, logs `TASK_DONE`, and returns summary + commit message suggestion.
 
 Task timeline log commands:
 ```powershell
@@ -172,16 +181,17 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summa
 Example summary output:
 ```text
 Task: T-201
-Events: 8
+Events: 9
 Timeline:
 [01] ... | PLAN_CREATED | INFO | actor=orchestrator
 [02] ... | PREFLIGHT_CLASSIFIED | INFO
-[03] ... | REVIEW_PHASE_STARTED | INFO
-[04] ... | REVIEW_REQUESTED | INFO | actor=code-review
-[05] ... | REVIEW_GATE_FAILED | FAIL
-[06] ... | REWORK_STARTED | INFO
-[07] ... | REVIEW_GATE_PASSED | PASS
-[08] ... | TASK_DONE | PASS
+[03] ... | COMPILE_GATE_PASSED | PASS
+[04] ... | REVIEW_PHASE_STARTED | INFO
+[05] ... | REVIEW_REQUESTED | INFO | actor=code-review
+[06] ... | REVIEW_GATE_FAILED | FAIL
+[07] ... | REWORK_STARTED | INFO
+[08] ... | REVIEW_GATE_PASSED | PASS
+[09] ... | TASK_DONE | PASS
 ```
 
 Optional commit message suggestion returned by agent:
@@ -200,6 +210,9 @@ feat(invoices): add CSV export endpoint with async email delivery hooks
 - If `EnforceNoAutoCommit=true`, installer configures `.git/hooks/pre-commit` guard and manual commit helpers in `live/scripts/agent-gates/human-commit.*`.
 - Installer updates `.gitignore` with managed agent entries.
 - Preflight roots and trigger regexes are configurable in `live/config/paths.json`.
+- Compile gate command is configured in `live/docs/agent-rules/40-commands.md` under `### Compile Gate (Mandatory)` and is required before `IN_REVIEW`.
+- Review gate (`required-reviews-check`) also validates compile evidence in task timeline; without `COMPILE_GATE_PASSED` it fails.
+- Command placeholders in `live/docs/agent-rules/40-commands.md` must be replaced with real project commands; verify fails on unresolved placeholders.
 - Gate scripts support both `pwsh` (`*.ps1`) and `bash` (`*.sh`); agent should auto-detect environment.
 - Bash gate scripts require a Python runtime in PATH (`python3`, `python`, or `py -3`).
 - Specialist skills added after init are project-specific and should be created only in `Octopus-agent-orchestrator/live/skills/**`.

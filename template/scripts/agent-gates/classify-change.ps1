@@ -44,6 +44,38 @@ function Normalize-Path {
     return $normalized.TrimStart('/')
 }
 
+function Assert-ValidTaskId {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw 'TaskId must not be empty.'
+    }
+
+    if ($Value.Length -gt 128) {
+        throw 'TaskId must be 128 characters or fewer.'
+    }
+
+    if ($Value -notmatch '^[A-Za-z0-9._-]+$') {
+        throw "TaskId '$Value' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$"
+    }
+}
+
+function Invoke-GitLines {
+    param(
+        [string]$RepoRootPath,
+        [string[]]$Arguments,
+        [string]$FailureMessage
+    )
+
+    $output = & git -C $RepoRootPath @Arguments 2>$null
+    $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+    if ($exitCode -ne 0) {
+        throw $FailureMessage
+    }
+
+    return @($output | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
 function Test-PathPrefix {
     param(
         [string]$PathValue,
@@ -138,6 +170,7 @@ function Append-TaskEvent {
     if ([string]::IsNullOrWhiteSpace($TaskId)) {
         return
     }
+    Assert-ValidTaskId -Value $TaskId
 
     try {
         $eventsDir = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/task-events'
@@ -436,20 +469,30 @@ if (-not $gitCommand -and -not $isExplicitChangedFiles) {
     throw 'Git is not available and -ChangedFiles was not provided.'
 }
 
+$canUseGitDiff = $false
+if ($gitCommand) {
+    & git -C $RepoRoot rev-parse --is-inside-work-tree 2>$null | Out-Null
+    $gitCheckExit = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+    $canUseGitDiff = $gitCheckExit -eq 0
+}
+if (-not $isExplicitChangedFiles -and -not $canUseGitDiff) {
+    throw "Git diff operations failed for RepoRoot '$RepoRoot'. Provide -ChangedFiles explicitly or run inside a valid git worktree."
+}
+
 $detectionSource = 'explicit_changed_files'
 $detectedFromGit = @()
 $untrackedFromGit = @()
-if (-not $isExplicitChangedFiles) {
+if (-not $isExplicitChangedFiles -and $canUseGitDiff) {
     if ($UseStaged) {
         $detectionSource = $(if ($IncludeUntracked) { 'git_staged_plus_untracked' } else { 'git_staged_only' })
-        $detectedFromGit = @(git -C $RepoRoot diff --cached --name-only --diff-filter=ACMRTUXB 2>$null | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $detectedFromGit = Invoke-GitLines -RepoRootPath $RepoRoot -Arguments @('diff', '--cached', '--name-only', '--diff-filter=ACMRTUXB') -FailureMessage "Failed to detect staged changed files via git diff --cached."
     } else {
         $detectionSource = 'git_auto'
-        $detectedFromGit = @(git -C $RepoRoot diff --name-only --diff-filter=ACMRTUXB HEAD 2>$null | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $detectedFromGit = Invoke-GitLines -RepoRootPath $RepoRoot -Arguments @('diff', '--name-only', '--diff-filter=ACMRTUXB', 'HEAD') -FailureMessage "Failed to detect changed files via git diff HEAD."
     }
 
     if ($IncludeUntracked) {
-        $untrackedFromGit = @(git -C $RepoRoot ls-files --others --exclude-standard 2>$null | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $untrackedFromGit = Invoke-GitLines -RepoRootPath $RepoRoot -Arguments @('ls-files', '--others', '--exclude-standard') -FailureMessage "Failed to detect untracked files via git ls-files."
     }
 
     $ChangedFiles = @($detectedFromGit + $untrackedFromGit | Sort-Object -Unique)
@@ -462,7 +505,7 @@ $additionsTotal = 0
 $deletionsTotal = 0
 $renameCount = 0
 
-if ($gitCommand) {
+if ($canUseGitDiff) {
     $numstatRows = @{}
     $numstatArgs = @('diff', '--numstat', '--diff-filter=ACMRTUXB')
     if (-not $isExplicitChangedFiles -and $UseStaged) {
@@ -470,7 +513,7 @@ if ($gitCommand) {
     } else {
         $numstatArgs += 'HEAD'
     }
-    $numstat = @(git -C $RepoRoot @numstatArgs 2>$null)
+    $numstat = Invoke-GitLines -RepoRootPath $RepoRoot -Arguments $numstatArgs -FailureMessage 'Failed to collect git numstat metrics.'
     foreach ($line in $numstat) {
         $parts = $line -split "`t"
         if ($parts.Count -ge 3) {
@@ -490,7 +533,7 @@ if ($gitCommand) {
     } else {
         $nameStatusArgs += 'HEAD'
     }
-    $nameStatusRows = @(git -C $RepoRoot @nameStatusArgs 2>$null)
+    $nameStatusRows = Invoke-GitLines -RepoRootPath $RepoRoot -Arguments $nameStatusArgs -FailureMessage 'Failed to collect git name-status metrics.'
     foreach ($line in $nameStatusRows) {
         $parts = $line -split "`t"
         if ($parts.Count -ge 1 -and $parts[0] -match '^R\d*$') {
@@ -552,6 +595,20 @@ if ($gitCommand) {
                     # Ignore binary and unreadable files in line metrics.
                 }
             }
+        }
+    }
+} elseif ($isExplicitChangedFiles) {
+    foreach ($file in $normalizedFiles) {
+        $fullPath = Join-Path $RepoRoot $file
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+            continue
+        }
+        try {
+            $lineCount = (Get-Content -Path $fullPath -ErrorAction Stop | Measure-Object -Line).Lines
+            $additionsTotal += [int]$lineCount
+            $changedLinesTotal += [int]$lineCount
+        } catch {
+            # Ignore binary and unreadable files in line metrics.
         }
     }
 }
@@ -645,6 +702,9 @@ $requiredPerformanceReview = $performanceTriggered -and [bool]$reviewCapabilitie
 $requiredInfraReview = $infraTriggered -and [bool]$reviewCapabilities.infra
 $requiredDependencyReview = $dependencyTriggered -and [bool]$reviewCapabilities.dependency
 $resolvedTaskId = Resolve-TaskId -ExplicitTaskId $TaskId -OutputPathHint $OutputPath
+if (-not [string]::IsNullOrWhiteSpace($resolvedTaskId)) {
+    Assert-ValidTaskId -Value $resolvedTaskId
+}
 $normalizedOutputPath = $(if ([string]::IsNullOrWhiteSpace($OutputPath)) { $null } else { $OutputPath.Replace('\', '/') })
 
 $result = [ordered]@{

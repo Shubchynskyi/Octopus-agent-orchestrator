@@ -48,7 +48,16 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
    - accepted command shape: `Execute task <task-id> depth=<1|2|3>`
    - default depth when omitted: `2`
 9. Optional post-init specialization:
-   - ask user: `Do you want to add additional specialist skills now? (yes/no)`
+   - before the yes/no question, provide in `<assistant-language>`:
+     - `Already configured specialist skills`:
+       - read `Octopus-agent-orchestrator/live/config/review-capabilities.json` and list enabled specialist keys (`api`, `test`, `performance`, `infra`, `dependency`);
+       - list existing specialist skill directories under `Octopus-agent-orchestrator/live/skills/**` beyond baseline (`orchestration`, `code-review`, `db-review`, `security-review`, `refactor-review`, `skill-builder`).
+     - `Available specialist skills to enable/create now`:
+       - predefined: `api-review`, `test-review`, `performance-review`, `infra-review`, `dependency-review`;
+       - custom specialist skills that can be created via skill-builder.
+     - `Recommendation for this project`:
+       - provide a short recommended set (for example `api-review`/`test-review` for backend APIs, `performance-review` for latency-sensitive services, `infra-review` for deployment/terraform changes), based on discovered stack and repository structure.
+   - then ask user: `Do you want to add additional specialist skills now? (yes/no)`
    - if `yes`, ask:
      - `Which skills should be added now? (api-review, test-review, performance-review, infra-review, dependency-review, or custom names)`
      - `For each selected skill, should it be mandatory gate or optional review?`
@@ -112,6 +121,8 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
   - list newly created `Octopus-agent-orchestrator/live/skills/*` paths;
   - list changed capability flags in `review-capabilities.json`;
   - list whether each added skill is `mandatory` or `optional`.
+- If optional specialist skills were not requested:
+  - still include the presented `already configured` list, `available` list, and recommendation in the report for traceability.
 - Confirmation line: `Workspace ready for task execution`.
 
 ## Constraints

@@ -34,9 +34,12 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 
 ## Mandatory Gate Contract
 - Preflight artifact must exist before review stage.
+- Compile gate script must pass before `IN_REVIEW`:
+  `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1`.
 - Required reviews must be launched only from preflight `required_reviews.*`.
 - Review gate script must pass before `DONE`:
   `Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1`.
+- Review gate script validates compile evidence (`COMPILE_GATE_PASSED`) from task timeline for the same task id.
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
   `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - Documentation impact updates are required when behavior/contracts/ops docs changed.

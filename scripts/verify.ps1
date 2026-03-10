@@ -25,6 +25,43 @@ $TargetRoot = (Resolve-Path $TargetRoot).Path
 $SourceOfTruth = $SourceOfTruth.Trim()
 $sourceOfTruthKey = $SourceOfTruth.ToUpperInvariant().Replace(' ', '')
 
+function Get-NormalizedPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PathValue
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($PathValue)
+    $rootPath = [System.IO.Path]::GetPathRoot($fullPath)
+    if (-not [string]::IsNullOrWhiteSpace($rootPath) -and [string]::Equals($fullPath, $rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $fullPath
+    }
+
+    return $fullPath.TrimEnd('\', '/')
+}
+
+function Test-IsPathInsideRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RootPath,
+        [Parameter(Mandatory = $true)]
+        [string]$CandidatePath
+    )
+
+    $rootFull = Get-NormalizedPath -PathValue $RootPath
+    $candidateFull = Get-NormalizedPath -PathValue $CandidatePath
+    if ([string]::Equals($rootFull, $candidateFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+
+    $rootWithSeparator = if ($rootFull.EndsWith('\') -or $rootFull.EndsWith('/')) {
+        $rootFull
+    } else {
+        $rootFull + [System.IO.Path]::DirectorySeparatorChar
+    }
+    return $candidateFull.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function Get-InitAnswerValue {
     param(
         [Parameter(Mandatory = $true)]
@@ -104,9 +141,22 @@ function Convert-ToBooleanAnswer {
 }
 
 $initAnswersContractViolations = @()
-$initAnswersCandidatePath = $InitAnswersPath
-if (-not [System.IO.Path]::IsPathRooted($initAnswersCandidatePath)) {
-    $initAnswersCandidatePath = Join-Path $TargetRoot $initAnswersCandidatePath
+$initAnswersCandidatePath = $null
+try {
+    $candidatePath = $InitAnswersPath
+    if (-not [System.IO.Path]::IsPathRooted($candidatePath)) {
+        $candidatePath = Join-Path $TargetRoot $candidatePath
+    }
+
+    $candidatePath = [System.IO.Path]::GetFullPath($candidatePath)
+    if (-not (Test-IsPathInsideRoot -RootPath $TargetRoot -CandidatePath $candidatePath)) {
+        throw "InitAnswersPath must resolve inside TargetRoot '$TargetRoot'. Resolved path: $candidatePath"
+    }
+
+    $initAnswersCandidatePath = $candidatePath
+}
+catch {
+    $initAnswersContractViolations += $_.Exception.Message
 }
 
 $initAnswersResolvedPath = $null
@@ -115,64 +165,71 @@ $artifactAssistantBrevity = $null
 $artifactSourceOfTruth = $null
 $artifactEnforceNoAutoCommit = $false
 
-if (-not (Test-Path -LiteralPath $initAnswersCandidatePath -PathType Leaf)) {
+if ($null -eq $initAnswersCandidatePath) {
+    # Path resolution violation already captured above.
+} elseif (-not (Test-Path -LiteralPath $initAnswersCandidatePath -PathType Leaf)) {
     $initAnswersContractViolations += "Init answers artifact missing: $initAnswersCandidatePath"
 } else {
     $initAnswersResolvedPath = (Resolve-Path -LiteralPath $initAnswersCandidatePath).Path
-    $initAnswersRaw = Get-Content -LiteralPath $initAnswersResolvedPath -Raw
-    if ([string]::IsNullOrWhiteSpace($initAnswersRaw)) {
-        $initAnswersContractViolations += "Init answers artifact is empty: $initAnswersResolvedPath"
+    $initAnswersPathIsInsideRoot = Test-IsPathInsideRoot -RootPath $TargetRoot -CandidatePath $initAnswersResolvedPath
+    if (-not $initAnswersPathIsInsideRoot) {
+        $initAnswersContractViolations += "InitAnswersPath resolves outside TargetRoot '$TargetRoot': $initAnswersResolvedPath"
     } else {
-        try {
-            $initAnswers = $initAnswersRaw | ConvertFrom-Json -ErrorAction Stop
-        }
-        catch {
-            $initAnswersContractViolations += "Init answers artifact is not valid JSON: $initAnswersResolvedPath"
-        }
-
-        if ($null -ne $initAnswers) {
-            $artifactAssistantLanguage = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'AssistantLanguage'
-            if ([string]::IsNullOrWhiteSpace($artifactAssistantLanguage)) {
-                $initAnswersContractViolations += "Init answers artifact missing AssistantLanguage: $initAnswersResolvedPath"
-            } else {
-                $artifactAssistantLanguage = $artifactAssistantLanguage.Trim()
-            }
-
-            $artifactAssistantBrevity = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'AssistantBrevity'
-            if ([string]::IsNullOrWhiteSpace($artifactAssistantBrevity)) {
-                $initAnswersContractViolations += "Init answers artifact missing AssistantBrevity: $initAnswersResolvedPath"
-            } else {
-                $artifactAssistantBrevity = $artifactAssistantBrevity.Trim().ToLowerInvariant()
-                $allowedBrevity = @('concise', 'detailed')
-                if ($allowedBrevity -notcontains $artifactAssistantBrevity) {
-                    $initAnswersContractViolations += "Init answers artifact has unsupported AssistantBrevity '$artifactAssistantBrevity'. Allowed values: concise, detailed."
-                }
-            }
-
-            $artifactSourceOfTruth = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'SourceOfTruth'
-            if ([string]::IsNullOrWhiteSpace($artifactSourceOfTruth)) {
-                $initAnswersContractViolations += "Init answers artifact missing SourceOfTruth: $initAnswersResolvedPath"
-            } else {
-                $artifactSourceOfTruth = $artifactSourceOfTruth.Trim()
-                $artifactSourceOfTruthKey = $artifactSourceOfTruth.ToUpperInvariant().Replace(' ', '')
-                if ($artifactSourceOfTruthKey -ne $sourceOfTruthKey) {
-                    $initAnswersContractViolations += "Init answers SourceOfTruth '$artifactSourceOfTruth' does not match verification SourceOfTruth '$SourceOfTruth'."
-                }
-            }
-
-            $artifactCollectedVia = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'CollectedVia'
-            if ([string]::IsNullOrWhiteSpace($artifactCollectedVia)) {
-                $initAnswersContractViolations += "Init answers artifact must include CollectedVia='AGENT_INIT_PROMPT.md': $initAnswersResolvedPath"
-            } elseif (-not [string]::Equals($artifactCollectedVia.Trim(), 'AGENT_INIT_PROMPT.md', [System.StringComparison]::OrdinalIgnoreCase)) {
-                $initAnswersContractViolations += "Init answers CollectedVia must be 'AGENT_INIT_PROMPT.md'. Current value: '$artifactCollectedVia'."
-            }
-
-            $artifactEnforceNoAutoCommitRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'EnforceNoAutoCommit'
+        $initAnswersRaw = Get-Content -LiteralPath $initAnswersResolvedPath -Raw
+        if ([string]::IsNullOrWhiteSpace($initAnswersRaw)) {
+            $initAnswersContractViolations += "Init answers artifact is empty: $initAnswersResolvedPath"
+        } else {
             try {
-                $artifactEnforceNoAutoCommit = Convert-ToBooleanAnswer -Value $artifactEnforceNoAutoCommitRaw -FieldName 'EnforceNoAutoCommit' -DefaultValue $false
+                $initAnswers = $initAnswersRaw | ConvertFrom-Json -ErrorAction Stop
             }
             catch {
-                $initAnswersContractViolations += $_.Exception.Message
+                $initAnswersContractViolations += "Init answers artifact is not valid JSON: $initAnswersResolvedPath"
+            }
+
+            if ($null -ne $initAnswers) {
+                $artifactAssistantLanguage = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'AssistantLanguage'
+                if ([string]::IsNullOrWhiteSpace($artifactAssistantLanguage)) {
+                    $initAnswersContractViolations += "Init answers artifact missing AssistantLanguage: $initAnswersResolvedPath"
+                } else {
+                    $artifactAssistantLanguage = $artifactAssistantLanguage.Trim()
+                }
+
+                $artifactAssistantBrevity = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'AssistantBrevity'
+                if ([string]::IsNullOrWhiteSpace($artifactAssistantBrevity)) {
+                    $initAnswersContractViolations += "Init answers artifact missing AssistantBrevity: $initAnswersResolvedPath"
+                } else {
+                    $artifactAssistantBrevity = $artifactAssistantBrevity.Trim().ToLowerInvariant()
+                    $allowedBrevity = @('concise', 'detailed')
+                    if ($allowedBrevity -notcontains $artifactAssistantBrevity) {
+                        $initAnswersContractViolations += "Init answers artifact has unsupported AssistantBrevity '$artifactAssistantBrevity'. Allowed values: concise, detailed."
+                    }
+                }
+
+                $artifactSourceOfTruth = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'SourceOfTruth'
+                if ([string]::IsNullOrWhiteSpace($artifactSourceOfTruth)) {
+                    $initAnswersContractViolations += "Init answers artifact missing SourceOfTruth: $initAnswersResolvedPath"
+                } else {
+                    $artifactSourceOfTruth = $artifactSourceOfTruth.Trim()
+                    $artifactSourceOfTruthKey = $artifactSourceOfTruth.ToUpperInvariant().Replace(' ', '')
+                    if ($artifactSourceOfTruthKey -ne $sourceOfTruthKey) {
+                        $initAnswersContractViolations += "Init answers SourceOfTruth '$artifactSourceOfTruth' does not match verification SourceOfTruth '$SourceOfTruth'."
+                    }
+                }
+
+                $artifactCollectedVia = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'CollectedVia'
+                if ([string]::IsNullOrWhiteSpace($artifactCollectedVia)) {
+                    $initAnswersContractViolations += "Init answers artifact must include CollectedVia='AGENT_INIT_PROMPT.md': $initAnswersResolvedPath"
+                } elseif (-not [string]::Equals($artifactCollectedVia.Trim(), 'AGENT_INIT_PROMPT.md', [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $initAnswersContractViolations += "Init answers CollectedVia must be 'AGENT_INIT_PROMPT.md'. Current value: '$artifactCollectedVia'."
+                }
+
+                $artifactEnforceNoAutoCommitRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'EnforceNoAutoCommit'
+                try {
+                    $artifactEnforceNoAutoCommit = Convert-ToBooleanAnswer -Value $artifactEnforceNoAutoCommitRaw -FieldName 'EnforceNoAutoCommit' -DefaultValue $false
+                }
+                catch {
+                    $initAnswersContractViolations += $_.Exception.Message
+                }
             }
         }
     }
@@ -245,6 +302,8 @@ $requiredPaths = @(
     '.junie/guidelines.md',
     '.windsurf/rules/rules.md',
     'Octopus-agent-orchestrator/VERSION',
+    'Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md',
+    'Octopus-agent-orchestrator/HOW_TO.md',
     'Octopus-agent-orchestrator/scripts/check-update.ps1',
     'Octopus-agent-orchestrator/scripts/check-update.sh',
     'Octopus-agent-orchestrator/scripts/update.ps1',
@@ -256,6 +315,8 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1',
@@ -263,6 +324,7 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.sh',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh',
     'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md',
     'Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md',
@@ -540,6 +602,68 @@ foreach ($ruleFile in $ruleFiles) {
     }
 }
 
+$commandsContractViolations = @()
+$commandsRulePath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md'
+if (Test-Path $commandsRulePath) {
+    $commandsContent = Get-Content -Path $commandsRulePath -Raw
+    $requiredCommandSnippets = @(
+        '### Compile Gate (Mandatory)',
+        'compile-gate.ps1',
+        'compile-gate.sh',
+        'required-reviews-check.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"',
+        'required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"'
+    )
+    foreach ($snippet in $requiredCommandSnippets) {
+        if ($commandsContent -notmatch [regex]::Escape($snippet)) {
+            $commandsContractViolations += "40-commands.md must include compile gate snippet '$snippet'."
+        }
+    }
+
+    $forbiddenCommandPlaceholders = @(
+        '<install dependencies command>',
+        '<local environment bootstrap command>',
+        '<start backend command>',
+        '<start frontend command>',
+        '<start worker or background job command>',
+        '<unit test command>',
+        '<integration test command>',
+        '<e2e test command>',
+        '<lint command>',
+        '<type-check command>',
+        '<format check command>',
+        '<compile command>',
+        '<build command>',
+        '<container or artifact packaging command>'
+    )
+
+    foreach ($placeholder in $forbiddenCommandPlaceholders) {
+        if ($commandsContent -match [regex]::Escape($placeholder)) {
+            $commandsContractViolations += "40-commands.md contains unresolved command placeholder: $placeholder"
+        }
+    }
+
+    $compileSectionMatch = [regex]::Match(
+        $commandsContent,
+        '(?ms)^### Compile Gate \(Mandatory\)\s*```[^\r\n]*\r?\n(?<body>.*?)\r?\n```'
+    )
+
+    if (-not $compileSectionMatch.Success) {
+        $commandsContractViolations += '40-commands.md must define a fenced command block under `### Compile Gate (Mandatory)`.'
+    } else {
+        $compileCommandLines = @(
+            $compileSectionMatch.Groups['body'].Value -split "\r?\n" |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and -not $_.StartsWith('#') }
+        )
+
+        if ($compileCommandLines.Count -eq 0) {
+            $commandsContractViolations += '40-commands.md compile gate section must contain at least one non-comment command.'
+        } elseif ($compileCommandLines[0] -match '^\s*<[^>]+>\s*$') {
+            $commandsContractViolations += "40-commands.md compile gate command is unresolved placeholder: $($compileCommandLines[0])"
+        }
+    }
+}
+
 $coreRuleContractViolations = @()
 $coreRulePath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md'
 if (Test-Path $coreRulePath) {
@@ -706,6 +830,10 @@ foreach ($profile in $providerOrchestratorProfiles) {
         $providerAgentContractViolations += "$($profile.RelativePath) must reference task event logger 'log-task-event.ps1'."
     }
 
+    if ($profileContent -notmatch [regex]::Escape('compile-gate.ps1')) {
+        $providerAgentContractViolations += "$($profile.RelativePath) must reference compile gate script 'compile-gate.ps1'."
+    }
+
     if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl')) {
         $providerAgentContractViolations += "$($profile.RelativePath) must reference task timeline log path 'runtime/task-events/<task-id>.jsonl'."
     }
@@ -860,12 +988,33 @@ if ($artifactEnforceNoAutoCommit) {
     }
 }
 
+$initPromptContractViolations = @()
+$initPromptPath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md'
+if (Test-Path -LiteralPath $initPromptPath -PathType Leaf) {
+    $initPromptContent = Get-Content -Path $initPromptPath -Raw
+    $requiredInitPromptSnippets = @(
+        '`Already configured specialist skills`:',
+        '`Available specialist skills to enable/create now`:',
+        '`Recommendation for this project`:',
+        'Do you want to add additional specialist skills now? (yes/no)',
+        'still include the presented `already configured` list, `available` list, and recommendation in the report for traceability.'
+    )
+
+    foreach ($snippet in $requiredInitPromptSnippets) {
+        if ($initPromptContent -notmatch [regex]::Escape($snippet)) {
+            $initPromptContractViolations += "Missing specialist-skills init contract snippet in AGENT_INIT_PROMPT.md: $snippet"
+        }
+    }
+}
+
 $reviewerExecutionContractViolations = @()
 $orchestrationSkillPath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md'
 if (Test-Path -LiteralPath $orchestrationSkillPath -PathType Leaf) {
     $orchestrationSkillContent = Get-Content -Path $orchestrationSkillPath -Raw
     $requiredSkillSnippets = @(
         '## Reviewer Agent Execution (Claude Code)',
+        'compile-gate.ps1 -TaskId "<task-id>" -CommandsPath "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"',
+        'COMPILE_GATE_PASSED',
         'Launch reviewer via Agent tool using clean context (`fork_context=false`).',
         'review artifact write path: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.',
         'required-reviews-check.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',
@@ -893,6 +1042,7 @@ if (Test-Path -LiteralPath $taskWorkflowRulePath -PathType Leaf) {
     $taskWorkflowRuleContent = Get-Content -Path $taskWorkflowRulePath -Raw
     $requiredWorkflowSnippets = @(
         'Reviewer-agent execution mechanics are defined in `orchestration/SKILL.md` section `Reviewer Agent Execution (Claude Code)`.',
+        'Compile gate script must pass before `IN_REVIEW`:',
         'Fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewers.',
         'Do you want me to commit now? (yes/no)'
     )
@@ -920,6 +1070,7 @@ Write-Output "TaskContractViolationCount: $($taskContractViolations.Count)"
 Write-Output "QwenSettingsViolationCount: $($qwenSettingsViolations.Count)"
 Write-Output "RuleFileViolationCount: $($ruleFileViolations.Count)"
 Write-Output "TemplatePlaceholderViolationCount: $($templatePlaceholderViolations.Count)"
+Write-Output "CommandsContractViolationCount: $($commandsContractViolations.Count)"
 Write-Output "InitAnswersContractViolationCount: $($initAnswersContractViolations.Count)"
 Write-Output "CoreRuleContractViolationCount: $($coreRuleContractViolations.Count)"
 Write-Output "EntrypointContractViolationCount: $($entrypointContractViolations.Count)"
@@ -927,6 +1078,8 @@ Write-Output "ProviderAgentContractViolationCount: $($providerAgentContractViola
 Write-Output "GitHubSkillBridgeContractViolationCount: $($githubSkillBridgeContractViolations.Count)"
 Write-Output "CopilotInstructionContractViolationCount: $($copilotInstructionContractViolations.Count)"
 Write-Output "CommitGuardContractViolationCount: $($commitGuardContractViolations.Count)"
+Write-Output "InitPromptContractViolationCount: $($initPromptContractViolations.Count)"
+Write-Output "ReviewerExecutionContractViolationCount: $($reviewerExecutionContractViolations.Count)"
 Write-Output "GitignoreMissingCount: $($gitignoreMissing.Count)"
 
 if ($missingPaths.Count -gt 0) {
@@ -974,6 +1127,13 @@ if ($ruleFileViolations.Count -gt 0) {
 if ($templatePlaceholderViolations.Count -gt 0) {
     Write-Output 'TemplatePlaceholderViolations:'
     foreach ($item in $templatePlaceholderViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($commandsContractViolations.Count -gt 0) {
+    Write-Output 'CommandsContractViolations:'
+    foreach ($item in $commandsContractViolations) {
         Write-Output " - $item"
     }
 }
@@ -1027,6 +1187,20 @@ if ($commitGuardContractViolations.Count -gt 0) {
     }
 }
 
+if ($initPromptContractViolations.Count -gt 0) {
+    Write-Output 'InitPromptContractViolations:'
+    foreach ($item in $initPromptContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($reviewerExecutionContractViolations.Count -gt 0) {
+    Write-Output 'ReviewerExecutionContractViolations:'
+    foreach ($item in $reviewerExecutionContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
 if ($gitignoreMissing.Count -gt 0) {
     Write-Output 'MissingGitignoreEntries:'
     foreach ($item in $gitignoreMissing) {
@@ -1042,6 +1216,7 @@ if (
     $qwenSettingsViolations.Count -gt 0 -or
     $ruleFileViolations.Count -gt 0 -or
     $templatePlaceholderViolations.Count -gt 0 -or
+    $commandsContractViolations.Count -gt 0 -or
     $initAnswersContractViolations.Count -gt 0 -or
     $coreRuleContractViolations.Count -gt 0 -or
     $entrypointContractViolations.Count -gt 0 -or
@@ -1049,6 +1224,8 @@ if (
     $githubSkillBridgeContractViolations.Count -gt 0 -or
     $copilotInstructionContractViolations.Count -gt 0 -or
     $commitGuardContractViolations.Count -gt 0 -or
+    $initPromptContractViolations.Count -gt 0 -or
+    $reviewerExecutionContractViolations.Count -gt 0 -or
     $gitignoreMissing.Count -gt 0
 ) {
     throw 'Verification failed. Resolve listed issues and rerun.'

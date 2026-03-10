@@ -21,6 +21,12 @@ if ([string]::IsNullOrWhiteSpace($TargetRoot)) {
 }
 $TargetRoot = (Resolve-Path $TargetRoot).Path
 
+$normalizedTargetRoot = $TargetRoot.TrimEnd('\', '/')
+$normalizedBundleRoot = $bundleRoot.TrimEnd('\', '/')
+if ([string]::Equals($normalizedTargetRoot, $normalizedBundleRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "TargetRoot points to orchestrator bundle directory '$bundleRoot'. Use the project root parent directory instead."
+}
+
 $deployedBundleRoot = Join-Path $TargetRoot 'Octopus-agent-orchestrator'
 if (-not (Test-Path -LiteralPath $deployedBundleRoot -PathType Container)) {
     throw "Deployed bundle not found: $deployedBundleRoot"
@@ -54,13 +60,64 @@ function Compare-VersionStrings {
         [string]$Latest
     )
 
+    $currentNormalized = $Current.Trim()
+    $latestNormalized = $Latest.Trim()
+    $currentNormalized = $currentNormalized.TrimStart('v', 'V')
+    $latestNormalized = $latestNormalized.TrimStart('v', 'V')
+
     try {
-        $currentParsed = [version]$Current
-        $latestParsed = [version]$Latest
-        return $currentParsed.CompareTo($latestParsed)
+        $currentSemVer = [System.Management.Automation.SemanticVersion]::Parse($currentNormalized)
+        $latestSemVer = [System.Management.Automation.SemanticVersion]::Parse($latestNormalized)
+        return $currentSemVer.CompareTo($latestSemVer)
     }
     catch {
-        return [string]::Compare($Current, $Latest, $true)
+        try {
+            $currentParsed = [version]$currentNormalized
+            $latestParsed = [version]$latestNormalized
+            return $currentParsed.CompareTo($latestParsed)
+        }
+        catch {
+            return [string]::Compare($currentNormalized, $latestNormalized, $true)
+        }
+    }
+}
+
+function Restore-SyncedItemsFromBackup {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TargetBundleRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$BackupRoot,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$PreexistingMap
+    )
+
+    foreach ($item in $PreexistingMap.Keys) {
+        $destinationPath = Join-Path $TargetBundleRoot $item
+        $preexisting = [bool]$PreexistingMap[$item]
+
+        if ($preexisting) {
+            $backupPath = Join-Path $BackupRoot $item
+            if (-not (Test-Path -LiteralPath $backupPath)) {
+                throw "Missing backup entry for '$item': $backupPath"
+            }
+
+            if (Test-Path -LiteralPath $destinationPath) {
+                Remove-Item -LiteralPath $destinationPath -Recurse -Force
+            }
+
+            $destinationParent = Split-Path -Parent $destinationPath
+            if ($destinationParent -and -not (Test-Path -LiteralPath $destinationParent)) {
+                New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+            }
+
+            Copy-Item -LiteralPath $backupPath -Destination $destinationPath -Recurse -Force
+            continue
+        }
+
+        if (Test-Path -LiteralPath $destinationPath) {
+            Remove-Item -LiteralPath $destinationPath -Recurse -Force
+        }
     }
 }
 
@@ -74,6 +131,7 @@ $syncUpdatedCount = 0
 $syncBackupCount = 0
 $syncCopiedItems = @()
 $syncBackupPathOutput = 'not-created'
+$syncRollbackStatus = 'NOT_NEEDED'
 $checkResult = 'UNKNOWN'
 $updateApplied = $false
 
@@ -127,74 +185,109 @@ try {
             'LICENSE',
             'VERSION'
         )
+        $syncPreexistingMap = @{}
 
-        foreach ($item in $syncItems) {
-            $sourcePath = Join-Path $tempRepoPath $item
-            if (-not (Test-Path -LiteralPath $sourcePath)) {
-                continue
-            }
-
-            $syncItemCount++
-            $destinationPath = Join-Path $deployedBundleRoot $item
-            $destinationExists = Test-Path -LiteralPath $destinationPath
-
-            if ($DryRun) {
-                $syncCopiedItems += $item
-                continue
-            }
-
-            if ($destinationExists) {
-                $backupPath = Join-Path $syncBackupRoot $item
-                $backupDir = Split-Path -Parent $backupPath
-                if ($backupDir -and -not (Test-Path -LiteralPath $backupDir)) {
-                    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+        try {
+            foreach ($item in $syncItems) {
+                $sourcePath = Join-Path $tempRepoPath $item
+                if (-not (Test-Path -LiteralPath $sourcePath)) {
+                    continue
                 }
-                Copy-Item -LiteralPath $destinationPath -Destination $backupPath -Recurse -Force
-                $syncBackupCount++
-                $syncBackupPathOutput = $syncBackupRoot
+
+                $syncItemCount++
+                $destinationPath = Join-Path $deployedBundleRoot $item
+                $destinationExists = Test-Path -LiteralPath $destinationPath
+
+                if ($DryRun) {
+                    $syncCopiedItems += $item
+                    continue
+                }
+
+                if (-not $syncPreexistingMap.ContainsKey($item)) {
+                    $syncPreexistingMap[$item] = $destinationExists
+                }
+
+                if ($destinationExists) {
+                    $backupPath = Join-Path $syncBackupRoot $item
+                    $backupDir = Split-Path -Parent $backupPath
+                    if ($backupDir -and -not (Test-Path -LiteralPath $backupDir)) {
+                        New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+                    }
+                    Copy-Item -LiteralPath $destinationPath -Destination $backupPath -Recurse -Force
+                    $syncBackupCount++
+                    $syncBackupPathOutput = $syncBackupRoot
+                }
+
+                $destinationParent = Split-Path -Parent $destinationPath
+                if ($destinationParent -and -not (Test-Path -LiteralPath $destinationParent)) {
+                    New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+                }
+
+                if (Test-Path -LiteralPath $destinationPath -PathType Container) {
+                    Remove-Item -LiteralPath $destinationPath -Recurse -Force
+                }
+
+                if (Test-Path -LiteralPath $sourcePath -PathType Container) {
+                    Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Recurse -Force
+                } else {
+                    Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+                }
+
+                $syncUpdatedCount++
+                $syncCopiedItems += $item
             }
 
-            $destinationParent = Split-Path -Parent $destinationPath
-            if ($destinationParent -and -not (Test-Path -LiteralPath $destinationParent)) {
-                New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
-            }
+            if (-not $DryRun) {
+                $updateScriptPath = Join-Path $deployedBundleRoot 'scripts/update.ps1'
+                if (-not (Test-Path -LiteralPath $updateScriptPath -PathType Leaf)) {
+                    throw "Updated update script not found: $updateScriptPath"
+                }
 
-            if (Test-Path -LiteralPath $destinationPath -PathType Container) {
-                Remove-Item -LiteralPath $destinationPath -Recurse -Force
-            }
+                $updateParams = @{
+                    TargetRoot      = $TargetRoot
+                    InitAnswersPath = $InitAnswersPath
+                }
+                if ($SkipVerify) {
+                    $updateParams.SkipVerify = $true
+                }
+                if ($SkipManifestValidation) {
+                    $updateParams.SkipManifestValidation = $true
+                }
 
-            if (Test-Path -LiteralPath $sourcePath -PathType Container) {
-                Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Recurse -Force
+                & $updateScriptPath @updateParams
+                $updateApplied = $true
+                $checkResult = 'UPDATED'
+                if ($syncPreexistingMap.Count -gt 0 -and $syncRollbackStatus -eq 'NOT_NEEDED') {
+                    $syncRollbackStatus = 'NOT_TRIGGERED'
+                }
             } else {
-                Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+                $checkResult = 'DRY_RUN_UPDATE_AVAILABLE'
             }
-
-            $syncUpdatedCount++
-            $syncCopiedItems += $item
         }
+        catch {
+            $originalError = $_.Exception.Message
+            if (-not $DryRun -and $syncPreexistingMap.Count -gt 0) {
+                $syncRollbackStatus = 'ATTEMPTED'
+                $rollbackFailed = $false
+                $rollbackError = $null
+                try {
+                    Restore-SyncedItemsFromBackup -TargetBundleRoot $deployedBundleRoot -BackupRoot $syncBackupRoot -PreexistingMap $syncPreexistingMap
+                    $syncRollbackStatus = 'SUCCESS'
+                }
+                catch {
+                    $rollbackFailed = $true
+                    $rollbackError = $_.Exception.Message
+                    $syncRollbackStatus = "FAILED: $rollbackError"
+                }
 
-        if (-not $DryRun) {
-            $updateScriptPath = Join-Path $deployedBundleRoot 'scripts/update.ps1'
-            if (-not (Test-Path -LiteralPath $updateScriptPath -PathType Leaf)) {
-                throw "Updated update script not found: $updateScriptPath"
+                if ($rollbackFailed) {
+                    throw "Update apply failed. Original error: $originalError. Sync rollback failed: $rollbackError"
+                }
+
+                throw "Update apply failed and sync rollback completed. Original error: $originalError"
             }
 
-            $updateParams = @{
-                TargetRoot      = $TargetRoot
-                InitAnswersPath = $InitAnswersPath
-            }
-            if ($SkipVerify) {
-                $updateParams.SkipVerify = $true
-            }
-            if ($SkipManifestValidation) {
-                $updateParams.SkipManifestValidation = $true
-            }
-
-            & $updateScriptPath @updateParams
-            $updateApplied = $true
-            $checkResult = 'UPDATED'
-        } else {
-            $checkResult = 'DRY_RUN_UPDATE_AVAILABLE'
+            throw "Update apply failed. Error: $originalError"
         }
     }
 }
@@ -219,6 +312,7 @@ Write-Output "SyncItemsDetected: $syncItemCount"
 Write-Output "SyncItemsBackedUp: $syncBackupCount"
 Write-Output "SyncItemsUpdated: $syncUpdatedCount"
 Write-Output "SyncBackupRoot: $syncBackupPathOutput"
+Write-Output "SyncRollbackStatus: $syncRollbackStatus"
 if ($syncCopiedItems.Count -gt 0) {
     Write-Output ('SyncedItems: ' + ($syncCopiedItems -join ', '))
 }

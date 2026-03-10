@@ -33,6 +33,22 @@ function Normalize-Path {
     return $PathValue.Replace('\', '/')
 }
 
+function Assert-ValidTaskId {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw 'TaskId must not be empty.'
+    }
+
+    if ($Value.Length -gt 128) {
+        throw 'TaskId must be 128 characters or fewer.'
+    }
+
+    if ($Value -notmatch '^[A-Za-z0-9._-]+$') {
+        throw "TaskId '$Value' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$"
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Resolve-ProjectRoot
 } else {
@@ -41,11 +57,12 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 
 $TaskId = $TaskId.Trim()
 $EventType = $EventType.Trim()
-if ([string]::IsNullOrWhiteSpace($TaskId)) {
-    throw 'TaskId must not be empty.'
-}
+Assert-ValidTaskId -Value $TaskId
 if ([string]::IsNullOrWhiteSpace($EventType)) {
     throw 'EventType must not be empty.'
+}
+if ($EventType -match '^(COMPILE_GATE_|REVIEW_GATE_|PREFLIGHT_)') {
+    throw "EventType '$EventType' is reserved and cannot be emitted via log-task-event."
 }
 
 if ([string]::IsNullOrWhiteSpace($EventsRoot)) {

@@ -46,6 +46,17 @@ def normalize_path(path_value: str):
     return normalized or None
 
 
+def assert_valid_task_id(value: str):
+    if not value or not value.strip():
+        raise ValueError("TaskId must not be empty.")
+    task_id = value.strip()
+    if len(task_id) > 128:
+        raise ValueError("TaskId must be 128 characters or fewer.")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", task_id):
+        raise ValueError(f"TaskId '{task_id}' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$")
+    return task_id
+
+
 def to_posix(path_obj: Path) -> str:
     return str(path_obj).replace("\\", "/")
 
@@ -87,6 +98,7 @@ def resolve_task_id(explicit_task_id: str, output_path_hint: str):
 def append_task_event(repo_root: Path, task_id: str, event_type: str, outcome: str, message: str, details: dict):
     if not task_id:
         return
+    task_id = assert_valid_task_id(task_id)
     events_dir = (repo_root / "Octopus-agent-orchestrator/runtime/task-events").resolve()
     events_dir.mkdir(parents=True, exist_ok=True)
 
@@ -113,7 +125,7 @@ def run_git(repo_root: Path, args):
         check=False,
     )
     if completed.returncode != 0:
-        return []
+        raise RuntimeError(f"git command failed: {' '.join(args)}")
     return [line for line in completed.stdout.splitlines() if line.strip()]
 
 
@@ -378,21 +390,45 @@ if (not git_available) and (not is_explicit_changed_files):
     print("Git is not available and no changed files were provided.", file=sys.stderr)
     sys.exit(1)
 
+git_worktree_ready = False
+if git_available:
+    try:
+        subprocess.run(["git", "-C", str(repo_root), "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, check=True)
+        git_worktree_ready = True
+    except Exception:
+        git_worktree_ready = False
+if (not is_explicit_changed_files) and (not git_worktree_ready):
+    print(
+        f"Git diff operations failed for repo root '{repo_root}'. Provide --changed-file/--changed-files or run inside a valid git worktree.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 detection_source = "explicit_changed_files"
 detected_from_git = []
 untracked_from_git = []
 if not is_explicit_changed_files:
-    if args.use_staged:
-        detection_source = "git_staged_plus_untracked" if include_untracked else "git_staged_only"
-        detected_from_git = run_git(repo_root, ["diff", "--cached", "--name-only", "--diff-filter=ACMRTUXB"])
-    else:
-        detection_source = "git_auto"
-        detected_from_git = run_git(repo_root, ["diff", "--name-only", "--diff-filter=ACMRTUXB", "HEAD"])
+    if not git_worktree_ready:
+        print(
+            f"Git diff operations failed for repo root '{repo_root}'. Provide --changed-file/--changed-files or run inside a valid git worktree.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    try:
+        if args.use_staged:
+            detection_source = "git_staged_plus_untracked" if include_untracked else "git_staged_only"
+            detected_from_git = run_git(repo_root, ["diff", "--cached", "--name-only", "--diff-filter=ACMRTUXB"])
+        else:
+            detection_source = "git_auto"
+            detected_from_git = run_git(repo_root, ["diff", "--name-only", "--diff-filter=ACMRTUXB", "HEAD"])
 
-    if include_untracked:
-        untracked_from_git = run_git(repo_root, ["ls-files", "--others", "--exclude-standard"])
+        if include_untracked:
+            untracked_from_git = run_git(repo_root, ["ls-files", "--others", "--exclude-standard"])
 
-    changed_files = sorted(set(detected_from_git + untracked_from_git))
+        changed_files = sorted(set(detected_from_git + untracked_from_git))
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
 else:
     changed_files = explicit_changed
 
@@ -409,7 +445,7 @@ additions_total = 0
 deletions_total = 0
 rename_count = 0
 
-if git_available:
+if git_worktree_ready:
     numstat_args = ["diff", "--numstat", "--diff-filter=ACMRTUXB"]
     if (not is_explicit_changed_files) and args.use_staged:
         numstat_args.append("--cached")
@@ -462,6 +498,11 @@ if git_available:
                 changed_lines = count_file_lines(repo_root / normalized)
                 additions_total += changed_lines
                 changed_lines_total += changed_lines
+elif is_explicit_changed_files:
+    for file_path in normalized_files:
+        changed_lines = count_file_lines(repo_root / file_path)
+        additions_total += changed_lines
+        changed_lines_total += changed_lines
 
 runtime_changed = any(test_path_prefix(path, runtime_roots) for path in normalized_files)
 db_triggered = any(test_match_any_regex(path, db_trigger_regexes) for path in normalized_files)
@@ -551,6 +592,12 @@ required_performance_review = performance_triggered and bool(review_capabilities
 required_infra_review = infra_triggered and bool(review_capabilities.get("infra"))
 required_dependency_review = dependency_triggered and bool(review_capabilities.get("dependency"))
 resolved_task_id = resolve_task_id(args.task_id, args.output_path)
+if resolved_task_id:
+    try:
+        resolved_task_id = assert_valid_task_id(resolved_task_id)
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
 
 result = {
     "detection_source": detection_source,

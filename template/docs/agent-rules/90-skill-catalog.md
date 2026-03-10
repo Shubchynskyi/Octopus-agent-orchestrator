@@ -27,6 +27,8 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
   `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1 -ChangedFiles @("<planned-file-1>", "<planned-file-2>") -TaskIntent "<task summary>" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
 - In dirty workspaces prefer staged mode:
   `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1 -UseStaged -TaskIntent "<task summary>" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
+- Compile gate is mandatory after implementation and before `IN_REVIEW`:
+  `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1 -TaskId "<task-id>" -CommandsPath "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"`
 - Preflight artifact is the only source for:
   - `path_mode` (`FAST_PATH` / `FULL_PATH`)
   - `required_reviews.code`
@@ -82,6 +84,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 
 ## Enforcement
 - Missing preflight artifact blocks progression.
+- Missing compile-gate pass (`COMPILE_GATE_PASSED`) blocks progression to `IN_REVIEW` and `DONE`.
 - Missing required skill invocation blocks progression.
 - Missing required verdict blocks completion.
 - Missing review gate check pass blocks completion.

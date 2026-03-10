@@ -2,6 +2,6 @@
 framework: openai
 role: specialist
 name: skill-builder
-version: 1.0.0
+version: 1.0.1
 description: Live-only specialist skill creation and wiring assistant.
 ---

@@ -10,7 +10,7 @@ allowed-tools:
   - Write
 metadata:
   author: Octopus-agent-orchestrator
-  version: 1.5.0
+  version: 1.6.0
   runtime_requirement: PowerShell 7+ (pwsh) or Bash + Python 3 for gate scripts
 ---
 
@@ -50,7 +50,11 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 7. Execute implementation path:
    - `FULL_PATH` runtime => tests first, then implementation.
    - non-runtime or `FAST_PATH` runtime => objective validations, then implementation.
-8. Run checks for changed scope (or explicitly report pending restricted checks).
+8. Run compile gate (mandatory) before review phase:
+   - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1 -TaskId "<task-id>" -CommandsPath "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"`
+   - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"`
+   - Compile gate writes task-scoped event `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED` automatically.
+   - On failure, do not move to review phase; fix and rerun until pass.
 9. Move task to `IN_REVIEW`.
    - Log event: `REVIEW_PHASE_STARTED`.
 10. Run only required independent reviews from preflight:
@@ -62,12 +66,13 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - Log event per reviewer invocation: `REVIEW_REQUESTED`.
 11. Run `required-reviews-check.ps1` and treat result as release gate.
    - `required-reviews-check` writes task-scoped event `REVIEW_GATE_PASSED` or `REVIEW_GATE_FAILED` automatically.
+   - `required-reviews-check` fails if compile evidence is missing in `runtime/task-events/<task-id>.jsonl` (missing `COMPILE_GATE_PASSED`).
 12. Fix blocking findings and repeat required reviews + gate check until pass.
    - On failed gate and return to coding, log event: `REWORK_STARTED`.
 13. Update required docs and changelog when behavior changed.
 14. Record artifacts and evidence in `TASK.md`.
 15. Set final status:
-   - `DONE` only when all mandatory gates passed.
+   - `DONE` only when compile gate and all mandatory review gates passed.
    - `BLOCKED` when any mandatory gate failed or cannot run.
    - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
 16. Report to user: implementation summary, depth, path mode, review verdicts, docs updated, and commit message suggestion.
@@ -132,14 +137,16 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Do not assign `FAST_PATH` / `FULL_PATH` manually.
 - Do not skip preflight classification.
 - Do not move to implementation without plan.
+- Do not move to `IN_REVIEW` without passing compile gate (`COMPILE_GATE_PASSED`).
 - Do not bypass required reviews without deterministic gate override contract.
-- Do not set `DONE` without passing `required-reviews-check.ps1`.
+- Do not set `DONE` without passing compile gate and `required-reviews-check.ps1`.
 - Do not skip explicit final user prompt about commit decision after reporting commit message suggestion.
 - Do not leave reviewer/specialist agents open after review completion (when platform supports agent lifecycle controls).
 
 ## Mandatory Outputs
 - Updated task row and status transitions in `TASK.md`.
 - Preflight artifact: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json`.
+- Compile gate result: `COMPILE_GATE_PASSED`.
 - Required review artifacts and verdicts.
 - Gate check result (`REVIEW_GATE_PASSED` or `REVIEW_GATE_PASSED_WITH_OVERRIDE`).
 - Task event trace: `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
@@ -160,6 +167,8 @@ Rule files provide policy context, but lifecycle steps and gate order are define
   - Re-run `classify-change.ps1` with explicit `-OutputPath`.
 - Required review verdict missing:
   - Re-run missing reviewer and then `required-reviews-check.ps1`.
+- Compile gate failed:
+  - Fix compile errors and rerun `compile-gate.ps1` / `.sh` until `COMPILE_GATE_PASSED`.
 - Override rejected:
   - Scope is too large or specialized reviews are required; remove override and run full review path.
 - Git noise in dirty workspace:

@@ -17,6 +17,7 @@ Use this format in the `Artifacts` column for `IN_REVIEW`, `DONE`, and `BLOCKED`
 Completion constraints:
 - `DONE` requires valid `path_mode`.
 - For tasks created after adoption of T-008 workflow, `DONE` requires concrete `preflight_artifact` path.
+- `DONE` requires compile gate pass (`COMPILE_GATE_PASSED` event in task timeline).
 - `DONE` requires `code_review_verdict=REVIEW PASSED` for runtime code tasks, otherwise `NOT_REQUIRED`.
 - `DONE` requires `db_review_verdict=DB REVIEW PASSED` when DB trigger matched, otherwise `NOT_REQUIRED`.
 - `DONE` requires `security_review_verdict=SECURITY REVIEW PASSED` when security trigger matched, otherwise `NOT_REQUIRED`.

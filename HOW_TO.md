@@ -19,7 +19,11 @@ Before installation, the agent must ask you:
 After collecting all 4 answers, the agent must write `Octopus-agent-orchestrator/runtime/init-answers.json` and pass it to `install.ps1` and `verify.ps1` through `-InitAnswersPath`.
 After install/init, the agent must use `Octopus-agent-orchestrator/live/project-discovery.md` to fill context rules for this repository.
 After successful setup, the agent must provide a short `Usage Instructions` section in the language you selected.
-After verification, the agent should optionally ask whether you want to add extra specialist skills (live-only).
+After verification, before asking `Do you want to add additional specialist skills now? (yes/no)`, the agent must show:
+- already configured specialist skills (enabled capability keys + existing live specialist skill directories);
+- available skills that can be enabled/created now (`api-review`, `test-review`, `performance-review`, `infra-review`, `dependency-review`, or custom via skill-builder);
+- recommended specialist set for this specific project.
+Then the agent asks the yes/no question and proceeds with skill creation only on approval.
 
 ## 3. Expected Result
 After successful setup:
@@ -30,6 +34,7 @@ After successful setup:
 - Selected source-of-truth entrypoint contains canonical routing index.
 - All non-selected entrypoint files redirect to the selected source-of-truth entrypoint.
 - Canonical rules are available under `Octopus-agent-orchestrator/live/docs/agent-rules/`.
+- Compile gate scripts are available under `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1` and `.sh`.
 - Validation passes:
   - `install.ps1`
   - `verify.ps1`
@@ -44,6 +49,7 @@ After successful setup:
 Note:
 - Template placeholders like `{{ASSISTANT_RESPONSE_LANGUAGE}}` and `{{ASSISTANT_RESPONSE_BREVITY}}` are expected before install/init.
 - They are resolved during setup into concrete values in `Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md`.
+- Command placeholders in `live/docs/agent-rules/40-commands.md` are not auto-resolved; they must be replaced with real project commands during setup, including `### Compile Gate (Mandatory)`.
 
 ## 4. Start Working On Tasks
 Use task commands in this shape:
@@ -75,11 +81,14 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 Gate scripts also have Bash alternatives:
 ```bash
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"
-bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "Octopus-agent-orchestrator/MANIFEST.md"
 ```
 Agent policy: auto-detect environment and run `.ps1` with `pwsh` when available, otherwise run `.sh` with `bash`.
 Bash gate scripts require a Python runtime in PATH (`python3`, `python`, or `py -3`).
+Compile gate command source is `Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md` section `### Compile Gate (Mandatory)`.
+Review gate validates compile evidence from task timeline; without `COMPILE_GATE_PASSED` for the same task id, `required-reviews-check` fails.
 
 ## 7. Update Existing Deployment
 Preferred flow (check + optional apply from git):
@@ -100,6 +109,8 @@ Behavior:
 ```powershell
 pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -Apply -NoPrompt -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
+
+If you pass `-TargetRoot` manually for `check-update.ps1` or `update.ps1`, use the project root path (parent directory that contains `Octopus-agent-orchestrator/`), not the bundle directory itself.
 
 By default, `check-update.ps1` uses:
 `https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git`

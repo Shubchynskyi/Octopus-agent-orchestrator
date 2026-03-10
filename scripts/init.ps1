@@ -25,6 +25,12 @@ if ([string]::IsNullOrWhiteSpace($TargetRoot)) {
 }
 $TargetRoot = (Resolve-Path $TargetRoot).Path
 
+$normalizedTargetRoot = $TargetRoot.TrimEnd('\', '/')
+$normalizedBundleRoot = $bundleRoot.TrimEnd('\', '/')
+if ([string]::Equals($normalizedTargetRoot, $normalizedBundleRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "TargetRoot points to orchestrator bundle directory '$bundleRoot'. Use the project root parent directory instead."
+}
+
 $projectName = Split-Path -Leaf $TargetRoot
 $timestampIso = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ssK')
 $liveRuleRoot = Join-Path $liveRoot 'docs/agent-rules'
@@ -91,6 +97,7 @@ $discoveryAugmentedRuleFiles = @(
     '20-architecture.md',
     '30-code-style.md',
     '40-commands.md',
+    '50-structure-and-docs.md',
     '60-operating-rules.md'
 )
 
@@ -384,11 +391,11 @@ function Select-RuleSource {
         if (Test-Path $legacyCandidate) {
             return @{ Path = $legacyCandidate; Origin = 'legacy-docs' }
         }
-        if (Test-Path $templateCandidate) {
-            return @{ Path = $templateCandidate; Origin = 'template' }
-        }
         if (Test-Path $liveCandidate) {
             return @{ Path = $liveCandidate; Origin = 'live-existing' }
+        }
+        if (Test-Path $templateCandidate) {
+            return @{ Path = $templateCandidate; Origin = 'template' }
         }
     } else {
         if (Test-Path $liveCandidate) {
@@ -673,9 +680,9 @@ foreach ($item in $ruleSourceMap) {
 }
 $initReportLines += ''
 $initReportLines += '## Context Fill Policy'
-$initReportLines += '- Project-context rules (`10/20/30/40/50/60`) prefer `docs/agent-rules/*` when available.'
-$initReportLines += '- All other rules prefer existing `live` content, then template defaults.'
-$initReportLines += '- Discovery overlay is appended to context rules (`10/20/30/40/60`) using `live/project-discovery.md`.'
+$initReportLines += '- Project-context rules (`10/20/30/40/50/60`) prefer legacy `docs/agent-rules/*`, then existing `live` content, then template defaults.'
+$initReportLines += '- All other rules prefer existing `live` content, then template defaults, then legacy docs fallback.'
+$initReportLines += '- Discovery overlay is appended to context rules (`10/20/30/40/50/60`) using `live/project-discovery.md`.'
 $initReportLines += '- Selected source-of-truth entrypoint (`' + $SourceOfTruth + '`) is provided by installer and points to `Octopus-agent-orchestrator/live/docs/agent-rules/*`.'
 
 $sourceInventoryPath = Join-Path $liveRoot 'source-inventory.md'

@@ -16,6 +16,189 @@ if ([string]::IsNullOrWhiteSpace($TargetRoot)) {
 }
 $TargetRoot = (Resolve-Path $TargetRoot).Path
 
+$normalizedTargetRoot = $TargetRoot.TrimEnd('\', '/')
+$normalizedBundleRoot = $bundleRoot.TrimEnd('\', '/')
+if ([string]::Equals($normalizedTargetRoot, $normalizedBundleRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "TargetRoot points to orchestrator bundle directory '$bundleRoot'. Use the project root parent directory instead."
+}
+
+function Get-NormalizedPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PathValue
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($PathValue)
+    $rootPath = [System.IO.Path]::GetPathRoot($fullPath)
+    if (-not [string]::IsNullOrWhiteSpace($rootPath) -and [string]::Equals($fullPath, $rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $fullPath
+    }
+
+    return $fullPath.TrimEnd('\', '/')
+}
+
+function Test-IsPathInsideRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RootPath,
+        [Parameter(Mandatory = $true)]
+        [string]$CandidatePath
+    )
+
+    $rootFull = Get-NormalizedPath -PathValue $RootPath
+    $candidateFull = Get-NormalizedPath -PathValue $CandidatePath
+
+    if ([string]::Equals($rootFull, $candidateFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+
+    $rootWithSeparator = if ($rootFull.EndsWith('\') -or $rootFull.EndsWith('/')) {
+        $rootFull
+    } else {
+        $rootFull + [System.IO.Path]::DirectorySeparatorChar
+    }
+    return $candidateFull.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Resolve-PathInsideRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RootPath,
+        [Parameter(Mandatory = $true)]
+        [string]$PathValue,
+        [Parameter(Mandatory = $true)]
+        [string]$Label,
+        [switch]$RequireFile
+    )
+
+    $candidatePath = $PathValue
+    if (-not [System.IO.Path]::IsPathRooted($candidatePath)) {
+        $candidatePath = Join-Path $RootPath $candidatePath
+    }
+
+    $candidatePath = [System.IO.Path]::GetFullPath($candidatePath)
+    if (-not (Test-IsPathInsideRoot -RootPath $RootPath -CandidatePath $candidatePath)) {
+        throw "$Label must resolve inside TargetRoot '$RootPath'. Resolved path: $candidatePath"
+    }
+
+    if ($RequireFile -and -not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) {
+        throw "$Label file not found: $candidatePath"
+    }
+
+    if ($RequireFile) {
+        $resolvedCandidatePath = (Resolve-Path -LiteralPath $candidatePath).Path
+        if (-not (Test-IsPathInsideRoot -RootPath $RootPath -CandidatePath $resolvedCandidatePath)) {
+            throw "$Label must resolve inside TargetRoot '$RootPath'. Resolved path: $resolvedCandidatePath"
+        }
+
+        return $resolvedCandidatePath
+    }
+
+    return $candidatePath
+}
+
+function Get-UpdateRollbackItems {
+    return @(
+        'CLAUDE.md',
+        'AGENTS.md',
+        'GEMINI.md',
+        'TASK.md',
+        '.qwen/settings.json',
+        '.github/copilot-instructions.md',
+        '.github/agents',
+        '.windsurf/rules/rules.md',
+        '.windsurf/agents',
+        '.junie/guidelines.md',
+        '.junie/agents',
+        '.antigravity/rules.md',
+        '.antigravity/agents',
+        '.gitignore',
+        '.git/hooks/pre-commit',
+        'Octopus-agent-orchestrator/live'
+    )
+}
+
+function New-RollbackSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RootPath,
+        [Parameter(Mandatory = $true)]
+        [string]$SnapshotRoot,
+        [Parameter(Mandatory = $true)]
+        [string[]]$RelativePaths
+    )
+
+    $records = @()
+    foreach ($relativePath in ($RelativePaths | Sort-Object -Unique)) {
+        $targetPath = Join-Path $RootPath $relativePath
+        $exists = Test-Path -LiteralPath $targetPath
+        $pathType = 'missing'
+        if ($exists) {
+            if (Test-Path -LiteralPath $targetPath -PathType Container) {
+                $pathType = 'directory'
+            } else {
+                $pathType = 'file'
+            }
+
+            $snapshotPath = Join-Path $SnapshotRoot $relativePath
+            $snapshotParent = Split-Path -Parent $snapshotPath
+            if ($snapshotParent -and -not (Test-Path -LiteralPath $snapshotParent)) {
+                New-Item -ItemType Directory -Path $snapshotParent -Force | Out-Null
+            }
+
+            Copy-Item -LiteralPath $targetPath -Destination $snapshotPath -Recurse -Force
+        }
+
+        $records += [PSCustomObject]@{
+            RelativePath = $relativePath
+            Existed      = $exists
+            PathType     = $pathType
+        }
+    }
+
+    return $records
+}
+
+function Restore-RollbackSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RootPath,
+        [Parameter(Mandatory = $true)]
+        [string]$SnapshotRoot,
+        [Parameter(Mandatory = $true)]
+        [object[]]$Records
+    )
+
+    foreach ($record in $Records) {
+        $relativePath = [string]$record.RelativePath
+        $targetPath = Join-Path $RootPath $relativePath
+        $snapshotPath = Join-Path $SnapshotRoot $relativePath
+        $shouldExist = [bool]$record.Existed
+
+        if ($shouldExist) {
+            if (-not (Test-Path -LiteralPath $snapshotPath)) {
+                throw "Rollback snapshot entry missing for '$relativePath': $snapshotPath"
+            }
+
+            if (Test-Path -LiteralPath $targetPath) {
+                Remove-Item -LiteralPath $targetPath -Recurse -Force
+            }
+
+            $targetParent = Split-Path -Parent $targetPath
+            if ($targetParent -and -not (Test-Path -LiteralPath $targetParent)) {
+                New-Item -ItemType Directory -Path $targetParent -Force | Out-Null
+            }
+
+            Copy-Item -LiteralPath $snapshotPath -Destination $targetPath -Recurse -Force
+            continue
+        }
+
+        if (Test-Path -LiteralPath $targetPath) {
+            Remove-Item -LiteralPath $targetPath -Recurse -Force
+        }
+    }
+}
+
 function Get-InitAnswerValue {
     param(
         [Parameter(Mandatory = $true)]
@@ -38,16 +221,7 @@ function Get-InitAnswerValue {
     return $null
 }
 
-$initAnswersCandidatePath = $InitAnswersPath
-if (-not [System.IO.Path]::IsPathRooted($initAnswersCandidatePath)) {
-    $initAnswersCandidatePath = Join-Path $TargetRoot $initAnswersCandidatePath
-}
-
-if (-not (Test-Path -LiteralPath $initAnswersCandidatePath -PathType Leaf)) {
-    throw "Init answers artifact not found: $initAnswersCandidatePath"
-}
-
-$initAnswersResolvedPath = (Resolve-Path -LiteralPath $initAnswersCandidatePath).Path
+$initAnswersResolvedPath = Resolve-PathInsideRoot -RootPath $TargetRoot -PathValue $InitAnswersPath -Label 'InitAnswersPath' -RequireFile
 $initAnswersRaw = Get-Content -LiteralPath $initAnswersResolvedPath -Raw
 if ([string]::IsNullOrWhiteSpace($initAnswersRaw)) {
     throw "Init answers artifact is empty: $initAnswersResolvedPath"
@@ -134,6 +308,12 @@ if (-not (Test-Path -LiteralPath $verifyScriptPath -PathType Leaf)) {
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $updateReportRelativePath = "Octopus-agent-orchestrator/runtime/update-reports/update-$timestamp.md"
 $updateReportPath = Join-Path $TargetRoot $updateReportRelativePath
+$rollbackSnapshotRelativePath = "Octopus-agent-orchestrator/runtime/update-rollbacks/update-$timestamp"
+$rollbackSnapshotPath = Join-Path $TargetRoot $rollbackSnapshotRelativePath
+$rollbackSnapshotCreated = $false
+$rollbackRecordCount = 0
+$rollbackStatus = 'NOT_NEEDED'
+$rollbackRecords = @()
 
 $installStatus = 'NOT_RUN'
 $verifyStatus = 'NOT_RUN'
@@ -151,48 +331,99 @@ if ($DryRun) {
     $installParams.DryRun = $true
 }
 
-& $installScriptPath @installParams
-$installStatus = 'PASS'
-
-if ($DryRun) {
-    $verifyStatus = 'SKIPPED_DRY_RUN'
-    $manifestStatus = 'SKIPPED_DRY_RUN'
-} else {
-    if ($SkipVerify) {
-        $verifyStatus = 'SKIPPED'
-    } else {
-        & $verifyScriptPath -TargetRoot $TargetRoot -SourceOfTruth $sourceOfTruth -InitAnswersPath $initAnswersResolvedPath
-        $verifyStatus = 'PASS'
+if (-not $DryRun) {
+    $rollbackRootDir = Split-Path -Parent $rollbackSnapshotPath
+    if ($rollbackRootDir -and -not (Test-Path -LiteralPath $rollbackRootDir)) {
+        New-Item -ItemType Directory -Path $rollbackRootDir -Force | Out-Null
     }
 
-    if ($SkipManifestValidation) {
-        $manifestStatus = 'SKIPPED'
+    $rollbackRecords = New-RollbackSnapshot -RootPath $TargetRoot -SnapshotRoot $rollbackSnapshotPath -RelativePaths (Get-UpdateRollbackItems)
+    $rollbackRecordCount = $rollbackRecords.Count
+    $rollbackSnapshotCreated = $true
+}
+
+$currentStage = 'INSTALL'
+try {
+    & $installScriptPath @installParams
+    $installStatus = 'PASS'
+
+    if ($DryRun) {
+        $verifyStatus = 'SKIPPED_DRY_RUN'
+        $manifestStatus = 'SKIPPED_DRY_RUN'
     } else {
-        if (-not (Test-Path -LiteralPath $manifestScriptPath -PathType Leaf)) {
-            throw "Manifest validation script not found: $manifestScriptPath"
-        }
-        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
-            throw "Manifest file not found: $manifestPath"
+        $currentStage = 'VERIFY'
+        if ($SkipVerify) {
+            $verifyStatus = 'SKIPPED'
+        } else {
+            & $verifyScriptPath -TargetRoot $TargetRoot -SourceOfTruth $sourceOfTruth -InitAnswersPath $initAnswersResolvedPath
+            $verifyStatus = 'PASS'
         }
 
-        & $manifestScriptPath -ManifestPath $manifestPath
-        $manifestStatus = 'PASS'
-    }
+        $currentStage = 'MANIFEST_VALIDATION'
+        if ($SkipManifestValidation) {
+            $manifestStatus = 'SKIPPED'
+        } else {
+            if (-not (Test-Path -LiteralPath $manifestScriptPath -PathType Leaf)) {
+                throw "Manifest validation script not found: $manifestScriptPath"
+            }
+            if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+                throw "Manifest file not found: $manifestPath"
+            }
 
-    if (Test-Path -LiteralPath $liveVersionPath -PathType Leaf) {
-        try {
-            $newLiveVersion = Get-Content -LiteralPath $liveVersionPath -Raw | ConvertFrom-Json -ErrorAction Stop
-            if ($null -ne $newLiveVersion -and $null -ne $newLiveVersion.PSObject.Properties['Version']) {
-                $newParsedVersion = [string]$newLiveVersion.Version
-                if (-not [string]::IsNullOrWhiteSpace($newParsedVersion)) {
-                    $updatedVersion = $newParsedVersion.Trim()
+            & $manifestScriptPath -ManifestPath $manifestPath
+            $manifestStatus = 'PASS'
+        }
+
+        if (Test-Path -LiteralPath $liveVersionPath -PathType Leaf) {
+            try {
+                $newLiveVersion = Get-Content -LiteralPath $liveVersionPath -Raw | ConvertFrom-Json -ErrorAction Stop
+                if ($null -ne $newLiveVersion -and $null -ne $newLiveVersion.PSObject.Properties['Version']) {
+                    $newParsedVersion = [string]$newLiveVersion.Version
+                    if (-not [string]::IsNullOrWhiteSpace($newParsedVersion)) {
+                        $updatedVersion = $newParsedVersion.Trim()
+                    }
                 }
             }
-        }
-        catch {
-            $updatedVersion = 'unknown'
+            catch {
+                $updatedVersion = 'unknown'
+            }
         }
     }
+}
+catch {
+    switch ($currentStage) {
+        'INSTALL' { $installStatus = 'FAIL' }
+        'VERIFY' { $verifyStatus = 'FAIL' }
+        'MANIFEST_VALIDATION' { $manifestStatus = 'FAIL' }
+    }
+
+    $originalError = $_.Exception.Message
+    if (-not $DryRun -and $rollbackSnapshotCreated) {
+        $rollbackStatus = 'ATTEMPTED'
+        $rollbackFailed = $false
+        $rollbackError = $null
+        try {
+            Restore-RollbackSnapshot -RootPath $TargetRoot -SnapshotRoot $rollbackSnapshotPath -Records $rollbackRecords
+            $rollbackStatus = 'SUCCESS'
+        }
+        catch {
+            $rollbackFailed = $true
+            $rollbackError = $_.Exception.Message
+            $rollbackStatus = "FAILED: $rollbackError"
+        }
+
+        if ($rollbackFailed) {
+            throw "Update failed during $currentStage. Original error: $originalError. Rollback failed: $rollbackError"
+        }
+
+        throw "Update failed during $currentStage and rollback completed successfully. Original error: $originalError"
+    }
+
+    throw "Update failed during $currentStage. Error: $originalError"
+}
+
+if (-not $DryRun -and $rollbackSnapshotCreated -and $rollbackStatus -eq 'NOT_NEEDED') {
+    $rollbackStatus = 'NOT_TRIGGERED'
 }
 
 if (-not $DryRun) {
@@ -207,6 +438,9 @@ if (-not $DryRun) {
     $reportLines += "GeneratedAt: $((Get-Date).ToString('yyyy-MM-ddTHH:mm:ssK'))"
     $reportLines += "TargetRoot: $TargetRoot"
     $reportLines += "InitAnswersPath: $initAnswersResolvedPath"
+    $reportLines += "RollbackSnapshotPath: $rollbackSnapshotRelativePath"
+    $reportLines += "RollbackSnapshotRecordCount: $rollbackRecordCount"
+    $reportLines += "RollbackStatus: $rollbackStatus"
     $reportLines += ''
     $reportLines += '## Version'
     $reportLines += "PreviousVersion: $previousVersion"
@@ -224,6 +458,10 @@ if (-not $DryRun) {
 
 Write-Output "TargetRoot: $TargetRoot"
 Write-Output "InitAnswersPath: $initAnswersResolvedPath"
+Write-Output "RollbackSnapshotPath: $rollbackSnapshotRelativePath"
+Write-Output "RollbackSnapshotCreated: $rollbackSnapshotCreated"
+Write-Output "RollbackSnapshotRecordCount: $rollbackRecordCount"
+Write-Output "RollbackStatus: $rollbackStatus"
 Write-Output "AssistantLanguage: $assistantLanguage"
 Write-Output "AssistantBrevity: $assistantBrevity"
 Write-Output "SourceOfTruth: $sourceOfTruth"

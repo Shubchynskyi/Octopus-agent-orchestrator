@@ -20,6 +20,7 @@ fi
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,8 +47,17 @@ event_type = args.event_type.strip()
 if not task_id:
     print("task-id must not be empty", file=sys.stderr)
     sys.exit(1)
+if len(task_id) > 128:
+    print("task-id must be 128 characters or fewer", file=sys.stderr)
+    sys.exit(1)
+if not re.fullmatch(r"[A-Za-z0-9._-]+", task_id):
+    print("task-id contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$", file=sys.stderr)
+    sys.exit(1)
 if not event_type:
     print("event-type must not be empty", file=sys.stderr)
+    sys.exit(1)
+if re.match(r"^(COMPILE_GATE_|REVIEW_GATE_|PREFLIGHT_)", event_type):
+    print(f"event-type '{event_type}' is reserved and cannot be emitted via log-task-event", file=sys.stderr)
     sys.exit(1)
 
 if args.events_root.strip():

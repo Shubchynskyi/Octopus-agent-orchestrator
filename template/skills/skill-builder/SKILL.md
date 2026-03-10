@@ -10,7 +10,7 @@ allowed-tools:
   - Write
 metadata:
   author: Octopus-agent-orchestrator
-  version: 1.0.0
+  version: 1.0.1
   runtime_requirement: PowerShell 7+ (pwsh) for gate scripts
 ---
 

@@ -70,6 +70,7 @@ Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default
 - `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md` - mandatory skill invocation policy.
 - `Octopus-agent-orchestrator/live/config/paths.json` - configurable preflight path roots and trigger regexes.
 - `Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1` - path mode and required review preflight gate.
+- `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1` / `.sh` - mandatory compile gate before review phase.
 - `Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1` - mandatory post-review gate checker.
 - `Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1` / `.sh` - task timeline event logger by task id.
 - `Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1` - human-readable task timeline summary by task id.

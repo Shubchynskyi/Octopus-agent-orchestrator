@@ -16,6 +16,9 @@ All notable changes to this bundle are documented in this file.
 - Manual commit helpers for guarded repositories:
   - `Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.ps1`
   - `Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.sh`
+- Mandatory compile gate scripts:
+  - `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1`
+  - `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh`
 
 ### Changed
 - Upgrade behavior for `TASK.md`:
@@ -26,10 +29,36 @@ All notable changes to this bundle are documented in this file.
   - mandatory immediate fallback self-review on single-agent platforms;
   - explicit reviewer-agent execution mapping and verdict-to-gate parameter mapping;
   - final report must ask commit decision (`Do you want me to commit now? (yes/no)`).
+- Init specialization step contract:
+  - before asking `Do you want to add additional specialist skills now? (yes/no)`, the agent must show:
+    - already configured specialist skills;
+    - available skills that can be enabled/created now;
+    - project-specific recommendation for specialist skills.
+- Workflow gates contract:
+  - compile gate is now mandatory before `IN_REVIEW`;
+  - review gate now enforces compile evidence (`COMPILE_GATE_PASSED`) for the same task id;
+  - `40-commands.md` requires concrete compile command in `### Compile Gate (Mandatory)`;
+  - verification fails if command placeholders remain unresolved in live command catalog.
+- Update/install reliability fixes:
+  - `init.ps1` now prefers existing `live` context rules over template defaults to preserve project-specific command catalogs;
+  - `install.ps1` now reapplies latest `TASK.md` managed template even when existing queue is empty;
+  - `install/init/update/check-update` now block `TargetRoot` pointing to the bundle directory (prevents nested `Octopus-agent-orchestrator/Octopus-agent-orchestrator`);
+  - orchestration stage-gates reference updated to require compile gate evidence before review gate completion.
 - Verification contract extended for:
   - version consistency checks;
   - provider bridge contracts;
   - optional commit-guard enforcement checks.
+
+## [1.0.1] - 2026-03-10
+
+### Changed
+- Bundle version bumped to `1.0.1` for distribution and update detection via `check-update`.
+- Hardened update/install/verify path validation for `InitAnswersPath` (must resolve inside `TargetRoot`).
+- Added rollback protection for `update.ps1` and `check-update.ps1` when apply phase fails.
+- `install.ps1` now fails closed for `EnforceNoAutoCommit=true` when `.git` is missing.
+- `.qwen/settings.json` alignment now preserves existing JSON and merges mandatory context entries (`AGENTS.md`, `TASK.md`).
+- `verify.ps1` now requires `validate-manifest.ps1` alongside shell manifest validator.
+- `init.ps1` discovery overlay policy aligned for context file set `10/20/30/40/50/60`.
 
 ## [1.0.0] - 2026-03-09
 
