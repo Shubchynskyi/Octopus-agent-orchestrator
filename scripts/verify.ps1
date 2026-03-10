@@ -13,10 +13,16 @@ $ErrorActionPreference = 'Stop'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $bundleRoot = Split-Path -Parent $scriptDir
 $sourceRoot = Join-Path $bundleRoot 'template'
+$ruleContractMigrationModulePath = Join-Path $scriptDir 'lib/rule-contract-migrations.ps1'
 
 if (-not (Test-Path $sourceRoot)) {
     throw "Template directory not found: $sourceRoot"
 }
+
+if (-not (Test-Path -LiteralPath $ruleContractMigrationModulePath -PathType Leaf)) {
+    throw "Rule contract migrations module not found: $ruleContractMigrationModulePath"
+}
+. $ruleContractMigrationModulePath
 
 if ([string]::IsNullOrWhiteSpace($TargetRoot)) {
     $TargetRoot = Split-Path -Parent $bundleRoot
@@ -308,6 +314,7 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/scripts/check-update.sh',
     'Octopus-agent-orchestrator/scripts/update.ps1',
     'Octopus-agent-orchestrator/scripts/update.sh',
+    'Octopus-agent-orchestrator/scripts/lib/rule-contract-migrations.ps1',
     'Octopus-agent-orchestrator/MANIFEST.md',
     'Octopus-agent-orchestrator/live/version.json',
     'Octopus-agent-orchestrator/live/config/review-capabilities.json',
@@ -609,10 +616,19 @@ if (Test-Path $commandsRulePath) {
     $requiredCommandSnippets = @(
         '### Compile Gate (Mandatory)',
         'compile-gate.ps1',
-        'compile-gate.sh',
-        'required-reviews-check.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"',
-        'required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"'
+        'compile-gate.sh'
     )
+    $commandContractMigrations = @(Get-RuleContractMigrationsForPath -RelativePath 'Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md')
+    foreach ($migration in $commandContractMigrations) {
+        foreach ($entry in @($migration.Entries)) {
+            $matchSnippet = [string]$entry.Match
+            if (-not [string]::IsNullOrWhiteSpace($matchSnippet)) {
+                $requiredCommandSnippets += $matchSnippet
+            }
+        }
+    }
+    $requiredCommandSnippets = @($requiredCommandSnippets | Sort-Object -Unique)
+
     foreach ($snippet in $requiredCommandSnippets) {
         if ($commandsContent -notmatch [regex]::Escape($snippet)) {
             $commandsContractViolations += "40-commands.md must include compile gate snippet '$snippet'."
@@ -1040,12 +1056,17 @@ if (Test-Path -LiteralPath $orchestrationSkillPath -PathType Leaf) {
 $taskWorkflowRulePath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md'
 if (Test-Path -LiteralPath $taskWorkflowRulePath -PathType Leaf) {
     $taskWorkflowRuleContent = Get-Content -Path $taskWorkflowRulePath -Raw
-    $requiredWorkflowSnippets = @(
-        'Reviewer-agent execution mechanics are defined in `orchestration/SKILL.md` section `Reviewer Agent Execution (Claude Code)`.',
-        'Compile gate script must pass before `IN_REVIEW`:',
-        'Fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewers.',
-        'Do you want me to commit now? (yes/no)'
-    )
+    $requiredWorkflowSnippets = @()
+    $workflowContractMigrations = @(Get-RuleContractMigrationsForPath -RelativePath 'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md')
+    foreach ($migration in $workflowContractMigrations) {
+        foreach ($entry in @($migration.Entries)) {
+            $matchSnippet = [string]$entry.Match
+            if (-not [string]::IsNullOrWhiteSpace($matchSnippet)) {
+                $requiredWorkflowSnippets += $matchSnippet
+            }
+        }
+    }
+    $requiredWorkflowSnippets = @($requiredWorkflowSnippets | Sort-Object -Unique)
 
     foreach ($snippet in $requiredWorkflowSnippets) {
         if ($taskWorkflowRuleContent -notmatch [regex]::Escape($snippet)) {

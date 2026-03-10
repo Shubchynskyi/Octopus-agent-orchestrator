@@ -11,6 +11,12 @@ $ErrorActionPreference = 'Stop'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $bundleRoot = Split-Path -Parent $scriptDir
 
+$ruleContractMigrationModulePath = Join-Path $scriptDir 'lib/rule-contract-migrations.ps1'
+if (-not (Test-Path -LiteralPath $ruleContractMigrationModulePath -PathType Leaf)) {
+    throw "Rule contract migrations module not found: $ruleContractMigrationModulePath"
+}
+. $ruleContractMigrationModulePath
+
 if ([string]::IsNullOrWhiteSpace($TargetRoot)) {
     $TargetRoot = Split-Path -Parent $bundleRoot
 }
@@ -316,9 +322,12 @@ $rollbackStatus = 'NOT_NEEDED'
 $rollbackRecords = @()
 
 $installStatus = 'NOT_RUN'
+$contractMigrationStatus = 'NOT_RUN'
 $verifyStatus = 'NOT_RUN'
 $manifestStatus = 'NOT_RUN'
 $updatedVersion = $bundleVersion
+$contractMigrationCount = 0
+$contractMigrationFiles = @()
 
 $installParams = @{
     TargetRoot        = $TargetRoot
@@ -348,9 +357,18 @@ try {
     $installStatus = 'PASS'
 
     if ($DryRun) {
+        $contractMigrationStatus = 'SKIPPED_DRY_RUN'
         $verifyStatus = 'SKIPPED_DRY_RUN'
         $manifestStatus = 'SKIPPED_DRY_RUN'
     } else {
+        $currentStage = 'CONTRACT_MIGRATIONS'
+        $contractMigrationResult = Invoke-RuleContractMigrationsOnDisk -RootPath $TargetRoot
+        $contractMigrationCount = [int]$contractMigrationResult.AppliedCount
+        if ($contractMigrationCount -gt 0) {
+            $contractMigrationFiles = @($contractMigrationResult.AppliedFiles)
+        }
+        $contractMigrationStatus = 'PASS'
+
         $currentStage = 'VERIFY'
         if ($SkipVerify) {
             $verifyStatus = 'SKIPPED'
@@ -393,6 +411,7 @@ try {
 catch {
     switch ($currentStage) {
         'INSTALL' { $installStatus = 'FAIL' }
+        'CONTRACT_MIGRATIONS' { $contractMigrationStatus = 'FAIL' }
         'VERIFY' { $verifyStatus = 'FAIL' }
         'MANIFEST_VALIDATION' { $manifestStatus = 'FAIL' }
     }
@@ -450,8 +469,17 @@ if (-not $DryRun) {
     $reportLines += ''
     $reportLines += '## CommandStatus'
     $reportLines += "Install: $installStatus"
+    $reportLines += "ContractMigrations: $contractMigrationStatus"
     $reportLines += "Verify: $verifyStatus"
     $reportLines += "ManifestValidation: $manifestStatus"
+    $reportLines += ''
+    $reportLines += '## ContractMigrations'
+    $reportLines += "AppliedCount: $contractMigrationCount"
+    if ($contractMigrationFiles.Count -gt 0) {
+        $reportLines += "AppliedFiles: $($contractMigrationFiles -join ', ')"
+    } else {
+        $reportLines += 'AppliedFiles: none'
+    }
 
     Set-Content -Path $updateReportPath -Value ($reportLines -join "`r`n")
 }
@@ -470,6 +498,11 @@ Write-Output "PreviousVersionSource: $previousVersionSource"
 Write-Output "BundleVersion: $bundleVersion"
 Write-Output "UpdatedVersion: $updatedVersion"
 Write-Output "InstallStatus: $installStatus"
+Write-Output "ContractMigrationStatus: $contractMigrationStatus"
+Write-Output "ContractMigrationCount: $contractMigrationCount"
+if ($contractMigrationFiles.Count -gt 0) {
+    Write-Output "ContractMigrationFiles: $($contractMigrationFiles -join ', ')"
+}
 Write-Output "VerifyStatus: $verifyStatus"
 Write-Output "ManifestValidationStatus: $manifestStatus"
 if ($DryRun) {

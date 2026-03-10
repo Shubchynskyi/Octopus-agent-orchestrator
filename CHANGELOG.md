@@ -64,6 +64,9 @@ All notable changes to this bundle are documented in this file.
 - `check-update.ps1` no longer removes `Octopus-agent-orchestrator/scripts` while running from that directory on Windows.
 - Script bundle sync now updates `scripts` in-place and skips the currently executing `check-update.ps1` to avoid file-lock failures.
 - Sync rollback for `scripts` now restores content in-place (with the same lock-safe behavior) instead of deleting the directory root.
+- Contract snippet migrations were moved to shared module `scripts/lib/rule-contract-migrations.ps1` and are now reused by `init.ps1`, `update.ps1`, and `verify.ps1` from a single source of truth.
+- `update.ps1` now has explicit `CONTRACT_MIGRATIONS` stage before verification and includes migration status/count in update report output.
+- `init.ps1` migration pass now auto-fills missing compile/review gate snippets for `40-commands.md` (including compile-gate command references) and reviewer-linkage snippets for `80-task-workflow.md` when legacy/live sources lag behind current contract.
 
 ## [1.0.0] - 2026-03-09
 
