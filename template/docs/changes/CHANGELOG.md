@@ -13,6 +13,13 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Docs Updated: <list of updated doc files>
 ```
 
+## 2026-03-10 - Commit guard no longer blocks human IDE commits
+- Task: ad-hoc
+- Type: behavior-change
+- Scope: install / git hooks
+- Summary: Updated managed pre-commit guard generation to block only detected agent sessions (with manual override helper) so human commits from IDE/terminal are not blocked.
+- Docs Updated: `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/CHANGELOG.md`
+
 ## 2026-03-05 - Agent workflow and quality gates formalized
 - Task: T-001, T-002, T-004, T-005
 - Type: behavior-change

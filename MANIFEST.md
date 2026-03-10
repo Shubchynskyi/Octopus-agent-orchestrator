@@ -66,6 +66,7 @@ Kept inside bundle:
 - scripts/update.sh
 - scripts/check-update.ps1
 - scripts/check-update.sh
+- scripts/lib/rule-contract-migrations.ps1
 - README.md
 - CHANGELOG.md
 - LICENSE

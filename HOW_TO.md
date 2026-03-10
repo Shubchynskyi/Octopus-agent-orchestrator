@@ -43,7 +43,7 @@ After successful setup:
 - Preflight path and trigger config exists: `Octopus-agent-orchestrator/live/config/paths.json`
 - Discovery report exists: `Octopus-agent-orchestrator/live/project-discovery.md`
 - Deployment version metadata exists: `Octopus-agent-orchestrator/live/version.json`
-- If enabled in init answers, hard no-auto-commit guard exists in `.git/hooks/pre-commit`.
+- If enabled in init answers, no-auto-commit guard exists in `.git/hooks/pre-commit` and blocks detected agent sessions while keeping normal human commits available.
 - Builder skill exists: `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md`
 
 Note:

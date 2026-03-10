@@ -292,6 +292,14 @@ $preCommitHookRelativePath = '.git/hooks/pre-commit'
 $commitGuardStart = '# Octopus-agent-orchestrator:commit-guard-start'
 $commitGuardEnd = '# Octopus-agent-orchestrator:commit-guard-end'
 $commitGuardEnvName = 'OCTOPUS_ALLOW_COMMIT'
+$commitGuardExtraAgentMarkersEnvName = 'OCTOPUS_AGENT_ENV_MARKERS'
+$commitGuardAgentEnvMarkers = @(
+    'CODEX_THREAD_ID',
+    'CLAUDE_CODE_SSE_PORT',
+    'AIDER_SESSION_ID',
+    'CURSOR_TRACE_ID',
+    'CURSOR_AGENT'
+)
 $bundleVersionRelativePath = 'Octopus-agent-orchestrator/VERSION'
 $bundleVersionFilePath = Join-Path $bundleRoot 'VERSION'
 $liveVersionRelativePath = 'Octopus-agent-orchestrator/live/version.json'
@@ -554,12 +562,39 @@ function Build-TaskManagedBlockWithExistingQueue {
 }
 
 function Get-CommitGuardManagedBlock {
+    $agentEnvMarkersLines = ($commitGuardAgentEnvMarkers | ForEach-Object { '  "' + $_ + '"' }) -join "`r`n"
+
     $block = @'
 {START}
-# Commit blocked by Octopus auto-commit guard.
-if [ "${{ENV_NAME}:-}" != "1" ]; then
-  echo "Commit blocked: auto-commit guard is enabled."
-  echo "Use human commit helper:"
+# Commit blocked by Octopus auto-commit guard only for detected agent sessions.
+if [ "${{ENV_NAME}:-}" = "1" ]; then
+  exit 0
+fi
+
+octopus_agent_env_markers=(
+{AGENT_ENV_MARKERS}
+)
+
+if [ -n "${{EXTRA_AGENT_MARKERS_ENV_NAME}:-}" ]; then
+  IFS=', ' read -r -a octopus_extra_agent_markers <<< "${{EXTRA_AGENT_MARKERS_ENV_NAME}}"
+  for octopus_marker in "${octopus_extra_agent_markers[@]}"; do
+    if [[ "$octopus_marker" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      octopus_agent_env_markers+=("$octopus_marker")
+    fi
+  done
+fi
+
+octopus_detected_agent_var=""
+for octopus_marker in "${octopus_agent_env_markers[@]}"; do
+  if [ -n "${!octopus_marker:-}" ]; then
+    octopus_detected_agent_var="$octopus_marker"
+    break
+  fi
+done
+
+if [ -n "$octopus_detected_agent_var" ]; then
+  echo "Commit blocked: agent commit guard is enabled (detected env: $octopus_detected_agent_var)."
+  echo "If this is a manual human commit from the same shell, use helper:"
   echo "  pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.ps1 -m \"<message>\""
   echo "or:"
   echo "  bash Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.sh -m \"<message>\""
@@ -571,6 +606,8 @@ fi
     return $block.Replace('{START}', $commitGuardStart).
         Replace('{END}', $commitGuardEnd).
         Replace('{ENV_NAME}', $commitGuardEnvName).
+        Replace('{AGENT_ENV_MARKERS}', $agentEnvMarkersLines).
+        Replace('{EXTRA_AGENT_MARKERS_ENV_NAME}', $commitGuardExtraAgentMarkersEnvName).
         Trim()
 }
 

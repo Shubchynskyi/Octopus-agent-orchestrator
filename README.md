@@ -207,7 +207,7 @@ feat(invoices): add CSV export endpoint with async email delivery hooks
 - During upgrades, `TASK.md` uses latest template and migrates existing queue rows (tasks are preserved).
 - Selected source-of-truth entrypoint is intentionally refreshed to keep routing canonical.
 - Installer creates backups in `Octopus-agent-orchestrator/runtime/backups/<timestamp>/`.
-- If `EnforceNoAutoCommit=true`, installer configures `.git/hooks/pre-commit` guard and manual commit helpers in `live/scripts/agent-gates/human-commit.*`.
+- If `EnforceNoAutoCommit=true`, installer configures `.git/hooks/pre-commit` guard that blocks detected agent sessions while allowing normal human commits (including IDE), plus manual commit helpers in `live/scripts/agent-gates/human-commit.*`.
 - Installer updates `.gitignore` with managed agent entries.
 - Preflight roots and trigger regexes are configurable in `live/config/paths.json`.
 - Compile gate command is configured in `live/docs/agent-rules/40-commands.md` under `### Compile Gate (Mandatory)` and is required before `IN_REVIEW`.

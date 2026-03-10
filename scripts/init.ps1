@@ -101,6 +101,14 @@ $discoveryAugmentedRuleFiles = @(
     '60-operating-rules.md'
 )
 
+$ruleContractMigrationModulePath = Join-Path $scriptDir 'lib/rule-contract-migrations.ps1'
+if (-not (Test-Path -LiteralPath $ruleContractMigrationModulePath -PathType Leaf)) {
+    throw "Rule contract migrations module not found: $ruleContractMigrationModulePath"
+}
+. $ruleContractMigrationModulePath
+
+$script:ruleContractMigrationLog = @()
+
 function Ensure-Directory {
     param(
         [Parameter(Mandatory = $true)]
@@ -507,6 +515,20 @@ foreach ($ruleFile in $ruleFiles) {
     }
 
     $content = Apply-AssistantDefaults -Content $content -RuleFile $ruleFile
+    $sourceRelativePath = To-RelativePath -Path $sourcePath
+    $migrationResult = Invoke-RuleContractMigrationsForContent -Content $content -RelativePath $sourceRelativePath
+    $content = [string]$migrationResult.Content
+    if ($migrationResult.AppliedCount -gt 0) {
+        foreach ($entry in @($migrationResult.AppliedEntries)) {
+            $script:ruleContractMigrationLog += [PSCustomObject]@{
+                RuleFile = $ruleFile
+                MigrationId = [string]$entry.MigrationId
+                FilePath = [string]$entry.FilePath
+                Match = [string]$entry.Match
+                Insert = [string]$entry.Insert
+            }
+        }
+    }
 
     if (-not $DryRun) {
         Set-Content -Path $destinationPath -Value $content
@@ -518,6 +540,12 @@ foreach ($ruleFile in $ruleFiles) {
         Origin = $sourceOrigin
         Destination = (To-RelativePath -Path $destinationPath)
     }
+}
+
+$ruleContractMigrationCount = $script:ruleContractMigrationLog.Count
+$ruleContractMigrationFiles = @()
+if ($ruleContractMigrationCount -gt 0) {
+    $ruleContractMigrationFiles = @($script:ruleContractMigrationLog | Select-Object -ExpandProperty RuleFile -Unique | Sort-Object)
 }
 
 $supportDirectories = @(
@@ -670,6 +698,7 @@ $initReportLines += '- Project discovery source: ' + $projectDiscovery.source
 $initReportLines += '- Project discovery stack signals: ' + $discoveredStackSummary
 $initReportLines += '- Project discovery top-level directories: ' + $discoveredDirectorySummary
 $initReportLines += '- Legacy docs discovered in `docs/agent-rules`: ' + ((($directoryInventory | Where-Object { $_.Path -eq 'docs/agent-rules' }).FileCount)) + ' files'
+$initReportLines += '- Contract migration snippets auto-applied: ' + $ruleContractMigrationCount
 $initReportLines += "- No files were moved or deleted; discovery sources were read-only."
 $initReportLines += ''
 $initReportLines += '## Rule Source Mapping'
@@ -684,6 +713,17 @@ $initReportLines += '- Project-context rules (`10/20/30/40/50/60`) prefer legacy
 $initReportLines += '- All other rules prefer existing `live` content, then template defaults, then legacy docs fallback.'
 $initReportLines += '- Discovery overlay is appended to context rules (`10/20/30/40/50/60`) using `live/project-discovery.md`.'
 $initReportLines += '- Selected source-of-truth entrypoint (`' + $SourceOfTruth + '`) is provided by installer and points to `Octopus-agent-orchestrator/live/docs/agent-rules/*`.'
+$initReportLines += '- Contract migration pass runs after source selection and applies required compatibility snippets for strict verify contracts.'
+$initReportLines += ''
+$initReportLines += '## Contract Migrations Applied'
+if ($ruleContractMigrationCount -eq 0) {
+    $initReportLines += '- No contract snippet migrations were required.'
+} else {
+    foreach ($file in $ruleContractMigrationFiles) {
+        $count = (@($script:ruleContractMigrationLog | Where-Object { $_.RuleFile -eq $file })).Count
+        $initReportLines += "- $file : $count snippet(s)"
+    }
+}
 
 $sourceInventoryPath = Join-Path $liveRoot 'source-inventory.md'
 $initReportPath = Join-Path $liveRoot 'init-report.md'
@@ -720,7 +760,7 @@ if (-not $DryRun) {
             'Orchestrator mode starts when task execution is requested from this file (`TASK.md`).',
             'If needed, the agent can add new tasks from user requests and then execute them in orchestrator mode.',
             $(if ($EnforceNoAutoCommit) {
-                'Hard no-auto-commit guard is enabled. For manual commits use: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.ps1 -m "<message>"`.'
+                'Hard no-auto-commit guard is enabled. It blocks detected agent-session commits while normal human commits remain available; for intentional manual commits from the same agent shell use: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.ps1 -m "<message>"`.'
             } else {
                 'Hard no-auto-commit guard is disabled.'
             }),
@@ -741,6 +781,10 @@ Write-Output "SourceOfTruth: $SourceOfTruth"
 Write-Output "EnforceNoAutoCommit: $EnforceNoAutoCommit"
 Write-Output "RuleFilesMaterialized: $($ruleFiles.Count)"
 Write-Output "SupportDirectoriesSynced: $copiedSupportDirs"
+Write-Output "RuleContractMigrationCount: $ruleContractMigrationCount"
+if ($ruleContractMigrationFiles.Count -gt 0) {
+    Write-Output "RuleContractMigrationFiles: $($ruleContractMigrationFiles -join ', ')"
+}
 Write-Output "DocFilesDiscovered: $docCount"
 Write-Output "SourceInventoryPath: $sourceInventoryPath"
 Write-Output "InitReportPath: $initReportPath"
