@@ -16,3 +16,9 @@ Desktop.ini
 # PowerShell
 *.ps1xml
 /Agents.MD
+
+# Local temp/runtime noise
+__pycache__/
+*.pyc
+.tmp_rtk_bin_*/
+/Octopus-agent-orchestrator/
