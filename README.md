@@ -10,7 +10,8 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 - Full changelog: `CHANGELOG.md`
 
 ## Version
-- Current bundle version: `1.0.1` (source: `VERSION`)
+- Current bundle version: `1.0.2` (source: `VERSION`)
+- Update command: `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1` (or `bash Octopus-agent-orchestrator/scripts/check-update.sh`); `-InitAnswersPath` is optional when using default `Octopus-agent-orchestrator/runtime/init-answers.json`
 - Last documentation update: `2026-03-10`
 
 ## Recent Changes (Short)
@@ -104,49 +105,39 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "O
 ```
 
 ## Updating Existing Deployment
-Preferred flow (auto-check + optional auto-apply from git):
+Use this in normal cases:
 
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1
 ```
 
 ```bash
-bash Octopus-agent-orchestrator/scripts/check-update.sh -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+bash Octopus-agent-orchestrator/scripts/check-update.sh
 ```
 
 Behavior:
-- if current version equals latest: reports `UP_TO_DATE`;
-- if newer version exists: asks `Apply now? (y/N)` and updates on confirmation;
-- in non-interactive mode use `-Apply -NoPrompt`.
+- if current version equals latest: `UP_TO_DATE`;
+- if newer version exists: asks `Apply now? (y/N)` and updates on confirmation.
 
-Auto-apply without prompt:
+Auto-apply (CI/non-interactive):
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -Apply -NoPrompt -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -Apply -NoPrompt
 ```
 
-By default, `check-update.ps1` uses the orchestrator repository:
-`https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git`
+Optional flags (only when needed):
+- `-InitAnswersPath "<path>"` if `init-answers.json` is not in default location.
+- `-RepoUrl "<git-url>"` to update from a fork/mirror.
+- `-TargetRoot "<project-root>"` when running from outside project root.
 
-To use your fork or mirror, pass source explicitly:
+Example with custom repo:
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -RepoUrl "<git-url>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -RepoUrl "<git-url>"
 ```
 
-Manual fallback (if you already replaced bundle files yourself):
+Manual fallback:
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/update.ps1
 ```
-
-If you pass `-TargetRoot` manually, use the project root path (parent directory that contains `Octopus-agent-orchestrator/`), not the bundle directory itself.
-
-Update flow:
-- checks versions by `VERSION` file;
-- syncs bundle files (`template`, `scripts`, docs, `VERSION`) with backup to `runtime/bundle-backups/<timestamp>/`;
-- runs `update.ps1` (install/init sync, verify, manifest validation);
-- rebuilds `TASK.md` from latest template and migrates existing task rows from previous `TASK.md` queue;
-- if queue migration cannot be parsed safely, keeps existing `TASK.md` managed block unchanged;
-- writes deployed version metadata to `Octopus-agent-orchestrator/live/version.json`;
-- writes update report to `Octopus-agent-orchestrator/runtime/update-reports/update-<timestamp>.md`.
 
 ## Work Example
 Example feature request:
