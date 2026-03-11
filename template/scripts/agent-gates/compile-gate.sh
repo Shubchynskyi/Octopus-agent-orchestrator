@@ -3,6 +3,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export OA_GATE_SCRIPT_DIR="$SCRIPT_DIR"
+if command -v cygpath >/dev/null 2>&1; then
+  export OA_GATE_BASH_BIN="$(cygpath -w "${BASH:-$(command -v bash)}")"
+else
+  export OA_GATE_BASH_BIN="${BASH:-$(command -v bash)}"
+fi
 
 PYTHON_CMD=()
 if command -v python3 >/dev/null 2>&1 && python3 -c "import sys" >/dev/null 2>&1; then
@@ -24,75 +29,21 @@ import re
 import subprocess
 import sys
 import time
-import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
+script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
+sys.path.insert(0, str(script_dir / "lib"))
 
-def normalize_path(path_value):
-    if path_value is None:
-        return None
-    return str(path_value).replace("\\", "/")
-
-
-def assert_valid_task_id(value: str):
-    if not value or not value.strip():
-        raise ValueError("TaskId must not be empty.")
-    task_id = value.strip()
-    if len(task_id) > 128:
-        raise ValueError("TaskId must be 128 characters or fewer.")
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", task_id):
-        raise ValueError(f"TaskId '{task_id}' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$")
-    return task_id
-
-
-def file_sha256(path: Path):
-    if not path or not path.exists() or not path.is_file():
-        return None
-    return hashlib.sha256(path.read_bytes()).hexdigest().lower()
-
-
-def append_metrics_event(path: Path, event_obj: dict, emit_metrics: bool):
-    if not emit_metrics:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(event_obj, ensure_ascii=False, separators=(",", ":")) + "\n")
-
-
-def append_task_event(repo_root: Path, task_id: str, event_type: str, outcome: str, message: str, details: dict):
-    if not task_id:
-        return
-    task_id = assert_valid_task_id(task_id)
-    events_root = (repo_root / "Octopus-agent-orchestrator/runtime/task-events").resolve()
-    events_root.mkdir(parents=True, exist_ok=True)
-    event = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "task_id": task_id,
-        "event_type": event_type,
-        "outcome": outcome,
-        "message": message,
-        "details": details,
-    }
-    line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-    with (events_root / f"{task_id}.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
-    with (events_root / "all-tasks.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
-
-
-def resolve_path_inside_repo(path_value: str, repo_root: Path) -> Path:
-    if not path_value or not path_value.strip():
-        raise RuntimeError("Path value must not be empty")
-    candidate = Path(path_value.strip())
-    if not candidate.is_absolute():
-        candidate = repo_root / candidate
-    candidate = candidate.resolve()
-    repo_root_resolved = repo_root.resolve()
-    if not str(candidate).lower().startswith(str(repo_root_resolved).lower()):
-        raise RuntimeError(f"Path '{path_value}' must resolve inside repository root '{repo_root_resolved}'.")
-    return candidate
-
+from gate_utils import (
+    append_metrics_event,
+    append_task_event,
+    assert_valid_task_id,
+    file_sha256,
+    normalize_path,
+    resolve_path_inside_repo,
+    resolve_project_root,
+)
 
 def resolve_commands_path(path_value: str, repo_root: Path) -> Path:
     if not path_value.strip():
@@ -163,17 +114,45 @@ def resolve_compile_evidence_path(explicit_path: str, repo_root: Path, task_id: 
     return (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-compile-gate.json").resolve()
 
 
+def resolve_compile_output_path(explicit_path: str, repo_root: Path, task_id: str):
+    if not task_id:
+        return None
+    if explicit_path and explicit_path.strip():
+        return resolve_path_inside_repo(explicit_path, repo_root)
+    return (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-compile-output.log").resolve()
+
+
+def get_output_stats(lines):
+    warning_lines = 0
+    error_lines = 0
+    for line in lines:
+        if re.search(r"\bwarning\b", line, re.IGNORECASE):
+            warning_lines += 1
+        if re.search(r"\berror\b", line, re.IGNORECASE):
+            error_lines += 1
+    return warning_lines, error_lines
+
+
+def append_compile_output_entry(output_path: Path, command_index: int, total_commands: int, command: str, output_lines):
+    if not output_path:
+        return
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a", encoding="utf-8") as fh:
+        fh.write(f"==== COMMAND {command_index}/{total_commands} ====\n")
+        fh.write(f"COMMAND: {command}\n")
+        fh.write(f"TIMESTAMP_UTC: {datetime.now(timezone.utc).isoformat()}\n")
+        fh.write("---- OUTPUT START ----\n")
+        for line in output_lines:
+            fh.write(f"{line}\n")
+        fh.write("---- OUTPUT END ----\n\n")
+
+
 def write_compile_evidence(
     evidence_path: Path,
     task_id: str,
-    preflight_path: Path,
-    preflight_hash: str,
+    gate_context: dict,
     status: str,
     outcome: str,
-    compile_commands,
-    commands_path: Path,
-    duration_ms: int,
-    exit_code: int,
     error_message: str,
 ):
     if not evidence_path or not task_id:
@@ -185,14 +164,9 @@ def write_compile_evidence(
         "task_id": task_id,
         "status": status,
         "outcome": outcome,
-        "commands_path": normalize_path(commands_path),
-        "compile_commands": compile_commands,
-        "preflight_path": normalize_path(preflight_path) if preflight_path else None,
-        "preflight_hash_sha256": preflight_hash,
-        "duration_ms": duration_ms,
-        "exit_code": exit_code,
         "error": error_message,
     }
+    payload.update(gate_context)
     evidence_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
@@ -201,18 +175,25 @@ parser.add_argument("--commands-path", default="Octopus-agent-orchestrator/live/
 parser.add_argument("--task-id", default="")
 parser.add_argument("--preflight-path", default="")
 parser.add_argument("--compile-evidence-path", default="")
+parser.add_argument("--compile-output-path", default="")
+parser.add_argument("--fail-tail-lines", default="50")
 parser.add_argument("--metrics-path", default="")
 parser.add_argument("--emit-metrics", default="true")
 parser.add_argument("--repo-root", default="")
 args = parser.parse_args()
 
-script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
-project_root_candidate = (script_dir / "../../../../").resolve()
-fallback_root = (script_dir / "../../").resolve()
-repo_root = Path(args.repo_root).resolve() if args.repo_root else (project_root_candidate if project_root_candidate.exists() else fallback_root)
+bash_executable = (os.environ.get("OA_GATE_BASH_BIN") or "bash").strip()
+repo_root = Path(args.repo_root).resolve() if args.repo_root else resolve_project_root(script_dir)
 task_id = args.task_id.strip()
 if task_id:
     task_id = assert_valid_task_id(task_id)
+
+try:
+    fail_tail_lines = int(str(args.fail_tail_lines).strip())
+except Exception as exc:
+    raise RuntimeError(f"fail-tail-lines must be an integer: {exc}")
+if fail_tail_lines <= 0:
+    raise RuntimeError("fail-tail-lines must be a positive integer")
 
 metrics_path = Path(args.metrics_path).resolve() if args.metrics_path.strip() else (repo_root / "Octopus-agent-orchestrator/runtime/metrics.jsonl").resolve()
 emit_metrics = args.emit_metrics.strip().lower() in {"1", "true", "yes", "y"}
@@ -222,8 +203,12 @@ compile_commands = []
 resolved_preflight_path = None
 preflight_hash = None
 compile_evidence_path = None
+compile_output_path = None
+compile_output_lines = []
+warning_count = 0
+error_count = 0
 duration_ms = 0
-exit_code = 1
+exit_code = 0
 error_message = None
 started_at = time.perf_counter()
 
@@ -233,126 +218,121 @@ try:
     resolved_preflight_path = resolve_preflight_path(args.preflight_path, repo_root, task_id)
     preflight_hash = file_sha256(resolved_preflight_path)
     compile_evidence_path = resolve_compile_evidence_path(args.compile_evidence_path, repo_root, task_id)
+    compile_output_path = resolve_compile_output_path(args.compile_output_path, repo_root, task_id)
 
-    for compile_command in compile_commands:
-        completed = subprocess.run(
-            compile_command,
-            shell=True,
-            cwd=str(repo_root),
-            check=False,
+    for command_index, compile_command in enumerate(compile_commands, start=1):
+        command_output_lines = []
+        command_exit_code = 0
+        try:
+            completed = subprocess.run(
+                [bash_executable, "-lc", compile_command],
+                capture_output=True,
+                text=True,
+                cwd=str(repo_root),
+                check=False,
+            )
+            command_exit_code = int(completed.returncode)
+            stdout_lines = completed.stdout.splitlines() if completed.stdout else []
+            stderr_lines = completed.stderr.splitlines() if completed.stderr else []
+            command_output_lines = stdout_lines + stderr_lines
+        except Exception as exc:
+            command_exit_code = 1
+            command_output_lines = [f"Failed to execute compile command: {exc}"]
+
+        compile_output_lines.extend(command_output_lines)
+        command_warning_count, command_error_count = get_output_stats(command_output_lines)
+        warning_count += command_warning_count
+        error_count += command_error_count
+        append_compile_output_entry(
+            output_path=compile_output_path,
+            command_index=command_index,
+            total_commands=len(compile_commands),
+            command=compile_command,
+            output_lines=command_output_lines,
         )
-        exit_code = int(completed.returncode)
-        if exit_code != 0:
-            raise RuntimeError(f"Compile command exited with code {exit_code}.")
+
+        if command_exit_code != 0:
+            exit_code = command_exit_code
+            error_message = f"Compile command #{command_index} exited with code {command_exit_code}."
+            break
 except Exception as exc:
-    error_message = str(exc)
+    if not error_message:
+        error_message = str(exc)
+    if exit_code == 0:
+        exit_code = 1
 finally:
     duration_ms = int(round((time.perf_counter() - started_at) * 1000))
 
+gate_context = {
+    "commands_path": normalize_path(resolved_commands_path),
+    "compile_commands": compile_commands,
+    "compile_command": compile_commands[0] if compile_commands else None,
+    "preflight_path": normalize_path(resolved_preflight_path) if resolved_preflight_path else None,
+    "preflight_hash_sha256": preflight_hash,
+    "evidence_path": normalize_path(compile_evidence_path) if compile_evidence_path else None,
+    "compile_output_path": normalize_path(compile_output_path) if compile_output_path else None,
+    "compile_output_lines": len(compile_output_lines),
+    "compile_output_warning_lines": warning_count,
+    "compile_output_error_lines": error_count,
+    "duration_ms": duration_ms,
+    "exit_code": exit_code if error_message else 0,
+}
+
 if error_message:
-    failure_details = {
-        "commands_path": normalize_path(resolved_commands_path),
-        "compile_commands": compile_commands,
-        "compile_command": compile_commands[0] if compile_commands else None,
-        "preflight_path": normalize_path(resolved_preflight_path) if resolved_preflight_path else None,
-        "preflight_hash_sha256": preflight_hash,
-        "evidence_path": normalize_path(compile_evidence_path) if compile_evidence_path else None,
-        "duration_ms": duration_ms,
-        "exit_code": exit_code,
-        "error": error_message,
-    }
     failure_event = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "event_type": "compile_gate_check",
         "status": "FAILED",
         "task_id": task_id or None,
-        "commands_path": normalize_path(resolved_commands_path),
-        "compile_commands": compile_commands,
-        "compile_command": compile_commands[0] if compile_commands else None,
-        "preflight_path": normalize_path(resolved_preflight_path) if resolved_preflight_path else None,
-        "preflight_hash_sha256": preflight_hash,
-        "evidence_path": normalize_path(compile_evidence_path) if compile_evidence_path else None,
-        "duration_ms": duration_ms,
-        "exit_code": exit_code,
         "error": error_message,
     }
+    failure_event.update(gate_context)
     append_metrics_event(metrics_path, failure_event, emit_metrics)
     write_compile_evidence(
         evidence_path=compile_evidence_path,
         task_id=task_id,
-        preflight_path=resolved_preflight_path,
-        preflight_hash=preflight_hash,
+        gate_context=gate_context,
         status="FAILED",
         outcome="FAIL",
-        compile_commands=compile_commands,
-        commands_path=resolved_commands_path,
-        duration_ms=duration_ms,
-        exit_code=exit_code,
         error_message=error_message,
     )
-    append_task_event(repo_root, task_id, "COMPILE_GATE_FAILED", "FAIL", "Compile gate failed.", failure_details)
+    append_task_event(repo_root, task_id, "COMPILE_GATE_FAILED", "FAIL", "Compile gate failed.", failure_event)
+
+    tail_lines = compile_output_lines[-fail_tail_lines:] if compile_output_lines else []
 
     print("COMPILE_GATE_FAILED")
-    if resolved_commands_path:
-        print(f"CommandsPath: {normalize_path(resolved_commands_path)}")
-    if compile_commands:
-        print(f"CompileCommand: {compile_commands[0]}")
-        if len(compile_commands) > 1:
-            print(f"CompileCommandsCount: {len(compile_commands)}")
-    if compile_evidence_path:
-        print(f"CompileEvidencePath: {normalize_path(compile_evidence_path)}")
-    print(f"DurationMs: {duration_ms}")
-    print(f"ExitCode: {exit_code}")
+    print(
+        f"CompileSummary: FAILED | duration_ms={duration_ms} | exit_code={exit_code} | errors={error_count} | warnings={warning_count}"
+    )
+    if compile_output_path:
+        print(f"CompileOutputPath: {normalize_path(compile_output_path)}")
+    if tail_lines:
+        print(f"CompileOutputTailLast{min(fail_tail_lines, len(tail_lines))}Lines:")
+        for line in tail_lines:
+            print(line)
     print(f"Reason: {error_message}")
     sys.exit(1)
 
-success_details = {
-    "commands_path": normalize_path(resolved_commands_path),
-    "compile_commands": compile_commands,
-    "compile_command": compile_commands[0] if compile_commands else None,
-    "preflight_path": normalize_path(resolved_preflight_path) if resolved_preflight_path else None,
-    "preflight_hash_sha256": preflight_hash,
-    "evidence_path": normalize_path(compile_evidence_path) if compile_evidence_path else None,
-    "duration_ms": duration_ms,
-    "exit_code": 0,
-}
 success_event = {
     "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     "event_type": "compile_gate_check",
     "status": "PASSED",
     "task_id": task_id or None,
-    "commands_path": normalize_path(resolved_commands_path),
-    "compile_commands": compile_commands,
-    "compile_command": compile_commands[0] if compile_commands else None,
-    "preflight_path": normalize_path(resolved_preflight_path) if resolved_preflight_path else None,
-    "preflight_hash_sha256": preflight_hash,
-    "evidence_path": normalize_path(compile_evidence_path) if compile_evidence_path else None,
-    "duration_ms": duration_ms,
-    "exit_code": 0,
 }
+success_event.update(gate_context)
 append_metrics_event(metrics_path, success_event, emit_metrics)
 write_compile_evidence(
     evidence_path=compile_evidence_path,
     task_id=task_id,
-    preflight_path=resolved_preflight_path,
-    preflight_hash=preflight_hash,
+    gate_context=gate_context,
     status="PASSED",
     outcome="PASS",
-    compile_commands=compile_commands,
-    commands_path=resolved_commands_path,
-    duration_ms=duration_ms,
-    exit_code=0,
     error_message=None,
 )
-append_task_event(repo_root, task_id, "COMPILE_GATE_PASSED", "PASS", "Compile gate passed.", success_details)
+append_task_event(repo_root, task_id, "COMPILE_GATE_PASSED", "PASS", "Compile gate passed.", success_event)
 
 print("COMPILE_GATE_PASSED")
-print(f"CommandsPath: {normalize_path(resolved_commands_path)}")
-if compile_commands:
-    print(f"CompileCommand: {compile_commands[0]}")
-    if len(compile_commands) > 1:
-        print(f"CompileCommandsCount: {len(compile_commands)}")
-if compile_evidence_path:
-    print(f"CompileEvidencePath: {normalize_path(compile_evidence_path)}")
-print(f"DurationMs: {duration_ms}")
+print(f"CompileSummary: PASSED | duration_ms={duration_ms} | exit_code=0 | errors={error_count} | warnings={warning_count}")
+if compile_output_path:
+    print(f"CompileOutputPath: {normalize_path(compile_output_path)}")
 PY

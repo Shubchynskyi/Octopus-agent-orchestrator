@@ -32,6 +32,7 @@ Installed to project root by `scripts/install.ps1`:
 Materialized inside `Octopus-agent-orchestrator/live` by `scripts/init.ps1`:
 - live/config/review-capabilities.json
 - live/config/paths.json
+- live/config/token-economy.json
 - live/docs/agent-rules/**
 - live/docs/changes/**
 - live/docs/reviews/**

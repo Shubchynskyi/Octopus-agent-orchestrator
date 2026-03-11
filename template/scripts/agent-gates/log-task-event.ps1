@@ -15,38 +15,138 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$gateUtilsModulePath = Join-Path $PSScriptRoot 'lib/gate-utils.psm1'
+if (-not (Test-Path -LiteralPath $gateUtilsModulePath)) {
+    throw "Missing gate utils module: $gateUtilsModulePath"
+}
+Import-Module -Name $gateUtilsModulePath -Force -DisableNameChecking
+
 function Resolve-ProjectRoot {
-    $projectRootCandidate = Join-Path $PSScriptRoot '..\..\..\..'
-    if (Test-Path $projectRootCandidate) {
-        return (Resolve-Path $projectRootCandidate).Path
-    }
-    return (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    return Get-GateProjectRoot -ScriptRoot $PSScriptRoot
 }
 
 function Normalize-Path {
     param([string]$PathValue)
 
-    if ([string]::IsNullOrWhiteSpace($PathValue)) {
-        return $null
-    }
-
-    return $PathValue.Replace('\', '/')
+    return Convert-GatePathToUnix -PathValue $PathValue
 }
 
 function Assert-ValidTaskId {
     param([string]$Value)
 
-    if ([string]::IsNullOrWhiteSpace($Value)) {
-        throw 'TaskId must not be empty.'
+    Assert-GateTaskId -Value $Value
+}
+
+function Resolve-PathInsideRepo {
+    param(
+        [string]$PathValue,
+        [string]$RepoRootPath
+    )
+
+    return Resolve-GatePathInsideRepo -PathValue $PathValue -RepoRootPath $RepoRootPath -AllowMissing
+}
+
+function Convert-ToDetailsMap {
+    param([object]$DetailsObject)
+
+    if ($null -eq $DetailsObject) {
+        return [ordered]@{}
     }
 
-    if ($Value.Length -gt 128) {
-        throw 'TaskId must be 128 characters or fewer.'
+    if ($DetailsObject -is [System.Collections.IDictionary]) {
+        $copy = [ordered]@{}
+        foreach ($key in $DetailsObject.Keys) {
+            $copy[$key] = $DetailsObject[$key]
+        }
+        return $copy
     }
 
-    if ($Value -notmatch '^[A-Za-z0-9._-]+$') {
-        throw "TaskId '$Value' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$"
+    if ($DetailsObject -is [PSCustomObject]) {
+        try {
+            $converted = $DetailsObject | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable
+            if ($converted -is [System.Collections.IDictionary]) {
+                $copy = [ordered]@{}
+                foreach ($key in $converted.Keys) {
+                    $copy[$key] = $converted[$key]
+                }
+                return $copy
+            }
+        } catch {
+        }
     }
+
+    return [ordered]@{
+        input_details = $DetailsObject
+    }
+}
+
+function Invoke-TerminalLogCleanup {
+    param(
+        [string]$RepoRootPath,
+        [string]$ResolvedTaskId
+    )
+
+    $cleanupResult = [ordered]@{
+        triggered = $true
+        attempted_paths = 0
+        discovered_paths = @()
+        deleted_paths = @()
+        missing_paths = @()
+        errors = @()
+    }
+
+    $candidatePaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $reviewsRoot = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/reviews'
+
+    if (Test-Path -LiteralPath $reviewsRoot -PathType Container) {
+        $pattern = "$ResolvedTaskId-compile-output*.log"
+        $matchedPaths = @(Get-ChildItem -Path $reviewsRoot -Filter $pattern -File -ErrorAction SilentlyContinue)
+        foreach ($matchedPath in $matchedPaths) {
+            [void]$candidatePaths.Add($matchedPath.FullName)
+        }
+    }
+
+    $compileEvidencePath = Join-Path $reviewsRoot "$ResolvedTaskId-compile-gate.json"
+    if (Test-Path -LiteralPath $compileEvidencePath -PathType Leaf) {
+        try {
+            $compileEvidence = Get-Content -LiteralPath $compileEvidencePath -Raw | ConvertFrom-Json -ErrorAction Stop
+            $compileOutputPathProperty = $compileEvidence.PSObject.Properties['compile_output_path']
+            if ($compileOutputPathProperty -and -not [string]::IsNullOrWhiteSpace([string]$compileOutputPathProperty.Value)) {
+                $resolvedEvidenceOutputPath = Resolve-PathInsideRepo -PathValue ([string]$compileOutputPathProperty.Value) -RepoRootPath $RepoRootPath
+                [void]$candidatePaths.Add($resolvedEvidenceOutputPath)
+            }
+        } catch {
+            $cleanupResult.errors += "Failed to read compile evidence '$($compileEvidencePath)': $($_.Exception.Message)"
+        }
+    }
+
+    foreach ($candidatePath in $candidatePaths) {
+        $resolvedCandidatePath = $null
+        try {
+            $resolvedCandidatePath = Resolve-PathInsideRepo -PathValue $candidatePath -RepoRootPath $RepoRootPath
+        } catch {
+            $cleanupResult.errors += "Compile output path is invalid '$candidatePath': $($_.Exception.Message)"
+            continue
+        }
+
+        $normalizedCandidatePath = Normalize-Path $resolvedCandidatePath
+        $cleanupResult.discovered_paths += $normalizedCandidatePath
+        $cleanupResult.attempted_paths = $cleanupResult.discovered_paths.Count
+
+        if (-not (Test-Path -LiteralPath $resolvedCandidatePath -PathType Leaf)) {
+            $cleanupResult.missing_paths += $normalizedCandidatePath
+            continue
+        }
+
+        try {
+            Remove-Item -LiteralPath $resolvedCandidatePath -Force -ErrorAction Stop
+            $cleanupResult.deleted_paths += $normalizedCandidatePath
+        } catch {
+            $cleanupResult.errors += "Failed to delete compile output '$normalizedCandidatePath': $($_.Exception.Message)"
+        }
+    }
+
+    return $cleanupResult
 }
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
@@ -78,6 +178,26 @@ if (-not [string]::IsNullOrWhiteSpace($DetailsJson)) {
     }
 }
 
+$terminalCleanup = [ordered]@{
+    triggered = $false
+    attempted_paths = 0
+    discovered_paths = @()
+    deleted_paths = @()
+    missing_paths = @()
+    errors = @()
+}
+$cleanupFailed = $false
+$eventDetails = $details
+
+$isTerminalEvent = $EventType -in @('TASK_DONE', 'TASK_BLOCKED')
+if ($isTerminalEvent) {
+    $terminalCleanup = Invoke-TerminalLogCleanup -RepoRootPath $RepoRoot -ResolvedTaskId $TaskId
+    $cleanupFailed = $terminalCleanup.errors.Count -gt 0
+    $detailsMap = Convert-ToDetailsMap -DetailsObject $details
+    $detailsMap['terminal_log_cleanup'] = $terminalCleanup
+    $eventDetails = [PSCustomObject]$detailsMap
+}
+
 if (-not (Test-Path $EventsRoot)) {
     New-Item -Path $EventsRoot -ItemType Directory -Force | Out-Null
 }
@@ -89,7 +209,7 @@ $event = [ordered]@{
     outcome = $Outcome
     actor = $Actor
     message = $Message
-    details = $details
+    details = $eventDetails
 }
 
 $line = $event | ConvertTo-Json -Depth 12 -Compress
@@ -107,6 +227,14 @@ $result = [ordered]@{
     actor = $Actor
     task_event_log_path = Normalize-Path $taskFilePath
     all_tasks_log_path = Normalize-Path $allTasksPath
+}
+if ($isTerminalEvent) {
+    $result['terminal_log_cleanup'] = $terminalCleanup
+}
+if ($cleanupFailed) {
+    $result['status'] = 'TASK_EVENT_LOGGED_CLEANUP_FAILED'
+    Write-Output ($result | ConvertTo-Json -Depth 12)
+    exit 1
 }
 
 Write-Output ($result | ConvertTo-Json -Depth 8)

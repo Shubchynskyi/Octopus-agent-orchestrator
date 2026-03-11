@@ -22,10 +22,23 @@ Prioritize correctness, performance, and data safety.
 - Task goal and expected DB behavior.
 - Changed files list and diff.
 - Migration files and repository/query changes.
-- Relevant rule files:
-  - `Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md`
-  - `Octopus-agent-orchestrator/live/docs/agent-rules/70-security.md`
-  - `Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md`
+- Rule context package selected by orchestration and explicitly passed to reviewer:
+  - token economy active + `depth=1`: only `00-core.md`, `80-task-workflow.md`, and DB-triggered rule ids/snippets for changed scope.
+  - token economy active + `depth=2`: `00-core.md`, `35-strict-coding-rules.md`, `70-security.md`, `80-task-workflow.md`.
+  - token economy disabled or `depth=3`: full required DB rule set for changed scope.
+
+## Token Economy Mode
+- Config source: `Octopus-agent-orchestrator/live/config/token-economy.json`.
+- Apply this section only when `enabled=true` and effective depth is in `enabled_depths`.
+- While active, this section takes precedence over any static rule-file list in `Required Inputs`.
+- Depth-aware required-rules behavior:
+  - `depth=1`: evaluate required DB rules directly triggered by changed scope first; avoid unrelated rule expansion and full static rule loading.
+  - `depth=2`: evaluate the full required DB checklist for changed scope.
+  - other depths: follow full review behavior without token-economy reductions.
+- Compact mode contract:
+  - when `compact_reviewer_output=true`, keep the same mandatory output sections and exact verdict token.
+  - keep findings concise (`risk -> evidence -> required action`) and move detail overflow to residual DB risks.
+  - when including failing command/test snippets, cap pasted tail output to `fail_tail_lines`.
 
 ## Review Workflow
 1. Detect DB-impact scope using `references/db-trigger-matrix.md`.

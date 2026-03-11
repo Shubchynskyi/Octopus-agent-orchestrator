@@ -4,6 +4,8 @@ param(
     [string]$TaskId = '',
     [string]$PreflightPath = '',
     [string]$CompileEvidencePath = '',
+    [string]$CompileOutputPath = '',
+    [int]$FailTailLines = 50,
     [string]$MetricsPath,
     [bool]$EmitMetrics = $true,
     [string]$RepoRoot
@@ -11,38 +13,26 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$gateUtilsModulePath = Join-Path $PSScriptRoot 'lib/gate-utils.psm1'
+if (-not (Test-Path -LiteralPath $gateUtilsModulePath)) {
+    throw "Missing gate utils module: $gateUtilsModulePath"
+}
+Import-Module -Name $gateUtilsModulePath -Force -DisableNameChecking
+
 function Resolve-ProjectRoot {
-    $projectRootCandidate = Join-Path $PSScriptRoot '..\..\..\..'
-    if (Test-Path $projectRootCandidate) {
-        return (Resolve-Path $projectRootCandidate).Path
-    }
-    return (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    return Get-GateProjectRoot -ScriptRoot $PSScriptRoot
 }
 
 function Normalize-Path {
     param([string]$PathValue)
 
-    if ([string]::IsNullOrWhiteSpace($PathValue)) {
-        return $null
-    }
-
-    return $PathValue.Replace('\', '/')
+    return Convert-GatePathToUnix -PathValue $PathValue
 }
 
 function Assert-ValidTaskId {
     param([string]$Value)
 
-    if ([string]::IsNullOrWhiteSpace($Value)) {
-        throw 'TaskId must not be empty.'
-    }
-
-    if ($Value.Length -gt 128) {
-        throw 'TaskId must be 128 characters or fewer.'
-    }
-
-    if ($Value -notmatch '^[A-Za-z0-9._-]+$') {
-        throw "TaskId '$Value' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$"
-    }
+    Assert-GateTaskId -Value $Value
 }
 
 function Resolve-PathInsideRepo {
@@ -51,17 +41,20 @@ function Resolve-PathInsideRepo {
         [string]$RepoRootPath
     )
 
+    return Resolve-GatePathInsideRepo -PathValue $PathValue -RepoRootPath $RepoRootPath -AllowMissing -AllowEmpty
+}
+
+function Ensure-ParentDirectory {
+    param([string]$PathValue)
+
     if ([string]::IsNullOrWhiteSpace($PathValue)) {
-        return $null
+        return
     }
 
-    $candidate = if ([System.IO.Path]::IsPathRooted($PathValue)) { $PathValue } else { Join-Path $RepoRootPath $PathValue }
-    $resolved = [System.IO.Path]::GetFullPath($candidate)
-    $repoNormalized = ([System.IO.Path]::GetFullPath($RepoRootPath)).TrimEnd('\')
-    if (-not $resolved.StartsWith($repoNormalized, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Path '$PathValue' must resolve inside repository root '$RepoRootPath'."
+    $parentDirectory = Split-Path -Parent $PathValue
+    if ($parentDirectory -and -not (Test-Path -LiteralPath $parentDirectory)) {
+        New-Item -Path $parentDirectory -ItemType Directory -Force | Out-Null
     }
-    return $resolved
 }
 
 function Resolve-PreflightPath {
@@ -100,6 +93,24 @@ function Resolve-CompileEvidencePath {
     return Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-compile-gate.json"
 }
 
+function Resolve-CompileOutputPath {
+    param(
+        [string]$ExplicitOutputPath,
+        [string]$RepoRootPath,
+        [string]$ResolvedTaskId
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ResolvedTaskId)) {
+        return $null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitOutputPath)) {
+        return Resolve-PathInsideRepo -PathValue $ExplicitOutputPath -RepoRootPath $RepoRootPath
+    }
+
+    return Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-compile-output.log"
+}
+
 function Get-FileSha256 {
     param([string]$PathValue)
 
@@ -114,18 +125,86 @@ function Get-FileSha256 {
     return (Get-FileHash -Path $PathValue -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-CompileOutputStats {
+    param([string[]]$Lines)
+
+    $warningCount = 0
+    $errorCount = 0
+    foreach ($line in @($Lines)) {
+        if ($line -match '(?i)\bwarning\b') {
+            $warningCount++
+        }
+        if ($line -match '(?i)\berror\b') {
+            $errorCount++
+        }
+    }
+
+    return [PSCustomObject]@{
+        warning_lines = $warningCount
+        error_lines = $errorCount
+    }
+}
+
+function Append-CompileOutputEntry {
+    param(
+        [string]$OutputPath,
+        [int]$CommandIndex,
+        [int]$TotalCommands,
+        [string]$Command,
+        [string[]]$OutputLines
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OutputPath)) {
+        return
+    }
+
+    Ensure-ParentDirectory -PathValue $OutputPath
+
+    $headerLines = @(
+        "==== COMMAND $CommandIndex/$TotalCommands ===="
+        "COMMAND: $Command"
+        "TIMESTAMP_UTC: $((Get-Date).ToUniversalTime().ToString('o'))"
+        '---- OUTPUT START ----'
+    )
+
+    $footerLines = @(
+        '---- OUTPUT END ----'
+        ''
+    )
+
+    Add-Content -Path $OutputPath -Value $headerLines
+    if ($OutputLines.Count -gt 0) {
+        Add-Content -Path $OutputPath -Value $OutputLines
+    }
+    Add-Content -Path $OutputPath -Value $footerLines
+}
+
+function Get-OutputTail {
+    param(
+        [string[]]$Lines,
+        [int]$TailCount
+    )
+
+    $allLines = @($Lines)
+    if ($TailCount -le 0 -or $allLines.Count -eq 0) {
+        return @()
+    }
+
+    if ($allLines.Count -le $TailCount) {
+        return $allLines
+    }
+
+    $startIndex = $allLines.Count - $TailCount
+    return $allLines[$startIndex..($allLines.Count - 1)]
+}
+
 function Write-CompileEvidence {
     param(
         [string]$EvidencePath,
         [string]$ResolvedTaskId,
-        [string]$PreflightPathResolved,
-        [string]$PreflightHash,
+        [hashtable]$GateContext,
         [string]$Status,
         [string]$Outcome,
-        [string[]]$CompileCommands,
-        [string]$ResolvedCommandsPath,
-        [int]$DurationMs,
-        [int]$ExitCode,
         [string]$ErrorMessage
     )
 
@@ -133,10 +212,7 @@ function Write-CompileEvidence {
         return
     }
 
-    $evidenceDir = Split-Path -Parent $EvidencePath
-    if ($evidenceDir -and -not (Test-Path -LiteralPath $evidenceDir)) {
-        New-Item -Path $evidenceDir -ItemType Directory -Force | Out-Null
-    }
+    Ensure-ParentDirectory -PathValue $EvidencePath
 
     $payload = [ordered]@{
         timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
@@ -144,13 +220,11 @@ function Write-CompileEvidence {
         task_id = $ResolvedTaskId
         status = $Status
         outcome = $Outcome
-        commands_path = Normalize-Path $ResolvedCommandsPath
-        compile_commands = $CompileCommands
-        preflight_path = Normalize-Path $PreflightPathResolved
-        preflight_hash_sha256 = $PreflightHash
-        duration_ms = $DurationMs
-        exit_code = $ExitCode
         error = $ErrorMessage
+    }
+
+    foreach ($key in $GateContext.Keys) {
+        $payload[$key] = $GateContext[$key]
     }
 
     Set-Content -LiteralPath $EvidencePath -Value ($payload | ConvertTo-Json -Depth 12)
@@ -176,24 +250,7 @@ function Append-MetricsEvent {
         [object]$EventObject
     )
 
-    if (-not $EmitMetrics) {
-        return
-    }
-
-    if ([string]::IsNullOrWhiteSpace($Path)) {
-        return
-    }
-
-    try {
-        $metricsDir = Split-Path -Parent $Path
-        if ($metricsDir -and -not (Test-Path $metricsDir)) {
-            New-Item -Path $metricsDir -ItemType Directory -Force | Out-Null
-        }
-        $line = $EventObject | ConvertTo-Json -Depth 12 -Compress
-        Add-Content -Path $Path -Value $line
-    } catch {
-        Write-Verbose "Metrics append failed: $($_.Exception.Message)"
-    }
+    Add-GateMetricsEvent -Path $Path -EventObject $EventObject -EmitMetrics $EmitMetrics
 }
 
 function Append-TaskEvent {
@@ -206,35 +263,7 @@ function Append-TaskEvent {
         [object]$Details
     )
 
-    if ([string]::IsNullOrWhiteSpace($ResolvedTaskId)) {
-        return
-    }
-    Assert-ValidTaskId -Value $ResolvedTaskId
-
-    try {
-        $eventsDir = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/task-events'
-        if (-not (Test-Path $eventsDir)) {
-            New-Item -Path $eventsDir -ItemType Directory -Force | Out-Null
-        }
-
-        $event = [ordered]@{
-            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
-            task_id = $ResolvedTaskId
-            event_type = $EventType
-            outcome = $Outcome
-            message = $Message
-            details = $Details
-        }
-
-        $line = $event | ConvertTo-Json -Depth 12 -Compress
-        $taskFilePath = Join-Path $eventsDir "$ResolvedTaskId.jsonl"
-        $allTasksPath = Join-Path $eventsDir 'all-tasks.jsonl'
-
-        Add-Content -Path $taskFilePath -Value $line
-        Add-Content -Path $allTasksPath -Value $line
-    } catch {
-        Write-Verbose "Task-event append failed: $($_.Exception.Message)"
-    }
+    Add-GateTaskEvent -RepoRootPath $RepoRootPath -TaskId $ResolvedTaskId -EventType $EventType -Outcome $Outcome -Message $Message -Details $Details
 }
 
 function Get-CompileCommands {
@@ -311,19 +340,32 @@ if ([string]::IsNullOrWhiteSpace($MetricsPath)) {
     $MetricsPath = Join-Path $RepoRoot 'Octopus-agent-orchestrator/runtime/metrics.jsonl'
 }
 
+if ($FailTailLines -le 0) {
+    throw 'FailTailLines must be a positive integer.'
+}
+
 $resolvedTaskId = if ([string]::IsNullOrWhiteSpace($TaskId)) { $null } else { $TaskId.Trim() }
 if (-not [string]::IsNullOrWhiteSpace($resolvedTaskId)) {
     Assert-ValidTaskId -Value $resolvedTaskId
 }
+
 $resolvedCommandsPath = $null
 $compileCommands = @()
 $resolvedPreflightPath = $null
 $preflightHash = $null
 $resolvedCompileEvidencePath = $null
-$exitCode = 1
-$durationMs = 0
+$resolvedCompileOutputPath = $null
+$compileOutputLines = New-Object 'System.Collections.Generic.List[string]'
+$warningCount = 0
+$errorCount = 0
+$exitCode = 0
 $exceptionMessage = $null
+$repoLocationPushed = $false
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$pwshExecutable = (Get-Process -Id $PID).Path
+if ([string]::IsNullOrWhiteSpace($pwshExecutable)) {
+    $pwshExecutable = 'pwsh'
+}
 
 try {
     $resolvedCommandsPath = Resolve-CommandsPath -PathValue $CommandsPath -RepoRootPath $RepoRoot
@@ -331,92 +373,107 @@ try {
     $resolvedPreflightPath = Resolve-PreflightPath -ExplicitPreflightPath $PreflightPath -RepoRootPath $RepoRoot -ResolvedTaskId $resolvedTaskId
     $preflightHash = Get-FileSha256 -PathValue $resolvedPreflightPath
     $resolvedCompileEvidencePath = Resolve-CompileEvidencePath -ExplicitEvidencePath $CompileEvidencePath -RepoRootPath $RepoRoot -ResolvedTaskId $resolvedTaskId
+    $resolvedCompileOutputPath = Resolve-CompileOutputPath -ExplicitOutputPath $CompileOutputPath -RepoRootPath $RepoRoot -ResolvedTaskId $resolvedTaskId
 
-    Push-Location $RepoRoot
-    try {
-        foreach ($compileCommand in $compileCommands) {
-            $global:LASTEXITCODE = 0
-            Invoke-Expression $compileCommand
-            $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
-            if (-not $?) {
-                if ($exitCode -eq 0) {
-                    $exitCode = 1
-                }
-            }
-            if ($exitCode -ne 0) {
-                throw "Compile command exited with code $exitCode."
-            }
+    Push-Location -LiteralPath $RepoRoot
+    $repoLocationPushed = $true
+
+    for ($index = 0; $index -lt $compileCommands.Count; $index++) {
+        $compileCommand = $compileCommands[$index]
+        $commandOutputLines = @()
+        $commandExitCode = 0
+
+        try {
+            $commandOutput = & $pwshExecutable -NoProfile -NonInteractive -Command $compileCommand 2>&1
+            $commandOutputLines = @($commandOutput | ForEach-Object { [string]$_ })
+            $commandExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
         }
-    } finally {
+        catch {
+            $commandOutputLines = @("Failed to execute compile command: $($_.Exception.Message)")
+            $commandExitCode = 1
+        }
+
+        foreach ($line in $commandOutputLines) {
+            $compileOutputLines.Add($line)
+        }
+
+        $stats = Get-CompileOutputStats -Lines $commandOutputLines
+        $warningCount += [int]$stats.warning_lines
+        $errorCount += [int]$stats.error_lines
+
+        Append-CompileOutputEntry -OutputPath $resolvedCompileOutputPath -CommandIndex ($index + 1) -TotalCommands $compileCommands.Count -Command $compileCommand -OutputLines $commandOutputLines
+
+        if ($commandExitCode -ne 0) {
+            $exitCode = $commandExitCode
+            $exceptionMessage = "Compile command #$($index + 1) exited with code $commandExitCode."
+            break
+        }
+    }
+}
+catch {
+    if ([string]::IsNullOrWhiteSpace($exceptionMessage)) {
+        $exceptionMessage = $_.Exception.Message
+    }
+    if ($exitCode -eq 0) {
+        $exitCode = 1
+    }
+}
+finally {
+    if ($repoLocationPushed) {
         Pop-Location
     }
-} catch {
-    $exceptionMessage = $_.Exception.Message
-} finally {
     $stopwatch.Stop()
-    $durationMs = [int][Math]::Round($stopwatch.Elapsed.TotalMilliseconds)
 }
 
-if ($null -ne $exceptionMessage) {
-    $failureDetails = [ordered]@{
-        commands_path = Normalize-Path $resolvedCommandsPath
-        compile_commands = $compileCommands
-        compile_command = $(if ($compileCommands.Count -gt 0) { $compileCommands[0] } else { $null })
-        preflight_path = Normalize-Path $resolvedPreflightPath
-        preflight_hash_sha256 = $preflightHash
-        evidence_path = Normalize-Path $resolvedCompileEvidencePath
-        duration_ms = $durationMs
-        exit_code = $exitCode
-        error = $exceptionMessage
-    }
+$durationMs = [int][Math]::Round($stopwatch.Elapsed.TotalMilliseconds)
+$totalOutputLines = $compileOutputLines.Count
+$compileOutputArray = @($compileOutputLines.ToArray())
+$tailOutput = Get-OutputTail -Lines $compileOutputArray -TailCount $FailTailLines
 
-    $failureEvent = [ordered]@{
-        timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
-        event_type = 'compile_gate_check'
-        status = 'FAILED'
-        task_id = $resolvedTaskId
-        commands_path = Normalize-Path $resolvedCommandsPath
-        compile_commands = $compileCommands
-        compile_command = $(if ($compileCommands.Count -gt 0) { $compileCommands[0] } else { $null })
-        preflight_path = Normalize-Path $resolvedPreflightPath
-        preflight_hash_sha256 = $preflightHash
-        evidence_path = Normalize-Path $resolvedCompileEvidencePath
-        duration_ms = $durationMs
-        exit_code = $exitCode
-        error = $exceptionMessage
-    }
-    Append-MetricsEvent -Path $MetricsPath -EventObject $failureEvent
-    Write-CompileEvidence -EvidencePath $resolvedCompileEvidencePath -ResolvedTaskId $resolvedTaskId -PreflightPathResolved $resolvedPreflightPath -PreflightHash $preflightHash -Status 'FAILED' -Outcome 'FAIL' -CompileCommands $compileCommands -ResolvedCommandsPath $resolvedCommandsPath -DurationMs $durationMs -ExitCode $exitCode -ErrorMessage $exceptionMessage
-    Append-TaskEvent -RepoRootPath $RepoRoot -ResolvedTaskId $resolvedTaskId -EventType 'COMPILE_GATE_FAILED' -Outcome 'FAIL' -Message 'Compile gate failed.' -Details $failureDetails
-
-    Write-Output 'COMPILE_GATE_FAILED'
-    if ($resolvedCommandsPath) {
-        Write-Output "CommandsPath: $($resolvedCommandsPath.Replace('\', '/'))"
-    }
-    if ($compileCommands.Count -gt 0) {
-        Write-Output "CompileCommand: $($compileCommands[0])"
-        if ($compileCommands.Count -gt 1) {
-            Write-Output "CompileCommandsCount: $($compileCommands.Count)"
-        }
-    }
-    if ($resolvedCompileEvidencePath) {
-        Write-Output "CompileEvidencePath: $($resolvedCompileEvidencePath.Replace('\', '/'))"
-    }
-    Write-Output "DurationMs: $durationMs"
-    Write-Output "ExitCode: $exitCode"
-    Write-Output "Reason: $exceptionMessage"
-    exit 1
-}
-
-$successDetails = [ordered]@{
+$gateContext = [ordered]@{
     commands_path = Normalize-Path $resolvedCommandsPath
     compile_commands = $compileCommands
     compile_command = $(if ($compileCommands.Count -gt 0) { $compileCommands[0] } else { $null })
     preflight_path = Normalize-Path $resolvedPreflightPath
     preflight_hash_sha256 = $preflightHash
     evidence_path = Normalize-Path $resolvedCompileEvidencePath
+    compile_output_path = Normalize-Path $resolvedCompileOutputPath
+    compile_output_lines = $totalOutputLines
+    compile_output_warning_lines = $warningCount
+    compile_output_error_lines = $errorCount
     duration_ms = $durationMs
-    exit_code = 0
+    exit_code = $(if ($null -ne $exceptionMessage) { $exitCode } else { 0 })
+}
+
+if ($null -ne $exceptionMessage) {
+    $failureEvent = [ordered]@{
+        timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+        event_type = 'compile_gate_check'
+        status = 'FAILED'
+        task_id = $resolvedTaskId
+        error = $exceptionMessage
+    }
+    foreach ($key in $gateContext.Keys) {
+        $failureEvent[$key] = $gateContext[$key]
+    }
+
+    Append-MetricsEvent -Path $MetricsPath -EventObject $failureEvent
+    Write-CompileEvidence -EvidencePath $resolvedCompileEvidencePath -ResolvedTaskId $resolvedTaskId -GateContext $gateContext -Status 'FAILED' -Outcome 'FAIL' -ErrorMessage $exceptionMessage
+    Append-TaskEvent -RepoRootPath $RepoRoot -ResolvedTaskId $resolvedTaskId -EventType 'COMPILE_GATE_FAILED' -Outcome 'FAIL' -Message 'Compile gate failed.' -Details $failureEvent
+
+    Write-Output 'COMPILE_GATE_FAILED'
+    Write-Output ("CompileSummary: FAILED | duration_ms={0} | exit_code={1} | errors={2} | warnings={3}" -f $durationMs, $exitCode, $errorCount, $warningCount)
+    if ($resolvedCompileOutputPath) {
+        Write-Output ("CompileOutputPath: {0}" -f (Normalize-Path $resolvedCompileOutputPath))
+    }
+    if ($tailOutput.Count -gt 0) {
+        Write-Output ("CompileOutputTailLast{0}Lines:" -f [Math]::Min($FailTailLines, $tailOutput.Count))
+        foreach ($line in $tailOutput) {
+            Write-Output $line
+        }
+    }
+    Write-Output "Reason: $exceptionMessage"
+    exit 1
 }
 
 $successEvent = [ordered]@{
@@ -424,28 +481,17 @@ $successEvent = [ordered]@{
     event_type = 'compile_gate_check'
     status = 'PASSED'
     task_id = $resolvedTaskId
-    commands_path = Normalize-Path $resolvedCommandsPath
-    compile_commands = $compileCommands
-    compile_command = $(if ($compileCommands.Count -gt 0) { $compileCommands[0] } else { $null })
-    preflight_path = Normalize-Path $resolvedPreflightPath
-    preflight_hash_sha256 = $preflightHash
-    evidence_path = Normalize-Path $resolvedCompileEvidencePath
-    duration_ms = $durationMs
-    exit_code = 0
 }
+foreach ($key in $gateContext.Keys) {
+    $successEvent[$key] = $gateContext[$key]
+}
+
 Append-MetricsEvent -Path $MetricsPath -EventObject $successEvent
-Write-CompileEvidence -EvidencePath $resolvedCompileEvidencePath -ResolvedTaskId $resolvedTaskId -PreflightPathResolved $resolvedPreflightPath -PreflightHash $preflightHash -Status 'PASSED' -Outcome 'PASS' -CompileCommands $compileCommands -ResolvedCommandsPath $resolvedCommandsPath -DurationMs $durationMs -ExitCode 0 -ErrorMessage $null
-Append-TaskEvent -RepoRootPath $RepoRoot -ResolvedTaskId $resolvedTaskId -EventType 'COMPILE_GATE_PASSED' -Outcome 'PASS' -Message 'Compile gate passed.' -Details $successDetails
+Write-CompileEvidence -EvidencePath $resolvedCompileEvidencePath -ResolvedTaskId $resolvedTaskId -GateContext $gateContext -Status 'PASSED' -Outcome 'PASS' -ErrorMessage $null
+Append-TaskEvent -RepoRootPath $RepoRoot -ResolvedTaskId $resolvedTaskId -EventType 'COMPILE_GATE_PASSED' -Outcome 'PASS' -Message 'Compile gate passed.' -Details $successEvent
 
 Write-Output 'COMPILE_GATE_PASSED'
-Write-Output "CommandsPath: $($resolvedCommandsPath.Replace('\', '/'))"
-if ($compileCommands.Count -gt 0) {
-    Write-Output "CompileCommand: $($compileCommands[0])"
-    if ($compileCommands.Count -gt 1) {
-        Write-Output "CompileCommandsCount: $($compileCommands.Count)"
-    }
+Write-Output ("CompileSummary: PASSED | duration_ms={0} | exit_code=0 | errors={1} | warnings={2}" -f $durationMs, $errorCount, $warningCount)
+if ($resolvedCompileOutputPath) {
+    Write-Output ("CompileOutputPath: {0}" -f (Normalize-Path $resolvedCompileOutputPath))
 }
-if ($resolvedCompileEvidencePath) {
-    Write-Output "CompileEvidencePath: $($resolvedCompileEvidencePath.Replace('\', '/'))"
-}
-Write-Output "DurationMs: $durationMs"

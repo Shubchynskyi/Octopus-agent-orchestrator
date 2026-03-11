@@ -22,12 +22,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$gateUtilsModulePath = Join-Path $PSScriptRoot 'lib/gate-utils.psm1'
+if (-not (Test-Path -LiteralPath $gateUtilsModulePath)) {
+    throw "Missing gate utils module: $gateUtilsModulePath"
+}
+Import-Module -Name $gateUtilsModulePath -Force -DisableNameChecking
+
 function Resolve-ProjectRoot {
-    $projectRootCandidate = Join-Path $PSScriptRoot '..\..\..\..'
-    if (Test-Path $projectRootCandidate) {
-        return (Resolve-Path $projectRootCandidate).Path
-    }
-    return (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    return Get-GateProjectRoot -ScriptRoot $PSScriptRoot
 }
 
 if ([string]::IsNullOrWhiteSpace($MetricsPath)) {
@@ -40,50 +42,19 @@ function Append-MetricsEvent {
         [object]$EventObject
     )
 
-    if (-not $EmitMetrics) {
-        return
-    }
-
-    if ([string]::IsNullOrWhiteSpace($Path)) {
-        return
-    }
-
-    try {
-        $metricsDir = Split-Path -Parent $Path
-        if ($metricsDir -and -not (Test-Path $metricsDir)) {
-            New-Item -Path $metricsDir -ItemType Directory -Force | Out-Null
-        }
-        $line = $EventObject | ConvertTo-Json -Depth 12 -Compress
-        Add-Content -Path $Path -Value $line
-    } catch {
-        Write-Verbose "Metrics append failed: $($_.Exception.Message)"
-    }
+    Add-GateMetricsEvent -Path $Path -EventObject $EventObject -EmitMetrics $EmitMetrics
 }
 
 function Normalize-Path {
     param([string]$PathValue)
 
-    if ([string]::IsNullOrWhiteSpace($PathValue)) {
-        return $null
-    }
-
-    return $PathValue.Replace('\', '/')
+    return Convert-GatePathToUnix -PathValue $PathValue
 }
 
 function Assert-ValidTaskId {
     param([string]$Value)
 
-    if ([string]::IsNullOrWhiteSpace($Value)) {
-        throw 'TaskId must not be empty.'
-    }
-
-    if ($Value.Length -gt 128) {
-        throw 'TaskId must be 128 characters or fewer.'
-    }
-
-    if ($Value -notmatch '^[A-Za-z0-9._-]+$') {
-        throw "TaskId '$Value' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$"
-    }
+    Assert-GateTaskId -Value $Value
 }
 
 function Get-FileSha256 {
@@ -290,35 +261,7 @@ function Append-TaskEvent {
         [object]$Details = $null
     )
 
-    if ([string]::IsNullOrWhiteSpace($TaskId)) {
-        return
-    }
-    Assert-ValidTaskId -Value $TaskId
-
-    try {
-        $eventsDir = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/task-events'
-        if (-not (Test-Path $eventsDir)) {
-            New-Item -Path $eventsDir -ItemType Directory -Force | Out-Null
-        }
-
-        $event = [ordered]@{
-            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
-            task_id = $TaskId
-            event_type = $EventType
-            outcome = $Outcome
-            message = $Message
-            details = $Details
-        }
-
-        $line = $event | ConvertTo-Json -Depth 12 -Compress
-        $taskFilePath = Join-Path $eventsDir "$TaskId.jsonl"
-        $allTasksPath = Join-Path $eventsDir 'all-tasks.jsonl'
-
-        Add-Content -Path $taskFilePath -Value $line
-        Add-Content -Path $allTasksPath -Value $line
-    } catch {
-        Write-Verbose "Task-event append failed: $($_.Exception.Message)"
-    }
+    Add-GateTaskEvent -RepoRootPath $RepoRootPath -TaskId $TaskId -EventType $EventType -Outcome $Outcome -Message $Message -Details $Details
 }
 
 function Parse-SkipReviews {
@@ -661,4 +604,5 @@ if ($skipCode) {
 Append-TaskEvent -RepoRootPath $repoRoot -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_PASSED' -Outcome 'PASS' -Message 'Required reviews gate passed.' -Details $taskSuccessDetails
 Write-Output 'REVIEW_GATE_PASSED'
 Write-Output "Mode: $($validatedPreflight.mode)"
+
 

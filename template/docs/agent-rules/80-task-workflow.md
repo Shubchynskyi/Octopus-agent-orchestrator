@@ -34,16 +34,19 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 
 ## Mandatory Gate Contract
 - Preflight artifact must exist before review stage.
+- Preflight classification must run with explicit `-OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
 - Compile gate script must pass before `IN_REVIEW`:
   `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1`.
+- Compile gate invocation must pass `fail_tail_lines` from `live/config/token-economy.json` (fallback `50`) to keep failure-output budget deterministic.
 - Required reviews must be launched only from preflight `required_reviews.*`.
 - Review gate script must pass before `DONE`:
   `Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1`.
 - Review gate script validates compile evidence (`COMPILE_GATE_PASSED`) from task timeline for the same task id.
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
   `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
+- Terminal statuses (`DONE`, `BLOCKED`) require full cleanup of temporary reviewer/specialist logs after required artifacts are persisted.
 - Documentation impact updates are required when behavior/contracts/ops docs changed.
-- Final user report must include commit message suggestion plus explicit commit decision question (`Do you want me to commit now? (yes/no)`).
+- Final user report order is mandatory: implementation summary -> `git commit -m "<message>"` suggestion -> `Do you want me to commit now? (yes/no)`.
 - Reviewer and specialist agents must be closed after verdict capture.
 
 ## Escape Hatch Contract
@@ -57,6 +60,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 
 ## Reviewer Independence
 - Preferred mode: reviewers are spawned with clean context (`fork_context=false`) when platform supports sub-agents.
+- Platform mapping: GitHub Copilot CLI must spawn reviewer runs via `task` tool with `agent_type="general-purpose"` (isolated context per reviewer run).
 - Fallback mode (single-agent platforms): run independent review passes sequentially, each with explicit scope and isolated checklist, before final verdict aggregation.
 - Fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewers.
 - Reviewer verdict is a release gate, not optional advice.

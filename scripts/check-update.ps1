@@ -79,7 +79,40 @@ function Compare-VersionStrings {
             return $currentParsed.CompareTo($latestParsed)
         }
         catch {
-            return [string]::Compare($currentNormalized, $latestNormalized, $true)
+            $parseDottedSegments = {
+                param([string]$Value)
+
+                $segments = @()
+                foreach ($rawSegment in ($Value -split '\.')) {
+                    $segment = $rawSegment.Trim()
+                    $segmentValue = 0L
+                    $numericPrefixMatch = [regex]::Match($segment, '^\d+')
+                    if ($numericPrefixMatch.Success) {
+                        [void][long]::TryParse($numericPrefixMatch.Value, [ref]$segmentValue)
+                    }
+                    $segments += $segmentValue
+                }
+
+                return ,$segments
+            }
+
+            $currentSegments = & $parseDottedSegments $currentNormalized
+            $latestSegments = & $parseDottedSegments $latestNormalized
+            $maxLength = [Math]::Max($currentSegments.Count, $latestSegments.Count)
+
+            for ($index = 0; $index -lt $maxLength; $index++) {
+                $currentValue = if ($index -lt $currentSegments.Count) { [long]$currentSegments[$index] } else { 0L }
+                $latestValue = if ($index -lt $latestSegments.Count) { [long]$latestSegments[$index] } else { 0L }
+
+                if ($currentValue -lt $latestValue) {
+                    return -1
+                }
+                if ($currentValue -gt $latestValue) {
+                    return 1
+                }
+            }
+
+            return 0
         }
     }
 }
@@ -106,6 +139,7 @@ function Copy-DirectoryContentMerge {
     }
 
     $sourceRoot = [System.IO.Path]::GetFullPath($SourceDirectory)
+    $expectedDestinationFiles = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($sourceFile in Get-ChildItem -LiteralPath $SourceDirectory -Recurse -File) {
         $relativePath = [System.IO.Path]::GetRelativePath($sourceRoot, $sourceFile.FullName)
         if ([string]::IsNullOrWhiteSpace($relativePath) -or $relativePath -eq '.') {
@@ -113,6 +147,7 @@ function Copy-DirectoryContentMerge {
         }
 
         $destinationFile = [System.IO.Path]::GetFullPath((Join-Path $DestinationDirectory $relativePath))
+        [void]$expectedDestinationFiles.Add($destinationFile)
         if ($skipSet.Contains($destinationFile)) {
             continue
         }
@@ -123,6 +158,28 @@ function Copy-DirectoryContentMerge {
         }
 
         Copy-Item -LiteralPath $sourceFile.FullName -Destination $destinationFile -Force
+    }
+
+    foreach ($destinationFile in Get-ChildItem -LiteralPath $DestinationDirectory -Recurse -File -ErrorAction SilentlyContinue) {
+        $destinationFileFull = [System.IO.Path]::GetFullPath($destinationFile.FullName)
+        if ($skipSet.Contains($destinationFileFull)) {
+            continue
+        }
+        if (-not $expectedDestinationFiles.Contains($destinationFileFull)) {
+            Remove-Item -LiteralPath $destinationFileFull -Force
+        }
+    }
+
+    $directories = @(Get-ChildItem -LiteralPath $DestinationDirectory -Recurse -Directory -ErrorAction SilentlyContinue | Sort-Object { $_.FullName.Length } -Descending)
+    foreach ($directory in $directories) {
+        if ($skipSet.Contains([System.IO.Path]::GetFullPath($directory.FullName))) {
+            continue
+        }
+
+        $hasChildren = @(Get-ChildItem -LiteralPath $directory.FullName -Force -ErrorAction SilentlyContinue).Count -gt 0
+        if (-not $hasChildren) {
+            Remove-Item -LiteralPath $directory.FullName -Force
+        }
     }
 }
 

@@ -13,6 +13,20 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Docs Updated: <list of updated doc files>
 ```
 
+## 2026-03-11 - Platform-agnostic reviewer routing and version bump
+- Task: ad-hoc
+- Type: behavior-change
+- Scope: orchestration / provider bridge / release metadata
+- Summary: Renamed reviewer execution guidance to platform-agnostic contract, added explicit GitHub Copilot CLI reviewer launch mapping (`task` + `agent_type="general-purpose"`), updated provider bridge managed blocks with the same mapping, fixed stale reviewer verifier snippets for backward compatibility, hardened repo-boundary checks in gate scripts, aligned PowerShell compile gate working directory with shell parity, made `check-update` scripts-directory sync/rollback deterministic, wired orchestration compile invocation to pass token-economy `fail_tail_lines`, and bumped bundle version to `1.0.2`.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/template/skills/orchestration/SKILL.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md`; `Octopus-agent-orchestrator/scripts/install.ps1`; `Octopus-agent-orchestrator/scripts/verify.ps1`; `Octopus-agent-orchestrator/scripts/check-update.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.sh`; `Octopus-agent-orchestrator/template/scripts/agent-gates/log-task-event.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/log-task-event.sh`; `Octopus-agent-orchestrator/VERSION`
+
+## 2026-03-10 - Security, token-economy, and cleanup contracts hardened
+- Task: ad-hoc
+- Type: behavior-change
+- Scope: gates / verification / bundle metadata
+- Summary: Enforced token-economy config contract in verification, updated install bridge profiles to re-read token-economy config, added token-economy artifact to manifested live config outputs, hardened compile-gate execution and compact output handling (including Git Bash path pinning on Windows), switched gate telemetry append failures to warning-level visibility, added terminal-task compile-log cleanup with fail-closed behavior, and replaced check-update fallback version comparison with numeric dotted-segment logic.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/MANIFEST.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`
+
 ## 2026-03-10 - Commit guard no longer blocks human IDE commits
 - Task: ad-hoc
 - Type: behavior-change

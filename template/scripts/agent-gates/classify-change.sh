@@ -26,39 +26,23 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
+sys.path.insert(0, str(script_dir / "lib"))
 
-def parse_bool(value: str) -> bool:
-    normalized = str(value).strip().lower()
-    if normalized in ("1", "true", "yes", "y", "on"):
-        return True
-    if normalized in ("0", "false", "no", "n", "off"):
-        return False
-    raise ValueError(f"Unsupported boolean value: {value}")
+from gate_utils import (
+    append_metrics_event,
+    append_task_event,
+    assert_valid_task_id,
+    match_any_regex as gate_match_any_regex,
+    normalize_path as gate_normalize_path,
+    parse_bool,
+    resolve_project_root,
+    to_posix,
+)
 
 
 def normalize_path(path_value: str):
-    if not path_value:
-        return None
-    normalized = path_value.replace("\\", "/").strip()
-    while normalized.startswith("./"):
-        normalized = normalized[2:]
-    normalized = normalized.lstrip("/")
-    return normalized or None
-
-
-def assert_valid_task_id(value: str):
-    if not value or not value.strip():
-        raise ValueError("TaskId must not be empty.")
-    task_id = value.strip()
-    if len(task_id) > 128:
-        raise ValueError("TaskId must be 128 characters or fewer.")
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", task_id):
-        raise ValueError(f"TaskId '{task_id}' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$")
-    return task_id
-
-
-def to_posix(path_obj: Path) -> str:
-    return str(path_obj).replace("\\", "/")
+    return gate_normalize_path(path_value, trim=True, strip_dot_slash=True, strip_leading_slash=True)
 
 
 def test_path_prefix(path_value: str, prefixes):
@@ -70,18 +54,7 @@ def test_path_prefix(path_value: str, prefixes):
 
 
 def test_match_any_regex(path_value: str, regexes):
-    for regex in regexes:
-        if re.search(regex, path_value):
-            return True
-    return False
-
-
-def append_metrics_event(path: Path, event_obj: dict, emit_metrics: bool):
-    if not emit_metrics:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(event_obj, ensure_ascii=False, separators=(",", ":")) + "\n")
+    return gate_match_any_regex(path_value, regexes)
 
 
 def resolve_task_id(explicit_task_id: str, output_path_hint: str):
@@ -93,28 +66,6 @@ def resolve_task_id(explicit_task_id: str, output_path_hint: str):
     candidate = re.sub(r"-preflight$", "", base_name)
     candidate = candidate.strip()
     return candidate or None
-
-
-def append_task_event(repo_root: Path, task_id: str, event_type: str, outcome: str, message: str, details: dict):
-    if not task_id:
-        return
-    task_id = assert_valid_task_id(task_id)
-    events_dir = (repo_root / "Octopus-agent-orchestrator/runtime/task-events").resolve()
-    events_dir.mkdir(parents=True, exist_ok=True)
-
-    event = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "task_id": task_id,
-        "event_type": event_type,
-        "outcome": outcome,
-        "message": message,
-        "details": details,
-    }
-    line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-    with (events_dir / f"{task_id}.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
-    with (events_dir / "all-tasks.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
 
 
 def run_git(repo_root: Path, args):
@@ -338,10 +289,7 @@ parser.add_argument("--metrics-path", default="")
 parser.add_argument("--emit-metrics", default="true")
 args = parser.parse_args()
 
-script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
-project_root_candidate = (script_dir / "../../../../").resolve()
-fallback_root = (script_dir / "../../").resolve()
-repo_root = Path(args.repo_root).resolve() if args.repo_root else (project_root_candidate if project_root_candidate.exists() else fallback_root)
+repo_root = Path(args.repo_root).resolve() if args.repo_root else resolve_project_root(script_dir)
 
 classification_config = get_classification_config(repo_root)
 metrics_path_raw = args.metrics_path.strip() if args.metrics_path else ""

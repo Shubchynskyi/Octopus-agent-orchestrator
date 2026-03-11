@@ -10,7 +10,7 @@ allowed-tools:
   - Write
 metadata:
   author: Octopus-agent-orchestrator
-  version: 1.6.0
+  version: 1.6.1
   runtime_requirement: PowerShell 7+ (pwsh) or Bash + Python 3 for gate scripts
 ---
 
@@ -24,6 +24,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Current task queue: `TASK.md`.
 - Active source-of-truth entrypoint (`CLAUDE.md` or configured redirect target).
 - Relevant rule files from `Octopus-agent-orchestrator/live/docs/agent-rules/`.
+- Token economy config: `Octopus-agent-orchestrator/live/config/token-economy.json`.
 
 ## Execution Depth
 - Supported: `depth=1`, `depth=2`, `depth=3`.
@@ -35,13 +36,47 @@ Rule files provide policy context, but lifecycle steps and gate order are define
   - required `db/security/refactor` review => minimum `depth=2`
   - high-risk auth/payment/data/infra changes => prefer `depth=3`
 
+## Token Economy
+- Config source: `Octopus-agent-orchestrator/live/config/token-economy.json`.
+- Activate only when `enabled=true` and effective depth is in `enabled_depths`.
+- Depth-aware reviewer context loading when active:
+  - `depth=1`: load task goal, changed files, required review flags, and minimal diff context only.
+  - `depth=2`: load `depth=1` context plus required checklists and only relevant rule sections.
+  - other depths: use full reviewer context.
+- Depth-aware reviewer rule-pack contract when active:
+  - `code` reviewer:
+    - `depth=1`: `00-core.md`, `80-task-workflow.md`, plus rule ids/snippets directly triggered by changed scope.
+    - `depth=2`: `00-core.md`, `35-strict-coding-rules.md`, `50-structure-and-docs.md`, `70-security.md`, `80-task-workflow.md`.
+  - `db` reviewer:
+    - `depth=1`: `00-core.md`, `80-task-workflow.md`, plus DB-triggered rule ids/snippets.
+    - `depth=2`: `00-core.md`, `35-strict-coding-rules.md`, `70-security.md`, `80-task-workflow.md`.
+  - `security` reviewer:
+    - `depth=1`: `00-core.md`, `80-task-workflow.md`, plus security-triggered rule ids/snippets.
+    - `depth=2`: `00-core.md`, `35-strict-coding-rules.md`, `70-security.md`, `80-task-workflow.md`.
+  - `refactor` reviewer:
+    - `depth=1`: `00-core.md`, `80-task-workflow.md`, plus refactor-triggered rule ids/snippets.
+    - `depth=2`: `00-core.md`, `30-code-style.md`, `35-strict-coding-rules.md`, `50-structure-and-docs.md`, `80-task-workflow.md`.
+  - `depth=3` or token economy disabled: full reviewer rule packs.
+- Context trimming when active:
+  - `strip_examples=true`: remove examples from loaded review/rule context.
+  - `strip_code_blocks=true`: remove code blocks from loaded review/rule context.
+- Scoped diff contract when active:
+  - if `scoped_diffs=true` and reviewer type is `db` or `security`, generate scoped artifact before reviewer launch:
+    - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.ps1 -ReviewType "<db|security>" -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff"`
+    - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.sh --review-type "<db|security>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff"`
+  - helper resolves trigger regexes from `Octopus-agent-orchestrator/live/config/paths.json` `triggers.<review-type>`.
+  - if helper reports `fallback_to_full_diff=true`, pass full diff to reviewer and continue required review.
+- Compact reviewer output contract when active:
+  - if `compact_reviewer_output=true`, require compact reviewer artifacts but keep mandatory sections and exact verdict tokens.
+  - on failed command/test evidence, cap pasted tail output to `fail_tail_lines`.
+
 ## Canonical Workflow
 1. Select highest-priority `TODO` task in `TASK.md` and move to `IN_PROGRESS`.
 2. If no `TODO` exists, create a task from current user request, then move it to `IN_PROGRESS`.
 3. Resolve requested depth and record requested/effective depth in `TASK.md` notes.
 4. Build concise plan: scope, files, risks, tests or validation strategy.
    - Log event: `PLAN_CREATED`.
-5. Run preflight:
+5. Run preflight with explicit `-OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`:
    - `classify-change.ps1` with `-ChangedFiles` for precise scope, or
    - `-UseStaged` in dirty workspaces.
    - environment selection: use `.ps1` via `pwsh` when available, otherwise use `.sh` bash equivalents.
@@ -51,19 +86,21 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - `FULL_PATH` runtime => tests first, then implementation.
    - non-runtime or `FAST_PATH` runtime => objective validations, then implementation.
 8. Run compile gate (mandatory) before review phase:
-   - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1 -TaskId "<task-id>" -CommandsPath "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"`
-   - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"`
+   - Resolve `fail_tail_lines` from `Octopus-agent-orchestrator/live/config/token-economy.json`; when missing/invalid, fallback to `50`.
+   - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1 -TaskId "<task-id>" -CommandsPath "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" -FailTailLines "<fail_tail_lines>"`
+   - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" --fail-tail-lines "<fail_tail_lines>"`
    - Compile gate writes task-scoped event `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED` automatically.
    - On failure, do not move to review phase; fix and rerun until pass.
 9. Move task to `IN_REVIEW`.
    - Log event: `REVIEW_PHASE_STARTED`.
 10. Run only required independent reviews from preflight:
-   - preferred when available: clean-context reviewer agents
-   - fallback for single-agent platforms: sequential independent review passes with explicit reviewer role prompt and isolated checklist per pass.
-   - fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewer and do not require extra user confirmation to start review passes.
-   - baseline: `code`, `db`, `security`, `refactor`
-   - optional when enabled in `Octopus-agent-orchestrator/live/config/review-capabilities.json`: `api`, `test`, `performance`, `infra`, `dependency`
-   - Log event per reviewer invocation: `REVIEW_REQUESTED`.
+    - preferred when available: clean-context reviewer agents
+    - fallback for single-agent platforms: sequential independent review passes with explicit reviewer role prompt and isolated checklist per pass.
+    - fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewer and do not require extra user confirmation to start review passes.
+    - baseline: `code`, `db`, `security`, `refactor`
+    - optional when enabled in `Octopus-agent-orchestrator/live/config/review-capabilities.json`: `api`, `test`, `performance`, `infra`, `dependency`
+    - when `scoped_diffs=true` and required reviewer is `db` or `security`, run scoped diff helper and attach scoped artifact path (plus fallback flag) to reviewer prompt.
+    - Log event per reviewer invocation: `REVIEW_REQUESTED`.
 11. Run `required-reviews-check.ps1` and treat result as release gate.
    - `required-reviews-check` writes task-scoped event `REVIEW_GATE_PASSED` or `REVIEW_GATE_FAILED` automatically.
    - `required-reviews-check` fails if compile evidence is missing in `runtime/task-events/<task-id>.jsonl` (missing `COMPILE_GATE_PASSED`).
@@ -75,20 +112,31 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - `DONE` only when compile gate and all mandatory review gates passed.
    - `BLOCKED` when any mandatory gate failed or cannot run.
    - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
-16. Report to user: implementation summary, depth, path mode, review verdicts, docs updated, and commit message suggestion.
-    - Always ask explicit follow-up question: `Do you want me to commit now? (yes/no)`.
+16. Report to user in exact order:
+    1. implementation summary (include depth, path mode, review verdicts, docs updated)
+    2. commit suggestion as exact command form: `git commit -m "<message>"`
+    3. explicit follow-up question: `Do you want me to commit now? (yes/no)`
 17. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
 18. Never commit unless user explicitly requests commit.
 
-## Reviewer Agent Execution (Claude Code)
-- Apply this section when platform supports Agent tool/sub-agents.
+## Reviewer Agent Execution (Platform-Agnostic)
+- Apply this section on every platform.
+- Preferred mode is always clean-context reviewer execution.
+- Do not use provider-default reviewer agents that bypass this contract.
+- Platform launch mapping:
+  - Claude Code: use Agent tool/sub-agents with `fork_context=false`.
+  - GitHub Copilot CLI: use `task` tool with `agent_type="general-purpose"`; run one reviewer per isolated task execution.
+  - Platforms without task/sub-agent support: use sequential single-agent fallback with explicit reviewer role prompts and isolated checklists.
 - For each required review where preflight `required_reviews.<type>=true`:
-  1. Launch reviewer via Agent tool using clean context (`fork_context=false`).
+  1. Launch reviewer using the platform mapping above with clean context isolation.
   2. Prompt must include:
      - task id and task goal;
      - changed files list from preflight artifact;
      - diff summary (or exact staged diff if available);
      - mandatory skill path for this review type;
+     - explicit rule-context package paths selected for this reviewer/depth (do not include non-selected rule files while token economy mode is active);
+     - token economy flags when active (`depth`, `compact_reviewer_output`, `strip_examples`, `strip_code_blocks`);
+     - for `db` / `security` required reviews when scoped diffs are enabled: scoped artifact produced by `build-scoped-diff.ps1/.sh`, with full-diff fallback when helper reports empty scope;
      - required output contract:
        - verdict token (`... PASSED` or `... FAILED`);
        - findings list with file evidence;
@@ -118,6 +166,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Task event logs:
   - `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`
   - `Octopus-agent-orchestrator/runtime/task-events/all-tasks.jsonl`
+- Terminal events `TASK_DONE` and `TASK_BLOCKED` trigger full log cleanup for temporary reviewer/specialist logs after required artifacts are persisted.
 - Human-readable summary:
   - `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1 -TaskId "<task-id>"`
 
@@ -135,12 +184,12 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 
 ## Hard Stops
 - Do not assign `FAST_PATH` / `FULL_PATH` manually.
-- Do not skip preflight classification.
+- Do not skip preflight classification with explicit `-OutputPath`.
 - Do not move to implementation without plan.
 - Do not move to `IN_REVIEW` without passing compile gate (`COMPILE_GATE_PASSED`).
 - Do not bypass required reviews without deterministic gate override contract.
 - Do not set `DONE` without passing compile gate and `required-reviews-check.ps1`.
-- Do not skip explicit final user prompt about commit decision after reporting commit message suggestion.
+- Do not change final report order: summary -> `git commit -m` suggestion -> `Do you want me to commit now? (yes/no)`.
 - Do not leave reviewer/specialist agents open after review completion (when platform supports agent lifecycle controls).
 
 ## Mandatory Outputs

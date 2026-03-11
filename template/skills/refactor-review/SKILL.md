@@ -22,11 +22,23 @@ Primary goal is behavior preservation with lower maintenance risk.
 - Task goal and explicit statement that behavior should remain unchanged.
 - Changed files list and diff.
 - Relevant tests and verification scope.
-- Relevant rule files:
-  - `Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md`
-  - `Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md`
-  - `Octopus-agent-orchestrator/live/docs/agent-rules/30-code-style.md`
-  - `Octopus-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md`
+- Rule context package selected by orchestration and explicitly passed to reviewer:
+  - token economy active + `depth=1`: only `00-core.md`, `80-task-workflow.md`, and refactor-triggered rule ids/snippets for changed scope.
+  - token economy active + `depth=2`: `00-core.md`, `30-code-style.md`, `35-strict-coding-rules.md`, `50-structure-and-docs.md`, `80-task-workflow.md`.
+  - token economy disabled or `depth=3`: full required refactor rule set for changed scope.
+
+## Token Economy Mode
+- Config source: `Octopus-agent-orchestrator/live/config/token-economy.json`.
+- Apply this section only when `enabled=true` and effective depth is in `enabled_depths`.
+- While active, this section takes precedence over any static rule-file list in `Required Inputs`.
+- Depth-aware required-rules behavior:
+  - `depth=1`: evaluate required refactor rules directly triggered by changed scope first; avoid unrelated rule expansion and full static rule loading.
+  - `depth=2`: evaluate the full required refactor checklist for changed scope.
+  - other depths: follow full review behavior without token-economy reductions.
+- Compact mode contract:
+  - when `compact_reviewer_output=true`, keep the same mandatory output sections and exact verdict token.
+  - keep findings concise (`risk -> evidence -> required action`) and move detail overflow to residual risks.
+  - when including failing command/test snippets, cap pasted tail output to `fail_tail_lines`.
 
 ## Review Workflow
 1. Detect refactor-impact scope using canonical trigger matrix:

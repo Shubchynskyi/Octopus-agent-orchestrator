@@ -16,12 +16,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$gateUtilsModulePath = Join-Path $PSScriptRoot 'lib/gate-utils.psm1'
+if (-not (Test-Path -LiteralPath $gateUtilsModulePath)) {
+    throw "Missing gate utils module: $gateUtilsModulePath"
+}
+Import-Module -Name $gateUtilsModulePath -Force -DisableNameChecking
+
 function Resolve-ProjectRoot {
-    $projectRootCandidate = Join-Path $PSScriptRoot '..\..\..\..'
-    if (Test-Path $projectRootCandidate) {
-        return (Resolve-Path $projectRootCandidate).Path
-    }
-    return (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    return Get-GateProjectRoot -ScriptRoot $PSScriptRoot
 }
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
@@ -33,31 +35,13 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 function Normalize-Path {
     param([string]$PathValue)
 
-    if ([string]::IsNullOrWhiteSpace($PathValue)) {
-        return $null
-    }
-
-    $normalized = $PathValue.Replace('\', '/').Trim()
-    while ($normalized.StartsWith('./')) {
-        $normalized = $normalized.Substring(2)
-    }
-    return $normalized.TrimStart('/')
+    return Convert-GatePathToUnix -PathValue $PathValue -TrimValue -StripLeadingRelative
 }
 
 function Assert-ValidTaskId {
     param([string]$Value)
 
-    if ([string]::IsNullOrWhiteSpace($Value)) {
-        throw 'TaskId must not be empty.'
-    }
-
-    if ($Value.Length -gt 128) {
-        throw 'TaskId must be 128 characters or fewer.'
-    }
-
-    if ($Value -notmatch '^[A-Za-z0-9._-]+$') {
-        throw "TaskId '$Value' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$"
-    }
+    Assert-GateTaskId -Value $Value
 }
 
 function Invoke-GitLines {
@@ -96,12 +80,7 @@ function Test-MatchAnyRegex {
         [string[]]$Regexes
     )
 
-    foreach ($regex in $Regexes) {
-        if ($PathValue -match $regex) {
-            return $true
-        }
-    }
-    return $false
+    return Test-GateMatchAnyRegex -PathValue $PathValue -Regexes $Regexes
 }
 
 function Append-MetricsEvent {
@@ -110,24 +89,7 @@ function Append-MetricsEvent {
         [object]$EventObject
     )
 
-    if (-not $EmitMetrics) {
-        return
-    }
-
-    if ([string]::IsNullOrWhiteSpace($Path)) {
-        return
-    }
-
-    try {
-        $metricsDir = Split-Path -Parent $Path
-        if ($metricsDir -and -not (Test-Path $metricsDir)) {
-            New-Item -Path $metricsDir -ItemType Directory -Force | Out-Null
-        }
-        $line = $EventObject | ConvertTo-Json -Depth 12 -Compress
-        Add-Content -Path $Path -Value $line
-    } catch {
-        Write-Verbose "Metrics append failed: $($_.Exception.Message)"
-    }
+    Add-GateMetricsEvent -Path $Path -EventObject $EventObject -EmitMetrics $EmitMetrics
 }
 
 function Resolve-TaskId {
@@ -167,64 +129,13 @@ function Append-TaskEvent {
         [object]$Details = $null
     )
 
-    if ([string]::IsNullOrWhiteSpace($TaskId)) {
-        return
-    }
-    Assert-ValidTaskId -Value $TaskId
-
-    try {
-        $eventsDir = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/task-events'
-        if (-not (Test-Path $eventsDir)) {
-            New-Item -Path $eventsDir -ItemType Directory -Force | Out-Null
-        }
-
-        $event = [ordered]@{
-            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
-            task_id = $TaskId
-            event_type = $EventType
-            outcome = $Outcome
-            message = $Message
-            details = $Details
-        }
-
-        $line = $event | ConvertTo-Json -Depth 12 -Compress
-        $taskFilePath = Join-Path $eventsDir "$TaskId.jsonl"
-        $allTasksPath = Join-Path $eventsDir 'all-tasks.jsonl'
-
-        Add-Content -Path $taskFilePath -Value $line
-        Add-Content -Path $allTasksPath -Value $line
-    } catch {
-        Write-Verbose "Task-event append failed: $($_.Exception.Message)"
-    }
+    Add-GateTaskEvent -RepoRootPath $RepoRootPath -TaskId $TaskId -EventType $EventType -Outcome $Outcome -Message $Message -Details $Details
 }
 
 function Convert-ToStringArray {
     param([object]$Value)
 
-    if ($null -eq $Value) {
-        return @()
-    }
-
-    if ($Value -is [string]) {
-        if ([string]::IsNullOrWhiteSpace($Value)) {
-            return @()
-        }
-        return @([string]$Value)
-    }
-
-    $values = @()
-    foreach ($item in @($Value)) {
-        if ($null -eq $item) {
-            continue
-        }
-        $text = [string]$item
-        if ([string]::IsNullOrWhiteSpace($text)) {
-            continue
-        }
-        $values += $text
-    }
-
-    return $values
+    return Convert-GateToStringArray -Value $Value
 }
 
 function Normalize-RootPrefixes {
@@ -374,7 +285,7 @@ function Get-ClassificationConfig {
 
             $source = 'paths_json'
         } catch {
-            Write-Verbose "Failed to parse classification config at ${configPath}: $($_.Exception.Message)"
+            Write-Warning "Failed to parse classification config at ${configPath}: $($_.Exception.Message)"
             $source = 'defaults_with_config_parse_error'
         }
     }
@@ -429,7 +340,7 @@ function Get-ReviewCapabilities {
             }
         }
     } catch {
-        Write-Verbose "Failed to parse review capabilities config at ${configPath}: $($_.Exception.Message)"
+        Write-Warning "Failed to parse review capabilities config at ${configPath}: $($_.Exception.Message)"
     }
 
     return $capabilities
@@ -633,8 +544,8 @@ if ($TaskIntent -match '(?i)\b(refactor|cleanup|restructure|extract|rename|modul
     $refactorIntentTriggered = $true
 }
 
-$codeLikeChangedCount = ($normalizedFiles | Where-Object { Test-MatchAnyRegex -PathValue $_ -Regexes $codeLikeRegexes }).Count
-$runtimeCodeLikeChangedCount = ($normalizedFiles | Where-Object {
+$codeLikeChangedCount = @($normalizedFiles | Where-Object { Test-MatchAnyRegex -PathValue $_ -Regexes $codeLikeRegexes }).Count
+$runtimeCodeLikeChangedCount = @($normalizedFiles | Where-Object {
     (Test-PathPrefix -PathValue $_ -Prefixes $runtimeRoots) -and (Test-MatchAnyRegex -PathValue $_ -Regexes $codeLikeRegexes)
 }).Count
 $runtimeCodeChanged = $runtimeCodeLikeChangedCount -gt 0
@@ -791,4 +702,5 @@ $taskEventDetails = [ordered]@{
 Append-TaskEvent -RepoRootPath $RepoRoot -TaskId $resolvedTaskId -EventType 'PREFLIGHT_CLASSIFIED' -Outcome 'INFO' -Message "Preflight completed with mode $mode." -Details $taskEventDetails
 
 Write-Output $json
+
 

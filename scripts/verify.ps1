@@ -319,6 +319,7 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/live/version.json',
     'Octopus-agent-orchestrator/live/config/review-capabilities.json',
     'Octopus-agent-orchestrator/live/config/paths.json',
+    'Octopus-agent-orchestrator/live/config/token-economy.json',
     'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh',
@@ -411,6 +412,166 @@ foreach ($relativePath in $requiredPaths) {
     $path = Join-Path $TargetRoot $relativePath
     if (-not (Test-Path $path)) {
         $missingPaths += $relativePath
+    }
+}
+
+$tokenEconomyContractViolations = @()
+$tokenEconomyRelativePath = 'Octopus-agent-orchestrator/live/config/token-economy.json'
+$tokenEconomyPath = Join-Path $TargetRoot $tokenEconomyRelativePath
+if (-not (Test-Path -LiteralPath $tokenEconomyPath -PathType Leaf)) {
+    $tokenEconomyContractViolations += "$tokenEconomyRelativePath is missing."
+} else {
+    try {
+        $tokenEconomyConfig = Get-Content -LiteralPath $tokenEconomyPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        $tokenEconomyContractViolations += "$tokenEconomyRelativePath must contain valid JSON."
+        $tokenEconomyConfig = $null
+    }
+
+    if ($null -ne $tokenEconomyConfig) {
+        $requiredBooleanKeys = @(
+            'enabled',
+            'strip_examples',
+            'strip_code_blocks',
+            'scoped_diffs',
+            'compact_reviewer_output'
+        )
+        foreach ($key in $requiredBooleanKeys) {
+            $property = $tokenEconomyConfig.PSObject.Properties[$key]
+            if ($null -eq $property) {
+                $tokenEconomyContractViolations += "$tokenEconomyRelativePath must include boolean '$key'."
+                continue
+            }
+
+            if ($property.Value -isnot [bool]) {
+                $tokenEconomyContractViolations += "$tokenEconomyRelativePath '$key' must be boolean."
+            }
+        }
+
+        $enabledDepthsProperty = $tokenEconomyConfig.PSObject.Properties['enabled_depths']
+        if ($null -eq $enabledDepthsProperty) {
+            $tokenEconomyContractViolations += "$tokenEconomyRelativePath must include array 'enabled_depths'."
+        } else {
+            $enabledDepthsValue = $enabledDepthsProperty.Value
+            if ($enabledDepthsValue -is [string] -or $null -eq $enabledDepthsValue) {
+                $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'enabled_depths' must be an array of integers in range 1..3."
+            } else {
+                foreach ($depthValue in @($enabledDepthsValue)) {
+                    $depthInt = $null
+                    if ($depthValue -is [int] -or $depthValue -is [long] -or $depthValue -is [short] -or $depthValue -is [byte]) {
+                        $depthInt = [int]$depthValue
+                    } elseif ($depthValue -is [double] -or $depthValue -is [decimal] -or $depthValue -is [single]) {
+                        $depthNumeric = [double]$depthValue
+                        if ($depthNumeric -eq [Math]::Floor($depthNumeric)) {
+                            $depthInt = [int]$depthNumeric
+                        }
+                    }
+
+                    if ($null -eq $depthInt -or $depthInt -lt 1 -or $depthInt -gt 3) {
+                        $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'enabled_depths' must contain only integers in range 1..3."
+                        break
+                    }
+                }
+            }
+        }
+
+        $failTailLinesProperty = $tokenEconomyConfig.PSObject.Properties['fail_tail_lines']
+        if ($null -eq $failTailLinesProperty) {
+            $tokenEconomyContractViolations += "$tokenEconomyRelativePath must include positive integer 'fail_tail_lines'."
+        } else {
+            $failTailLines = $null
+            $failTailRaw = $failTailLinesProperty.Value
+            if ($failTailRaw -is [int] -or $failTailRaw -is [long] -or $failTailRaw -is [short] -or $failTailRaw -is [byte]) {
+                $failTailLines = [int]$failTailRaw
+            } elseif ($failTailRaw -is [double] -or $failTailRaw -is [decimal] -or $failTailRaw -is [single]) {
+                $failTailNumeric = [double]$failTailRaw
+                if ($failTailNumeric -eq [Math]::Floor($failTailNumeric)) {
+                    $failTailLines = [int]$failTailNumeric
+                }
+            }
+
+            if ($null -eq $failTailLines -or $failTailLines -le 0) {
+                $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'fail_tail_lines' must be a positive integer."
+            }
+        }
+    }
+}
+
+$compileGateContractViolations = @()
+$compileGateScriptChecks = @(
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1'
+        Forbidden = @('Invoke-Expression')
+        Required = @('CompileOutputPath', 'FailTailLines', 'compile_output_path', 'CompileOutputPath:')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.ps1'
+        Forbidden = @('Invoke-Expression')
+        Required = @('CompileOutputPath', 'FailTailLines', 'compile_output_path', 'CompileOutputPath:')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh'
+        Forbidden = @('shell=True')
+        Required = @('--compile-output-path', '--fail-tail-lines', 'compile_output_path', 'CompileOutputPath:', 'OA_GATE_BASH_BIN')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.sh'
+        Forbidden = @('shell=True')
+        Required = @('--compile-output-path', '--fail-tail-lines', 'compile_output_path', 'CompileOutputPath:', 'OA_GATE_BASH_BIN')
+    }
+)
+
+foreach ($check in $compileGateScriptChecks) {
+    $scriptPath = Join-Path $TargetRoot $check.RelativePath
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        continue
+    }
+
+    $scriptContent = Get-Content -LiteralPath $scriptPath -Raw
+    foreach ($forbiddenSnippet in @($check.Forbidden)) {
+        if ($scriptContent -match [regex]::Escape([string]$forbiddenSnippet)) {
+            $compileGateContractViolations += "$($check.RelativePath) must not contain '$forbiddenSnippet'."
+        }
+    }
+    foreach ($requiredSnippet in @($check.Required)) {
+        if ($scriptContent -notmatch [regex]::Escape([string]$requiredSnippet)) {
+            $compileGateContractViolations += "$($check.RelativePath) must include '$requiredSnippet'."
+        }
+    }
+}
+
+$terminalCleanupContractViolations = @()
+$terminalCleanupScriptChecks = @(
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1'
+        Required = @('TASK_DONE', 'TASK_BLOCKED', 'terminal_log_cleanup', 'compile-output')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/log-task-event.ps1'
+        Required = @('TASK_DONE', 'TASK_BLOCKED', 'terminal_log_cleanup', 'compile-output')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.sh'
+        Required = @('TASK_DONE', 'TASK_BLOCKED', 'terminal_log_cleanup', 'compile-output')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/log-task-event.sh'
+        Required = @('TASK_DONE', 'TASK_BLOCKED', 'terminal_log_cleanup', 'compile-output')
+    }
+)
+
+foreach ($check in $terminalCleanupScriptChecks) {
+    $scriptPath = Join-Path $TargetRoot $check.RelativePath
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        continue
+    }
+
+    $scriptContent = Get-Content -LiteralPath $scriptPath -Raw
+    foreach ($requiredSnippet in @($check.Required)) {
+        if ($scriptContent -notmatch [regex]::Escape([string]$requiredSnippet)) {
+            $terminalCleanupContractViolations += "$($check.RelativePath) must include '$requiredSnippet' to enforce terminal full-log cleanup."
+        }
     }
 }
 
@@ -1028,10 +1189,8 @@ $orchestrationSkillPath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/live
 if (Test-Path -LiteralPath $orchestrationSkillPath -PathType Leaf) {
     $orchestrationSkillContent = Get-Content -Path $orchestrationSkillPath -Raw
     $requiredSkillSnippets = @(
-        '## Reviewer Agent Execution (Claude Code)',
         'compile-gate.ps1 -TaskId "<task-id>" -CommandsPath "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"',
         'COMPILE_GATE_PASSED',
-        'Launch reviewer via Agent tool using clean context (`fork_context=false`).',
         'review artifact write path: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.',
         'required-reviews-check.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',
         '-CodeReviewVerdict "<...>"',
@@ -1049,6 +1208,32 @@ if (Test-Path -LiteralPath $orchestrationSkillPath -PathType Leaf) {
     foreach ($snippet in $requiredSkillSnippets) {
         if ($orchestrationSkillContent -notmatch [regex]::Escape($snippet)) {
             $reviewerExecutionContractViolations += "Missing reviewer execution contract snippet in live/skills/orchestration/SKILL.md: $snippet"
+        }
+    }
+
+    $requiredAnyOfSnippetGroups = @(
+        @(
+            '## Reviewer Agent Execution (Claude Code)',
+            '## Reviewer Agent Execution (Platform-Agnostic)'
+        ),
+        @(
+            'Launch reviewer via Agent tool using clean context (`fork_context=false`).',
+            'Launch reviewer using the platform mapping above with clean context isolation.'
+        )
+    )
+
+    foreach ($snippetGroup in $requiredAnyOfSnippetGroups) {
+        $groupMatched = $false
+        foreach ($candidateSnippet in $snippetGroup) {
+            if ($orchestrationSkillContent -match [regex]::Escape([string]$candidateSnippet)) {
+                $groupMatched = $true
+                break
+            }
+        }
+
+        if (-not $groupMatched) {
+            $joinedCandidates = ($snippetGroup | ForEach-Object { [string]$_ }) -join ' || '
+            $reviewerExecutionContractViolations += "Missing reviewer execution contract snippet group in live/skills/orchestration/SKILL.md: $joinedCandidates"
         }
     }
 }
@@ -1083,6 +1268,9 @@ Write-Output "EnforceNoAutoCommit: $artifactEnforceNoAutoCommit"
 Write-Output "CanonicalEntrypoint: $canonicalEntrypoint"
 Write-Output "RequiredPathsChecked: $($requiredPaths.Count)"
 Write-Output "MissingPathCount: $($missingPaths.Count)"
+Write-Output "TokenEconomyContractViolationCount: $($tokenEconomyContractViolations.Count)"
+Write-Output "CompileGateContractViolationCount: $($compileGateContractViolations.Count)"
+Write-Output "TerminalCleanupContractViolationCount: $($terminalCleanupContractViolations.Count)"
 Write-Output "BundleVersion: $bundleVersion"
 Write-Output "VersionContractViolationCount: $($versionContractViolations.Count)"
 Write-Output "ManagedFilesChecked: $($strictManagedFiles.Count + 1 + $entrypointFiles.Count)"
@@ -1106,6 +1294,27 @@ Write-Output "GitignoreMissingCount: $($gitignoreMissing.Count)"
 if ($missingPaths.Count -gt 0) {
     Write-Output 'MissingPaths:'
     foreach ($item in $missingPaths) {
+        Write-Output " - $item"
+    }
+}
+
+if ($tokenEconomyContractViolations.Count -gt 0) {
+    Write-Output 'TokenEconomyContractViolations:'
+    foreach ($item in $tokenEconomyContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($compileGateContractViolations.Count -gt 0) {
+    Write-Output 'CompileGateContractViolations:'
+    foreach ($item in $compileGateContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($terminalCleanupContractViolations.Count -gt 0) {
+    Write-Output 'TerminalCleanupContractViolations:'
+    foreach ($item in $terminalCleanupContractViolations) {
         Write-Output " - $item"
     }
 }
@@ -1231,6 +1440,9 @@ if ($gitignoreMissing.Count -gt 0) {
 
 if (
     $missingPaths.Count -gt 0 -or
+    $tokenEconomyContractViolations.Count -gt 0 -or
+    $compileGateContractViolations.Count -gt 0 -or
+    $terminalCleanupContractViolations.Count -gt 0 -or
     $versionContractViolations.Count -gt 0 -or
     $styleViolations.Count -gt 0 -or
     $taskContractViolations.Count -gt 0 -or

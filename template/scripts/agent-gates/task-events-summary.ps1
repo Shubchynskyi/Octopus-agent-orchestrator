@@ -11,38 +11,26 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$gateUtilsModulePath = Join-Path $PSScriptRoot 'lib/gate-utils.psm1'
+if (-not (Test-Path -LiteralPath $gateUtilsModulePath)) {
+    throw "Missing gate utils module: $gateUtilsModulePath"
+}
+Import-Module -Name $gateUtilsModulePath -Force -DisableNameChecking
+
 function Resolve-ProjectRoot {
-    $projectRootCandidate = Join-Path $PSScriptRoot '..\..\..\..'
-    if (Test-Path $projectRootCandidate) {
-        return (Resolve-Path $projectRootCandidate).Path
-    }
-    return (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    return Get-GateProjectRoot -ScriptRoot $PSScriptRoot
 }
 
 function Normalize-Path {
     param([string]$PathValue)
 
-    if ([string]::IsNullOrWhiteSpace($PathValue)) {
-        return $null
-    }
-
-    return $PathValue.Replace('\', '/')
+    return Convert-GatePathToUnix -PathValue $PathValue
 }
 
 function Assert-ValidTaskId {
     param([string]$Value)
 
-    if ([string]::IsNullOrWhiteSpace($Value)) {
-        throw 'TaskId must not be empty.'
-    }
-
-    if ($Value.Length -gt 128) {
-        throw 'TaskId must be 128 characters or fewer.'
-    }
-
-    if ($Value -notmatch '^[A-Za-z0-9._-]+$') {
-        throw "TaskId '$Value' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$"
-    }
+    Assert-GateTaskId -Value $Value
 }
 
 function Get-EventTimestamp {

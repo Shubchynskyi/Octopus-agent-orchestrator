@@ -854,6 +854,11 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 7. Update task status and artifacts in `TASK.md`.
 8. Log lifecycle events by task id (`log-task-event.ps1` or `.sh`) into `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 
+## Reviewer Launch Mapping (Required)
+- Claude Code: launch clean-context reviewers via Agent tool (`fork_context=false`).
+- GitHub Copilot CLI: launch clean-context reviewers via `task` tool with `agent_type="general-purpose"` (one reviewer per isolated task run).
+- Platforms without task/sub-agent support: run sequential isolated reviewer passes in one thread; never use provider-default reviewer agents.
+
 ## Skill Routing
 - Orchestration: `Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md`
 - Code review: `Octopus-agent-orchestrator/live/skills/code-review/SKILL.md`
@@ -864,6 +869,7 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 ## Dynamic Skill Discovery (Required)
 - Canonical skill list: `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md`
 - Optional-skill capability flags: `Octopus-agent-orchestrator/live/config/review-capabilities.json`
+- Token-economy controls: `Octopus-agent-orchestrator/live/config/token-economy.json`
 - Include specialist skills added after initialization from `Octopus-agent-orchestrator/live/skills/**` when required by preflight and capability flags.
 
 ## Task Timeline Logging (Required)
@@ -912,6 +918,8 @@ Do not implement tasks directly without orchestration preflight and required rev
 - Capability flag gate: `{CAPABILITY_FLAG}`
 - Re-read `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md` before execution.
 - Re-read `Octopus-agent-orchestrator/live/config/review-capabilities.json` before execution.
+- Re-read `Octopus-agent-orchestrator/live/config/token-economy.json` before execution.
+- On GitHub Copilot CLI, spawn reviewer helper tasks via `task` tool with `agent_type="general-purpose"` and isolated context.
 - Honor specialist skills added after initialization under `Octopus-agent-orchestrator/live/skills/**`.
 - Log review invocation and outcomes via `log-task-event.ps1` or `.sh` into task timeline.
 - Task timeline path (per task): `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.

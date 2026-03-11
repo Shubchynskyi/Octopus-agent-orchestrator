@@ -548,6 +548,50 @@ if ($ruleContractMigrationCount -gt 0) {
     $ruleContractMigrationFiles = @($script:ruleContractMigrationLog | Select-Object -ExpandProperty RuleFile -Unique | Sort-Object)
 }
 
+$tokenEconomyTemplatePath = Join-Path $templateRoot 'config/token-economy.json'
+$tokenEconomyDestinationPath = Join-Path $liveRoot 'config/token-economy.json'
+$tokenEconomyExistingConfig = $null
+$tokenEconomyConfigMergeStatus = 'no_existing_live_config_template_applied'
+
+if (Test-Path -LiteralPath $tokenEconomyDestinationPath -PathType Leaf) {
+    try {
+        $tokenEconomyExistingConfig = Get-Content -LiteralPath $tokenEconomyDestinationPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $tokenEconomyConfigMergeStatus = 'existing_config_detected'
+    }
+    catch {
+        Write-Warning "Token economy live config is invalid JSON and cannot be preserved: $tokenEconomyDestinationPath. Template defaults will be applied."
+        $tokenEconomyConfigMergeStatus = 'existing_config_invalid_template_applied'
+    }
+}
+
+function Merge-TokenEconomyConfig {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$TemplateConfig,
+        [Parameter(Mandatory = $true)]
+        [object]$ExistingConfig
+    )
+
+    $merged = [ordered]@{}
+    foreach ($property in $TemplateConfig.PSObject.Properties) {
+        $propertyName = [string]$property.Name
+        if ($null -ne $ExistingConfig.PSObject.Properties[$propertyName]) {
+            $merged[$propertyName] = $ExistingConfig.$propertyName
+        } else {
+            $merged[$propertyName] = $TemplateConfig.$propertyName
+        }
+    }
+
+    foreach ($property in $ExistingConfig.PSObject.Properties) {
+        $propertyName = [string]$property.Name
+        if (-not $merged.Contains($propertyName)) {
+            $merged[$propertyName] = $ExistingConfig.$propertyName
+        }
+    }
+
+    return $merged
+}
+
 $supportDirectories = @(
     'config',
     'scripts',
@@ -572,6 +616,30 @@ foreach ($relativeDirectory in $supportDirectories) {
     }
 
     $copiedSupportDirs++
+}
+
+if ($null -ne $tokenEconomyExistingConfig) {
+    if (-not (Test-Path -LiteralPath $tokenEconomyTemplatePath -PathType Leaf)) {
+        Write-Warning "Token economy template config not found: $tokenEconomyTemplatePath. Existing live config preservation skipped."
+        $tokenEconomyConfigMergeStatus = 'template_missing_preservation_skipped'
+    } else {
+        try {
+            $tokenEconomyTemplateConfig = Get-Content -LiteralPath $tokenEconomyTemplatePath -Raw | ConvertFrom-Json -ErrorAction Stop
+            $mergedTokenEconomyConfig = Merge-TokenEconomyConfig -TemplateConfig $tokenEconomyTemplateConfig -ExistingConfig $tokenEconomyExistingConfig
+            if (-not $DryRun) {
+                Set-Content -LiteralPath $tokenEconomyDestinationPath -Value ($mergedTokenEconomyConfig | ConvertTo-Json -Depth 12)
+            }
+            $tokenEconomyConfigMergeStatus = if ($DryRun) {
+                'dry_run_existing_values_would_be_preserved'
+            } else {
+                'existing_values_preserved_and_missing_keys_filled'
+            }
+        }
+        catch {
+            Write-Warning "Failed to merge token economy config while preserving existing values: $($_.Exception.Message)."
+            $tokenEconomyConfigMergeStatus = 'merge_failed_template_applied'
+        }
+    }
 }
 
 $legacyEntrypoints = @(
@@ -690,6 +758,8 @@ $initReportLines += ''
 $initReportLines += '## Summary'
 $initReportLines += '- Rule files materialized in `Octopus-agent-orchestrator/live/docs/agent-rules`: ' + $ruleFiles.Count
 $initReportLines += '- Support directories synced into `Octopus-agent-orchestrator/live`: ' + $copiedSupportDirs
+$initReportLines += '- Token economy config sync policy: preserve existing live values and fill missing keys from template.'
+$initReportLines += '- Token economy config merge status: ' + $tokenEconomyConfigMergeStatus
 $initReportLines += '- Assistant response language: ' + $AssistantLanguage
 $initReportLines += '- Assistant response brevity: ' + $AssistantBrevity
 $initReportLines += '- Source of truth entrypoint: ' + $SourceOfTruth
@@ -781,6 +851,7 @@ Write-Output "SourceOfTruth: $SourceOfTruth"
 Write-Output "EnforceNoAutoCommit: $EnforceNoAutoCommit"
 Write-Output "RuleFilesMaterialized: $($ruleFiles.Count)"
 Write-Output "SupportDirectoriesSynced: $copiedSupportDirs"
+Write-Output "TokenEconomyConfigMergeStatus: $tokenEconomyConfigMergeStatus"
 Write-Output "RuleContractMigrationCount: $ruleContractMigrationCount"
 if ($ruleContractMigrationFiles.Count -gt 0) {
     Write-Output "RuleContractMigrationFiles: $($ruleContractMigrationFiles -join ', ')"

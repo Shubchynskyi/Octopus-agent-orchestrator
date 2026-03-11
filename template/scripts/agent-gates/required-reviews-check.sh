@@ -22,70 +22,21 @@ import json
 import os
 import re
 import sys
-import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
+script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
+sys.path.insert(0, str(script_dir / "lib"))
 
-def parse_bool(value: str) -> bool:
-    normalized = str(value).strip().lower()
-    if normalized in ("1", "true", "yes", "y", "on"):
-        return True
-    if normalized in ("0", "false", "no", "n", "off"):
-        return False
-    raise ValueError(f"Unsupported boolean value: {value}")
-
-
-def normalize_path(path_value: str):
-    if path_value is None:
-        return None
-    return str(path_value).replace("\\", "/")
-
-
-def assert_valid_task_id(value: str):
-    if not value or not value.strip():
-        raise ValueError("TaskId must not be empty.")
-    task_id = value.strip()
-    if len(task_id) > 128:
-        raise ValueError("TaskId must be 128 characters or fewer.")
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", task_id):
-        raise ValueError(f"TaskId '{task_id}' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$")
-    return task_id
-
-
-def file_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest().lower()
-
-
-def append_metrics_event(path: Path, event_obj: dict, emit_metrics: bool):
-    if not emit_metrics:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(event_obj, ensure_ascii=False, separators=(",", ":")) + "\n")
-
-
-def append_task_event(repo_root: Path, task_id: str, event_type: str, outcome: str, message: str, details: dict):
-    if not task_id:
-        return
-    task_id = assert_valid_task_id(task_id)
-    events_dir = (repo_root / "Octopus-agent-orchestrator/runtime/task-events").resolve()
-    events_dir.mkdir(parents=True, exist_ok=True)
-
-    event = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "task_id": task_id,
-        "event_type": event_type,
-        "outcome": outcome,
-        "message": message,
-        "details": details,
-    }
-    line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-    with (events_dir / f"{task_id}.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
-    with (events_dir / "all-tasks.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
-
+from gate_utils import (
+    append_metrics_event,
+    append_task_event,
+    assert_valid_task_id,
+    file_sha256,
+    normalize_path,
+    parse_bool,
+    resolve_project_root,
+)
 
 def parse_skip_reviews(value: str):
     if not value or not value.strip():
@@ -291,10 +242,7 @@ parser.add_argument("--metrics-path", default="")
 parser.add_argument("--emit-metrics", default="true")
 args = parser.parse_args()
 
-script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
-project_root_candidate = (script_dir / "../../../../").resolve()
-fallback_root = (script_dir / "../../").resolve()
-repo_root = project_root_candidate if project_root_candidate.exists() else fallback_root
+repo_root = resolve_project_root(script_dir)
 
 preflight_path = Path(args.preflight_path)
 if not preflight_path.is_absolute():
