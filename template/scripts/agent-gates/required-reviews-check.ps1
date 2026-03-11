@@ -16,6 +16,7 @@ param(
     [string]$SkipReason = '',
     [string]$OverrideArtifactPath,
     [string]$CompileEvidencePath,
+    [string]$ReviewEvidencePath,
     [string]$MetricsPath,
     [bool]$EmitMetrics = $true
 )
@@ -51,10 +52,38 @@ function Normalize-Path {
     return Convert-GatePathToUnix -PathValue $PathValue
 }
 
+function Normalize-RelativePath {
+    param([string]$PathValue)
+
+    return Convert-GatePathToUnix -PathValue $PathValue -TrimValue -StripLeadingRelative
+}
+
+function Convert-ToStringArray {
+    param([object]$Value)
+
+    return Convert-GateToStringArray -Value $Value
+}
+
 function Assert-ValidTaskId {
     param([string]$Value)
 
     Assert-GateTaskId -Value $Value
+}
+
+function Invoke-GitLines {
+    param(
+        [string]$RepoRootPath,
+        [string[]]$Arguments,
+        [string]$FailureMessage
+    )
+
+    $output = & git -C $RepoRootPath @Arguments 2>$null
+    $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+    if ($exitCode -ne 0) {
+        throw $FailureMessage
+    }
+
+    return @($output | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 }
 
 function Get-FileSha256 {
@@ -65,6 +94,120 @@ function Get-FileSha256 {
 
     $hash = Get-FileHash -Path $Path -Algorithm SHA256
     return $hash.Hash.ToLowerInvariant()
+}
+
+function Get-StringSha256 {
+    param([string]$Text)
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($(if ($null -eq $Text) { '' } else { $Text }))
+        $hashBytes = $sha.ComputeHash($bytes)
+        return ([System.BitConverter]::ToString($hashBytes)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-FileLineCount {
+    param([string]$PathValue)
+
+    if ([string]::IsNullOrWhiteSpace($PathValue) -or -not (Test-Path -LiteralPath $PathValue -PathType Leaf)) {
+        return 0
+    }
+
+    try {
+        return [int]((Get-Content -LiteralPath $PathValue -ErrorAction Stop | Measure-Object -Line).Lines)
+    } catch {
+        return 0
+    }
+}
+
+function Get-WorkspaceSnapshot {
+    param(
+        [string]$RepoRootPath,
+        [string]$DetectionSource,
+        [bool]$IncludeUntracked
+    )
+
+    $sourceValue = if ([string]::IsNullOrWhiteSpace($DetectionSource)) { 'git_auto' } else { $DetectionSource.Trim().ToLowerInvariant() }
+    $useStaged = $sourceValue -in @('git_staged_only', 'git_staged_plus_untracked')
+    if ($sourceValue -eq 'git_staged_only') {
+        $IncludeUntracked = $false
+    }
+
+    $diffArgs = @('diff', '--name-only', '--diff-filter=ACMRTUXB')
+    if ($useStaged) {
+        $diffArgs += '--cached'
+    } else {
+        $diffArgs += 'HEAD'
+    }
+    $changedFromDiff = Invoke-GitLines -RepoRootPath $RepoRootPath -Arguments $diffArgs -FailureMessage 'Failed to collect changed files snapshot.'
+
+    $untrackedFiles = @()
+    if ($IncludeUntracked) {
+        $untrackedFiles = Invoke-GitLines -RepoRootPath $RepoRootPath -Arguments @('ls-files', '--others', '--exclude-standard') -FailureMessage 'Failed to collect untracked files snapshot.'
+    }
+
+    $normalizedChangedFiles = @(
+        $changedFromDiff + $untrackedFiles |
+            ForEach-Object { Normalize-RelativePath $_ } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Sort-Object -Unique
+    )
+
+    $numstatArgs = @('diff', '--numstat', '--diff-filter=ACMRTUXB')
+    if ($useStaged) {
+        $numstatArgs += '--cached'
+    } else {
+        $numstatArgs += 'HEAD'
+    }
+    $numstatRows = Invoke-GitLines -RepoRootPath $RepoRootPath -Arguments $numstatArgs -FailureMessage 'Failed to collect changed lines snapshot.'
+
+    $additionsTotal = 0
+    $deletionsTotal = 0
+    foreach ($row in $numstatRows) {
+        $parts = $row -split "`t"
+        if ($parts.Count -lt 3) {
+            continue
+        }
+
+        if ($parts[0] -match '^\d+$') {
+            $additionsTotal += [int]$parts[0]
+        }
+        if ($parts[1] -match '^\d+$') {
+            $deletionsTotal += [int]$parts[1]
+        }
+    }
+
+    if ($IncludeUntracked -and $untrackedFiles.Count -gt 0) {
+        foreach ($untrackedFile in $untrackedFiles) {
+            $normalizedPath = Normalize-RelativePath $untrackedFile
+            if ([string]::IsNullOrWhiteSpace($normalizedPath)) {
+                continue
+            }
+
+            $fullPath = Join-Path $RepoRootPath $normalizedPath
+            $additionsTotal += Get-FileLineCount -PathValue $fullPath
+        }
+    }
+
+    $changedLinesTotal = $additionsTotal + $deletionsTotal
+    $filesFingerprint = Get-StringSha256 -Text ($normalizedChangedFiles -join "`n")
+    $scopeFingerprint = Get-StringSha256 -Text ("{0}|{1}|{2}|{3}|{4}|{5}" -f $sourceValue, $useStaged, $IncludeUntracked, $normalizedChangedFiles.Count, $changedLinesTotal, $filesFingerprint)
+
+    return [PSCustomObject]@{
+        detection_source = $sourceValue
+        use_staged = $useStaged
+        include_untracked = [bool]$IncludeUntracked
+        changed_files = $normalizedChangedFiles
+        changed_files_count = $normalizedChangedFiles.Count
+        additions_total = $additionsTotal
+        deletions_total = $deletionsTotal
+        changed_lines_total = $changedLinesTotal
+        changed_files_sha256 = $filesFingerprint
+        scope_sha256 = $scopeFingerprint
+    }
 }
 
 function Try-GetRequiredBoolean {
@@ -235,6 +378,12 @@ function Get-ValidatedPreflightContext {
         $errors += 'Preflight field `metrics.changed_lines_total` is required and must be a non-negative integer.'
     }
 
+    $detectionSource = if ($null -ne $preflightObject.PSObject.Properties['detection_source']) { [string]$preflightObject.detection_source } else { 'git_auto' }
+    $includeUntracked = $true
+    if ([string]::Equals($detectionSource.Trim(), 'git_staged_only', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $includeUntracked = $false
+    }
+
     $preflightResolvedPath = (Resolve-Path -LiteralPath $PreflightPathValue).Path
     $preflightHash = Get-FileSha256 -Path $preflightResolvedPath
 
@@ -245,6 +394,8 @@ function Get-ValidatedPreflightContext {
         required_reviews = $requiredReviewFlags
         changed_files_count = $changedFilesCount
         changed_lines_total = $changedLinesTotal
+        detection_source = $detectionSource
+        include_untracked = [bool]$includeUntracked
         preflight_path = $preflightResolvedPath
         preflight_hash = $preflightHash
         errors = $errors
@@ -262,6 +413,61 @@ function Append-TaskEvent {
     )
 
     Add-GateTaskEvent -RepoRootPath $RepoRootPath -TaskId $TaskId -EventType $EventType -Outcome $Outcome -Message $Message -Details $Details
+}
+
+function Resolve-ReviewEvidencePath {
+    param(
+        [string]$RepoRootPath,
+        [string]$ResolvedTaskId,
+        [string]$ReviewEvidencePathValue
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ResolvedTaskId)) {
+        return $null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ReviewEvidencePathValue)) {
+        if ([System.IO.Path]::IsPathRooted($ReviewEvidencePathValue)) {
+            return $ReviewEvidencePathValue
+        }
+        return Join-Path $RepoRootPath $ReviewEvidencePathValue
+    }
+
+    return Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-review-gate.json"
+}
+
+function Write-ReviewEvidence {
+    param(
+        [string]$EvidencePath,
+        [string]$ResolvedTaskId,
+        [hashtable]$Context,
+        [string]$Status,
+        [string]$Outcome,
+        [string[]]$Violations
+    )
+
+    if ([string]::IsNullOrWhiteSpace($EvidencePath) -or [string]::IsNullOrWhiteSpace($ResolvedTaskId)) {
+        return
+    }
+
+    $parentDirectory = Split-Path -Parent $EvidencePath
+    if ($parentDirectory -and -not (Test-Path -LiteralPath $parentDirectory)) {
+        New-Item -Path $parentDirectory -ItemType Directory -Force | Out-Null
+    }
+
+    $payload = [ordered]@{
+        timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+        event_source = 'required-reviews-check'
+        task_id = $ResolvedTaskId
+        status = $Status
+        outcome = $Outcome
+        violations = @($Violations)
+    }
+    foreach ($key in $Context.Keys) {
+        $payload[$key] = $Context[$key]
+    }
+
+    Set-Content -LiteralPath $EvidencePath -Value ($payload | ConvertTo-Json -Depth 12)
 }
 
 function Parse-SkipReviews {
@@ -319,12 +525,19 @@ function Get-CompileGateEvidence {
     $result = [ordered]@{
         task_id = $ResolvedTaskId
         evidence_path = $null
+        evidence_hash = $null
         evidence_status = $null
         evidence_outcome = $null
         evidence_task_id = $null
         evidence_preflight_path = $null
         evidence_preflight_hash = $null
         evidence_source = $null
+        evidence_scope_detection_source = $null
+        evidence_scope_include_untracked = $null
+        evidence_scope_changed_files_count = 0
+        evidence_scope_changed_lines_total = 0
+        evidence_scope_changed_files_sha256 = $null
+        evidence_scope_sha256 = $null
         status = 'UNKNOWN'
     }
 
@@ -349,6 +562,7 @@ function Get-CompileGateEvidence {
         $result.status = 'EVIDENCE_FILE_MISSING'
         return $result
     }
+    $result.evidence_hash = Get-FileSha256 -Path $resolvedEvidencePath
 
     try {
         $evidenceObject = Get-Content -Raw -LiteralPath $resolvedEvidencePath | ConvertFrom-Json -ErrorAction Stop
@@ -368,6 +582,12 @@ function Get-CompileGateEvidence {
     $recordedPreflightPath = if ($null -ne $evidenceObject.PSObject.Properties['preflight_path']) { [string]$evidenceObject.preflight_path } else { '' }
     $recordedPreflightHash = if ($null -ne $evidenceObject.PSObject.Properties['preflight_hash_sha256']) { [string]$evidenceObject.preflight_hash_sha256 } else { '' }
     $recordedSource = if ($null -ne $evidenceObject.PSObject.Properties['event_source']) { [string]$evidenceObject.event_source } else { '' }
+    $recordedScopeDetectionSource = if ($null -ne $evidenceObject.PSObject.Properties['scope_detection_source']) { [string]$evidenceObject.scope_detection_source } else { '' }
+    $recordedScopeIncludeUntracked = if ($null -ne $evidenceObject.PSObject.Properties['scope_include_untracked']) { [bool]$evidenceObject.scope_include_untracked } else { $true }
+    $recordedScopeChangedFilesCount = if ($null -ne $evidenceObject.PSObject.Properties['scope_changed_files_count']) { [int]$evidenceObject.scope_changed_files_count } else { 0 }
+    $recordedScopeChangedLinesTotal = if ($null -ne $evidenceObject.PSObject.Properties['scope_changed_lines_total']) { [int]$evidenceObject.scope_changed_lines_total } else { 0 }
+    $recordedScopeChangedFilesSha = if ($null -ne $evidenceObject.PSObject.Properties['scope_changed_files_sha256']) { [string]$evidenceObject.scope_changed_files_sha256 } else { '' }
+    $recordedScopeSha = if ($null -ne $evidenceObject.PSObject.Properties['scope_sha256']) { [string]$evidenceObject.scope_sha256 } else { '' }
 
     $result.evidence_task_id = $recordedTaskId
     $result.evidence_status = $recordedStatus
@@ -375,6 +595,12 @@ function Get-CompileGateEvidence {
     $result.evidence_preflight_path = Normalize-Path $recordedPreflightPath
     $result.evidence_preflight_hash = $recordedPreflightHash
     $result.evidence_source = $recordedSource
+    $result.evidence_scope_detection_source = $recordedScopeDetectionSource
+    $result.evidence_scope_include_untracked = [bool]$recordedScopeIncludeUntracked
+    $result.evidence_scope_changed_files_count = [int]$recordedScopeChangedFilesCount
+    $result.evidence_scope_changed_lines_total = [int]$recordedScopeChangedLinesTotal
+    $result.evidence_scope_changed_files_sha256 = $recordedScopeChangedFilesSha
+    $result.evidence_scope_sha256 = $recordedScopeSha
 
     if ([string]::IsNullOrWhiteSpace($recordedTaskId) -or -not [string]::Equals($recordedTaskId.Trim(), $ResolvedTaskId, [System.StringComparison]::Ordinal)) {
         $result.status = 'EVIDENCE_TASK_MISMATCH'
@@ -399,6 +625,11 @@ function Get-CompileGateEvidence {
         }
     }
 
+    if ([string]::IsNullOrWhiteSpace($recordedScopeDetectionSource) -or [string]::IsNullOrWhiteSpace($recordedScopeChangedFilesSha) -or [string]::IsNullOrWhiteSpace($recordedScopeSha)) {
+        $result.status = 'EVIDENCE_SCOPE_MISSING'
+        return $result
+    }
+
     $statusNormalized = $recordedStatus.Trim().ToUpperInvariant()
     $outcomeNormalized = $recordedOutcome.Trim().ToUpperInvariant()
     if ($statusNormalized -eq 'PASSED' -and $outcomeNormalized -eq 'PASS') {
@@ -410,11 +641,68 @@ function Get-CompileGateEvidence {
     return $result
 }
 
+function Test-CompileScopeDrift {
+    param(
+        [string]$RepoRootPath,
+        [object]$CompileEvidence
+    )
+
+    $result = [ordered]@{
+        status = 'UNKNOWN'
+        detection_source = $null
+        include_untracked = $null
+        current_scope = $null
+        evidence_scope_sha256 = $null
+        evidence_changed_files_sha256 = $null
+        evidence_changed_lines_total = $null
+        violations = @()
+    }
+
+    if ($null -eq $CompileEvidence -or [string]::IsNullOrWhiteSpace([string]$CompileEvidence.evidence_scope_detection_source)) {
+        $result.status = 'EVIDENCE_SCOPE_MISSING'
+        $result.violations += 'Compile gate evidence does not include scope snapshot.'
+        return $result
+    }
+
+    $detectionSource = [string]$CompileEvidence.evidence_scope_detection_source
+    $includeUntracked = [bool]$CompileEvidence.evidence_scope_include_untracked
+    $snapshot = Get-WorkspaceSnapshot -RepoRootPath $RepoRootPath -DetectionSource $detectionSource -IncludeUntracked $includeUntracked
+
+    $result.detection_source = $detectionSource
+    $result.include_untracked = [bool]$includeUntracked
+    $result.current_scope = $snapshot
+    $result.evidence_scope_sha256 = [string]$CompileEvidence.evidence_scope_sha256
+    $result.evidence_changed_files_sha256 = [string]$CompileEvidence.evidence_scope_changed_files_sha256
+    $result.evidence_changed_lines_total = [int]$CompileEvidence.evidence_scope_changed_lines_total
+
+    if (-not [string]::Equals([string]$CompileEvidence.evidence_scope_sha256, [string]$snapshot.scope_sha256, [System.StringComparison]::Ordinal)) {
+        $result.violations += 'Workspace scope fingerprint changed after compile gate.'
+    }
+    if (-not [string]::Equals([string]$CompileEvidence.evidence_scope_changed_files_sha256, [string]$snapshot.changed_files_sha256, [System.StringComparison]::Ordinal)) {
+        $result.violations += 'Workspace changed_files fingerprint differs from compile evidence.'
+    }
+    if ([int]$CompileEvidence.evidence_scope_changed_lines_total -ne [int]$snapshot.changed_lines_total) {
+        $result.violations += "Workspace changed_lines_total=$($snapshot.changed_lines_total) differs from compile evidence changed_lines_total=$([int]$CompileEvidence.evidence_scope_changed_lines_total)."
+    }
+
+    if ($result.violations.Count -gt 0) {
+        $result.status = 'DRIFT_DETECTED'
+        return $result
+    }
+
+    $result.status = 'PASS'
+    return $result
+}
+
 $validatedPreflight = Get-ValidatedPreflightContext -PreflightPathValue $PreflightPath -ExplicitTaskId $TaskId
 $repoRoot = Resolve-ProjectRoot
 $preflight = $validatedPreflight.preflight
 $resolvedTaskId = $validatedPreflight.resolved_task_id
 $compileGateEvidence = Get-CompileGateEvidence -RepoRootPath $repoRoot -ResolvedTaskId $resolvedTaskId -PreflightPathValue $validatedPreflight.preflight_path -PreflightHashValue $validatedPreflight.preflight_hash -CompileEvidencePathValue $CompileEvidencePath
+$scopeDrift = $null
+if ($compileGateEvidence.status -eq 'PASS') {
+    $scopeDrift = Test-CompileScopeDrift -RepoRootPath $repoRoot -CompileEvidence $compileGateEvidence
+}
 
 $errors = @()
 $errors += @($validatedPreflight.errors)
@@ -456,8 +744,20 @@ switch ($compileGateEvidence.status) {
     'EVIDENCE_PREFLIGHT_PATH_MISMATCH' {
         $errors += "Compile gate evidence preflight path mismatch. Evidence path='$($compileGateEvidence.evidence_preflight_path)'."
     }
+    'EVIDENCE_SCOPE_MISSING' {
+        $errors += 'Compile gate evidence is missing scope snapshot fields. Re-run compile-gate.ps1/.sh.'
+    }
     'EVIDENCE_NOT_PASS' {
         $errors += "Compile gate did not pass. Evidence status='$($compileGateEvidence.evidence_status)', outcome='$($compileGateEvidence.evidence_outcome)'."
+    }
+}
+
+if ($null -ne $scopeDrift) {
+    if ($scopeDrift.status -eq 'EVIDENCE_SCOPE_MISSING') {
+        $errors += @($scopeDrift.violations)
+    } elseif ($scopeDrift.status -eq 'DRIFT_DETECTED') {
+        $errors += 'Workspace changed after compile gate; rerun compile-gate.ps1/.sh before review gate.'
+        $errors += @($scopeDrift.violations)
     }
 }
 
@@ -501,12 +801,40 @@ Test-ExpectedVerdict -Label 'Performance review' -Required $requiredPerformance 
 Test-ExpectedVerdict -Label 'Infra review' -Required $requiredInfra -SkippedByOverride $false -ActualVerdict $InfraReviewVerdict -PassVerdict 'INFRA REVIEW PASSED'
 Test-ExpectedVerdict -Label 'Dependency review' -Required $requiredDependency -SkippedByOverride $false -ActualVerdict $DependencyReviewVerdict -PassVerdict 'DEPENDENCY REVIEW PASSED'
 
+$resolvedReviewEvidencePath = Resolve-ReviewEvidencePath -RepoRootPath $repoRoot -ResolvedTaskId $resolvedTaskId -ReviewEvidencePathValue $ReviewEvidencePath
+$reviewEvidenceContext = [ordered]@{
+    preflight_path = Normalize-Path $validatedPreflight.preflight_path
+    preflight_hash_sha256 = $validatedPreflight.preflight_hash
+    mode = $validatedPreflight.mode
+    compile_evidence_path = $compileGateEvidence.evidence_path
+    compile_evidence_hash_sha256 = $compileGateEvidence.evidence_hash
+    scope_drift = $scopeDrift
+    required_reviews = $validatedPreflight.required_reviews
+    verdicts = [ordered]@{
+        code = $CodeReviewVerdict
+        db = $DbReviewVerdict
+        security = $SecurityReviewVerdict
+        refactor = $RefactorReviewVerdict
+        api = $ApiReviewVerdict
+        test = $TestReviewVerdict
+        performance = $PerformanceReviewVerdict
+        infra = $InfraReviewVerdict
+        dependency = $DependencyReviewVerdict
+    }
+    skip_reviews = $skipReviewsList
+    skip_reason = $SkipReason
+    override_artifact = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
+}
+
 if ($errors.Count -gt 0) {
+    Write-ReviewEvidence -EvidencePath $resolvedReviewEvidencePath -ResolvedTaskId $resolvedTaskId -Context $reviewEvidenceContext -Status 'FAILED' -Outcome 'FAIL' -Violations @($errors)
+
     $failureEvent = [ordered]@{
         timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
         event_type = 'review_gate_check'
         status = 'FAILED'
         task_id = $resolvedTaskId
+        review_evidence_path = Normalize-Path $resolvedReviewEvidencePath
         preflight_path = Normalize-Path $validatedPreflight.preflight_path
         mode = $validatedPreflight.mode
         skip_reviews = $skipReviewsList
@@ -517,6 +845,7 @@ if ($errors.Count -gt 0) {
     Append-MetricsEvent -Path $MetricsPath -EventObject $failureEvent
 
     $taskFailureDetails = [ordered]@{
+        review_evidence_path = Normalize-Path $resolvedReviewEvidencePath
         preflight_path = Normalize-Path $validatedPreflight.preflight_path
         mode = $validatedPreflight.mode
         skip_reviews = $skipReviewsList
@@ -569,11 +898,15 @@ if ($skipCode) {
     Set-Content -Path $OverrideArtifactPath -Value ($overrideArtifact | ConvertTo-Json -Depth 8)
 }
 
+$reviewEvidenceContext['override_artifact'] = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
+Write-ReviewEvidence -EvidencePath $resolvedReviewEvidencePath -ResolvedTaskId $resolvedTaskId -Context $reviewEvidenceContext -Status 'PASSED' -Outcome 'PASS' -Violations @()
+
 $successEvent = [ordered]@{
     timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
     event_type = 'review_gate_check'
     status = 'PASSED'
     task_id = $resolvedTaskId
+    review_evidence_path = Normalize-Path $resolvedReviewEvidencePath
     preflight_path = Normalize-Path $validatedPreflight.preflight_path
     mode = $validatedPreflight.mode
     skip_reviews = $skipReviewsList
@@ -584,6 +917,7 @@ $successEvent = [ordered]@{
 Append-MetricsEvent -Path $MetricsPath -EventObject $successEvent
 
 $taskSuccessDetails = [ordered]@{
+    review_evidence_path = Normalize-Path $resolvedReviewEvidencePath
     preflight_path = Normalize-Path $validatedPreflight.preflight_path
     mode = $validatedPreflight.mode
     skip_reviews = $skipReviewsList

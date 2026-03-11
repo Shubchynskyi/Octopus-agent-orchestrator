@@ -29,10 +29,38 @@ function Normalize-Path {
     return Convert-GatePathToUnix -PathValue $PathValue
 }
 
+function Normalize-RelativePath {
+    param([string]$PathValue)
+
+    return Convert-GatePathToUnix -PathValue $PathValue -TrimValue -StripLeadingRelative
+}
+
 function Assert-ValidTaskId {
     param([string]$Value)
 
     Assert-GateTaskId -Value $Value
+}
+
+function Convert-ToStringArray {
+    param([object]$Value)
+
+    return Convert-GateToStringArray -Value $Value
+}
+
+function Invoke-GitLines {
+    param(
+        [string]$RepoRootPath,
+        [string[]]$Arguments,
+        [string]$FailureMessage
+    )
+
+    $output = & git -C $RepoRootPath @Arguments 2>$null
+    $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+    if ($exitCode -ne 0) {
+        throw $FailureMessage
+    }
+
+    return @($output | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 }
 
 function Resolve-PathInsideRepo {
@@ -123,6 +151,192 @@ function Get-FileSha256 {
     }
 
     return (Get-FileHash -Path $PathValue -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Get-StringSha256 {
+    param([string]$Text)
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($(if ($null -eq $Text) { '' } else { $Text }))
+        $hashBytes = $sha.ComputeHash($bytes)
+        return ([System.BitConverter]::ToString($hashBytes)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-FileLineCount {
+    param([string]$PathValue)
+
+    if ([string]::IsNullOrWhiteSpace($PathValue) -or -not (Test-Path -LiteralPath $PathValue -PathType Leaf)) {
+        return 0
+    }
+
+    try {
+        return [int]((Get-Content -LiteralPath $PathValue -ErrorAction Stop | Measure-Object -Line).Lines)
+    } catch {
+        return 0
+    }
+}
+
+function Get-WorkspaceSnapshot {
+    param(
+        [string]$RepoRootPath,
+        [string]$DetectionSource,
+        [bool]$IncludeUntracked
+    )
+
+    $sourceValue = if ([string]::IsNullOrWhiteSpace($DetectionSource)) { 'git_auto' } else { $DetectionSource.Trim().ToLowerInvariant() }
+    $useStaged = $sourceValue -in @('git_staged_only', 'git_staged_plus_untracked')
+    if ($sourceValue -eq 'git_staged_only') {
+        $IncludeUntracked = $false
+    }
+
+    $diffArgs = @('diff', '--name-only', '--diff-filter=ACMRTUXB')
+    if ($useStaged) {
+        $diffArgs += '--cached'
+    } else {
+        $diffArgs += 'HEAD'
+    }
+    $changedFromDiff = Invoke-GitLines -RepoRootPath $RepoRootPath -Arguments $diffArgs -FailureMessage 'Failed to collect changed files snapshot.'
+
+    $untrackedFiles = @()
+    if ($IncludeUntracked) {
+        $untrackedFiles = Invoke-GitLines -RepoRootPath $RepoRootPath -Arguments @('ls-files', '--others', '--exclude-standard') -FailureMessage 'Failed to collect untracked files snapshot.'
+    }
+
+    $normalizedChangedFiles = @(
+        $changedFromDiff + $untrackedFiles |
+            ForEach-Object { Normalize-RelativePath $_ } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Sort-Object -Unique
+    )
+
+    $numstatArgs = @('diff', '--numstat', '--diff-filter=ACMRTUXB')
+    if ($useStaged) {
+        $numstatArgs += '--cached'
+    } else {
+        $numstatArgs += 'HEAD'
+    }
+    $numstatRows = Invoke-GitLines -RepoRootPath $RepoRootPath -Arguments $numstatArgs -FailureMessage 'Failed to collect changed lines snapshot.'
+
+    $additionsTotal = 0
+    $deletionsTotal = 0
+    foreach ($row in $numstatRows) {
+        $parts = $row -split "`t"
+        if ($parts.Count -lt 3) {
+            continue
+        }
+
+        if ($parts[0] -match '^\d+$') {
+            $additionsTotal += [int]$parts[0]
+        }
+        if ($parts[1] -match '^\d+$') {
+            $deletionsTotal += [int]$parts[1]
+        }
+    }
+
+    if ($IncludeUntracked -and $untrackedFiles.Count -gt 0) {
+        foreach ($untrackedFile in $untrackedFiles) {
+            $normalizedPath = Normalize-RelativePath $untrackedFile
+            if ([string]::IsNullOrWhiteSpace($normalizedPath)) {
+                continue
+            }
+
+            $fullPath = Join-Path $RepoRootPath $normalizedPath
+            $additionsTotal += Get-FileLineCount -PathValue $fullPath
+        }
+    }
+
+    $changedLinesTotal = $additionsTotal + $deletionsTotal
+    $filesFingerprint = Get-StringSha256 -Text ($normalizedChangedFiles -join "`n")
+    $scopeFingerprint = Get-StringSha256 -Text ("{0}|{1}|{2}|{3}|{4}|{5}" -f $sourceValue, $useStaged, $IncludeUntracked, $normalizedChangedFiles.Count, $changedLinesTotal, $filesFingerprint)
+
+    return [PSCustomObject]@{
+        detection_source = $sourceValue
+        use_staged = $useStaged
+        include_untracked = [bool]$IncludeUntracked
+        changed_files = $normalizedChangedFiles
+        changed_files_count = $normalizedChangedFiles.Count
+        additions_total = $additionsTotal
+        deletions_total = $deletionsTotal
+        changed_lines_total = $changedLinesTotal
+        changed_files_sha256 = $filesFingerprint
+        scope_sha256 = $scopeFingerprint
+    }
+}
+
+function Get-PreflightContext {
+    param(
+        [string]$PreflightPathValue,
+        [string]$ResolvedTaskId
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PreflightPathValue)) {
+        throw "Preflight artifact path is required for compile gate task '$ResolvedTaskId'."
+    }
+    if (-not (Test-Path -LiteralPath $PreflightPathValue -PathType Leaf)) {
+        throw "Preflight artifact not found: $PreflightPathValue"
+    }
+
+    try {
+        $preflightObject = Get-Content -Raw -LiteralPath $PreflightPathValue | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Preflight artifact is not valid JSON: $PreflightPathValue"
+    }
+
+    $preflightTaskId = if ($null -ne $preflightObject.PSObject.Properties['task_id']) { [string]$preflightObject.task_id } else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($preflightTaskId) -and -not [string]::Equals($preflightTaskId.Trim(), $ResolvedTaskId, [System.StringComparison]::Ordinal)) {
+        throw "TaskId '$ResolvedTaskId' does not match preflight.task_id '$($preflightTaskId.Trim())'."
+    }
+
+    if ($null -eq $preflightObject.PSObject.Properties['changed_files']) {
+        throw 'Preflight field `changed_files` is required.'
+    }
+    if ($null -eq $preflightObject.PSObject.Properties['metrics'] -or $null -eq $preflightObject.metrics) {
+        throw 'Preflight field `metrics` is required.'
+    }
+    if ($null -eq $preflightObject.PSObject.Properties['required_reviews'] -or $null -eq $preflightObject.required_reviews) {
+        throw 'Preflight field `required_reviews` is required.'
+    }
+
+    $normalizedChangedFiles = @(
+        Convert-ToStringArray $preflightObject.changed_files |
+            ForEach-Object { Normalize-RelativePath $_ } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Sort-Object -Unique
+    )
+
+    $metricChangedLines = $null
+    if ($null -ne $preflightObject.metrics.PSObject.Properties['changed_lines_total']) {
+        $rawChangedLines = $preflightObject.metrics.changed_lines_total
+        if ($rawChangedLines -is [int] -or $rawChangedLines -is [long] -or $rawChangedLines -is [short]) {
+            $metricChangedLines = [int][long]$rawChangedLines
+        } elseif ($rawChangedLines -is [double] -or $rawChangedLines -is [decimal] -or $rawChangedLines -is [single]) {
+            $metricChangedLines = [int][double]$rawChangedLines
+        }
+    }
+    if ($null -eq $metricChangedLines -or $metricChangedLines -lt 0) {
+        throw 'Preflight field `metrics.changed_lines_total` is required and must be non-negative.'
+    }
+
+    $detectionSource = if ($null -ne $preflightObject.PSObject.Properties['detection_source']) { [string]$preflightObject.detection_source } else { 'git_auto' }
+    $includeUntracked = $true
+    if ([string]::Equals($detectionSource.Trim(), 'git_staged_only', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $includeUntracked = $false
+    }
+
+    return [PSCustomObject]@{
+        preflight = $preflightObject
+        task_id = $ResolvedTaskId
+        detection_source = $detectionSource
+        include_untracked = [bool]$includeUntracked
+        changed_files = $normalizedChangedFiles
+        changed_files_count = $normalizedChangedFiles.Count
+        changed_lines_total = $metricChangedLines
+        changed_files_sha256 = Get-StringSha256 -Text ($normalizedChangedFiles -join "`n")
+    }
 }
 
 function Get-CompileOutputStats {
@@ -325,6 +539,9 @@ function Get-CompileCommands {
         if ($command -match '^\s*<[^>]+>\s*$') {
             throw "Compile command placeholder is unresolved in ${RulePath}: $command"
         }
+        if ($command -match '(?i)\borg\.apache\.maven\.wrapper\.mavenwrappermain\b') {
+            throw "Compile command anti-pattern detected in ${RulePath}: use wrapper entrypoint script (for example './mvnw' or '.\\mvnw.cmd') instead of MavenWrapperMain class invocation."
+        }
     }
 
     return $commands
@@ -348,11 +565,16 @@ $resolvedTaskId = if ([string]::IsNullOrWhiteSpace($TaskId)) { $null } else { $T
 if (-not [string]::IsNullOrWhiteSpace($resolvedTaskId)) {
     Assert-ValidTaskId -Value $resolvedTaskId
 }
+if ([string]::IsNullOrWhiteSpace($resolvedTaskId)) {
+    throw 'TaskId is required for compile gate.'
+}
 
 $resolvedCommandsPath = $null
 $compileCommands = @()
 $resolvedPreflightPath = $null
 $preflightHash = $null
+$preflightContext = $null
+$workspaceSnapshot = $null
 $resolvedCompileEvidencePath = $null
 $resolvedCompileOutputPath = $null
 $compileOutputLines = New-Object 'System.Collections.Generic.List[string]'
@@ -371,6 +593,33 @@ try {
     $resolvedCommandsPath = Resolve-CommandsPath -PathValue $CommandsPath -RepoRootPath $RepoRoot
     $compileCommands = @(Get-CompileCommands -RulePath $resolvedCommandsPath)
     $resolvedPreflightPath = Resolve-PreflightPath -ExplicitPreflightPath $PreflightPath -RepoRootPath $RepoRoot -ResolvedTaskId $resolvedTaskId
+    $preflightContext = Get-PreflightContext -PreflightPathValue $resolvedPreflightPath -ResolvedTaskId $resolvedTaskId
+    $workspaceSnapshot = Get-WorkspaceSnapshot -RepoRootPath $RepoRoot -DetectionSource $preflightContext.detection_source -IncludeUntracked $preflightContext.include_untracked
+
+    $scopeViolations = @()
+    if ($workspaceSnapshot.changed_files_sha256 -ne $preflightContext.changed_files_sha256) {
+        $scopeViolations += 'Preflight changed_files differ from current workspace snapshot.'
+    }
+    if ([int]$workspaceSnapshot.changed_lines_total -ne [int]$preflightContext.changed_lines_total) {
+        $scopeViolations += "Preflight changed_lines_total=$($preflightContext.changed_lines_total) differs from current snapshot changed_lines_total=$($workspaceSnapshot.changed_lines_total)."
+    }
+    if ($scopeViolations.Count -gt 0) {
+        $scopeDetails = [ordered]@{
+            preflight_changed_files = $preflightContext.changed_files
+            preflight_changed_files_count = $preflightContext.changed_files_count
+            preflight_changed_lines_total = $preflightContext.changed_lines_total
+            preflight_changed_files_sha256 = $preflightContext.changed_files_sha256
+            snapshot_detection_source = $workspaceSnapshot.detection_source
+            snapshot_include_untracked = $workspaceSnapshot.include_untracked
+            snapshot_changed_files = $workspaceSnapshot.changed_files
+            snapshot_changed_files_count = $workspaceSnapshot.changed_files_count
+            snapshot_changed_lines_total = $workspaceSnapshot.changed_lines_total
+            snapshot_changed_files_sha256 = $workspaceSnapshot.changed_files_sha256
+            violations = $scopeViolations
+        }
+        throw ("Preflight scope drift detected. Re-run classify-change before compile gate. Details: " + ($scopeDetails | ConvertTo-Json -Depth 8 -Compress))
+    }
+
     $preflightHash = Get-FileSha256 -PathValue $resolvedPreflightPath
     $resolvedCompileEvidencePath = Resolve-CompileEvidencePath -ExplicitEvidencePath $CompileEvidencePath -RepoRootPath $RepoRoot -ResolvedTaskId $resolvedTaskId
     $resolvedCompileOutputPath = Resolve-CompileOutputPath -ExplicitOutputPath $CompileOutputPath -RepoRootPath $RepoRoot -ResolvedTaskId $resolvedTaskId
@@ -436,6 +685,19 @@ $gateContext = [ordered]@{
     compile_command = $(if ($compileCommands.Count -gt 0) { $compileCommands[0] } else { $null })
     preflight_path = Normalize-Path $resolvedPreflightPath
     preflight_hash_sha256 = $preflightHash
+    preflight_detection_source = $(if ($null -ne $preflightContext) { $preflightContext.detection_source } else { $null })
+    preflight_include_untracked = $(if ($null -ne $preflightContext) { [bool]$preflightContext.include_untracked } else { $null })
+    preflight_changed_files_count = $(if ($null -ne $preflightContext) { [int]$preflightContext.changed_files_count } else { $null })
+    preflight_changed_lines_total = $(if ($null -ne $preflightContext) { [int]$preflightContext.changed_lines_total } else { $null })
+    preflight_changed_files_sha256 = $(if ($null -ne $preflightContext) { $preflightContext.changed_files_sha256 } else { $null })
+    scope_detection_source = $(if ($null -ne $workspaceSnapshot) { $workspaceSnapshot.detection_source } else { $null })
+    scope_use_staged = $(if ($null -ne $workspaceSnapshot) { [bool]$workspaceSnapshot.use_staged } else { $null })
+    scope_include_untracked = $(if ($null -ne $workspaceSnapshot) { [bool]$workspaceSnapshot.include_untracked } else { $null })
+    scope_changed_files = $(if ($null -ne $workspaceSnapshot) { $workspaceSnapshot.changed_files } else { @() })
+    scope_changed_files_count = $(if ($null -ne $workspaceSnapshot) { [int]$workspaceSnapshot.changed_files_count } else { 0 })
+    scope_changed_lines_total = $(if ($null -ne $workspaceSnapshot) { [int]$workspaceSnapshot.changed_lines_total } else { 0 })
+    scope_changed_files_sha256 = $(if ($null -ne $workspaceSnapshot) { $workspaceSnapshot.changed_files_sha256 } else { $null })
+    scope_sha256 = $(if ($null -ne $workspaceSnapshot) { $workspaceSnapshot.scope_sha256 } else { $null })
     evidence_path = Normalize-Path $resolvedCompileEvidencePath
     compile_output_path = Normalize-Path $resolvedCompileOutputPath
     compile_output_lines = $totalOutputLines

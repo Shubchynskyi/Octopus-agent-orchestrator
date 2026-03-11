@@ -146,7 +146,7 @@ def get_default_classification_config():
                 r"(?i)(typeorm|prisma|flyway|liquibase|alembic|knex|sequelize)",
             ],
             "security": [
-                r"(^|/)(auth|security|oauth|jwt|token|rbac|acl|keycloak|okta|saml|openid|mfa|crypt|encryption|certificate|secret|vault|webhook)(/|\.|$)"
+                r"(^|/)(auth|security|oauth|jwt|token|rbac|acl|keycloak|okta|saml|openid|mfa|crypt|encryption|certificate|secret|vault|webhook|payment|checkout|billing)(/|\.|$)"
             ],
             "api": [
                 r"(^|/)(controllers?|routes?|handlers?|endpoints?|graphql)(/|\.|$)",

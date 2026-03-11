@@ -10,7 +10,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 - Full changelog: `CHANGELOG.md`
 
 ## Version
-- Current bundle version: `1.0.3` (source: `VERSION`)
+- Current bundle version: `1.0.4` (source: `VERSION`)
 - Update command: `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1` (or `bash Octopus-agent-orchestrator/scripts/check-update.sh`); `-InitAnswersPath` is optional when using default `Octopus-agent-orchestrator/runtime/init-answers.json`
 - Last documentation update: `2026-03-11`
 
@@ -102,6 +102,7 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --rationale "<why>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "Octopus-agent-orchestrator/MANIFEST.md"
 ```
@@ -164,8 +165,9 @@ Typical agent lifecycle:
 5. Runs independent reviews.
 6. Receives failed review or failed gate (`REVIEW_GATE_FAILED`), returns to code, logs `REWORK_STARTED`.
 7. Fixes findings, reruns compile/reviews, receives `REVIEW_GATE_PASSED`.
-8. Runs completion gate and receives `COMPLETION_GATE_PASSED`.
-9. Marks task `DONE`, logs `TASK_DONE`, and returns summary + commit message suggestion.
+8. Runs doc impact gate and receives `DOC_IMPACT_ASSESSED`.
+9. Runs completion gate and receives `COMPLETION_GATE_PASSED`.
+10. Marks task `DONE`, logs `TASK_DONE`, and returns summary + commit message suggestion.
 
 Task timeline log commands:
 ```powershell
@@ -206,8 +208,10 @@ feat(invoices): add CSV export endpoint with async email delivery hooks
 - Installer updates `.gitignore` with managed agent entries.
 - Preflight roots and trigger regexes are configurable in `live/config/paths.json`.
 - Compile gate command is configured in `live/docs/agent-rules/40-commands.md` under `### Compile Gate (Mandatory)` and is required before `IN_REVIEW`.
-- Review gate (`required-reviews-check`) also validates compile evidence in task timeline; without `COMPILE_GATE_PASSED` it fails.
-- Completion gate (`completion-gate`) is required before `DONE`; it validates review-loop timeline integrity and required review artifacts.
+- Compile gate enforces preflight scope freshness; scope drift requires re-preflight before compile.
+- Review gate (`required-reviews-check`) validates compile evidence plus post-compile drift and writes review evidence (`<task-id>-review-gate.json`).
+- Doc impact gate (`doc-impact-gate`) writes machine-checkable documentation impact evidence (`<task-id>-doc-impact.json`) before completion.
+- Completion gate (`completion-gate`) is required before `DONE`; it validates compile/review/doc-impact evidence, review-loop timeline integrity, and required review artifacts.
 - Command placeholders in `live/docs/agent-rules/40-commands.md` must be replaced with real project commands; verify fails on unresolved placeholders.
 - Gate scripts support both `pwsh` (`*.ps1`) and `bash` (`*.sh`); agent should auto-detect environment.
 - Bash gate scripts require a Python runtime in PATH (`python3`, `python`, or `py -3`).

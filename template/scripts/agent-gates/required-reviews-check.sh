@@ -18,9 +18,11 @@ fi
 
 "${PYTHON_CMD[@]}" - "$@" <<'PY'
 import argparse
+import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,6 +78,93 @@ def get_non_negative_int(metrics: dict, key: str):
             raise ValueError
         return int(value)
     raise ValueError
+
+
+def string_sha256(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest().lower()
+
+
+def count_file_lines(path: Path) -> int:
+    if not path.exists() or not path.is_file():
+        return 0
+    try:
+        line_count = 0
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for _ in handle:
+                line_count += 1
+        return line_count
+    except OSError:
+        return 0
+
+
+def git_lines(repo_root: Path, args, failure_message: str):
+    completed = subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(failure_message)
+    return [line for line in completed.stdout.splitlines() if line.strip()]
+
+
+def get_workspace_snapshot(repo_root: Path, detection_source: str, include_untracked: bool):
+    source = (detection_source or "git_auto").strip().lower()
+    use_staged = source in {"git_staged_only", "git_staged_plus_untracked"}
+    if source == "git_staged_only":
+        include_untracked = False
+
+    diff_args = ["diff", "--name-only", "--diff-filter=ACMRTUXB"]
+    diff_args.extend(["--cached"] if use_staged else ["HEAD"])
+    changed_from_diff = git_lines(repo_root, diff_args, "Failed to collect changed files snapshot.")
+
+    untracked = []
+    if include_untracked:
+        untracked = git_lines(repo_root, ["ls-files", "--others", "--exclude-standard"], "Failed to collect untracked files snapshot.")
+
+    normalized_changed_files = sorted({normalize_path(item, trim=True, strip_dot_slash=True, strip_leading_slash=True) for item in (changed_from_diff + untracked) if normalize_path(item, trim=True, strip_dot_slash=True, strip_leading_slash=True)})
+
+    numstat_args = ["diff", "--numstat", "--diff-filter=ACMRTUXB"]
+    numstat_args.extend(["--cached"] if use_staged else ["HEAD"])
+    numstat_rows = git_lines(repo_root, numstat_args, "Failed to collect changed lines snapshot.")
+
+    additions_total = 0
+    deletions_total = 0
+    for row in numstat_rows:
+        parts = row.split("\t")
+        if len(parts) < 3:
+            continue
+        if parts[0].isdigit():
+            additions_total += int(parts[0])
+        if parts[1].isdigit():
+            deletions_total += int(parts[1])
+
+    if include_untracked:
+        for item in untracked:
+            normalized = normalize_path(item, trim=True, strip_dot_slash=True, strip_leading_slash=True)
+            if not normalized:
+                continue
+            additions_total += count_file_lines(repo_root / normalized)
+
+    changed_lines_total = additions_total + deletions_total
+    changed_files_sha256 = string_sha256("\n".join(normalized_changed_files))
+    scope_sha256 = string_sha256(
+        f"{source}|{use_staged}|{include_untracked}|{len(normalized_changed_files)}|{changed_lines_total}|{changed_files_sha256}"
+    )
+
+    return {
+        "detection_source": source,
+        "use_staged": bool(use_staged),
+        "include_untracked": bool(include_untracked),
+        "changed_files": normalized_changed_files,
+        "changed_files_count": len(normalized_changed_files),
+        "additions_total": additions_total,
+        "deletions_total": deletions_total,
+        "changed_lines_total": changed_lines_total,
+        "changed_files_sha256": changed_files_sha256,
+        "scope_sha256": scope_sha256,
+    }
 
 
 def validate_preflight(preflight_path: Path, explicit_task_id: str):
@@ -139,6 +228,9 @@ def validate_preflight(preflight_path: Path, explicit_task_id: str):
         changed_lines_total = 0
         errors.append("Preflight field `metrics.changed_lines_total` is required and must be a non-negative integer.")
 
+    detection_source = str(preflight.get("detection_source", "git_auto")).strip() or "git_auto"
+    include_untracked = detection_source.lower() != "git_staged_only"
+
     return {
         "preflight": preflight,
         "resolved_task_id": resolved_task_id,
@@ -146,6 +238,8 @@ def validate_preflight(preflight_path: Path, explicit_task_id: str):
         "required_reviews": required_flags,
         "changed_files_count": changed_files_count,
         "changed_lines_total": changed_lines_total,
+        "detection_source": detection_source,
+        "include_untracked": include_untracked,
         "preflight_hash": file_sha256(preflight_path),
         "errors": errors,
     }
@@ -155,12 +249,19 @@ def get_compile_gate_evidence(repo_root: Path, task_id: str, preflight_path: Pat
     result = {
         "task_id": task_id,
         "evidence_path": None,
+        "evidence_hash": None,
         "evidence_status": None,
         "evidence_outcome": None,
         "evidence_task_id": None,
         "evidence_preflight_path": None,
         "evidence_preflight_hash": None,
         "evidence_source": None,
+        "evidence_scope_detection_source": None,
+        "evidence_scope_include_untracked": True,
+        "evidence_scope_changed_files_count": 0,
+        "evidence_scope_changed_lines_total": 0,
+        "evidence_scope_changed_files_sha256": None,
+        "evidence_scope_sha256": None,
         "status": "UNKNOWN",
     }
 
@@ -179,6 +280,7 @@ def get_compile_gate_evidence(repo_root: Path, task_id: str, preflight_path: Pat
     if not evidence_path.exists():
         result["status"] = "EVIDENCE_FILE_MISSING"
         return result
+    result["evidence_hash"] = file_sha256(evidence_path)
 
     try:
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -192,6 +294,12 @@ def get_compile_gate_evidence(repo_root: Path, task_id: str, preflight_path: Pat
     recorded_preflight_hash = str(evidence.get("preflight_hash_sha256", "")).strip().lower()
     recorded_preflight_path = normalize_path(evidence.get("preflight_path"))
     recorded_source = str(evidence.get("event_source", "")).strip().lower()
+    recorded_scope_detection_source = str(evidence.get("scope_detection_source", "")).strip().lower()
+    recorded_scope_include_untracked = bool(evidence.get("scope_include_untracked", True))
+    recorded_scope_changed_files_count = int(evidence.get("scope_changed_files_count", 0))
+    recorded_scope_changed_lines_total = int(evidence.get("scope_changed_lines_total", 0))
+    recorded_scope_changed_files_sha = str(evidence.get("scope_changed_files_sha256", "")).strip().lower()
+    recorded_scope_sha = str(evidence.get("scope_sha256", "")).strip().lower()
 
     result["evidence_task_id"] = recorded_task_id or None
     result["evidence_status"] = recorded_status or None
@@ -199,6 +307,12 @@ def get_compile_gate_evidence(repo_root: Path, task_id: str, preflight_path: Pat
     result["evidence_preflight_hash"] = recorded_preflight_hash or None
     result["evidence_preflight_path"] = recorded_preflight_path
     result["evidence_source"] = recorded_source or None
+    result["evidence_scope_detection_source"] = recorded_scope_detection_source or None
+    result["evidence_scope_include_untracked"] = bool(recorded_scope_include_untracked)
+    result["evidence_scope_changed_files_count"] = recorded_scope_changed_files_count
+    result["evidence_scope_changed_lines_total"] = recorded_scope_changed_lines_total
+    result["evidence_scope_changed_files_sha256"] = recorded_scope_changed_files_sha or None
+    result["evidence_scope_sha256"] = recorded_scope_sha or None
 
     if recorded_task_id != task_id:
         result["status"] = "EVIDENCE_TASK_MISMATCH"
@@ -214,12 +328,93 @@ def get_compile_gate_evidence(repo_root: Path, task_id: str, preflight_path: Pat
         result["status"] = "EVIDENCE_PREFLIGHT_PATH_MISMATCH"
         return result
 
+    if not recorded_scope_detection_source or not recorded_scope_changed_files_sha or not recorded_scope_sha:
+        result["status"] = "EVIDENCE_SCOPE_MISSING"
+        return result
+
     if recorded_status == "PASSED" and recorded_outcome == "PASS":
         result["status"] = "PASS"
         return result
 
     result["status"] = "EVIDENCE_NOT_PASS"
     return result
+
+
+def test_compile_scope_drift(repo_root: Path, compile_evidence: dict):
+    result = {
+        "status": "UNKNOWN",
+        "detection_source": None,
+        "include_untracked": None,
+        "current_scope": None,
+        "evidence_scope_sha256": None,
+        "evidence_changed_files_sha256": None,
+        "evidence_changed_lines_total": None,
+        "violations": [],
+    }
+
+    detection_source = str(compile_evidence.get("evidence_scope_detection_source") or "").strip()
+    if not detection_source:
+        result["status"] = "EVIDENCE_SCOPE_MISSING"
+        result["violations"].append("Compile gate evidence does not include scope snapshot.")
+        return result
+
+    include_untracked = bool(compile_evidence.get("evidence_scope_include_untracked", True))
+    current_scope = get_workspace_snapshot(repo_root, detection_source, include_untracked)
+
+    result["detection_source"] = detection_source
+    result["include_untracked"] = include_untracked
+    result["current_scope"] = current_scope
+    result["evidence_scope_sha256"] = str(compile_evidence.get("evidence_scope_sha256") or "")
+    result["evidence_changed_files_sha256"] = str(compile_evidence.get("evidence_scope_changed_files_sha256") or "")
+    result["evidence_changed_lines_total"] = int(compile_evidence.get("evidence_scope_changed_lines_total") or 0)
+
+    if result["evidence_scope_sha256"] != current_scope["scope_sha256"]:
+        result["violations"].append("Workspace scope fingerprint changed after compile gate.")
+    if result["evidence_changed_files_sha256"] != current_scope["changed_files_sha256"]:
+        result["violations"].append("Workspace changed_files fingerprint differs from compile evidence.")
+    if result["evidence_changed_lines_total"] != int(current_scope["changed_lines_total"]):
+        result["violations"].append(
+            "Workspace changed_lines_total="
+            f"{current_scope['changed_lines_total']} differs from compile evidence changed_lines_total="
+            f"{result['evidence_changed_lines_total']}."
+        )
+
+    result["status"] = "DRIFT_DETECTED" if result["violations"] else "PASS"
+    return result
+
+
+def resolve_review_evidence_path(repo_root: Path, task_id: str, review_evidence_path_arg: str):
+    if not task_id:
+        return None
+    if review_evidence_path_arg and review_evidence_path_arg.strip():
+        evidence_path = Path(review_evidence_path_arg.strip())
+        if not evidence_path.is_absolute():
+            evidence_path = (repo_root / evidence_path).resolve()
+        return evidence_path
+    return (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-review-gate.json").resolve()
+
+
+def write_review_evidence(
+    review_evidence_path: Path,
+    task_id: str,
+    context: dict,
+    status: str,
+    outcome: str,
+    violations,
+):
+    if not review_evidence_path or not task_id:
+        return
+    review_evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "event_source": "required-reviews-check",
+        "task_id": task_id,
+        "status": status,
+        "outcome": outcome,
+        "violations": list(violations or []),
+    }
+    payload.update(context or {})
+    review_evidence_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 parser = argparse.ArgumentParser()
@@ -238,6 +433,7 @@ parser.add_argument("--skip-reviews", default="")
 parser.add_argument("--skip-reason", default="")
 parser.add_argument("--override-artifact-path", default="")
 parser.add_argument("--compile-evidence-path", default="")
+parser.add_argument("--review-evidence-path", default="")
 parser.add_argument("--metrics-path", default="")
 parser.add_argument("--emit-metrics", default="true")
 args = parser.parse_args()
@@ -261,6 +457,9 @@ compile_gate_evidence = get_compile_gate_evidence(
     preflight_hash=validated_preflight["preflight_hash"],
     compile_evidence_path_arg=args.compile_evidence_path,
 )
+scope_drift = None
+if compile_gate_evidence.get("status") == "PASS":
+    scope_drift = test_compile_scope_drift(repo_root=repo_root, compile_evidence=compile_gate_evidence)
 
 metrics_path_raw = args.metrics_path.strip() if args.metrics_path else ""
 if not metrics_path_raw:
@@ -302,11 +501,20 @@ elif compile_status == "EVIDENCE_PREFLIGHT_HASH_MISMATCH":
     errors.append("Compile gate evidence preflight hash mismatch. Re-run compile-gate.ps1/.sh for the current preflight artifact.")
 elif compile_status == "EVIDENCE_PREFLIGHT_PATH_MISMATCH":
     errors.append(f"Compile gate evidence preflight path mismatch. Evidence path='{compile_gate_evidence.get('evidence_preflight_path')}'.")
+elif compile_status == "EVIDENCE_SCOPE_MISSING":
+    errors.append("Compile gate evidence is missing scope snapshot fields. Re-run compile-gate.ps1/.sh.")
 elif compile_status == "EVIDENCE_NOT_PASS":
     errors.append(
         f"Compile gate did not pass. Evidence status='{compile_gate_evidence.get('evidence_status')}', "
         f"outcome='{compile_gate_evidence.get('evidence_outcome')}'."
     )
+
+if scope_drift is not None:
+    if scope_drift.get("status") == "EVIDENCE_SCOPE_MISSING":
+        errors.extend(scope_drift.get("violations", []))
+    elif scope_drift.get("status") == "DRIFT_DETECTED":
+        errors.append("Workspace changed after compile gate; rerun compile-gate.ps1/.sh before review gate.")
+        errors.extend(scope_drift.get("violations", []))
 
 required_code = bool(validated_preflight["required_reviews"]["code"])
 required_db = bool(validated_preflight["required_reviews"]["db"])
@@ -354,12 +562,46 @@ test_expected_verdict(errors, "Performance review", required_performance, False,
 test_expected_verdict(errors, "Infra review", required_infra, False, args.infra_review_verdict, "INFRA REVIEW PASSED")
 test_expected_verdict(errors, "Dependency review", required_dependency, False, args.dependency_review_verdict, "DEPENDENCY REVIEW PASSED")
 
+review_evidence_path = resolve_review_evidence_path(repo_root, resolved_task_id, args.review_evidence_path)
+review_evidence_context = {
+    "preflight_path": normalize_path(preflight_path.resolve()),
+    "preflight_hash_sha256": validated_preflight["preflight_hash"],
+    "mode": validated_preflight["mode"],
+    "compile_evidence_path": compile_gate_evidence.get("evidence_path"),
+    "compile_evidence_hash_sha256": compile_gate_evidence.get("evidence_hash"),
+    "scope_drift": scope_drift,
+    "required_reviews": validated_preflight["required_reviews"],
+    "verdicts": {
+        "code": args.code_review_verdict,
+        "db": args.db_review_verdict,
+        "security": args.security_review_verdict,
+        "refactor": args.refactor_review_verdict,
+        "api": args.api_review_verdict,
+        "test": args.test_review_verdict,
+        "performance": args.performance_review_verdict,
+        "infra": args.infra_review_verdict,
+        "dependency": args.dependency_review_verdict,
+    },
+    "skip_reviews": skip_reviews_list,
+    "skip_reason": skip_reason,
+    "override_artifact": normalize_path(args.override_artifact_path) if args.override_artifact_path.strip() else None,
+}
+
 if errors:
+    write_review_evidence(
+        review_evidence_path=review_evidence_path,
+        task_id=resolved_task_id,
+        context=review_evidence_context,
+        status="FAILED",
+        outcome="FAIL",
+        violations=errors,
+    )
     failure_event = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "event_type": "review_gate_check",
         "status": "FAILED",
         "task_id": resolved_task_id,
+        "review_evidence_path": normalize_path(review_evidence_path) if review_evidence_path else None,
         "preflight_path": normalize_path(preflight_path.resolve()),
         "mode": validated_preflight["mode"],
         "skip_reviews": skip_reviews_list,
@@ -377,6 +619,7 @@ if errors:
         details={
             "preflight_path": normalize_path(preflight_path),
             "mode": validated_preflight["mode"],
+            "review_evidence_path": normalize_path(review_evidence_path) if review_evidence_path else None,
             "skip_reviews": skip_reviews_list,
             "skip_reason": skip_reason,
             "compile_gate": compile_gate_evidence,
@@ -424,11 +667,22 @@ if skip_code:
     override_path.write_text(json.dumps(override_artifact, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     override_artifact_path = str(override_path)
 
+review_evidence_context["override_artifact"] = normalize_path(override_artifact_path) if override_artifact_path else None
+write_review_evidence(
+    review_evidence_path=review_evidence_path,
+    task_id=resolved_task_id,
+    context=review_evidence_context,
+    status="PASSED",
+    outcome="PASS",
+    violations=[],
+)
+
 success_event = {
     "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     "event_type": "review_gate_check",
     "status": "PASSED",
     "task_id": resolved_task_id,
+    "review_evidence_path": normalize_path(review_evidence_path) if review_evidence_path else None,
     "preflight_path": normalize_path(preflight_path),
     "mode": validated_preflight["mode"],
     "skip_reviews": skip_reviews_list,
@@ -448,6 +702,7 @@ if skip_code:
         details={
             "preflight_path": normalize_path(preflight_path),
             "mode": validated_preflight["mode"],
+            "review_evidence_path": normalize_path(review_evidence_path) if review_evidence_path else None,
             "skip_reviews": skip_reviews_list,
             "skip_reason": skip_reason,
             "compile_gate": compile_gate_evidence,
@@ -468,6 +723,7 @@ else:
         details={
             "preflight_path": normalize_path(preflight_path),
             "mode": validated_preflight["mode"],
+            "review_evidence_path": normalize_path(review_evidence_path) if review_evidence_path else None,
             "skip_reviews": skip_reviews_list,
             "skip_reason": skip_reason,
             "compile_gate": compile_gate_evidence,

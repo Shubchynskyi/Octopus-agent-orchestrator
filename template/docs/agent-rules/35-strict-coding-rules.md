@@ -114,6 +114,7 @@ Review checks:
 
 ## Documentation Rules
 - Any runtime behavior change requires documentation impact assessment.
+- Documentation impact assessment must be machine-checkable via task artifact (`runtime/reviews/<task-id>-doc-impact.json`).
 - If behavior, contract, or operating flow changed, update relevant docs in the same task.
 - API contract changes require API documentation updates.
 - Architecture or integration flow changes require updates in architecture docs or ADR records.

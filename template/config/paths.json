@@ -37,7 +37,7 @@
       "(?i)(typeorm|prisma|flyway|liquibase|alembic|knex|sequelize)"
     ],
     "security": [
-      "(^|/)(auth|security|oauth|jwt|token|rbac|acl|keycloak|okta|saml|openid|mfa|crypt|encryption|certificate|secret|vault|webhook)(/|\\.|$)"
+      "(^|/)(auth|security|oauth|jwt|token|rbac|acl|keycloak|okta|saml|openid|mfa|crypt|encryption|certificate|secret|vault|webhook|payment|checkout|billing)(/|\\.|$)"
     ],
     "api": [
       "(^|/)(controllers?|routes?|handlers?|endpoints?|graphql)(/|\\.|$)",

@@ -327,6 +327,8 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1',
@@ -505,22 +507,22 @@ $compileGateScriptChecks = @(
     [PSCustomObject]@{
         RelativePath = 'Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1'
         Forbidden = @('Invoke-Expression')
-        Required = @('CompileOutputPath', 'FailTailLines', 'compile_output_path', 'CompileOutputPath:')
+        Required = @('CompileOutputPath', 'FailTailLines', 'compile_output_path', 'CompileOutputPath:', 'scope_detection_source', 'scope_sha256', 'Preflight scope drift detected')
     },
     [PSCustomObject]@{
         RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.ps1'
         Forbidden = @('Invoke-Expression')
-        Required = @('CompileOutputPath', 'FailTailLines', 'compile_output_path', 'CompileOutputPath:')
+        Required = @('CompileOutputPath', 'FailTailLines', 'compile_output_path', 'CompileOutputPath:', 'scope_detection_source', 'scope_sha256', 'Preflight scope drift detected')
     },
     [PSCustomObject]@{
         RelativePath = 'Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh'
         Forbidden = @('shell=True')
-        Required = @('--compile-output-path', '--fail-tail-lines', 'compile_output_path', 'CompileOutputPath:', 'OA_GATE_BASH_BIN')
+        Required = @('--compile-output-path', '--fail-tail-lines', 'compile_output_path', 'CompileOutputPath:', 'OA_GATE_BASH_BIN', 'scope_detection_source', 'scope_sha256', 'Preflight scope drift detected')
     },
     [PSCustomObject]@{
         RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.sh'
         Forbidden = @('shell=True')
-        Required = @('--compile-output-path', '--fail-tail-lines', 'compile_output_path', 'CompileOutputPath:', 'OA_GATE_BASH_BIN')
+        Required = @('--compile-output-path', '--fail-tail-lines', 'compile_output_path', 'CompileOutputPath:', 'OA_GATE_BASH_BIN', 'scope_detection_source', 'scope_sha256', 'Preflight scope drift detected')
     }
 )
 
@@ -547,19 +549,19 @@ $completionGateContractViolations = @()
 $completionGateScriptChecks = @(
     [PSCustomObject]@{
         RelativePath = 'Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1'
-        Required = @('COMPILE_GATE_PASSED', 'REVIEW_GATE_FAILED', 'REWORK_STARTED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'COMPLETION_GATE_PASSED', 'COMPLETION_GATE_FAILED', 'runtime/task-events', 'runtime/reviews')
+        Required = @('COMPILE_GATE_PASSED', 'REVIEW_GATE_FAILED', 'REWORK_STARTED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'COMPLETION_GATE_PASSED', 'COMPLETION_GATE_FAILED', 'runtime/task-events', 'runtime/reviews', 'review-gate.json', 'doc-impact.json', 'required-reviews-check', 'doc-impact-gate')
     },
     [PSCustomObject]@{
         RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/completion-gate.ps1'
-        Required = @('COMPILE_GATE_PASSED', 'REVIEW_GATE_FAILED', 'REWORK_STARTED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'COMPLETION_GATE_PASSED', 'COMPLETION_GATE_FAILED', 'runtime/task-events', 'runtime/reviews')
+        Required = @('COMPILE_GATE_PASSED', 'REVIEW_GATE_FAILED', 'REWORK_STARTED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'COMPLETION_GATE_PASSED', 'COMPLETION_GATE_FAILED', 'runtime/task-events', 'runtime/reviews', 'review-gate.json', 'doc-impact.json', 'required-reviews-check', 'doc-impact-gate')
     },
     [PSCustomObject]@{
         RelativePath = 'Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh'
-        Required = @('COMPILE_GATE_PASSED', 'REVIEW_GATE_FAILED', 'REWORK_STARTED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'COMPLETION_GATE_PASSED', 'COMPLETION_GATE_FAILED', 'runtime/task-events', 'runtime/reviews')
+        Required = @('COMPILE_GATE_PASSED', 'REVIEW_GATE_FAILED', 'REWORK_STARTED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'COMPLETION_GATE_PASSED', 'COMPLETION_GATE_FAILED', 'runtime/task-events', 'runtime/reviews', 'review-gate.json', 'doc-impact.json', 'required-reviews-check', 'doc-impact-gate')
     },
     [PSCustomObject]@{
         RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/completion-gate.sh'
-        Required = @('COMPILE_GATE_PASSED', 'REVIEW_GATE_FAILED', 'REWORK_STARTED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'COMPLETION_GATE_PASSED', 'COMPLETION_GATE_FAILED', 'runtime/task-events', 'runtime/reviews')
+        Required = @('COMPILE_GATE_PASSED', 'REVIEW_GATE_FAILED', 'REWORK_STARTED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'COMPLETION_GATE_PASSED', 'COMPLETION_GATE_FAILED', 'runtime/task-events', 'runtime/reviews', 'review-gate.json', 'doc-impact.json', 'required-reviews-check', 'doc-impact-gate')
     }
 )
 
@@ -573,6 +575,40 @@ foreach ($check in $completionGateScriptChecks) {
     foreach ($requiredSnippet in @($check.Required)) {
         if ($scriptContent -notmatch [regex]::Escape([string]$requiredSnippet)) {
             $completionGateContractViolations += "$($check.RelativePath) must include '$requiredSnippet' to enforce completion gate contract."
+        }
+    }
+}
+
+$docImpactGateContractViolations = @()
+$docImpactGateScriptChecks = @(
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1'
+        Required = @('DOC_IMPACT_GATE_PASSED', 'DOC_IMPACT_GATE_FAILED', 'DOC_IMPACT_ASSESSED', 'DOC_IMPACT_ASSESSMENT_FAILED', 'doc-impact-gate', 'preflight_hash_sha256', 'docs_updated', 'changelog_updated')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/doc-impact-gate.ps1'
+        Required = @('DOC_IMPACT_GATE_PASSED', 'DOC_IMPACT_GATE_FAILED', 'DOC_IMPACT_ASSESSED', 'DOC_IMPACT_ASSESSMENT_FAILED', 'doc-impact-gate', 'preflight_hash_sha256', 'docs_updated', 'changelog_updated')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.sh'
+        Required = @('--decision', '--behavior-changed', '--changelog-updated', '--rationale', 'DOC_IMPACT_GATE_PASSED', 'DOC_IMPACT_GATE_FAILED', 'DOC_IMPACT_ASSESSED', 'DOC_IMPACT_ASSESSMENT_FAILED', 'doc-impact-gate', 'preflight_hash_sha256')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/doc-impact-gate.sh'
+        Required = @('--decision', '--behavior-changed', '--changelog-updated', '--rationale', 'DOC_IMPACT_GATE_PASSED', 'DOC_IMPACT_GATE_FAILED', 'DOC_IMPACT_ASSESSED', 'DOC_IMPACT_ASSESSMENT_FAILED', 'doc-impact-gate', 'preflight_hash_sha256')
+    }
+)
+
+foreach ($check in $docImpactGateScriptChecks) {
+    $scriptPath = Join-Path $TargetRoot $check.RelativePath
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        continue
+    }
+
+    $scriptContent = Get-Content -LiteralPath $scriptPath -Raw
+    foreach ($requiredSnippet in @($check.Required)) {
+        if ($scriptContent -notmatch [regex]::Escape([string]$requiredSnippet)) {
+            $docImpactGateContractViolations += "$($check.RelativePath) must include '$requiredSnippet' to enforce documentation-impact gate contract."
         }
     }
 }
@@ -1242,7 +1278,11 @@ if (Test-Path -LiteralPath $orchestrationSkillPath -PathType Leaf) {
         'COMPILE_GATE_PASSED',
         'review artifact write path: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.',
         'required-reviews-check.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',
+        'doc-impact-gate.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',
         'completion-gate.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',
+        'runtime/reviews/<task-id>-review-gate.json',
+        'runtime/reviews/<task-id>-doc-impact.json',
+        'DOC_IMPACT_ASSESSED',
         '-CodeReviewVerdict "<...>"',
         '-DbReviewVerdict "<...>"',
         '-SecurityReviewVerdict "<...>"',
@@ -1322,6 +1362,7 @@ Write-Output "MissingPathCount: $($missingPaths.Count)"
 Write-Output "TokenEconomyContractViolationCount: $($tokenEconomyContractViolations.Count)"
 Write-Output "CompileGateContractViolationCount: $($compileGateContractViolations.Count)"
 Write-Output "CompletionGateContractViolationCount: $($completionGateContractViolations.Count)"
+Write-Output "DocImpactGateContractViolationCount: $($docImpactGateContractViolations.Count)"
 Write-Output "TerminalCleanupContractViolationCount: $($terminalCleanupContractViolations.Count)"
 Write-Output "BundleVersion: $bundleVersion"
 Write-Output "VersionContractViolationCount: $($versionContractViolations.Count)"
@@ -1367,6 +1408,13 @@ if ($compileGateContractViolations.Count -gt 0) {
 if ($completionGateContractViolations.Count -gt 0) {
     Write-Output 'CompletionGateContractViolations:'
     foreach ($item in $completionGateContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($docImpactGateContractViolations.Count -gt 0) {
+    Write-Output 'DocImpactGateContractViolations:'
+    foreach ($item in $docImpactGateContractViolations) {
         Write-Output " - $item"
     }
 }
@@ -1502,6 +1550,7 @@ if (
     $tokenEconomyContractViolations.Count -gt 0 -or
     $compileGateContractViolations.Count -gt 0 -or
     $completionGateContractViolations.Count -gt 0 -or
+    $docImpactGateContractViolations.Count -gt 0 -or
     $terminalCleanupContractViolations.Count -gt 0 -or
     $versionContractViolations.Count -gt 0 -or
     $styleViolations.Count -gt 0 -or

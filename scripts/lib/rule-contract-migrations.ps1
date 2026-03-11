@@ -36,6 +36,16 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-
                 Insert = 'bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"'
             },
             @{
+                Match = 'doc-impact-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"'
+                Insert = 'pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>" -Decision "NO_DOC_UPDATES" -BehaviorChanged $false -ChangelogUpdated $false -Rationale "No behavior/contract/ops-doc impact."'
+                InsertMode = 'line'
+            },
+            @{
+                Match = 'doc-impact-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"'
+                Insert = 'bash Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --rationale "No behavior/contract/ops-doc impact."'
+                InsertMode = 'line'
+            },
+            @{
                 Match = 'completion-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"'
                 Insert = 'pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"'
                 InsertMode = 'line'
@@ -72,6 +82,11 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-
             @{
                 Match = 'Completion gate script must pass before `DONE`:'
                 Insert = 'Completion gate script must pass before `DONE`:'
+                InsertMode = 'line'
+            },
+            @{
+                Match = 'Documentation impact gate script must pass before `DONE`:'
+                Insert = 'Documentation impact gate script must pass before `DONE`:'
                 InsertMode = 'line'
             },
             @{

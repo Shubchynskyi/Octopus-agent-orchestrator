@@ -850,7 +850,7 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 3. Execute task workflow only in orchestrator mode: `Execute task <task-id> depth=<1|2|3>`.
 4. Run preflight classification before implementation (`classify-change.ps1` or `.sh`).
 5. Run compile gate before review (`compile-gate.ps1` or `.sh`) using `live/docs/agent-rules/40-commands.md`.
-6. Run required independent reviews and gates (`required-reviews-check.ps1` or `.sh`, then `completion-gate.ps1` or `.sh`) before marking `DONE`.
+6. Run required independent reviews and gates (`required-reviews-check.ps1` or `.sh`, then `doc-impact-gate.ps1` or `.sh`, then `completion-gate.ps1` or `.sh`) before marking `DONE`.
 7. Update task status and artifacts in `TASK.md`.
 8. Log lifecycle events by task id (`log-task-event.ps1` or `.sh`) into `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 

@@ -5,6 +5,9 @@ param(
     [string]$TaskId = '',
     [string]$TimelinePath,
     [string]$ReviewsRoot,
+    [string]$CompileEvidencePath,
+    [string]$ReviewEvidencePath,
+    [string]$DocImpactPath,
     [string]$MetricsPath,
     [bool]$EmitMetrics = $true
 )
@@ -57,6 +60,16 @@ function Assert-ValidTaskId {
     param([string]$Value)
 
     Assert-GateTaskId -Value $Value
+}
+
+function Get-FileSha256 {
+    param([string]$PathValue)
+
+    if ([string]::IsNullOrWhiteSpace($PathValue) -or -not (Test-Path -LiteralPath $PathValue -PathType Leaf)) {
+        return $null
+    }
+
+    return (Get-FileHash -Path $PathValue -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
 function Convert-ToSkipReviewArray {
@@ -173,6 +186,7 @@ function Get-ValidatedPreflightContext {
         resolved_task_id = $resolvedTaskId
         required_reviews = $requiredReviewFlags
         preflight_path = $preflightResolvedPath
+        preflight_hash = Get-FileSha256 -PathValue $preflightResolvedPath
         errors = $errors
     }
 }
@@ -440,15 +454,307 @@ function Get-ReviewArtifactEvidence {
     return $result
 }
 
+function Get-CompileGateEvidence {
+    param(
+        [string]$RepoRootPath,
+        [string]$ResolvedTaskId,
+        [string]$PreflightPathValue,
+        [string]$PreflightHashValue,
+        [string]$CompileEvidencePathValue
+    )
+
+    $result = [ordered]@{
+        evidence_path = $null
+        evidence_hash = $null
+        status = 'UNKNOWN'
+        violations = @()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ResolvedTaskId)) {
+        $result.status = 'TASK_ID_MISSING'
+        $result.violations += 'Compile evidence cannot be validated: task id is missing.'
+        return $result
+    }
+
+    $resolvedEvidencePath = if ([string]::IsNullOrWhiteSpace($CompileEvidencePathValue)) {
+        Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-compile-gate.json"
+    } elseif ([System.IO.Path]::IsPathRooted($CompileEvidencePathValue)) {
+        $CompileEvidencePathValue
+    } else {
+        Join-Path $RepoRootPath $CompileEvidencePathValue
+    }
+
+    $result.evidence_path = Normalize-Path $resolvedEvidencePath
+    if (-not (Test-Path -LiteralPath $resolvedEvidencePath -PathType Leaf)) {
+        $result.status = 'EVIDENCE_FILE_MISSING'
+        $result.violations += "Compile evidence file not found: $($result.evidence_path)"
+        return $result
+    }
+
+    $result.evidence_hash = Get-FileSha256 -PathValue $resolvedEvidencePath
+    $evidenceObject = $null
+    try {
+        $evidenceObject = Get-Content -Raw -LiteralPath $resolvedEvidencePath | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        $result.status = 'EVIDENCE_INVALID_JSON'
+        $result.violations += "Compile evidence is invalid JSON: $($result.evidence_path)"
+        return $result
+    }
+
+    $recordedTaskId = if ($null -ne $evidenceObject.PSObject.Properties['task_id']) { [string]$evidenceObject.task_id } else { '' }
+    $recordedSource = if ($null -ne $evidenceObject.PSObject.Properties['event_source']) { [string]$evidenceObject.event_source } else { '' }
+    $recordedStatus = if ($null -ne $evidenceObject.PSObject.Properties['status']) { [string]$evidenceObject.status } else { '' }
+    $recordedOutcome = if ($null -ne $evidenceObject.PSObject.Properties['outcome']) { [string]$evidenceObject.outcome } else { '' }
+    $recordedPreflightPath = if ($null -ne $evidenceObject.PSObject.Properties['preflight_path']) { [string]$evidenceObject.preflight_path } else { '' }
+    $recordedPreflightHash = if ($null -ne $evidenceObject.PSObject.Properties['preflight_hash_sha256']) { [string]$evidenceObject.preflight_hash_sha256 } else { '' }
+
+    if (-not [string]::Equals($recordedTaskId.Trim(), $ResolvedTaskId, [System.StringComparison]::Ordinal)) {
+        $result.violations += "Compile evidence task mismatch. Expected '$ResolvedTaskId', got '$recordedTaskId'."
+    }
+    if (-not [string]::Equals($recordedSource.Trim(), 'compile-gate', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $result.violations += "Compile evidence source mismatch. Expected 'compile-gate', got '$recordedSource'."
+    }
+    if (-not [string]::Equals($recordedStatus.Trim(), 'PASSED', [System.StringComparison]::OrdinalIgnoreCase) -or -not [string]::Equals($recordedOutcome.Trim(), 'PASS', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $result.violations += "Compile evidence is not PASS. status='$recordedStatus', outcome='$recordedOutcome'."
+    }
+    if (-not [string]::Equals($recordedPreflightHash.Trim().ToLowerInvariant(), $PreflightHashValue.Trim().ToLowerInvariant(), [System.StringComparison]::Ordinal)) {
+        $result.violations += 'Compile evidence preflight hash mismatch.'
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($recordedPreflightPath)) {
+        $expectedPreflightPath = Normalize-Path (Resolve-Path -LiteralPath $PreflightPathValue).Path
+        if (-not [string]::Equals((Normalize-Path $recordedPreflightPath), $expectedPreflightPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $result.violations += 'Compile evidence preflight path mismatch.'
+        }
+    }
+
+    $result.evidence = $evidenceObject
+    if ($result.violations.Count -gt 0) {
+        $result.status = 'FAILED'
+        return $result
+    }
+
+    $result.status = 'PASS'
+    return $result
+}
+
+function Get-ReviewGateEvidence {
+    param(
+        [string]$RepoRootPath,
+        [string]$ResolvedTaskId,
+        [string]$PreflightPathValue,
+        [string]$PreflightHashValue,
+        [string]$ReviewEvidencePathValue,
+        [object]$CompileEvidence
+    )
+
+    $result = [ordered]@{
+        evidence_path = $null
+        status = 'UNKNOWN'
+        violations = @()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ResolvedTaskId)) {
+        $result.status = 'TASK_ID_MISSING'
+        $result.violations += 'Review evidence cannot be validated: task id is missing.'
+        return $result
+    }
+
+    $resolvedEvidencePath = if ([string]::IsNullOrWhiteSpace($ReviewEvidencePathValue)) {
+        Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-review-gate.json"
+    } elseif ([System.IO.Path]::IsPathRooted($ReviewEvidencePathValue)) {
+        $ReviewEvidencePathValue
+    } else {
+        Join-Path $RepoRootPath $ReviewEvidencePathValue
+    }
+
+    $result.evidence_path = Normalize-Path $resolvedEvidencePath
+    if (-not (Test-Path -LiteralPath $resolvedEvidencePath -PathType Leaf)) {
+        $result.status = 'EVIDENCE_FILE_MISSING'
+        $result.violations += "Review evidence file not found: $($result.evidence_path)"
+        return $result
+    }
+
+    $evidenceObject = $null
+    try {
+        $evidenceObject = Get-Content -Raw -LiteralPath $resolvedEvidencePath | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        $result.status = 'EVIDENCE_INVALID_JSON'
+        $result.violations += "Review evidence is invalid JSON: $($result.evidence_path)"
+        return $result
+    }
+
+    $recordedTaskId = if ($null -ne $evidenceObject.PSObject.Properties['task_id']) { [string]$evidenceObject.task_id } else { '' }
+    $recordedSource = if ($null -ne $evidenceObject.PSObject.Properties['event_source']) { [string]$evidenceObject.event_source } else { '' }
+    $recordedStatus = if ($null -ne $evidenceObject.PSObject.Properties['status']) { [string]$evidenceObject.status } else { '' }
+    $recordedOutcome = if ($null -ne $evidenceObject.PSObject.Properties['outcome']) { [string]$evidenceObject.outcome } else { '' }
+    $recordedPreflightPath = if ($null -ne $evidenceObject.PSObject.Properties['preflight_path']) { [string]$evidenceObject.preflight_path } else { '' }
+    $recordedPreflightHash = if ($null -ne $evidenceObject.PSObject.Properties['preflight_hash_sha256']) { [string]$evidenceObject.preflight_hash_sha256 } else { '' }
+    $recordedCompilePath = if ($null -ne $evidenceObject.PSObject.Properties['compile_evidence_path']) { [string]$evidenceObject.compile_evidence_path } else { '' }
+    $recordedCompileHash = if ($null -ne $evidenceObject.PSObject.Properties['compile_evidence_hash_sha256']) { [string]$evidenceObject.compile_evidence_hash_sha256 } else { '' }
+
+    if (-not [string]::Equals($recordedTaskId.Trim(), $ResolvedTaskId, [System.StringComparison]::Ordinal)) {
+        $result.violations += "Review evidence task mismatch. Expected '$ResolvedTaskId', got '$recordedTaskId'."
+    }
+    if (-not [string]::Equals($recordedSource.Trim(), 'required-reviews-check', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $result.violations += "Review evidence source mismatch. Expected 'required-reviews-check', got '$recordedSource'."
+    }
+    if (-not [string]::Equals($recordedStatus.Trim(), 'PASSED', [System.StringComparison]::OrdinalIgnoreCase) -or -not [string]::Equals($recordedOutcome.Trim(), 'PASS', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $result.violations += "Review evidence is not PASS. status='$recordedStatus', outcome='$recordedOutcome'."
+    }
+    if (-not [string]::Equals($recordedPreflightHash.Trim().ToLowerInvariant(), $PreflightHashValue.Trim().ToLowerInvariant(), [System.StringComparison]::Ordinal)) {
+        $result.violations += 'Review evidence preflight hash mismatch.'
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($recordedPreflightPath)) {
+        $expectedPreflightPath = Normalize-Path (Resolve-Path -LiteralPath $PreflightPathValue).Path
+        if (-not [string]::Equals((Normalize-Path $recordedPreflightPath), $expectedPreflightPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $result.violations += 'Review evidence preflight path mismatch.'
+        }
+    }
+    if ($null -ne $CompileEvidence) {
+        if (-not [string]::IsNullOrWhiteSpace($recordedCompilePath) -and -not [string]::Equals((Normalize-Path $recordedCompilePath), [string]$CompileEvidence.evidence_path, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $result.violations += 'Review evidence compile path mismatch.'
+        }
+        if (-not [string]::IsNullOrWhiteSpace($recordedCompileHash) -and -not [string]::Equals($recordedCompileHash.Trim().ToLowerInvariant(), ([string]$CompileEvidence.evidence_hash).Trim().ToLowerInvariant(), [System.StringComparison]::Ordinal)) {
+            $result.violations += 'Review evidence compile hash mismatch.'
+        }
+    }
+
+    $result.evidence = $evidenceObject
+    if ($result.violations.Count -gt 0) {
+        $result.status = 'FAILED'
+        return $result
+    }
+
+    $result.status = 'PASS'
+    return $result
+}
+
+function Get-DocImpactEvidence {
+    param(
+        [string]$RepoRootPath,
+        [string]$ResolvedTaskId,
+        [string]$PreflightPathValue,
+        [string]$PreflightHashValue,
+        [string]$DocImpactPathValue
+    )
+
+    $result = [ordered]@{
+        evidence_path = $null
+        status = 'UNKNOWN'
+        violations = @()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ResolvedTaskId)) {
+        $result.status = 'TASK_ID_MISSING'
+        $result.violations += 'Doc impact evidence cannot be validated: task id is missing.'
+        return $result
+    }
+
+    $resolvedEvidencePath = if ([string]::IsNullOrWhiteSpace($DocImpactPathValue)) {
+        Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-doc-impact.json"
+    } elseif ([System.IO.Path]::IsPathRooted($DocImpactPathValue)) {
+        $DocImpactPathValue
+    } else {
+        Join-Path $RepoRootPath $DocImpactPathValue
+    }
+
+    $result.evidence_path = Normalize-Path $resolvedEvidencePath
+    if (-not (Test-Path -LiteralPath $resolvedEvidencePath -PathType Leaf)) {
+        $result.status = 'EVIDENCE_FILE_MISSING'
+        $result.violations += "Doc impact evidence file not found: $($result.evidence_path)"
+        return $result
+    }
+
+    $evidenceObject = $null
+    try {
+        $evidenceObject = Get-Content -Raw -LiteralPath $resolvedEvidencePath | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        $result.status = 'EVIDENCE_INVALID_JSON'
+        $result.violations += "Doc impact evidence is invalid JSON: $($result.evidence_path)"
+        return $result
+    }
+
+    $recordedTaskId = if ($null -ne $evidenceObject.PSObject.Properties['task_id']) { [string]$evidenceObject.task_id } else { '' }
+    $recordedSource = if ($null -ne $evidenceObject.PSObject.Properties['event_source']) { [string]$evidenceObject.event_source } else { '' }
+    $recordedStatus = if ($null -ne $evidenceObject.PSObject.Properties['status']) { [string]$evidenceObject.status } else { '' }
+    $recordedOutcome = if ($null -ne $evidenceObject.PSObject.Properties['outcome']) { [string]$evidenceObject.outcome } else { '' }
+    $recordedPreflightPath = if ($null -ne $evidenceObject.PSObject.Properties['preflight_path']) { [string]$evidenceObject.preflight_path } else { '' }
+    $recordedPreflightHash = if ($null -ne $evidenceObject.PSObject.Properties['preflight_hash_sha256']) { [string]$evidenceObject.preflight_hash_sha256 } else { '' }
+    $recordedDecision = if ($null -ne $evidenceObject.PSObject.Properties['decision']) { [string]$evidenceObject.decision } else { '' }
+    $recordedRationale = if ($null -ne $evidenceObject.PSObject.Properties['rationale']) { [string]$evidenceObject.rationale } else { '' }
+    $recordedBehaviorChanged = if ($null -ne $evidenceObject.PSObject.Properties['behavior_changed']) { [bool]$evidenceObject.behavior_changed } else { $false }
+    $recordedChangelogUpdated = if ($null -ne $evidenceObject.PSObject.Properties['changelog_updated']) { [bool]$evidenceObject.changelog_updated } else { $false }
+    $recordedDocsUpdated = @()
+    if ($null -ne $evidenceObject.PSObject.Properties['docs_updated']) {
+        $recordedDocsUpdated = @(
+            Convert-GateToStringArray -Value $evidenceObject.docs_updated -TrimValues |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+    }
+
+    if (-not [string]::Equals($recordedTaskId.Trim(), $ResolvedTaskId, [System.StringComparison]::Ordinal)) {
+        $result.violations += "Doc impact evidence task mismatch. Expected '$ResolvedTaskId', got '$recordedTaskId'."
+    }
+    if (-not [string]::Equals($recordedSource.Trim(), 'doc-impact-gate', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $result.violations += "Doc impact evidence source mismatch. Expected 'doc-impact-gate', got '$recordedSource'."
+    }
+    if (-not [string]::Equals($recordedStatus.Trim(), 'PASSED', [System.StringComparison]::OrdinalIgnoreCase) -or -not [string]::Equals($recordedOutcome.Trim(), 'PASS', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $result.violations += "Doc impact evidence is not PASS. status='$recordedStatus', outcome='$recordedOutcome'."
+    }
+    if (-not [string]::Equals($recordedPreflightHash.Trim().ToLowerInvariant(), $PreflightHashValue.Trim().ToLowerInvariant(), [System.StringComparison]::Ordinal)) {
+        $result.violations += 'Doc impact evidence preflight hash mismatch.'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($recordedPreflightPath)) {
+        $expectedPreflightPath = Normalize-Path (Resolve-Path -LiteralPath $PreflightPathValue).Path
+        if (-not [string]::Equals((Normalize-Path $recordedPreflightPath), $expectedPreflightPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $result.violations += 'Doc impact evidence preflight path mismatch.'
+        }
+    }
+
+    $decisionNormalized = $recordedDecision.Trim().ToUpperInvariant()
+    if (@('NO_DOC_UPDATES', 'DOCS_UPDATED') -notcontains $decisionNormalized) {
+        $result.violations += "Doc impact decision '$recordedDecision' is invalid."
+    }
+    if ([string]::IsNullOrWhiteSpace($recordedRationale) -or $recordedRationale.Trim().Length -lt 12) {
+        $result.violations += 'Doc impact rationale must be provided (>= 12 chars).'
+    }
+    if ($decisionNormalized -eq 'DOCS_UPDATED' -and $recordedDocsUpdated.Count -eq 0) {
+        $result.violations += 'Doc impact decision DOCS_UPDATED requires non-empty docs_updated list.'
+    }
+    if ($recordedBehaviorChanged -and $decisionNormalized -ne 'DOCS_UPDATED') {
+        $result.violations += 'Behavior-changed tasks must set decision=DOCS_UPDATED.'
+    }
+    if ($recordedBehaviorChanged -and -not $recordedChangelogUpdated) {
+        $result.violations += 'Behavior-changed tasks must set changelog_updated=true.'
+    }
+
+    $result.evidence = $evidenceObject
+    if ($result.violations.Count -gt 0) {
+        $result.status = 'FAILED'
+        return $result
+    }
+
+    $result.status = 'PASS'
+    return $result
+}
+
 $validatedPreflight = Get-ValidatedPreflightContext -PreflightPathValue $PreflightPath -ExplicitTaskId $TaskId
 $repoRoot = Resolve-ProjectRoot
 $resolvedTaskId = $validatedPreflight.resolved_task_id
 
+$compileEvidence = Get-CompileGateEvidence -RepoRootPath $repoRoot -ResolvedTaskId $resolvedTaskId -PreflightPathValue $validatedPreflight.preflight_path -PreflightHashValue $validatedPreflight.preflight_hash -CompileEvidencePathValue $CompileEvidencePath
+$reviewGateEvidence = Get-ReviewGateEvidence -RepoRootPath $repoRoot -ResolvedTaskId $resolvedTaskId -PreflightPathValue $validatedPreflight.preflight_path -PreflightHashValue $validatedPreflight.preflight_hash -ReviewEvidencePathValue $ReviewEvidencePath -CompileEvidence $compileEvidence
+$docImpactEvidence = Get-DocImpactEvidence -RepoRootPath $repoRoot -ResolvedTaskId $resolvedTaskId -PreflightPathValue $validatedPreflight.preflight_path -PreflightHashValue $validatedPreflight.preflight_hash -DocImpactPathValue $DocImpactPath
 $timelineEvidence = Get-TimelineEvidence -RepoRootPath $repoRoot -ResolvedTaskId $resolvedTaskId -TimelinePathValue $TimelinePath
 $artifactEvidence = Get-ReviewArtifactEvidence -RepoRootPath $repoRoot -ResolvedTaskId $resolvedTaskId -RequiredReviewFlags $validatedPreflight.required_reviews -SkipReviews @($timelineEvidence.skip_reviews) -ReviewsRootValue $ReviewsRoot
 
 $errors = @()
 $errors += @($validatedPreflight.errors)
+$errors += @($compileEvidence.violations)
+$errors += @($reviewGateEvidence.violations)
+$errors += @($docImpactEvidence.violations)
 $errors += @($timelineEvidence.violations)
 $errors += @($artifactEvidence.violations)
 
@@ -459,6 +765,9 @@ if ($errors.Count -gt 0) {
         status = 'FAILED'
         task_id = $resolvedTaskId
         preflight_path = Normalize-Path $validatedPreflight.preflight_path
+        compile_evidence = $compileEvidence
+        review_gate_evidence = $reviewGateEvidence
+        doc_impact_evidence = $docImpactEvidence
         timeline = $timelineEvidence
         review_artifacts = $artifactEvidence
         violations = $errors
@@ -467,6 +776,9 @@ if ($errors.Count -gt 0) {
 
     $taskFailureDetails = [ordered]@{
         preflight_path = Normalize-Path $validatedPreflight.preflight_path
+        compile_evidence = $compileEvidence
+        review_gate_evidence = $reviewGateEvidence
+        doc_impact_evidence = $docImpactEvidence
         timeline = $timelineEvidence
         review_artifacts = $artifactEvidence
         violations = $errors
@@ -485,6 +797,9 @@ $successEvent = [ordered]@{
     status = 'PASSED'
     task_id = $resolvedTaskId
     preflight_path = Normalize-Path $validatedPreflight.preflight_path
+    compile_evidence = $compileEvidence
+    review_gate_evidence = $reviewGateEvidence
+    doc_impact_evidence = $docImpactEvidence
     timeline = $timelineEvidence
     review_artifacts = $artifactEvidence
 }
@@ -492,6 +807,9 @@ Append-MetricsEvent -Path $MetricsPath -EventObject $successEvent
 
 $taskSuccessDetails = [ordered]@{
     preflight_path = Normalize-Path $validatedPreflight.preflight_path
+    compile_evidence = $compileEvidence
+    review_gate_evidence = $reviewGateEvidence
+    doc_impact_evidence = $docImpactEvidence
     timeline = $timelineEvidence
     review_artifacts = $artifactEvidence
 }

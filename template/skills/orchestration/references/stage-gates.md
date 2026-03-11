@@ -27,7 +27,9 @@ Pass criteria:
 Pass criteria:
 - Compile gate passed before review phase:
   - `compile-gate.ps1` / `compile-gate.sh` result is pass.
+  - Compile evidence artifact exists: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-compile-gate.json`.
   - Task timeline contains `COMPILE_GATE_PASSED`.
+  - No preflight scope drift is reported by compile gate.
 
 ## Gate 7: Independent Reviews
 Pass criteria:
@@ -39,10 +41,12 @@ Pass criteria:
 - Review artifacts satisfy `TASK.md` artifact contract.
 - `required-reviews-check.ps1` / `.sh` result is pass.
 - `required-reviews-check` compile-evidence check is pass for same task id.
+- Review gate evidence artifact exists: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-review-gate.json`.
 
 ## Gate 8: Documentation Finalization
 Pass criteria:
-- Documentation impact assessed.
+- Documentation impact gate passed (`doc-impact-gate.ps1` / `.sh`).
+- Documentation impact artifact exists: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-doc-impact.json`.
 - Required docs updated for impacted behavior.
 - Changelog updated for runtime behavior changes.
 

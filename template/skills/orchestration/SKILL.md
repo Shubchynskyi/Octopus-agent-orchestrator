@@ -98,6 +98,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1 -TaskId "<task-id>" -CommandsPath "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" -FailTailLines "<fail_tail_lines>"`
    - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" --fail-tail-lines "<fail_tail_lines>"`
    - Compile gate writes task-scoped event `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED` automatically.
+   - Compile gate is strict about preflight scope freshness and fails on scope drift; rerun preflight when scope changes.
    - On failure, do not move to review phase; fix and rerun until pass.
 9. Move task to `IN_REVIEW`.
    - Log event: `REVIEW_PHASE_STARTED`.
@@ -112,24 +113,29 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 11. Run `required-reviews-check.ps1` and treat result as release gate.
    - `required-reviews-check` writes task-scoped event `REVIEW_GATE_PASSED` or `REVIEW_GATE_FAILED` automatically.
    - `required-reviews-check` fails if compile evidence is missing in `runtime/task-events/<task-id>.jsonl` (missing `COMPILE_GATE_PASSED`).
+   - `required-reviews-check` fails if workspace changed after compile evidence; rerun compile gate after post-compile edits.
 12. Fix blocking findings and repeat required reviews + gate check until pass.
    - On failed gate and return to coding, log event: `REWORK_STARTED`.
-13. Run completion gate and treat result as final readiness gate before `DONE`.
+13. Run doc impact gate before completion:
+   - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>" -Decision "<NO_DOC_UPDATES|DOCS_UPDATED>" -BehaviorChanged "<true|false>" -ChangelogUpdated "<true|false>" -Rationale "<why>"`
+   - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
+   - Doc impact gate writes task-scoped event `DOC_IMPACT_ASSESSED` or `DOC_IMPACT_ASSESSMENT_FAILED`.
+14. Run completion gate and treat result as final readiness gate before `DONE`.
    - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"`
    - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"`
    - Completion gate writes task-scoped event `COMPLETION_GATE_PASSED` or `COMPLETION_GATE_FAILED` automatically.
-14. Update required docs and changelog when behavior changed.
-15. Record artifacts and evidence in `TASK.md`.
-16. Set final status:
-   - `DONE` only when compile gate, required review gate, and completion gate passed.
+15. Update required docs and changelog when behavior changed.
+16. Record artifacts and evidence in `TASK.md`.
+17. Set final status:
+   - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed.
    - `BLOCKED` when any mandatory gate failed or cannot run.
    - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
-17. Report to user in exact order:
+18. Report to user in exact order:
     1. implementation summary (include depth, path mode, review verdicts, docs updated)
     2. commit suggestion as exact command form: `git commit -m "<message>"`
     3. explicit follow-up question: `Do you want me to commit now? (yes/no)`
-18. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
-19. Never commit unless user explicitly requests commit.
+19. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
+20. Never commit unless user explicitly requests commit.
 
 ## Reviewer Agent Execution (Platform-Agnostic)
 - Apply this section on every platform.
@@ -168,6 +174,9 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - After all required verdicts are collected, run gate script with all verdict parameters:
   - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1 -PreflightPath "<path>" -TaskId "<task-id>" -CodeReviewVerdict "<...>" -DbReviewVerdict "<...>" -SecurityReviewVerdict "<...>" -RefactorReviewVerdict "<...>" -ApiReviewVerdict "<...>" -TestReviewVerdict "<...>" -PerformanceReviewVerdict "<...>" -InfraReviewVerdict "<...>" -DependencyReviewVerdict "<...>"`
   - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "<path>" --task-id "<task-id>" --code-review-verdict "<...>" --db-review-verdict "<...>" --security-review-verdict "<...>" --refactor-review-verdict "<...>" --api-review-verdict "<...>" --test-review-verdict "<...>" --performance-review-verdict "<...>" --infra-review-verdict "<...>" --dependency-review-verdict "<...>"`
+- After review gate pass, run doc impact gate:
+  - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1 -PreflightPath "<path>" -TaskId "<task-id>" -Decision "<NO_DOC_UPDATES|DOCS_UPDATED>" -BehaviorChanged "<true|false>" -ChangelogUpdated "<true|false>" -Rationale "<why>"`
+  - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.sh --preflight-path "<path>" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
 - After review gate pass, run completion gate before `DONE`:
   - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1 -PreflightPath "<path>" -TaskId "<task-id>"`
   - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "<path>" --task-id "<task-id>"`
@@ -203,7 +212,8 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Do not move to implementation without plan.
 - Do not move to `IN_REVIEW` without passing compile gate (`COMPILE_GATE_PASSED`).
 - Do not bypass required reviews without deterministic gate override contract.
-- Do not set `DONE` without passing compile gate, `required-reviews-check.ps1`, and `completion-gate.ps1`.
+- Do not set `DONE` without passing compile gate, `required-reviews-check.ps1`, `doc-impact-gate.ps1`, and `completion-gate.ps1`.
+- Do not continue after compile/review when scope changed; rerun preflight and full mandatory gates.
 - Do not change final report order: summary -> `git commit -m` suggestion -> `Do you want me to commit now? (yes/no)`.
 - Do not leave reviewer/specialist agents open after review completion (when platform supports agent lifecycle controls).
 
@@ -211,12 +221,14 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Updated task row and status transitions in `TASK.md`.
 - Preflight artifact: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json`.
 - Compile gate result: `COMPILE_GATE_PASSED`.
+- Compile gate evidence: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-compile-gate.json`.
 - Required review artifacts and verdicts.
 - Gate check result (`REVIEW_GATE_PASSED` or `REVIEW_GATE_PASSED_WITH_OVERRIDE`).
+- Review gate evidence: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-review-gate.json`.
+- Documentation impact gate result and artifact: `DOC_IMPACT_ASSESSED` + `Octopus-agent-orchestrator/runtime/reviews/<task-id>-doc-impact.json`.
 - Completion gate result (`COMPLETION_GATE_PASSED`).
 - Task event trace: `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - Optional timeline summary for final report: `task-events-summary.ps1` output.
-- Documentation impact result and updated doc list.
 - Final user report.
 
 ## Examples
@@ -236,6 +248,10 @@ Rule files provide policy context, but lifecycle steps and gate order are define
   - Resolve listed timeline/artifact violations, then rerun `completion-gate.ps1` / `.sh`.
 - Compile gate failed:
   - Fix compile errors and rerun `compile-gate.ps1` / `.sh` until `COMPILE_GATE_PASSED`.
+- Compile gate failed with preflight scope drift:
+  - Re-run `classify-change.ps1/.sh` for current scope, then rerun compile and review gates.
+- Doc impact gate failed:
+  - Fix doc-impact decision/rationale/changelog flags and rerun `doc-impact-gate.ps1` / `.sh`.
 - Override rejected:
   - Scope is too large or specialized reviews are required; remove override and run full review path.
 - Git noise in dirty workspace:

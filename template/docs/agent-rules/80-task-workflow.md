@@ -46,14 +46,18 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Preflight classification must run with explicit `-OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
 - Compile gate script must pass before `IN_REVIEW`:
   `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1`.
+- Compile gate enforces preflight scope freshness; if scope drift is detected, re-run preflight before compile.
 - Compile gate invocation must pass `fail_tail_lines` from `live/config/token-economy.json` (fallback `50`) to keep failure-output budget deterministic.
 - Required reviews must be launched only from preflight `required_reviews.*`.
 - Review gate script must pass before `DONE`:
   `Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1`.
 - Review gate script validates compile evidence (`COMPILE_GATE_PASSED`) from task timeline for the same task id.
+- Review gate script validates no workspace drift after compile evidence; post-compile edits require compile gate rerun.
+- Documentation impact gate script must pass before `DONE`:
+  `Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1`.
 - Completion gate script must pass before `DONE`:
   `Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1`.
-- Completion gate validates timeline integrity (`COMPILE_GATE_PASSED`, review pass evidence, `REWORK_STARTED` after latest `REVIEW_GATE_FAILED`) and required review artifacts.
+- Completion gate validates compile evidence, review-gate evidence, doc-impact evidence, timeline integrity (`COMPILE_GATE_PASSED`, review pass evidence, `REWORK_STARTED` after latest `REVIEW_GATE_FAILED`), and required review artifacts.
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
   `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - Terminal statuses (`DONE`, `BLOCKED`) require full cleanup of temporary reviewer/specialist logs after required artifacts are persisted.
@@ -61,6 +65,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Final user report order is mandatory: implementation summary -> `git commit -m "<message>"` suggestion -> `Do you want me to commit now? (yes/no)`.
 - Reviewer and specialist agents must be closed after verdict capture.
 - HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order.
+- If compile command or workflow infra files are hotfixed inside current task, scope is expanded and full re-run is mandatory: preflight -> compile gate -> required reviews gate -> doc impact gate -> completion gate.
 
 ## Escape Hatch Contract
 - Audited skip-review override is allowed only through gate script parameters.

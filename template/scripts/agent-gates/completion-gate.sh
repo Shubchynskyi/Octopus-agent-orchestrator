@@ -32,6 +32,7 @@ from gate_utils import (  # noqa: E402
     append_metrics_event,
     append_task_event,
     assert_valid_task_id,
+    file_sha256,
     normalize_path,
     parse_bool,
     resolve_project_root,
@@ -116,6 +117,7 @@ def validate_preflight(preflight_path: Path, explicit_task_id: str):
         "resolved_task_id": resolved_task_id,
         "required_reviews": required_flags,
         "preflight_path": preflight_path.resolve(),
+        "preflight_hash": file_sha256(preflight_path.resolve()),
         "errors": errors,
     }
 
@@ -285,11 +287,231 @@ def get_review_artifact_evidence(repo_root: Path, task_id: str, required_reviews
     return result
 
 
+def get_compile_gate_evidence(
+    repo_root: Path,
+    task_id: str,
+    preflight_path: Path,
+    preflight_hash: str,
+    compile_evidence_path_arg: str,
+):
+    result = {
+        "evidence_path": None,
+        "evidence_hash": None,
+        "status": "UNKNOWN",
+        "violations": [],
+    }
+
+    if not task_id:
+        result["status"] = "TASK_ID_MISSING"
+        result["violations"].append("Compile evidence cannot be validated: task id is missing.")
+        return result
+
+    if compile_evidence_path_arg and compile_evidence_path_arg.strip():
+        evidence_path = Path(compile_evidence_path_arg.strip())
+        if not evidence_path.is_absolute():
+            evidence_path = (repo_root / evidence_path).resolve()
+    else:
+        evidence_path = (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-compile-gate.json").resolve()
+
+    result["evidence_path"] = normalize_path(evidence_path)
+    if not evidence_path.exists() or not evidence_path.is_file():
+        result["status"] = "EVIDENCE_FILE_MISSING"
+        result["violations"].append(f"Compile evidence file not found: {result['evidence_path']}")
+        return result
+
+    result["evidence_hash"] = file_sha256(evidence_path)
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except Exception:
+        result["status"] = "EVIDENCE_INVALID_JSON"
+        result["violations"].append(f"Compile evidence is invalid JSON: {result['evidence_path']}")
+        return result
+
+    recorded_task_id = str(evidence.get("task_id", "")).strip()
+    recorded_source = str(evidence.get("event_source", "")).strip().lower()
+    recorded_status = str(evidence.get("status", "")).strip().upper()
+    recorded_outcome = str(evidence.get("outcome", "")).strip().upper()
+    recorded_preflight_path = normalize_path(evidence.get("preflight_path"))
+    recorded_preflight_hash = str(evidence.get("preflight_hash_sha256", "")).strip().lower()
+
+    if recorded_task_id != task_id:
+        result["violations"].append(f"Compile evidence task mismatch. Expected '{task_id}', got '{recorded_task_id}'.")
+    if recorded_source != "compile-gate":
+        result["violations"].append(f"Compile evidence source mismatch. Expected 'compile-gate', got '{recorded_source}'.")
+    if not (recorded_status == "PASSED" and recorded_outcome == "PASS"):
+        result["violations"].append(f"Compile evidence is not PASS. status='{recorded_status}', outcome='{recorded_outcome}'.")
+    if recorded_preflight_hash != preflight_hash.strip().lower():
+        result["violations"].append("Compile evidence preflight hash mismatch.")
+    expected_preflight_path = normalize_path(preflight_path.resolve())
+    if recorded_preflight_path and recorded_preflight_path.lower() != expected_preflight_path.lower():
+        result["violations"].append("Compile evidence preflight path mismatch.")
+
+    result["evidence"] = evidence
+    result["status"] = "FAILED" if result["violations"] else "PASS"
+    return result
+
+
+def get_review_gate_evidence(
+    repo_root: Path,
+    task_id: str,
+    preflight_path: Path,
+    preflight_hash: str,
+    review_evidence_path_arg: str,
+    compile_evidence: dict,
+):
+    result = {
+        "evidence_path": None,
+        "status": "UNKNOWN",
+        "violations": [],
+    }
+
+    if not task_id:
+        result["status"] = "TASK_ID_MISSING"
+        result["violations"].append("Review evidence cannot be validated: task id is missing.")
+        return result
+
+    if review_evidence_path_arg and review_evidence_path_arg.strip():
+        evidence_path = Path(review_evidence_path_arg.strip())
+        if not evidence_path.is_absolute():
+            evidence_path = (repo_root / evidence_path).resolve()
+    else:
+        evidence_path = (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-review-gate.json").resolve()
+
+    result["evidence_path"] = normalize_path(evidence_path)
+    if not evidence_path.exists() or not evidence_path.is_file():
+        result["status"] = "EVIDENCE_FILE_MISSING"
+        result["violations"].append(f"Review evidence file not found: {result['evidence_path']}")
+        return result
+
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except Exception:
+        result["status"] = "EVIDENCE_INVALID_JSON"
+        result["violations"].append(f"Review evidence is invalid JSON: {result['evidence_path']}")
+        return result
+
+    recorded_task_id = str(evidence.get("task_id", "")).strip()
+    recorded_source = str(evidence.get("event_source", "")).strip().lower()
+    recorded_status = str(evidence.get("status", "")).strip().upper()
+    recorded_outcome = str(evidence.get("outcome", "")).strip().upper()
+    recorded_preflight_path = normalize_path(evidence.get("preflight_path"))
+    recorded_preflight_hash = str(evidence.get("preflight_hash_sha256", "")).strip().lower()
+    recorded_compile_path = normalize_path(evidence.get("compile_evidence_path"))
+    recorded_compile_hash = str(evidence.get("compile_evidence_hash_sha256", "")).strip().lower()
+
+    if recorded_task_id != task_id:
+        result["violations"].append(f"Review evidence task mismatch. Expected '{task_id}', got '{recorded_task_id}'.")
+    if recorded_source != "required-reviews-check":
+        result["violations"].append(
+            "Review evidence source mismatch. Expected 'required-reviews-check', "
+            f"got '{recorded_source}'."
+        )
+    if not (recorded_status == "PASSED" and recorded_outcome == "PASS"):
+        result["violations"].append(f"Review evidence is not PASS. status='{recorded_status}', outcome='{recorded_outcome}'.")
+    if recorded_preflight_hash != preflight_hash.strip().lower():
+        result["violations"].append("Review evidence preflight hash mismatch.")
+    expected_preflight_path = normalize_path(preflight_path.resolve())
+    if recorded_preflight_path and recorded_preflight_path.lower() != expected_preflight_path.lower():
+        result["violations"].append("Review evidence preflight path mismatch.")
+    if compile_evidence:
+        compile_path = compile_evidence.get("evidence_path")
+        compile_hash = str(compile_evidence.get("evidence_hash") or "").strip().lower()
+        if recorded_compile_path and compile_path and recorded_compile_path.lower() != str(compile_path).lower():
+            result["violations"].append("Review evidence compile path mismatch.")
+        if recorded_compile_hash and compile_hash and recorded_compile_hash != compile_hash:
+            result["violations"].append("Review evidence compile hash mismatch.")
+
+    result["evidence"] = evidence
+    result["status"] = "FAILED" if result["violations"] else "PASS"
+    return result
+
+
+def get_doc_impact_evidence(
+    repo_root: Path,
+    task_id: str,
+    preflight_path: Path,
+    preflight_hash: str,
+    doc_impact_path_arg: str,
+):
+    result = {
+        "evidence_path": None,
+        "status": "UNKNOWN",
+        "violations": [],
+    }
+
+    if not task_id:
+        result["status"] = "TASK_ID_MISSING"
+        result["violations"].append("Doc impact evidence cannot be validated: task id is missing.")
+        return result
+
+    if doc_impact_path_arg and doc_impact_path_arg.strip():
+        evidence_path = Path(doc_impact_path_arg.strip())
+        if not evidence_path.is_absolute():
+            evidence_path = (repo_root / evidence_path).resolve()
+    else:
+        evidence_path = (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-doc-impact.json").resolve()
+
+    result["evidence_path"] = normalize_path(evidence_path)
+    if not evidence_path.exists() or not evidence_path.is_file():
+        result["status"] = "EVIDENCE_FILE_MISSING"
+        result["violations"].append(f"Doc impact evidence file not found: {result['evidence_path']}")
+        return result
+
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except Exception:
+        result["status"] = "EVIDENCE_INVALID_JSON"
+        result["violations"].append(f"Doc impact evidence is invalid JSON: {result['evidence_path']}")
+        return result
+
+    recorded_task_id = str(evidence.get("task_id", "")).strip()
+    recorded_source = str(evidence.get("event_source", "")).strip().lower()
+    recorded_status = str(evidence.get("status", "")).strip().upper()
+    recorded_outcome = str(evidence.get("outcome", "")).strip().upper()
+    recorded_preflight_path = normalize_path(evidence.get("preflight_path"))
+    recorded_preflight_hash = str(evidence.get("preflight_hash_sha256", "")).strip().lower()
+    recorded_decision = str(evidence.get("decision", "")).strip().upper()
+    recorded_rationale = str(evidence.get("rationale", "")).strip()
+    recorded_behavior_changed = bool(evidence.get("behavior_changed", False))
+    recorded_changelog_updated = bool(evidence.get("changelog_updated", False))
+    docs_updated = [str(item).strip() for item in (evidence.get("docs_updated") or []) if str(item).strip()]
+
+    if recorded_task_id != task_id:
+        result["violations"].append(f"Doc impact evidence task mismatch. Expected '{task_id}', got '{recorded_task_id}'.")
+    if recorded_source != "doc-impact-gate":
+        result["violations"].append(f"Doc impact evidence source mismatch. Expected 'doc-impact-gate', got '{recorded_source}'.")
+    if not (recorded_status == "PASSED" and recorded_outcome == "PASS"):
+        result["violations"].append(f"Doc impact evidence is not PASS. status='{recorded_status}', outcome='{recorded_outcome}'.")
+    if recorded_preflight_hash != preflight_hash.strip().lower():
+        result["violations"].append("Doc impact evidence preflight hash mismatch.")
+    expected_preflight_path = normalize_path(preflight_path.resolve())
+    if recorded_preflight_path and recorded_preflight_path.lower() != expected_preflight_path.lower():
+        result["violations"].append("Doc impact evidence preflight path mismatch.")
+
+    if recorded_decision not in {"NO_DOC_UPDATES", "DOCS_UPDATED"}:
+        result["violations"].append(f"Doc impact decision '{recorded_decision}' is invalid.")
+    if not recorded_rationale or len(recorded_rationale) < 12:
+        result["violations"].append("Doc impact rationale must be provided (>= 12 chars).")
+    if recorded_decision == "DOCS_UPDATED" and not docs_updated:
+        result["violations"].append("Doc impact decision DOCS_UPDATED requires non-empty docs_updated list.")
+    if recorded_behavior_changed and recorded_decision != "DOCS_UPDATED":
+        result["violations"].append("Behavior-changed tasks must set decision=DOCS_UPDATED.")
+    if recorded_behavior_changed and not recorded_changelog_updated:
+        result["violations"].append("Behavior-changed tasks must set changelog_updated=true.")
+
+    result["evidence"] = evidence
+    result["status"] = "FAILED" if result["violations"] else "PASS"
+    return result
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--preflight-path", required=True)
 parser.add_argument("--task-id", default="")
 parser.add_argument("--timeline-path", default="")
 parser.add_argument("--reviews-root", default="")
+parser.add_argument("--compile-evidence-path", default="")
+parser.add_argument("--review-evidence-path", default="")
+parser.add_argument("--doc-impact-path", default="")
 parser.add_argument("--metrics-path", default="")
 parser.add_argument("--emit-metrics", default="true")
 args = parser.parse_args()
@@ -314,6 +536,28 @@ else:
         metrics_path = (repo_root / metrics_path).resolve()
 emit_metrics = parse_bool(args.emit_metrics)
 
+compile_evidence = get_compile_gate_evidence(
+    repo_root=repo_root,
+    task_id=resolved_task_id,
+    preflight_path=validated_preflight["preflight_path"],
+    preflight_hash=validated_preflight["preflight_hash"],
+    compile_evidence_path_arg=args.compile_evidence_path,
+)
+review_gate_evidence = get_review_gate_evidence(
+    repo_root=repo_root,
+    task_id=resolved_task_id,
+    preflight_path=validated_preflight["preflight_path"],
+    preflight_hash=validated_preflight["preflight_hash"],
+    review_evidence_path_arg=args.review_evidence_path,
+    compile_evidence=compile_evidence,
+)
+doc_impact_evidence = get_doc_impact_evidence(
+    repo_root=repo_root,
+    task_id=resolved_task_id,
+    preflight_path=validated_preflight["preflight_path"],
+    preflight_hash=validated_preflight["preflight_hash"],
+    doc_impact_path_arg=args.doc_impact_path,
+)
 timeline_evidence = get_timeline_evidence(repo_root, resolved_task_id, args.timeline_path)
 artifact_evidence = get_review_artifact_evidence(
     repo_root=repo_root,
@@ -325,6 +569,9 @@ artifact_evidence = get_review_artifact_evidence(
 
 errors = []
 errors.extend(validated_preflight["errors"])
+errors.extend(compile_evidence["violations"])
+errors.extend(review_gate_evidence["violations"])
+errors.extend(doc_impact_evidence["violations"])
 errors.extend(timeline_evidence["violations"])
 errors.extend(artifact_evidence["violations"])
 
@@ -335,6 +582,9 @@ if errors:
         "status": "FAILED",
         "task_id": resolved_task_id,
         "preflight_path": normalize_path(validated_preflight["preflight_path"]),
+        "compile_evidence": compile_evidence,
+        "review_gate_evidence": review_gate_evidence,
+        "doc_impact_evidence": doc_impact_evidence,
         "timeline": timeline_evidence,
         "review_artifacts": artifact_evidence,
         "violations": errors,
@@ -348,6 +598,9 @@ if errors:
         message="Completion gate failed.",
         details={
             "preflight_path": normalize_path(validated_preflight["preflight_path"]),
+            "compile_evidence": compile_evidence,
+            "review_gate_evidence": review_gate_evidence,
+            "doc_impact_evidence": doc_impact_evidence,
             "timeline": timeline_evidence,
             "review_artifacts": artifact_evidence,
             "violations": errors,
@@ -366,6 +619,9 @@ success_event = {
     "status": "PASSED",
     "task_id": resolved_task_id,
     "preflight_path": normalize_path(validated_preflight["preflight_path"]),
+    "compile_evidence": compile_evidence,
+    "review_gate_evidence": review_gate_evidence,
+    "doc_impact_evidence": doc_impact_evidence,
     "timeline": timeline_evidence,
     "review_artifacts": artifact_evidence,
 }
@@ -378,6 +634,9 @@ append_task_event(
     message="Completion gate passed.",
     details={
         "preflight_path": normalize_path(validated_preflight["preflight_path"]),
+        "compile_evidence": compile_evidence,
+        "review_gate_evidence": review_gate_evidence,
+        "doc_impact_evidence": doc_impact_evidence,
         "timeline": timeline_evidence,
         "review_artifacts": artifact_evidence,
     },

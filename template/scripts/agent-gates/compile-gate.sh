@@ -23,6 +23,7 @@ fi
 
 "${PYTHON_CMD[@]}" - "$@" <<'PY'
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -95,6 +96,12 @@ def get_compile_commands(rule_path: Path):
     for command in commands:
         if re.match(r"^\s*<[^>]+>\s*$", command):
             raise RuntimeError(f"Compile command placeholder is unresolved in {rule_path}: {command}")
+        if re.search(r"\borg\.apache\.maven\.wrapper\.mavenwrappermain\b", command, re.IGNORECASE):
+            raise RuntimeError(
+                "Compile command anti-pattern detected in "
+                f"{rule_path}: use wrapper entrypoint script (for example './mvnw' or '.\\mvnw.cmd') "
+                "instead of MavenWrapperMain class invocation."
+            )
     return commands
 
 
@@ -120,6 +127,138 @@ def resolve_compile_output_path(explicit_path: str, repo_root: Path, task_id: st
     if explicit_path and explicit_path.strip():
         return resolve_path_inside_repo(explicit_path, repo_root)
     return (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-compile-output.log").resolve()
+
+
+def string_sha256(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest().lower()
+
+
+def count_file_lines(path: Path) -> int:
+    if not path.exists() or not path.is_file():
+        return 0
+    try:
+        line_count = 0
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for _ in handle:
+                line_count += 1
+        return line_count
+    except OSError:
+        return 0
+
+
+def git_lines(repo_root: Path, args, failure_message: str):
+    completed = subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(failure_message)
+    return [line for line in completed.stdout.splitlines() if line.strip()]
+
+
+def get_workspace_snapshot(repo_root: Path, detection_source: str, include_untracked: bool):
+    source = (detection_source or "git_auto").strip().lower()
+    use_staged = source in {"git_staged_only", "git_staged_plus_untracked"}
+    if source == "git_staged_only":
+        include_untracked = False
+
+    diff_args = ["diff", "--name-only", "--diff-filter=ACMRTUXB"]
+    diff_args.extend(["--cached"] if use_staged else ["HEAD"])
+    changed_from_diff = git_lines(repo_root, diff_args, "Failed to collect changed files snapshot.")
+
+    untracked = []
+    if include_untracked:
+        untracked = git_lines(repo_root, ["ls-files", "--others", "--exclude-standard"], "Failed to collect untracked files snapshot.")
+
+    normalized_changed_files = sorted({normalize_path(item) for item in (changed_from_diff + untracked) if normalize_path(item)})
+
+    numstat_args = ["diff", "--numstat", "--diff-filter=ACMRTUXB"]
+    numstat_args.extend(["--cached"] if use_staged else ["HEAD"])
+    numstat_rows = git_lines(repo_root, numstat_args, "Failed to collect changed lines snapshot.")
+
+    additions_total = 0
+    deletions_total = 0
+    for row in numstat_rows:
+        parts = row.split("\t")
+        if len(parts) < 3:
+            continue
+        if parts[0].isdigit():
+            additions_total += int(parts[0])
+        if parts[1].isdigit():
+            deletions_total += int(parts[1])
+
+    if include_untracked:
+        for item in untracked:
+            normalized = normalize_path(item)
+            if not normalized:
+                continue
+            additions_total += count_file_lines(repo_root / normalized)
+
+    changed_lines_total = additions_total + deletions_total
+    files_fingerprint = string_sha256("\n".join(normalized_changed_files))
+    scope_fingerprint = string_sha256(
+        f"{source}|{use_staged}|{include_untracked}|{len(normalized_changed_files)}|{changed_lines_total}|{files_fingerprint}"
+    )
+
+    return {
+        "detection_source": source,
+        "use_staged": bool(use_staged),
+        "include_untracked": bool(include_untracked),
+        "changed_files": normalized_changed_files,
+        "changed_files_count": len(normalized_changed_files),
+        "additions_total": additions_total,
+        "deletions_total": deletions_total,
+        "changed_lines_total": changed_lines_total,
+        "changed_files_sha256": files_fingerprint,
+        "scope_sha256": scope_fingerprint,
+    }
+
+
+def get_preflight_context(preflight_path: Path, task_id: str):
+    if not preflight_path or not preflight_path.exists():
+        raise RuntimeError(f"Preflight artifact not found: {preflight_path}")
+    try:
+        preflight_object = json.loads(preflight_path.read_text(encoding="utf-8"))
+    except Exception:
+        raise RuntimeError(f"Preflight artifact is not valid JSON: {preflight_path}")
+
+    preflight_task_id = str(preflight_object.get("task_id", "")).strip()
+    if preflight_task_id and preflight_task_id != task_id:
+        raise RuntimeError(f"TaskId '{task_id}' does not match preflight.task_id '{preflight_task_id}'.")
+
+    if "changed_files" not in preflight_object:
+        raise RuntimeError("Preflight field `changed_files` is required.")
+    if "metrics" not in preflight_object or not isinstance(preflight_object.get("metrics"), dict):
+        raise RuntimeError("Preflight field `metrics` is required.")
+    if "required_reviews" not in preflight_object or not isinstance(preflight_object.get("required_reviews"), dict):
+        raise RuntimeError("Preflight field `required_reviews` is required.")
+
+    preflight_changed_files = sorted(
+        {
+            normalize_path(item)
+            for item in (preflight_object.get("changed_files") or [])
+            if normalize_path(item)
+        }
+    )
+    changed_lines_total = preflight_object.get("metrics", {}).get("changed_lines_total")
+    if not isinstance(changed_lines_total, int) or changed_lines_total < 0:
+        raise RuntimeError("Preflight field `metrics.changed_lines_total` is required and must be non-negative.")
+
+    detection_source = str(preflight_object.get("detection_source", "git_auto")).strip() or "git_auto"
+    include_untracked = detection_source.lower() != "git_staged_only"
+
+    return {
+        "preflight": preflight_object,
+        "task_id": task_id,
+        "detection_source": detection_source,
+        "include_untracked": include_untracked,
+        "changed_files": preflight_changed_files,
+        "changed_files_count": len(preflight_changed_files),
+        "changed_lines_total": int(changed_lines_total),
+        "changed_files_sha256": string_sha256("\n".join(preflight_changed_files)),
+    }
 
 
 def get_output_stats(lines):
@@ -187,6 +326,8 @@ repo_root = Path(args.repo_root).resolve() if args.repo_root else resolve_projec
 task_id = args.task_id.strip()
 if task_id:
     task_id = assert_valid_task_id(task_id)
+if not task_id:
+    raise RuntimeError("task-id is required for compile gate")
 
 try:
     fail_tail_lines = int(str(args.fail_tail_lines).strip())
@@ -202,6 +343,8 @@ resolved_commands_path = None
 compile_commands = []
 resolved_preflight_path = None
 preflight_hash = None
+preflight_context = None
+workspace_snapshot = None
 compile_evidence_path = None
 compile_output_path = None
 compile_output_lines = []
@@ -216,6 +359,39 @@ try:
     resolved_commands_path = resolve_commands_path(args.commands_path, repo_root)
     compile_commands = list(get_compile_commands(resolved_commands_path))
     resolved_preflight_path = resolve_preflight_path(args.preflight_path, repo_root, task_id)
+    preflight_context = get_preflight_context(resolved_preflight_path, task_id)
+    workspace_snapshot = get_workspace_snapshot(
+        repo_root=repo_root,
+        detection_source=preflight_context["detection_source"],
+        include_untracked=bool(preflight_context["include_untracked"]),
+    )
+    scope_violations = []
+    if workspace_snapshot["changed_files_sha256"] != preflight_context["changed_files_sha256"]:
+        scope_violations.append("Preflight changed_files differ from current workspace snapshot.")
+    if int(workspace_snapshot["changed_lines_total"]) != int(preflight_context["changed_lines_total"]):
+        scope_violations.append(
+            "Preflight changed_lines_total="
+            f"{preflight_context['changed_lines_total']} differs from current snapshot changed_lines_total="
+            f"{workspace_snapshot['changed_lines_total']}."
+        )
+    if scope_violations:
+        scope_details = {
+            "preflight_changed_files": preflight_context["changed_files"],
+            "preflight_changed_files_count": preflight_context["changed_files_count"],
+            "preflight_changed_lines_total": preflight_context["changed_lines_total"],
+            "preflight_changed_files_sha256": preflight_context["changed_files_sha256"],
+            "snapshot_detection_source": workspace_snapshot["detection_source"],
+            "snapshot_include_untracked": workspace_snapshot["include_untracked"],
+            "snapshot_changed_files": workspace_snapshot["changed_files"],
+            "snapshot_changed_files_count": workspace_snapshot["changed_files_count"],
+            "snapshot_changed_lines_total": workspace_snapshot["changed_lines_total"],
+            "snapshot_changed_files_sha256": workspace_snapshot["changed_files_sha256"],
+            "violations": scope_violations,
+        }
+        raise RuntimeError(
+            "Preflight scope drift detected. Re-run classify-change before compile gate. "
+            + json.dumps(scope_details, ensure_ascii=False, separators=(",", ":"))
+        )
     preflight_hash = file_sha256(resolved_preflight_path)
     compile_evidence_path = resolve_compile_evidence_path(args.compile_evidence_path, repo_root, task_id)
     compile_output_path = resolve_compile_output_path(args.compile_output_path, repo_root, task_id)
@@ -269,6 +445,19 @@ gate_context = {
     "compile_command": compile_commands[0] if compile_commands else None,
     "preflight_path": normalize_path(resolved_preflight_path) if resolved_preflight_path else None,
     "preflight_hash_sha256": preflight_hash,
+    "preflight_detection_source": preflight_context["detection_source"] if preflight_context else None,
+    "preflight_include_untracked": bool(preflight_context["include_untracked"]) if preflight_context else None,
+    "preflight_changed_files_count": int(preflight_context["changed_files_count"]) if preflight_context else None,
+    "preflight_changed_lines_total": int(preflight_context["changed_lines_total"]) if preflight_context else None,
+    "preflight_changed_files_sha256": preflight_context["changed_files_sha256"] if preflight_context else None,
+    "scope_detection_source": workspace_snapshot["detection_source"] if workspace_snapshot else None,
+    "scope_use_staged": bool(workspace_snapshot["use_staged"]) if workspace_snapshot else None,
+    "scope_include_untracked": bool(workspace_snapshot["include_untracked"]) if workspace_snapshot else None,
+    "scope_changed_files": workspace_snapshot["changed_files"] if workspace_snapshot else [],
+    "scope_changed_files_count": int(workspace_snapshot["changed_files_count"]) if workspace_snapshot else 0,
+    "scope_changed_lines_total": int(workspace_snapshot["changed_lines_total"]) if workspace_snapshot else 0,
+    "scope_changed_files_sha256": workspace_snapshot["changed_files_sha256"] if workspace_snapshot else None,
+    "scope_sha256": workspace_snapshot["scope_sha256"] if workspace_snapshot else None,
     "evidence_path": normalize_path(compile_evidence_path) if compile_evidence_path else None,
     "compile_output_path": normalize_path(compile_output_path) if compile_output_path else None,
     "compile_output_lines": len(compile_output_lines),

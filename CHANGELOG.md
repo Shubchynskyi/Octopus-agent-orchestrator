@@ -59,6 +59,14 @@ All notable changes to this bundle are documented in this file.
   - provider bridge contracts;
   - optional commit-guard enforcement checks.
 
+## [1.0.4] - 2026-03-11
+
+### Changed
+- Bundle version bumped to `1.0.4` for distribution and update detection via `scripts/check-update.ps1`.
+- Orchestration gate chain hardened with mandatory documentation-impact gate (`doc-impact-gate.ps1` / `.sh`) and evidence wiring in completion checks.
+- Compile/review/completion gate contracts tightened for scope-drift checks and task-scoped evidence consistency.
+- Security path triggers expanded (`payment`, `checkout`, `billing`) in change classification config and gate classifiers.
+
 ## [1.0.3] - 2026-03-11
 
 ### Added
