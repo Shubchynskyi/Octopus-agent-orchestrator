@@ -13,6 +13,7 @@ Default response brevity: {{ASSISTANT_RESPONSE_BREVITY}}.
 2. Keep responses {{ASSISTANT_RESPONSE_BREVITY}} unless the user explicitly asks for more or less detail.
 3. Keep code in English (variables, functions, classes, comments in code).
 4. Keep documentation in English (README, docs, file content).
+5. Task completion always ends with: implementation summary, suggested `git commit -m "<message>"`, and explicit `Do you want me to commit now? (yes/no)` question (see `80-task-workflow.md`, Mandatory Gate Contract).
 
 ## Code Quality
 

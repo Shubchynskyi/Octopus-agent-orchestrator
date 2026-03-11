@@ -59,6 +59,23 @@ All notable changes to this bundle are documented in this file.
   - provider bridge contracts;
   - optional commit-guard enforcement checks.
 
+## [1.0.3] - 2026-03-11
+
+### Added
+- Hard completion gate scripts:
+  - `Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1`
+  - `Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh`
+
+### Changed
+- Task finalization contract hardened:
+  - added explicit resume protocol and completion hard-stop in workflow rules;
+  - `DONE` now requires completion gate pass (`COMPLETION_GATE_PASSED`) in addition to compile/review gates;
+  - orchestration skill now runs completion gate before terminal status and includes resume flow requirements.
+- Rule migrations now auto-add completion-gate command snippets and finalization reminder snippets for upgraded live rule files.
+- Verification contract now enforces completion-gate scripts, completion-gate orchestration linkage, and core finalization reminder.
+- Provider orchestrator bridge template now requires running completion gate before marking `DONE`.
+- Bundle metadata/docs updated for version `1.0.3` and completion-gate workflow.
+
 ## [1.0.2] - 2026-03-11
 
 ### Changed

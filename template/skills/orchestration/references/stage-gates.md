@@ -49,9 +49,11 @@ Pass criteria:
 ## Gate 9: Completion
 Pass criteria:
 - All required gates passed.
+- `completion-gate.ps1` / `.sh` result is pass.
+- Timeline contains `COMPLETION_GATE_PASSED`.
 - Task marked `DONE`.
 - Artifact contract fields are valid for path mode, required verdicts, and evidence.
-- User report and commit message suggestion prepared.
+- User report is delivered in mandatory order: implementation summary -> `git commit -m "<message>"` suggestion -> `Do you want me to commit now? (yes/no)`.
 
 ## Failure Policy
 - Any failed gate blocks next gates.

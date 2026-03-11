@@ -32,6 +32,15 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
   - preflight returns `FULL_PATH`;
   - preflight requires specialized review (`db`, `security`, `refactor`, or enabled optional specialist review).
 
+## Task Resume Protocol
+- Apply this protocol whenever resuming an existing task in `IN_PROGRESS` or `IN_REVIEW`.
+- Mandatory resume sequence:
+  1. Re-read `AGENTS.md` routing and `00-core.md`.
+  2. Re-read orchestration workflow (`live/skills/orchestration/SKILL.md`) and current task row in `TASK.md`.
+  3. Re-read existing task evidence (`runtime/reviews/*`, `runtime/task-events/<task-id>.jsonl`) before new changes.
+  4. Continue with full mandatory gates; resume never bypasses compile/review/completion gates.
+- Final user report contract is mandatory on resume too.
+
 ## Mandatory Gate Contract
 - Preflight artifact must exist before review stage.
 - Preflight classification must run with explicit `-OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
@@ -42,12 +51,16 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Review gate script must pass before `DONE`:
   `Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1`.
 - Review gate script validates compile evidence (`COMPILE_GATE_PASSED`) from task timeline for the same task id.
+- Completion gate script must pass before `DONE`:
+  `Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1`.
+- Completion gate validates timeline integrity (`COMPILE_GATE_PASSED`, review pass evidence, `REWORK_STARTED` after latest `REVIEW_GATE_FAILED`) and required review artifacts.
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
   `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - Terminal statuses (`DONE`, `BLOCKED`) require full cleanup of temporary reviewer/specialist logs after required artifacts are persisted.
 - Documentation impact updates are required when behavior/contracts/ops docs changed.
 - Final user report order is mandatory: implementation summary -> `git commit -m "<message>"` suggestion -> `Do you want me to commit now? (yes/no)`.
 - Reviewer and specialist agents must be closed after verdict capture.
+- HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order.
 
 ## Escape Hatch Contract
 - Audited skip-review override is allowed only through gate script parameters.

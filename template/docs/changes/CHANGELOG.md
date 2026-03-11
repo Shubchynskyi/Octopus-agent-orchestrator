@@ -13,6 +13,13 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Docs Updated: <list of updated doc files>
 ```
 
+## 2026-03-11 - Completion gate and resume hard-stop contract
+- Task: ad-hoc
+- Type: behavior-change
+- Scope: orchestration / gate scripts / verification
+- Summary: Added completion gate scripts (`completion-gate.ps1` and `.sh`) to enforce final readiness before `DONE`, including timeline integrity checks (`COMPILE_GATE_PASSED`, review pass evidence, rework-after-failure), required review artifact validation, and task-event/metrics emission (`COMPLETION_GATE_PASSED` or `COMPLETION_GATE_FAILED`). Added explicit task resume protocol and hard completion stop in workflow/skill docs, wired completion gate into command catalog and provider bridge contract, and extended contract migrations/verification to enforce these rules on upgrades.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/00-core.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/40-commands.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/90-skill-catalog.md`; `Octopus-agent-orchestrator/template/skills/orchestration/SKILL.md`; `Octopus-agent-orchestrator/template/skills/orchestration/references/stage-gates.md`; `Octopus-agent-orchestrator/scripts/lib/rule-contract-migrations.ps1`; `Octopus-agent-orchestrator/scripts/verify.ps1`; `Octopus-agent-orchestrator/scripts/install.ps1`; `Octopus-agent-orchestrator/VERSION`; `Octopus-agent-orchestrator/README.md`
+
 ## 2026-03-11 - Platform-agnostic reviewer routing and version bump
 - Task: ad-hoc
 - Type: behavior-change

@@ -327,6 +327,8 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1',
@@ -537,6 +539,40 @@ foreach ($check in $compileGateScriptChecks) {
     foreach ($requiredSnippet in @($check.Required)) {
         if ($scriptContent -notmatch [regex]::Escape([string]$requiredSnippet)) {
             $compileGateContractViolations += "$($check.RelativePath) must include '$requiredSnippet'."
+        }
+    }
+}
+
+$completionGateContractViolations = @()
+$completionGateScriptChecks = @(
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1'
+        Required = @('COMPILE_GATE_PASSED', 'REVIEW_GATE_FAILED', 'REWORK_STARTED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'COMPLETION_GATE_PASSED', 'COMPLETION_GATE_FAILED', 'runtime/task-events', 'runtime/reviews')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/completion-gate.ps1'
+        Required = @('COMPILE_GATE_PASSED', 'REVIEW_GATE_FAILED', 'REWORK_STARTED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'COMPLETION_GATE_PASSED', 'COMPLETION_GATE_FAILED', 'runtime/task-events', 'runtime/reviews')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh'
+        Required = @('COMPILE_GATE_PASSED', 'REVIEW_GATE_FAILED', 'REWORK_STARTED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'COMPLETION_GATE_PASSED', 'COMPLETION_GATE_FAILED', 'runtime/task-events', 'runtime/reviews')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/completion-gate.sh'
+        Required = @('COMPILE_GATE_PASSED', 'REVIEW_GATE_FAILED', 'REWORK_STARTED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE', 'COMPLETION_GATE_PASSED', 'COMPLETION_GATE_FAILED', 'runtime/task-events', 'runtime/reviews')
+    }
+)
+
+foreach ($check in $completionGateScriptChecks) {
+    $scriptPath = Join-Path $TargetRoot $check.RelativePath
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        continue
+    }
+
+    $scriptContent = Get-Content -LiteralPath $scriptPath -Raw
+    foreach ($requiredSnippet in @($check.Required)) {
+        if ($scriptContent -notmatch [regex]::Escape([string]$requiredSnippet)) {
+            $completionGateContractViolations += "$($check.RelativePath) must include '$requiredSnippet' to enforce completion gate contract."
         }
     }
 }
@@ -792,7 +828,7 @@ if (Test-Path $commandsRulePath) {
 
     foreach ($snippet in $requiredCommandSnippets) {
         if ($commandsContent -notmatch [regex]::Escape($snippet)) {
-            $commandsContractViolations += "40-commands.md must include compile gate snippet '$snippet'."
+            $commandsContractViolations += "40-commands.md must include gate contract snippet '$snippet'."
         }
     }
 
@@ -850,6 +886,15 @@ if (Test-Path $coreRulePath) {
     }
     if ($coreContent -notmatch '(?m)^Default response brevity: .+\.\r?$') {
         $coreRuleContractViolations += '00-core.md must define configured assistant response brevity sentence.'
+    }
+    $hasFinalizationReminder = (
+        ($coreContent -match [regex]::Escape('implementation summary')) -and
+        ($coreContent -match [regex]::Escape('git commit -m "<message>"')) -and
+        ($coreContent -match [regex]::Escape('Do you want me to commit now? (yes/no)')) -and
+        ($coreContent -match [regex]::Escape('80-task-workflow.md'))
+    )
+    if (-not $hasFinalizationReminder) {
+        $coreRuleContractViolations += '00-core.md must include finalization reminder line that points to mandatory completion report order.'
     }
 
     if (-not [string]::IsNullOrWhiteSpace($artifactAssistantLanguage)) {
@@ -1009,6 +1054,10 @@ foreach ($profile in $providerOrchestratorProfiles) {
 
     if ($profileContent -notmatch [regex]::Escape('compile-gate.ps1')) {
         $providerAgentContractViolations += "$($profile.RelativePath) must reference compile gate script 'compile-gate.ps1'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape('completion-gate.ps1')) {
+        $providerAgentContractViolations += "$($profile.RelativePath) must reference completion gate script 'completion-gate.ps1'."
     }
 
     if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl')) {
@@ -1193,6 +1242,7 @@ if (Test-Path -LiteralPath $orchestrationSkillPath -PathType Leaf) {
         'COMPILE_GATE_PASSED',
         'review artifact write path: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.',
         'required-reviews-check.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',
+        'completion-gate.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',
         '-CodeReviewVerdict "<...>"',
         '-DbReviewVerdict "<...>"',
         '-SecurityReviewVerdict "<...>"',
@@ -1202,6 +1252,7 @@ if (Test-Path -LiteralPath $orchestrationSkillPath -PathType Leaf) {
         '-PerformanceReviewVerdict "<...>"',
         '-InfraReviewVerdict "<...>"',
         '-DependencyReviewVerdict "<...>"',
+        'COMPLETION_GATE_PASSED',
         'single-agent fallback mode (no Agent tool)'
     )
 
@@ -1270,6 +1321,7 @@ Write-Output "RequiredPathsChecked: $($requiredPaths.Count)"
 Write-Output "MissingPathCount: $($missingPaths.Count)"
 Write-Output "TokenEconomyContractViolationCount: $($tokenEconomyContractViolations.Count)"
 Write-Output "CompileGateContractViolationCount: $($compileGateContractViolations.Count)"
+Write-Output "CompletionGateContractViolationCount: $($completionGateContractViolations.Count)"
 Write-Output "TerminalCleanupContractViolationCount: $($terminalCleanupContractViolations.Count)"
 Write-Output "BundleVersion: $bundleVersion"
 Write-Output "VersionContractViolationCount: $($versionContractViolations.Count)"
@@ -1308,6 +1360,13 @@ if ($tokenEconomyContractViolations.Count -gt 0) {
 if ($compileGateContractViolations.Count -gt 0) {
     Write-Output 'CompileGateContractViolations:'
     foreach ($item in $compileGateContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($completionGateContractViolations.Count -gt 0) {
+    Write-Output 'CompletionGateContractViolations:'
+    foreach ($item in $completionGateContractViolations) {
         Write-Output " - $item"
     }
 }
@@ -1442,6 +1501,7 @@ if (
     $missingPaths.Count -gt 0 -or
     $tokenEconomyContractViolations.Count -gt 0 -or
     $compileGateContractViolations.Count -gt 0 -or
+    $completionGateContractViolations.Count -gt 0 -or
     $terminalCleanupContractViolations.Count -gt 0 -or
     $versionContractViolations.Count -gt 0 -or
     $styleViolations.Count -gt 0 -or

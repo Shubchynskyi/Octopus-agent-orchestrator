@@ -66,6 +66,8 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
     - `dependency-review` for `required_reviews.dependency=true`
 - Before `DONE`, run:
   `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" ...`
+- Then run completion gate:
+  `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"`
 
 ## Trigger Source of Truth
 - Specialized trigger semantics are defined only in:
@@ -88,6 +90,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Missing required skill invocation blocks progression.
 - Missing required verdict blocks completion.
 - Missing review gate check pass blocks completion.
+- Missing completion gate pass (`COMPLETION_GATE_PASSED`) blocks completion.
 - Missing task timeline evidence in `runtime/task-events/<task-id>.jsonl` blocks completion.
 - Missing required docs/changelog updates blocks completion for doc-impacting changes.
 - Reviewer/specialist agents must be closed after verdict capture.

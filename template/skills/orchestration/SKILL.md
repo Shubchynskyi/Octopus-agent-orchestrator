@@ -10,7 +10,7 @@ allowed-tools:
   - Write
 metadata:
   author: Octopus-agent-orchestrator
-  version: 1.6.1
+  version: 1.6.2
   runtime_requirement: PowerShell 7+ (pwsh) or Bash + Python 3 for gate scripts
 ---
 
@@ -70,6 +70,14 @@ Rule files provide policy context, but lifecycle steps and gate order are define
   - if `compact_reviewer_output=true`, require compact reviewer artifacts but keep mandatory sections and exact verdict tokens.
   - on failed command/test evidence, cap pasted tail output to `fail_tail_lines`.
 
+## Task Resume Protocol
+- When resuming a task already in `IN_PROGRESS` or `IN_REVIEW`, treat resume as full orchestration execution.
+- Mandatory resume sequence:
+  1. Re-read `AGENTS.md` routing, `00-core.md`, and this orchestration skill before any edits.
+  2. Re-open current task row in `TASK.md` and latest artifacts in `runtime/reviews/` plus timeline `runtime/task-events/<task-id>.jsonl`.
+  3. Continue from current stage, but do not skip compile/review/completion gates.
+  4. Final report contract remains mandatory on resume: summary -> commit command -> explicit commit question.
+
 ## Canonical Workflow
 1. Select highest-priority `TODO` task in `TASK.md` and move to `IN_PROGRESS`.
 2. If no `TODO` exists, create a task from current user request, then move it to `IN_PROGRESS`.
@@ -106,18 +114,22 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - `required-reviews-check` fails if compile evidence is missing in `runtime/task-events/<task-id>.jsonl` (missing `COMPILE_GATE_PASSED`).
 12. Fix blocking findings and repeat required reviews + gate check until pass.
    - On failed gate and return to coding, log event: `REWORK_STARTED`.
-13. Update required docs and changelog when behavior changed.
-14. Record artifacts and evidence in `TASK.md`.
-15. Set final status:
-   - `DONE` only when compile gate and all mandatory review gates passed.
+13. Run completion gate and treat result as final readiness gate before `DONE`.
+   - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"`
+   - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"`
+   - Completion gate writes task-scoped event `COMPLETION_GATE_PASSED` or `COMPLETION_GATE_FAILED` automatically.
+14. Update required docs and changelog when behavior changed.
+15. Record artifacts and evidence in `TASK.md`.
+16. Set final status:
+   - `DONE` only when compile gate, required review gate, and completion gate passed.
    - `BLOCKED` when any mandatory gate failed or cannot run.
    - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
-16. Report to user in exact order:
+17. Report to user in exact order:
     1. implementation summary (include depth, path mode, review verdicts, docs updated)
     2. commit suggestion as exact command form: `git commit -m "<message>"`
     3. explicit follow-up question: `Do you want me to commit now? (yes/no)`
-17. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
-18. Never commit unless user explicitly requests commit.
+18. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
+19. Never commit unless user explicitly requests commit.
 
 ## Reviewer Agent Execution (Platform-Agnostic)
 - Apply this section on every platform.
@@ -156,6 +168,9 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - After all required verdicts are collected, run gate script with all verdict parameters:
   - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1 -PreflightPath "<path>" -TaskId "<task-id>" -CodeReviewVerdict "<...>" -DbReviewVerdict "<...>" -SecurityReviewVerdict "<...>" -RefactorReviewVerdict "<...>" -ApiReviewVerdict "<...>" -TestReviewVerdict "<...>" -PerformanceReviewVerdict "<...>" -InfraReviewVerdict "<...>" -DependencyReviewVerdict "<...>"`
   - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "<path>" --task-id "<task-id>" --code-review-verdict "<...>" --db-review-verdict "<...>" --security-review-verdict "<...>" --refactor-review-verdict "<...>" --api-review-verdict "<...>" --test-review-verdict "<...>" --performance-review-verdict "<...>" --infra-review-verdict "<...>" --dependency-review-verdict "<...>"`
+- After review gate pass, run completion gate before `DONE`:
+  - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1 -PreflightPath "<path>" -TaskId "<task-id>"`
+  - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "<path>" --task-id "<task-id>"`
 - In single-agent fallback mode (no Agent tool), run the same review scopes sequentially with explicit role prompts and use the same verdict tokens and artifact contract.
 
 ## Task Event Logging Commands
@@ -188,7 +203,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Do not move to implementation without plan.
 - Do not move to `IN_REVIEW` without passing compile gate (`COMPILE_GATE_PASSED`).
 - Do not bypass required reviews without deterministic gate override contract.
-- Do not set `DONE` without passing compile gate and `required-reviews-check.ps1`.
+- Do not set `DONE` without passing compile gate, `required-reviews-check.ps1`, and `completion-gate.ps1`.
 - Do not change final report order: summary -> `git commit -m` suggestion -> `Do you want me to commit now? (yes/no)`.
 - Do not leave reviewer/specialist agents open after review completion (when platform supports agent lifecycle controls).
 
@@ -198,6 +213,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Compile gate result: `COMPILE_GATE_PASSED`.
 - Required review artifacts and verdicts.
 - Gate check result (`REVIEW_GATE_PASSED` or `REVIEW_GATE_PASSED_WITH_OVERRIDE`).
+- Completion gate result (`COMPLETION_GATE_PASSED`).
 - Task event trace: `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - Optional timeline summary for final report: `task-events-summary.ps1` output.
 - Documentation impact result and updated doc list.
@@ -216,6 +232,8 @@ Rule files provide policy context, but lifecycle steps and gate order are define
   - Re-run `classify-change.ps1` with explicit `-OutputPath`.
 - Required review verdict missing:
   - Re-run missing reviewer and then `required-reviews-check.ps1`.
+- Completion gate failed:
+  - Resolve listed timeline/artifact violations, then rerun `completion-gate.ps1` / `.sh`.
 - Compile gate failed:
   - Fix compile errors and rerun `compile-gate.ps1` / `.sh` until `COMPILE_GATE_PASSED`.
 - Override rejected:

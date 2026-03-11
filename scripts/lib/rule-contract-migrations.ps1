@@ -6,7 +6,7 @@ $script:RuleContractMigrationDefinitions = @(
             'Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md'
         )
         SectionTitle = '## Contract Compatibility Snippets (Auto-added by init/update)'
-        IntroLine = '- Added by migration to satisfy required review-gate command contract during upgrade.'
+        IntroLine = '- Added by migration to satisfy required review/completion gate command contract during upgrade.'
         Entries = @(
             @{
                 Match = '### Compile Gate (Mandatory)'
@@ -34,6 +34,16 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-
             @{
                 Match = 'required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"'
                 Insert = 'bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"'
+            },
+            @{
+                Match = 'completion-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"'
+                Insert = 'pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"'
+                InsertMode = 'line'
+            },
+            @{
+                Match = 'completion-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"'
+                Insert = 'bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"'
+                InsertMode = 'line'
             }
         )
     },
@@ -51,8 +61,18 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-
                 Insert = 'Reviewer-agent execution mechanics are defined in `orchestration/SKILL.md` section `Reviewer Agent Execution (Claude Code)`.'
             },
             @{
+                Match = '## Task Resume Protocol'
+                Insert = '## Task Resume Protocol'
+                InsertMode = 'line'
+            },
+            @{
                 Match = 'Compile gate script must pass before `IN_REVIEW`:'
                 Insert = 'Compile gate script must pass before `IN_REVIEW`:'
+            },
+            @{
+                Match = 'Completion gate script must pass before `DONE`:'
+                Insert = 'Completion gate script must pass before `DONE`:'
+                InsertMode = 'line'
             },
             @{
                 Match = 'Fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewers.'
@@ -61,6 +81,27 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-
             @{
                 Match = 'Do you want me to commit now? (yes/no)'
                 Insert = 'Do you want me to commit now? (yes/no)'
+            },
+            @{
+                Match = 'HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order.'
+                Insert = 'HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order.'
+                InsertMode = 'line'
+            }
+        )
+    },
+    @{
+        Id = 'core-finalization-reminder-snippets'
+        FilePattern = '(^|/)00-core\.md$'
+        TargetRelativePaths = @(
+            'Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md'
+        )
+        SectionTitle = '## Contract Compatibility Snippets (Auto-added by init/update)'
+        IntroLine = '- Added by migration to satisfy finalization reminder contract during upgrade.'
+        Entries = @(
+            @{
+                Match = 'Task completion always ends with: implementation summary, suggested `git commit -m "<message>"`, and explicit `Do you want me to commit now? (yes/no)` question (see `80-task-workflow.md`, Mandatory Gate Contract).'
+                Insert = 'Task completion always ends with: implementation summary, suggested `git commit -m "<message>"`, and explicit `Do you want me to commit now? (yes/no)` question (see `80-task-workflow.md`, Mandatory Gate Contract).'
+                InsertMode = 'line'
             }
         )
     }

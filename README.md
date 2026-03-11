@@ -10,9 +10,9 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 - Full changelog: `CHANGELOG.md`
 
 ## Version
-- Current bundle version: `1.0.2` (source: `VERSION`)
+- Current bundle version: `1.0.3` (source: `VERSION`)
 - Update command: `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1` (or `bash Octopus-agent-orchestrator/scripts/check-update.sh`); `-InitAnswersPath` is optional when using default `Octopus-agent-orchestrator/runtime/init-answers.json`
-- Last documentation update: `2026-03-10`
+- Last documentation update: `2026-03-11`
 
 ## Recent Changes (Short)
 - Added update workflow with version check and optional auto-apply from git (`scripts/check-update.ps1`, `scripts/update.ps1`).
@@ -22,6 +22,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 - Improved TASK upgrade behavior: apply latest template while migrating existing queue rows.
 - Clarified orchestration review mechanics: mandatory fallback self-review and explicit final commit decision prompt.
 - Added hard compile gate before review phase (`live/scripts/agent-gates/compile-gate.ps1` and `.sh`) driven by `live/docs/agent-rules/40-commands.md`.
+- Added hard completion gate before `DONE` (`live/scripts/agent-gates/completion-gate.ps1` and `.sh`) with resume protocol and mandatory finalization checks.
 
 ## Design
 - Canonical rule set lives only in `Octopus-agent-orchestrator/live/docs/agent-rules/*`.
@@ -101,6 +102,7 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "Octopus-agent-orchestrator/MANIFEST.md"
 ```
 
@@ -162,7 +164,8 @@ Typical agent lifecycle:
 5. Runs independent reviews.
 6. Receives failed review or failed gate (`REVIEW_GATE_FAILED`), returns to code, logs `REWORK_STARTED`.
 7. Fixes findings, reruns compile/reviews, receives `REVIEW_GATE_PASSED`.
-8. Marks task `DONE`, logs `TASK_DONE`, and returns summary + commit message suggestion.
+8. Runs completion gate and receives `COMPLETION_GATE_PASSED`.
+9. Marks task `DONE`, logs `TASK_DONE`, and returns summary + commit message suggestion.
 
 Task timeline log commands:
 ```powershell
@@ -172,7 +175,7 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summa
 Example summary output:
 ```text
 Task: T-201
-Events: 9
+Events: 10
 Timeline:
 [01] ... | PLAN_CREATED | INFO | actor=orchestrator
 [02] ... | PREFLIGHT_CLASSIFIED | INFO
@@ -182,7 +185,8 @@ Timeline:
 [06] ... | REVIEW_GATE_FAILED | FAIL
 [07] ... | REWORK_STARTED | INFO
 [08] ... | REVIEW_GATE_PASSED | PASS
-[09] ... | TASK_DONE | PASS
+[09] ... | COMPLETION_GATE_PASSED | PASS
+[10] ... | TASK_DONE | PASS
 ```
 
 Optional commit message suggestion returned by agent:
@@ -203,6 +207,7 @@ feat(invoices): add CSV export endpoint with async email delivery hooks
 - Preflight roots and trigger regexes are configurable in `live/config/paths.json`.
 - Compile gate command is configured in `live/docs/agent-rules/40-commands.md` under `### Compile Gate (Mandatory)` and is required before `IN_REVIEW`.
 - Review gate (`required-reviews-check`) also validates compile evidence in task timeline; without `COMPILE_GATE_PASSED` it fails.
+- Completion gate (`completion-gate`) is required before `DONE`; it validates review-loop timeline integrity and required review artifacts.
 - Command placeholders in `live/docs/agent-rules/40-commands.md` must be replaced with real project commands; verify fails on unresolved placeholders.
 - Gate scripts support both `pwsh` (`*.ps1`) and `bash` (`*.sh`); agent should auto-detect environment.
 - Bash gate scripts require a Python runtime in PATH (`python3`, `python`, or `py -3`).
