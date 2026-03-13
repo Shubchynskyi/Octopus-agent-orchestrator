@@ -17,8 +17,8 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Task: ad-hoc
 - Type: behavior-change
 - Scope: release metadata / docs
-- Summary: Finalized the token-economy hardening release as bundle version `1.0.7` and synchronized source-level version references in the main changelog and user-facing README so update detection and release metadata stay aligned.
-- Docs Updated: `Octopus-agent-orchestrator/VERSION`; `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`
+- Summary: Finalized the token-economy hardening release as bundle version `1.0.7`, synchronized source-level version references in the main changelog and user-facing README, and extended update-time rule migrations so older deployed `40-commands.md` files gain the new `build-scoped-diff`, `build-review-context`, and `task-events-summary.sh` command-contract snippets required by verification.
+- Docs Updated: `Octopus-agent-orchestrator/VERSION`; `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/scripts/lib/rule-contract-migrations.ps1`
 
 ## 2026-03-11 - Completion gate and resume hard-stop contract
 - Task: ad-hoc

@@ -29,6 +29,9 @@ All notable changes to this bundle are documented in this file.
 - `init.ps1` now preserves existing `live/config/output-filters.json` values during refresh while filling missing keys from the latest template.
 - Bundle version bumped to `1.0.7` for distribution and update detection via `scripts/check-update.ps1`.
 
+### Fixed
+- Update-time rule contract migrations now also backfill the newer `40-commands.md` command snippets for `build-scoped-diff`, `build-review-context`, and `task-events-summary.sh`, so upgrades from older deployments no longer fail VERIFY with `CommandsContractViolationCount > 0`.
+
 ## [1.0.6] - 2026-03-13
 
 ### Changed

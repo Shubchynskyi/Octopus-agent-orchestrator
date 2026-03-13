@@ -28,6 +28,36 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-
                 Insert = 'bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"'
             },
             @{
+                Match = 'pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1 -TaskId "<task-id>"'
+                Insert = 'pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1 -TaskId "<task-id>"'
+                InsertMode = 'line'
+            },
+            @{
+                Match = 'bash Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh --task-id "<task-id>"'
+                Insert = 'bash Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh --task-id "<task-id>"'
+                InsertMode = 'line'
+            },
+            @{
+                Match = 'pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.ps1 -ReviewType "<db|security>" -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" -MetadataPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"'
+                Insert = 'pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.ps1 -ReviewType "<db|security>" -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" -MetadataPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"'
+                InsertMode = 'line'
+            },
+            @{
+                Match = 'bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.sh --review-type "<db|security>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" --metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"'
+                Insert = 'bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.sh --review-type "<db|security>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" --metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"'
+                InsertMode = 'line'
+            },
+            @{
+                Match = 'pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.ps1 -ReviewType "<code|db|security|refactor|api|test|performance|infra|dependency>" -Depth <1|2|3> -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -ScopedDiffMetadataPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"'
+                Insert = 'pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.ps1 -ReviewType "<code|db|security|refactor|api|test|performance|infra|dependency>" -Depth <1|2|3> -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -ScopedDiffMetadataPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"'
+                InsertMode = 'line'
+            },
+            @{
+                Match = 'bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.sh --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --depth <1|2|3> --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"'
+                Insert = 'bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.sh --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --depth <1|2|3> --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"'
+                InsertMode = 'line'
+            },
+            @{
                 Match = 'required-reviews-check.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"'
                 Insert = 'pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>" -CodeReviewVerdict "<verdict>" -DbReviewVerdict "<verdict>" -SecurityReviewVerdict "<verdict>" -RefactorReviewVerdict "<verdict>" -ApiReviewVerdict "<verdict>" -TestReviewVerdict "<verdict>" -PerformanceReviewVerdict "<verdict>" -InfraReviewVerdict "<verdict>" -DependencyReviewVerdict "<verdict>"'
             },
@@ -250,7 +280,7 @@ function Get-RuleContractMigrationsForPath {
         return @()
     }
 
-    $matches = @()
+    $matchingMigrations = New-Object System.Collections.ArrayList
     foreach ($migration in @($script:RuleContractMigrationDefinitions)) {
         $pattern = [string]$migration.FilePattern
         if ([string]::IsNullOrWhiteSpace($pattern)) {
@@ -258,11 +288,11 @@ function Get-RuleContractMigrationsForPath {
         }
 
         if ($normalizedPath -match $pattern) {
-            $matches += $migration
+            [void]$matchingMigrations.Add([object]$migration)
         }
     }
 
-    return $matches
+    return $matchingMigrations.ToArray()
 }
 
 function Invoke-RuleContractMigrationsForContent {
