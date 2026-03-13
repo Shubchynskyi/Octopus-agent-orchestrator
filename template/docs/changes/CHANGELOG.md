@@ -55,6 +55,20 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Summary: Extended `scripts/lib/rule-contract-migrations.ps1` so update runs patch older deployed `live/docs/agent-rules/35/40/50/60/80` files with the ignored-orchestrator git-boundary snippets now enforced by `scripts/verify.ps1`, preventing rollback-only failures during VERIFY on existing installations.
 - Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/scripts/lib/rule-contract-migrations.ps1`
 
+## 2026-03-13 - Token economy telemetry baseline for gates
+- Task: T-010
+- Type: architecture-change
+- Scope: gate telemetry / token economy
+- Summary: Added shared raw-vs-filtered output telemetry helpers for PowerShell and shell gate implementations. Compile gate now records current savings produced by tail/suppress-on-pass behavior, while required-review gate records passthrough baseline telemetry so future output compression can be measured without changing current gate verdict logic.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/template/scripts/agent-gates/lib/gate-utils.psm1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/lib/gate_utils.py`; `Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.sh`; `Octopus-agent-orchestrator/template/scripts/agent-gates/required-reviews-check.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/required-reviews-check.sh`
+
+## 2026-03-13 - Shared output-filter engine for gate console payloads
+- Task: T-011
+- Type: architecture-change
+- Scope: gate runtime / verification / config
+- Summary: Added a shared output-filter engine for PowerShell and shell gate runtimes plus managed config `live/config/output-filters.json`. Compile gate now resolves named success/failure console profiles from config instead of hardcoded tail logic, required-review gate is wired to the same engine with passthrough profile, and verification/bridge contracts now require the new config artifact.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/MANIFEST.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/50-structure-and-docs.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md`; `Octopus-agent-orchestrator/template/skills/orchestration/SKILL.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/scripts/install.ps1`; `Octopus-agent-orchestrator/scripts/verify.ps1`; `Octopus-agent-orchestrator/template/config/output-filters.json`; `Octopus-agent-orchestrator/template/scripts/agent-gates/lib/gate-utils.psm1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/lib/gate_utils.py`; `Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.sh`; `Octopus-agent-orchestrator/template/scripts/agent-gates/required-reviews-check.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/required-reviews-check.sh`
+
 ## 2026-03-11 - Platform-agnostic reviewer routing and version bump
 - Task: ad-hoc
 - Type: behavior-change
@@ -110,6 +124,5 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Scope: agent process
 - Summary: Added post-init optional specialist-skill flow, live-only skill-builder package, capability-based optional review triggers (`api/test/performance/infra/dependency`), expanded deterministic gate contracts, and strengthened security baseline guidance.
 - Docs Updated: `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md`; `Octopus-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md`; `Octopus-agent-orchestrator/live/docs/agent-rules/60-operating-rules.md`; `Octopus-agent-orchestrator/live/docs/agent-rules/70-security.md`; `Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md`; `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md`; `Octopus-agent-orchestrator/live/docs/reviews/TEMPLATE.md`; `Octopus-agent-orchestrator/live/docs/tasks/TASKS.md`
-
 
 

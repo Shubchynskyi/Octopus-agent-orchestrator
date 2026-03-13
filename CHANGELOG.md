@@ -4,6 +4,16 @@ All notable changes to this bundle are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Token-economy output telemetry baseline for gate payloads:
+  - compile and review gates now emit `raw_line_count`, `raw_char_count`, `filtered_line_count`, `filtered_char_count`, `estimated_saved_chars`, `estimated_saved_tokens`, `filter_mode`, and `fallback_mode` into runtime metrics;
+  - compile gates report current savings from tail/suppress-on-pass behavior without changing pass/fail verdict logic;
+  - review gates report passthrough baseline telemetry so later compression changes can be measured against existing output size.
+- Shared gate-output filter engine and config:
+  - new config artifact `Octopus-agent-orchestrator/live/config/output-filters.json`;
+  - PowerShell and shell gate runtimes now support shared line-based filter primitives (`strip_ansi`, regex replace, keep/drop matching lines, line truncation, head/tail, max-total-lines, emit-when-empty);
+  - compile and required-review gates now resolve named output-filter profiles from config and fall back to passthrough with visible warning when config is missing or invalid.
+
 ## [1.0.6] - 2026-03-13
 
 ### Changed

@@ -17,6 +17,7 @@ param(
     [string]$OverrideArtifactPath,
     [string]$CompileEvidencePath,
     [string]$ReviewEvidencePath,
+    [string]$OutputFiltersPath = 'Octopus-agent-orchestrator/live/config/output-filters.json',
     [string]$MetricsPath,
     [bool]$EmitMetrics = $true
 )
@@ -84,6 +85,15 @@ function Invoke-GitLines {
     }
 
     return @($output | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Resolve-PathInsideRepo {
+    param(
+        [string]$PathValue,
+        [string]$RepoRootPath
+    )
+
+    return Resolve-GatePathInsideRepo -PathValue $PathValue -RepoRootPath $RepoRootPath -AllowMissing -AllowEmpty
 }
 
 function Get-FileSha256 {
@@ -766,6 +776,7 @@ function Test-CompileScopeDrift {
 
 $validatedPreflight = Get-ValidatedPreflightContext -PreflightPathValue $PreflightPath -ExplicitTaskId $TaskId
 $repoRoot = Resolve-ProjectRoot
+$resolvedOutputFiltersPath = Resolve-PathInsideRepo -PathValue $OutputFiltersPath -RepoRootPath $repoRoot
 $preflight = $validatedPreflight.preflight
 $resolvedTaskId = $validatedPreflight.resolved_task_id
 $compileGateEvidence = Get-CompileGateEvidence -RepoRootPath $repoRoot -ResolvedTaskId $resolvedTaskId -PreflightPathValue $validatedPreflight.preflight_path -PreflightHashValue $validatedPreflight.preflight_hash -CompileEvidencePathValue $CompileEvidencePath
@@ -878,6 +889,7 @@ $reviewEvidenceContext = [ordered]@{
     mode = $validatedPreflight.mode
     compile_evidence_path = $compileGateEvidence.evidence_path
     compile_evidence_hash_sha256 = $compileGateEvidence.evidence_hash
+    output_filters_path = Normalize-Path $resolvedOutputFiltersPath
     scope_drift = $scopeDrift
     required_reviews = $validatedPreflight.required_reviews
     verdicts = [ordered]@{
@@ -897,6 +909,18 @@ $reviewEvidenceContext = [ordered]@{
 }
 
 if ($errors.Count -gt 0) {
+    $failureOutputLines = New-Object 'System.Collections.Generic.List[string]'
+    $failureOutputLines.Add('REVIEW_GATE_FAILED')
+    $failureOutputLines.Add("Mode: $($validatedPreflight.mode)")
+    $failureOutputLines.Add('Violations:')
+    foreach ($errorLine in @($errors)) {
+        $failureOutputLines.Add("- $errorLine")
+    }
+    $filteredFailureOutput = Invoke-GateOutputFilter -Lines $failureOutputLines -ConfigPath $resolvedOutputFiltersPath -ProfileName 'review_gate_console'
+    $filteredFailureOutputLines = @($filteredFailureOutput.lines)
+    $failureOutputTelemetry = Get-GateOutputTelemetry -RawLines $failureOutputLines -FilteredLines $filteredFailureOutputLines -FilterMode $filteredFailureOutput.filter_mode -FallbackMode $filteredFailureOutput.fallback_mode
+    $reviewEvidenceContext['output_telemetry'] = $failureOutputTelemetry
+
     Write-ReviewEvidence -EvidencePath $resolvedReviewEvidencePath -ResolvedTaskId $resolvedTaskId -Context $reviewEvidenceContext -Status 'FAILED' -Outcome 'FAIL' -Violations @($errors)
 
     $failureEvent = [ordered]@{
@@ -909,8 +933,12 @@ if ($errors.Count -gt 0) {
         mode = $validatedPreflight.mode
         skip_reviews = $skipReviewsList
         skip_reason = $SkipReason
+        output_filters_path = Normalize-Path $resolvedOutputFiltersPath
         compile_gate = $compileGateEvidence
         violations = $errors
+    }
+    foreach ($key in $failureOutputTelemetry.Keys) {
+        $failureEvent[$key] = $failureOutputTelemetry[$key]
     }
     Append-MetricsEvent -Path $MetricsPath -EventObject $failureEvent
 
@@ -925,10 +953,9 @@ if ($errors.Count -gt 0) {
     }
     Append-TaskEvent -RepoRootPath $repoRoot -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_FAILED' -Outcome 'FAIL' -Message 'Required reviews gate failed.' -Details $taskFailureDetails
 
-    Write-Output 'REVIEW_GATE_FAILED'
-    Write-Output "Mode: $($validatedPreflight.mode)"
-    Write-Output 'Violations:'
-    $errors | ForEach-Object { Write-Output "- $_" }
+    foreach ($line in $filteredFailureOutputLines) {
+        Write-Output $line
+    }
     exit 1
 }
 
@@ -968,7 +995,23 @@ if ($skipCode) {
     Set-Content -Path $OverrideArtifactPath -Value ($overrideArtifact | ConvertTo-Json -Depth 8)
 }
 
+$successOutputLines = New-Object 'System.Collections.Generic.List[string]'
+if ($skipCode) {
+    $successOutputLines.Add('REVIEW_GATE_PASSED_WITH_OVERRIDE')
+    $successOutputLines.Add("Mode: $($validatedPreflight.mode)")
+    $successOutputLines.Add('SkippedReviews: code')
+    if (-not [string]::IsNullOrWhiteSpace($OverrideArtifactPath)) {
+        $successOutputLines.Add("OverrideArtifact: $OverrideArtifactPath")
+    }
+} else {
+    $successOutputLines.Add('REVIEW_GATE_PASSED')
+    $successOutputLines.Add("Mode: $($validatedPreflight.mode)")
+}
+$filteredSuccessOutput = Invoke-GateOutputFilter -Lines $successOutputLines -ConfigPath $resolvedOutputFiltersPath -ProfileName 'review_gate_console'
+$filteredSuccessOutputLines = @($filteredSuccessOutput.lines)
+$successOutputTelemetry = Get-GateOutputTelemetry -RawLines $successOutputLines -FilteredLines $filteredSuccessOutputLines -FilterMode $filteredSuccessOutput.filter_mode -FallbackMode $filteredSuccessOutput.fallback_mode
 $reviewEvidenceContext['override_artifact'] = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
+$reviewEvidenceContext['output_telemetry'] = $successOutputTelemetry
 Write-ReviewEvidence -EvidencePath $resolvedReviewEvidencePath -ResolvedTaskId $resolvedTaskId -Context $reviewEvidenceContext -Status 'PASSED' -Outcome 'PASS' -Violations @()
 
 $successEvent = [ordered]@{
@@ -981,8 +1024,12 @@ $successEvent = [ordered]@{
     mode = $validatedPreflight.mode
     skip_reviews = $skipReviewsList
     skip_reason = $SkipReason
+    output_filters_path = Normalize-Path $resolvedOutputFiltersPath
     compile_gate = $compileGateEvidence
     override_artifact = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
+}
+foreach ($key in $successOutputTelemetry.Keys) {
+    $successEvent[$key] = $successOutputTelemetry[$key]
 }
 Append-MetricsEvent -Path $MetricsPath -EventObject $successEvent
 
@@ -998,15 +1045,15 @@ $taskSuccessDetails = [ordered]@{
 
 if ($skipCode) {
     Append-TaskEvent -RepoRootPath $repoRoot -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_PASSED_WITH_OVERRIDE' -Outcome 'PASS' -Message 'Required reviews gate passed with audited override.' -Details $taskSuccessDetails
-    Write-Output 'REVIEW_GATE_PASSED_WITH_OVERRIDE'
-    Write-Output "Mode: $($validatedPreflight.mode)"
-    Write-Output 'SkippedReviews: code'
-    Write-Output "OverrideArtifact: $OverrideArtifactPath"
+    foreach ($line in $filteredSuccessOutputLines) {
+        Write-Output $line
+    }
     exit 0
 }
 
 Append-TaskEvent -RepoRootPath $repoRoot -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_PASSED' -Outcome 'PASS' -Message 'Required reviews gate passed.' -Details $taskSuccessDetails
-Write-Output 'REVIEW_GATE_PASSED'
-Write-Output "Mode: $($validatedPreflight.mode)"
+foreach ($line in $filteredSuccessOutputLines) {
+    Write-Output $line
+}
 
 

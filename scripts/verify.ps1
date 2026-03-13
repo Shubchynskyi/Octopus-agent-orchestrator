@@ -342,6 +342,7 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/live/config/review-capabilities.json',
     'Octopus-agent-orchestrator/live/config/paths.json',
     'Octopus-agent-orchestrator/live/config/token-economy.json',
+    'Octopus-agent-orchestrator/live/config/output-filters.json',
     'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh',
@@ -533,6 +534,254 @@ if (-not (Test-Path -LiteralPath $tokenEconomyPath -PathType Leaf)) {
 
             if ($null -eq $failTailLines -or $failTailLines -le 0) {
                 $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'fail_tail_lines' must be a positive integer."
+            }
+        }
+    }
+}
+
+function Get-VerifyConfigValue {
+    param(
+        [AllowNull()]
+        [object]$Object,
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Key)) {
+            return $Object[$Key]
+        }
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$Key]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
+function Get-VerifyConfigStringArray {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($null -eq $Value) {
+        return @()
+    }
+
+    if ($Value -is [string]) {
+        $single = $Value.Trim()
+        if ([string]::IsNullOrWhiteSpace($single)) {
+            return @()
+        }
+        return @($single)
+    }
+
+    $result = @()
+    foreach ($item in @($Value)) {
+        if ($null -eq $item) {
+            continue
+        }
+
+        $text = [string]$item
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            continue
+        }
+        $result += $text.Trim()
+    }
+
+    return @($result)
+}
+
+function Test-VerifyFilterIntegerSpec {
+    param(
+        [AllowNull()]
+        [object]$Value,
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath,
+        [Parameter(Mandatory = $true)]
+        [string]$FieldName,
+        [Parameter(Mandatory = $true)]
+        [ref]$Violations,
+        [int]$Minimum = 0
+    )
+
+    $contextKey = Get-VerifyConfigValue -Object $Value -Key 'context_key'
+    if ($null -ne $contextKey) {
+        if ($contextKey -isnot [string] -or [string]::IsNullOrWhiteSpace($contextKey.Trim())) {
+            $Violations.Value += "$RelativePath $FieldName context reference must define non-empty string 'context_key'."
+        }
+        return
+    }
+
+    $resolvedInt = $null
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [short] -or $Value -is [byte]) {
+        $resolvedInt = [int]$Value
+    } elseif ($Value -is [double] -or $Value -is [decimal] -or $Value -is [single]) {
+        $numericValue = [double]$Value
+        if ($numericValue -eq [Math]::Floor($numericValue)) {
+            $resolvedInt = [int]$numericValue
+        }
+    }
+
+    if ($null -eq $resolvedInt -or $resolvedInt -lt $Minimum) {
+        $Violations.Value += "$RelativePath $FieldName must be integer >= $Minimum or object with non-empty 'context_key'."
+    }
+}
+
+$outputFiltersContractViolations = @()
+$outputFiltersRelativePath = 'Octopus-agent-orchestrator/live/config/output-filters.json'
+$outputFiltersPath = Join-Path $TargetRoot $outputFiltersRelativePath
+if (-not (Test-Path -LiteralPath $outputFiltersPath -PathType Leaf)) {
+    $outputFiltersContractViolations += "$outputFiltersRelativePath is missing."
+} else {
+    try {
+        $outputFiltersConfig = Get-Content -LiteralPath $outputFiltersPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+    }
+    catch {
+        $outputFiltersContractViolations += "$outputFiltersRelativePath must contain valid JSON."
+        $outputFiltersConfig = $null
+    }
+
+    if ($null -ne $outputFiltersConfig) {
+        $versionValue = Get-VerifyConfigValue -Object $outputFiltersConfig -Key 'version'
+        $versionInt = $null
+        if ($versionValue -is [int] -or $versionValue -is [long] -or $versionValue -is [short] -or $versionValue -is [byte]) {
+            $versionInt = [int]$versionValue
+        } elseif ($versionValue -is [double] -or $versionValue -is [decimal] -or $versionValue -is [single]) {
+            $versionNumeric = [double]$versionValue
+            if ($versionNumeric -eq [Math]::Floor($versionNumeric)) {
+                $versionInt = [int]$versionNumeric
+            }
+        }
+        if ($null -eq $versionInt -or $versionInt -lt 1) {
+            $outputFiltersContractViolations += "$outputFiltersRelativePath must include integer 'version' >= 1."
+        }
+
+        $profilesValue = Get-VerifyConfigValue -Object $outputFiltersConfig -Key 'profiles'
+        if ($profilesValue -isnot [System.Collections.IDictionary] -or $profilesValue.Count -eq 0) {
+            $outputFiltersContractViolations += "$outputFiltersRelativePath must include non-empty object 'profiles'."
+        } else {
+            foreach ($profileEntry in $profilesValue.GetEnumerator()) {
+                $profileName = [string]$profileEntry.Key
+                if ([string]::IsNullOrWhiteSpace($profileName)) {
+                    $outputFiltersContractViolations += "$outputFiltersRelativePath profile names must not be empty."
+                    continue
+                }
+
+                $profileValue = $profileEntry.Value
+                if ($profileValue -isnot [System.Collections.IDictionary]) {
+                    $outputFiltersContractViolations += "$outputFiltersRelativePath profile '$profileName' must be an object."
+                    continue
+                }
+
+                $emitWhenEmptyValue = Get-VerifyConfigValue -Object $profileValue -Key 'emit_when_empty'
+                if ($null -ne $emitWhenEmptyValue -and $emitWhenEmptyValue -isnot [string]) {
+                    $outputFiltersContractViolations += "$outputFiltersRelativePath profile '$profileName' field 'emit_when_empty' must be string when present."
+                }
+
+                $operationsValue = Get-VerifyConfigValue -Object $profileValue -Key 'operations'
+                if ($null -eq $operationsValue) {
+                    $operationsValue = @()
+                } elseif ($operationsValue -is [string]) {
+                    $outputFiltersContractViolations += "$outputFiltersRelativePath profile '$profileName' field 'operations' must be an array."
+                    continue
+                }
+
+                $operationIndex = 0
+                foreach ($operation in @($operationsValue)) {
+                    $operationIndex++
+                    $operationLabel = "profile '$profileName' operation #$operationIndex"
+                    if ($operation -isnot [System.Collections.IDictionary]) {
+                        $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel must be an object."
+                        continue
+                    }
+
+                    $operationType = [string](Get-VerifyConfigValue -Object $operation -Key 'type')
+                    if ([string]::IsNullOrWhiteSpace($operationType)) {
+                        $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel requires non-empty 'type'."
+                        continue
+                    }
+
+                    switch ($operationType.Trim().ToLowerInvariant()) {
+                        'strip_ansi' {
+                        }
+                        'regex_replace' {
+                            $patternValue = Get-VerifyConfigValue -Object $operation -Key 'pattern'
+                            if ($patternValue -isnot [string] -or [string]::IsNullOrWhiteSpace($patternValue.Trim())) {
+                                $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel requires non-empty string 'pattern'."
+                            } else {
+                                try {
+                                    [void][regex]::new($patternValue)
+                                } catch {
+                                    $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel pattern '$patternValue' is invalid regex."
+                                }
+                            }
+                        }
+                        'drop_lines_matching' {
+                            $patterns = Get-VerifyConfigStringArray -Value $(Get-VerifyConfigValue -Object $operation -Key 'patterns')
+                            if ($patterns.Count -eq 0) {
+                                $patterns = Get-VerifyConfigStringArray -Value $(Get-VerifyConfigValue -Object $operation -Key 'pattern')
+                            }
+                            if ($patterns.Count -eq 0) {
+                                $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel requires non-empty 'pattern' or 'patterns'."
+                            } else {
+                                foreach ($pattern in $patterns) {
+                                    try {
+                                        [void][regex]::new($pattern)
+                                    } catch {
+                                        $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel pattern '$pattern' is invalid regex."
+                                    }
+                                }
+                            }
+                        }
+                        'keep_lines_matching' {
+                            $patterns = Get-VerifyConfigStringArray -Value $(Get-VerifyConfigValue -Object $operation -Key 'patterns')
+                            if ($patterns.Count -eq 0) {
+                                $patterns = Get-VerifyConfigStringArray -Value $(Get-VerifyConfigValue -Object $operation -Key 'pattern')
+                            }
+                            if ($patterns.Count -eq 0) {
+                                $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel requires non-empty 'pattern' or 'patterns'."
+                            } else {
+                                foreach ($pattern in $patterns) {
+                                    try {
+                                        [void][regex]::new($pattern)
+                                    } catch {
+                                        $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel pattern '$pattern' is invalid regex."
+                                    }
+                                }
+                            }
+                        }
+                        'truncate_line_length' {
+                            Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $operation -Key 'max_chars') -RelativePath $outputFiltersRelativePath -FieldName "$operationLabel max_chars" -Violations ([ref]$outputFiltersContractViolations) -Minimum 1
+                        }
+                        'head' {
+                            Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $operation -Key 'count') -RelativePath $outputFiltersRelativePath -FieldName "$operationLabel count" -Violations ([ref]$outputFiltersContractViolations) -Minimum 1
+                        }
+                        'tail' {
+                            Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $operation -Key 'count') -RelativePath $outputFiltersRelativePath -FieldName "$operationLabel count" -Violations ([ref]$outputFiltersContractViolations) -Minimum 1
+                        }
+                        'max_total_lines' {
+                            Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $operation -Key 'max_lines') -RelativePath $outputFiltersRelativePath -FieldName "$operationLabel max_lines" -Violations ([ref]$outputFiltersContractViolations) -Minimum 0
+                            $strategyValue = Get-VerifyConfigValue -Object $operation -Key 'strategy'
+                            if ($null -ne $strategyValue) {
+                                if ($strategyValue -isnot [string] -or @('head', 'tail') -notcontains $strategyValue.Trim().ToLowerInvariant()) {
+                                    $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel strategy must be 'head' or 'tail'."
+                                }
+                            }
+                        }
+                        default {
+                            $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel has unsupported type '$operationType'."
+                        }
+                    }
+                }
             }
         }
     }
@@ -1251,6 +1500,10 @@ foreach ($profile in $providerOrchestratorProfiles) {
         $providerAgentContractViolations += "$($profile.RelativePath) must reference optional capability flags file 'review-capabilities.json'."
     }
 
+    if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/live/config/output-filters.json')) {
+        $providerAgentContractViolations += "$($profile.RelativePath) must reference output filter config 'output-filters.json'."
+    }
+
     if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/live/skills/**')) {
         $providerAgentContractViolations += "$($profile.RelativePath) must allow specialist skills under 'Octopus-agent-orchestrator/live/skills/**'."
     }
@@ -1382,6 +1635,10 @@ foreach ($profile in $githubSkillBridgeProfiles) {
 
     if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/live/config/review-capabilities.json')) {
         $githubSkillBridgeContractViolations += "$($profile.RelativePath) must reference optional capability flags file 'review-capabilities.json'."
+    }
+
+    if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/live/config/output-filters.json')) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must reference output filter config 'output-filters.json'."
     }
 
     if ($profileContent -notmatch [regex]::Escape('Octopus-agent-orchestrator/live/skills/**')) {
@@ -1545,6 +1802,7 @@ Write-Output "CanonicalEntrypoint: $canonicalEntrypoint"
 Write-Output "RequiredPathsChecked: $($requiredPaths.Count)"
 Write-Output "MissingPathCount: $($missingPaths.Count)"
 Write-Output "TokenEconomyContractViolationCount: $($tokenEconomyContractViolations.Count)"
+Write-Output "OutputFiltersContractViolationCount: $($outputFiltersContractViolations.Count)"
 Write-Output "CompileGateContractViolationCount: $($compileGateContractViolations.Count)"
 Write-Output "CompletionGateContractViolationCount: $($completionGateContractViolations.Count)"
 Write-Output "DocImpactGateContractViolationCount: $($docImpactGateContractViolations.Count)"
@@ -1580,6 +1838,13 @@ if ($missingPaths.Count -gt 0) {
 if ($tokenEconomyContractViolations.Count -gt 0) {
     Write-Output 'TokenEconomyContractViolations:'
     foreach ($item in $tokenEconomyContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($outputFiltersContractViolations.Count -gt 0) {
+    Write-Output 'OutputFiltersContractViolations:'
+    foreach ($item in $outputFiltersContractViolations) {
         Write-Output " - $item"
     }
 }
@@ -1741,6 +2006,7 @@ if ($gitignoreMissing.Count -gt 0) {
 if (
     $missingPaths.Count -gt 0 -or
     $tokenEconomyContractViolations.Count -gt 0 -or
+    $outputFiltersContractViolations.Count -gt 0 -or
     $compileGateContractViolations.Count -gt 0 -or
     $completionGateContractViolations.Count -gt 0 -or
     $docImpactGateContractViolations.Count -gt 0 -or

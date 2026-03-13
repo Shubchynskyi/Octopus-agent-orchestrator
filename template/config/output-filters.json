@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "profiles": {
+    "compile_failure_console": {
+      "description": "Current fail-safe compile console output: strip ANSI and keep only the configured tail.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "tail",
+          "count": {
+            "context_key": "fail_tail_lines"
+          }
+        }
+      ]
+    },
+    "compile_success_console": {
+      "description": "Suppress raw compile stdout on green runs while retaining telemetry.",
+      "operations": [
+        {
+          "type": "drop_lines_matching",
+          "pattern": ".*"
+        }
+      ]
+    },
+    "review_gate_console": {
+      "description": "Baseline passthrough profile for review gate output while keeping filter engine wired.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        }
+      ]
+    }
+  }
+}

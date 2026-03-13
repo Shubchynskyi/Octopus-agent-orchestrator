@@ -50,6 +50,7 @@ After successful setup:
 - Live capability config exists: `Octopus-agent-orchestrator/live/config/review-capabilities.json`
 - Preflight path and trigger config exists: `Octopus-agent-orchestrator/live/config/paths.json`
 - Token-economy config exists: `Octopus-agent-orchestrator/live/config/token-economy.json` (compact output and fail-tail controls).
+- Output-filter config exists: `Octopus-agent-orchestrator/live/config/output-filters.json` (shared gate-output filter profiles).
 - Discovery report exists: `Octopus-agent-orchestrator/live/project-discovery.md`
 - Deployment version metadata exists: `Octopus-agent-orchestrator/live/version.json`
 - If enabled in init answers, no-auto-commit guard exists in `.git/hooks/pre-commit` and blocks detected agent sessions while keeping normal human commits available.

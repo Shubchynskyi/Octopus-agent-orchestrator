@@ -978,6 +978,7 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 - Canonical skill list: `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md`
 - Optional-skill capability flags: `Octopus-agent-orchestrator/live/config/review-capabilities.json`
 - Token-economy controls: `Octopus-agent-orchestrator/live/config/token-economy.json`
+- Output-filter profiles: `Octopus-agent-orchestrator/live/config/output-filters.json`
 - Include specialist skills added after initialization from `Octopus-agent-orchestrator/live/skills/**` when required by preflight and capability flags.
 
 ## Task Timeline Logging (Required)
@@ -1028,6 +1029,7 @@ Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent
 - Re-read `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md` before execution.
 - Re-read `Octopus-agent-orchestrator/live/config/review-capabilities.json` before execution.
 - Re-read `Octopus-agent-orchestrator/live/config/token-economy.json` before execution.
+- Re-read `Octopus-agent-orchestrator/live/config/output-filters.json` before execution.
 - On GitHub Copilot CLI, spawn reviewer helper tasks via `task` tool with `agent_type="general-purpose"` and isolated context.
 - Honor specialist skills added after initialization under `Octopus-agent-orchestrator/live/skills/**`.
 - Log review invocation and outcomes via `log-task-event.ps1` or `.sh` into task timeline.

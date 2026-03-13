@@ -49,6 +49,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
   `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1`.
 - Compile gate enforces preflight scope freshness; if scope drift is detected, re-run preflight before compile.
 - Compile gate invocation must pass `fail_tail_lines` from `live/config/token-economy.json` (fallback `50`) to keep failure-output budget deterministic.
+- Compile/review gate output compaction profiles are loaded from `live/config/output-filters.json`; invalid or missing config must warn and fall back to passthrough output instead of inventing filtered summaries.
 - Required reviews must be launched only from preflight `required_reviews.*`.
 - Review gate script must pass before `DONE`:
   `Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1`.

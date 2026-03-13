@@ -6,6 +6,7 @@ param(
     [string]$CompileEvidencePath = '',
     [string]$CompileOutputPath = '',
     [int]$FailTailLines = 50,
+    [string]$OutputFiltersPath = 'Octopus-agent-orchestrator/live/config/output-filters.json',
     [string]$MetricsPath,
     [bool]$EmitMetrics = $true,
     [string]$RepoRoot
@@ -644,6 +645,7 @@ $preflightContext = $null
 $workspaceSnapshot = $null
 $resolvedCompileEvidencePath = $null
 $resolvedCompileOutputPath = $null
+$resolvedOutputFiltersPath = $null
 $compileOutputLines = New-Object 'System.Collections.Generic.List[string]'
 $warningCount = 0
 $errorCount = 0
@@ -662,6 +664,7 @@ try {
     $resolvedPreflightPath = Resolve-PreflightPath -ExplicitPreflightPath $PreflightPath -RepoRootPath $RepoRoot -ResolvedTaskId $resolvedTaskId
     $preflightContext = Get-PreflightContext -PreflightPathValue $resolvedPreflightPath -ResolvedTaskId $resolvedTaskId
     $workspaceSnapshot = Get-WorkspaceSnapshot -RepoRootPath $RepoRoot -DetectionSource $preflightContext.detection_source -IncludeUntracked $preflightContext.include_untracked -ExplicitChangedFiles $preflightContext.changed_files
+    $resolvedOutputFiltersPath = Resolve-PathInsideRepo -PathValue $OutputFiltersPath -RepoRootPath $RepoRoot
 
     $scopeViolations = @()
     if ($workspaceSnapshot.changed_files_sha256 -ne $preflightContext.changed_files_sha256) {
@@ -744,7 +747,16 @@ finally {
 $durationMs = [int][Math]::Round($stopwatch.Elapsed.TotalMilliseconds)
 $totalOutputLines = $compileOutputLines.Count
 $compileOutputArray = @($compileOutputLines.ToArray())
-$tailOutput = Get-OutputTail -Lines $compileOutputArray -TailCount $FailTailLines
+$compileOutputContext = @{
+    fail_tail_lines = $FailTailLines
+}
+$filteredCompileOutput = if ($null -ne $exceptionMessage) {
+    Invoke-GateOutputFilter -Lines $compileOutputArray -ConfigPath $resolvedOutputFiltersPath -ProfileName 'compile_failure_console' -ContextData $compileOutputContext
+} else {
+    Invoke-GateOutputFilter -Lines $compileOutputArray -ConfigPath $resolvedOutputFiltersPath -ProfileName 'compile_success_console' -ContextData $compileOutputContext
+}
+$filteredCompileOutputLines = @($filteredCompileOutput.lines)
+$compileOutputTelemetry = Get-GateOutputTelemetry -RawLines $compileOutputArray -FilteredLines $filteredCompileOutputLines -FilterMode $filteredCompileOutput.filter_mode -FallbackMode $filteredCompileOutput.fallback_mode
 
 $gateContext = [ordered]@{
     commands_path = Normalize-Path $resolvedCommandsPath
@@ -767,11 +779,15 @@ $gateContext = [ordered]@{
     scope_sha256 = $(if ($null -ne $workspaceSnapshot) { $workspaceSnapshot.scope_sha256 } else { $null })
     evidence_path = Normalize-Path $resolvedCompileEvidencePath
     compile_output_path = Normalize-Path $resolvedCompileOutputPath
+    output_filters_path = Normalize-Path $resolvedOutputFiltersPath
     compile_output_lines = $totalOutputLines
     compile_output_warning_lines = $warningCount
     compile_output_error_lines = $errorCount
     duration_ms = $durationMs
     exit_code = $(if ($null -ne $exceptionMessage) { $exitCode } else { 0 })
+}
+foreach ($key in $compileOutputTelemetry.Keys) {
+    $gateContext[$key] = $compileOutputTelemetry[$key]
 }
 
 if ($null -ne $exceptionMessage) {
@@ -795,9 +811,13 @@ if ($null -ne $exceptionMessage) {
     if ($resolvedCompileOutputPath) {
         Write-Output ("CompileOutputPath: {0}" -f (Normalize-Path $resolvedCompileOutputPath))
     }
-    if ($tailOutput.Count -gt 0) {
-        Write-Output ("CompileOutputTailLast{0}Lines:" -f [Math]::Min($FailTailLines, $tailOutput.Count))
-        foreach ($line in $tailOutput) {
+    if ($filteredCompileOutputLines.Count -gt 0) {
+        if ($compileOutputTelemetry.filter_mode -eq 'profile:compile_failure_console' -and $compileOutputTelemetry.fallback_mode -eq 'none') {
+            Write-Output ("CompileOutputTailLast{0}Lines:" -f [Math]::Min($FailTailLines, $filteredCompileOutputLines.Count))
+        } else {
+            Write-Output 'CompileOutputFilteredLines:'
+        }
+        foreach ($line in $filteredCompileOutputLines) {
             Write-Output $line
         }
     }

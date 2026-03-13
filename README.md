@@ -45,6 +45,8 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 ## Token Economy
 - Token cost optimization is built in via `Octopus-agent-orchestrator/live/config/token-economy.json`.
 - Controls include compact reviewer output, scoped diffs for heavy reviews, and compile fail-tail limit (`fail_tail_lines`).
+- Gate output filter profiles live in `Octopus-agent-orchestrator/live/config/output-filters.json` and drive shared compile/review output compaction behavior.
+- Gate metrics now record raw-vs-filtered payload size and estimated saved tokens for compile/review gates, giving a baseline before broader output-compression work lands.
 - Recommended default: use `enabled=true` with `depth=1` only for small, well-localized tasks; prefer `depth=2` when review correctness depends on broader context.
 
 ## What Is Deployed To Project Root
@@ -76,6 +78,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 ## What Is Materialized Inside Orchestrator
 - `Octopus-agent-orchestrator/live/config/review-capabilities.json`
 - `Octopus-agent-orchestrator/live/config/paths.json`
+- `Octopus-agent-orchestrator/live/config/output-filters.json`
 - `Octopus-agent-orchestrator/live/docs/agent-rules/00..90`
 - `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`
 - `Octopus-agent-orchestrator/live/docs/reviews/TEMPLATE.md`

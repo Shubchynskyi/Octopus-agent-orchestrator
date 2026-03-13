@@ -37,9 +37,11 @@ script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
 sys.path.insert(0, str(script_dir / "lib"))
 
 from gate_utils import (
+    apply_output_filter_profile,
     append_metrics_event,
     append_task_event,
     assert_valid_task_id,
+    build_output_telemetry,
     file_sha256,
     normalize_path,
     resolve_path_inside_repo,
@@ -373,6 +375,7 @@ parser.add_argument("--preflight-path", default="")
 parser.add_argument("--compile-evidence-path", default="")
 parser.add_argument("--compile-output-path", default="")
 parser.add_argument("--fail-tail-lines", default="50")
+parser.add_argument("--output-filters-path", default="Octopus-agent-orchestrator/live/config/output-filters.json")
 parser.add_argument("--metrics-path", default="")
 parser.add_argument("--emit-metrics", default="true")
 parser.add_argument("--repo-root", default="")
@@ -404,6 +407,7 @@ preflight_context = None
 workspace_snapshot = None
 compile_evidence_path = None
 compile_output_path = None
+output_filters_path = None
 compile_output_lines = []
 warning_count = 0
 error_count = 0
@@ -453,6 +457,7 @@ try:
     preflight_hash = file_sha256(resolved_preflight_path)
     compile_evidence_path = resolve_compile_evidence_path(args.compile_evidence_path, repo_root, task_id)
     compile_output_path = resolve_compile_output_path(args.compile_output_path, repo_root, task_id)
+    output_filters_path = resolve_path_inside_repo(args.output_filters_path, repo_root, allow_missing=True)
 
     for command_index, compile_command in enumerate(compile_commands, start=1):
         command_output_lines = []
@@ -518,12 +523,36 @@ gate_context = {
     "scope_sha256": workspace_snapshot["scope_sha256"] if workspace_snapshot else None,
     "evidence_path": normalize_path(compile_evidence_path) if compile_evidence_path else None,
     "compile_output_path": normalize_path(compile_output_path) if compile_output_path else None,
+    "output_filters_path": normalize_path(output_filters_path) if output_filters_path else None,
     "compile_output_lines": len(compile_output_lines),
     "compile_output_warning_lines": warning_count,
     "compile_output_error_lines": error_count,
     "duration_ms": duration_ms,
     "exit_code": exit_code if error_message else 0,
 }
+compile_output_context = {"fail_tail_lines": fail_tail_lines}
+if error_message:
+    filtered_output_result = apply_output_filter_profile(
+        compile_output_lines,
+        output_filters_path,
+        "compile_failure_console",
+        context=compile_output_context,
+    )
+else:
+    filtered_output_result = apply_output_filter_profile(
+        compile_output_lines,
+        output_filters_path,
+        "compile_success_console",
+        context=compile_output_context,
+    )
+filtered_output_lines = list(filtered_output_result["lines"])
+compile_output_telemetry = build_output_telemetry(
+    compile_output_lines,
+    filtered_output_lines,
+    filter_mode=filtered_output_result["filter_mode"],
+    fallback_mode=filtered_output_result["fallback_mode"],
+)
+gate_context.update(compile_output_telemetry)
 
 if error_message:
     failure_event = {
@@ -545,17 +574,21 @@ if error_message:
     )
     append_task_event(repo_root, task_id, "COMPILE_GATE_FAILED", "FAIL", "Compile gate failed.", failure_event)
 
-    tail_lines = compile_output_lines[-fail_tail_lines:] if compile_output_lines else []
-
     print("COMPILE_GATE_FAILED")
     print(
         f"CompileSummary: FAILED | duration_ms={duration_ms} | exit_code={exit_code} | errors={error_count} | warnings={warning_count}"
     )
     if compile_output_path:
         print(f"CompileOutputPath: {normalize_path(compile_output_path)}")
-    if tail_lines:
-        print(f"CompileOutputTailLast{min(fail_tail_lines, len(tail_lines))}Lines:")
-        for line in tail_lines:
+    if filtered_output_lines:
+        if (
+            compile_output_telemetry["filter_mode"] == "profile:compile_failure_console"
+            and compile_output_telemetry["fallback_mode"] == "none"
+        ):
+            print(f"CompileOutputTailLast{min(fail_tail_lines, len(filtered_output_lines))}Lines:")
+        else:
+            print("CompileOutputFilteredLines:")
+        for line in filtered_output_lines:
             print(line)
     print(f"Reason: {error_message}")
     sys.exit(1)

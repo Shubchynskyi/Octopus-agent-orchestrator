@@ -96,6 +96,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - non-runtime or `FAST_PATH` runtime => objective validations, then implementation.
 8. Run compile gate (mandatory) before review phase:
    - Resolve `fail_tail_lines` from `Octopus-agent-orchestrator/live/config/token-economy.json`; when missing/invalid, fallback to `50`.
+   - Gate output filter profiles are loaded from `Octopus-agent-orchestrator/live/config/output-filters.json`; invalid config must warn and fall back to passthrough output.
    - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1 -TaskId "<task-id>" -CommandsPath "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" -FailTailLines "<fail_tail_lines>"`
    - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" --fail-tail-lines "<fail_tail_lines>"`
    - Compile gate writes task-scoped event `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED` automatically.

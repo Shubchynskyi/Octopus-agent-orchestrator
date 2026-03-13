@@ -34,6 +34,7 @@ Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default
     ├── live/                     # Active rule and skill set for this project
     │   ├── config/review-capabilities.json # Optional specialist-review capability flags
     │   ├── config/paths.json     # Runtime roots and preflight trigger regexes
+    │   ├── config/output-filters.json # Shared gate-output filter profiles
     │   ├── docs/agent-rules/**   # Canonical rule set used by selected source-of-truth routing
     │   ├── docs/changes/CHANGELOG.md
     │   ├── docs/reviews/TEMPLATE.md
@@ -71,6 +72,7 @@ Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default
 - `Octopus-agent-orchestrator/live/docs/reviews/TEMPLATE.md` - canonical review artifact template.
 - `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md` - mandatory skill invocation policy.
 - `Octopus-agent-orchestrator/live/config/paths.json` - configurable preflight path roots and trigger regexes.
+- `Octopus-agent-orchestrator/live/config/output-filters.json` - shared compile/review output filter profiles for gate compaction.
 - `Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1` - path mode and required review preflight gate.
 - `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1` / `.sh` - mandatory compile gate before review phase.
 - `Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1` - mandatory post-review gate checker.

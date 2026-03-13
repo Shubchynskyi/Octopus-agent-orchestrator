@@ -31,12 +31,15 @@ script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
 sys.path.insert(0, str(script_dir / "lib"))
 
 from gate_utils import (
+    apply_output_filter_profile,
     append_metrics_event,
     append_task_event,
     assert_valid_task_id,
+    build_output_telemetry,
     file_sha256,
     normalize_path,
     parse_bool,
+    resolve_path_inside_repo,
     resolve_project_root,
 )
 
@@ -499,11 +502,13 @@ parser.add_argument("--skip-reason", default="")
 parser.add_argument("--override-artifact-path", default="")
 parser.add_argument("--compile-evidence-path", default="")
 parser.add_argument("--review-evidence-path", default="")
+parser.add_argument("--output-filters-path", default="Octopus-agent-orchestrator/live/config/output-filters.json")
 parser.add_argument("--metrics-path", default="")
 parser.add_argument("--emit-metrics", default="true")
 args = parser.parse_args()
 
 repo_root = resolve_project_root(script_dir)
+output_filters_path = resolve_path_inside_repo(args.output_filters_path, repo_root, allow_missing=True)
 
 preflight_path = Path(args.preflight_path)
 if not preflight_path.is_absolute():
@@ -634,6 +639,7 @@ review_evidence_context = {
     "mode": validated_preflight["mode"],
     "compile_evidence_path": compile_gate_evidence.get("evidence_path"),
     "compile_evidence_hash_sha256": compile_gate_evidence.get("evidence_hash"),
+    "output_filters_path": normalize_path(output_filters_path) if output_filters_path else None,
     "scope_drift": scope_drift,
     "required_reviews": validated_preflight["required_reviews"],
     "verdicts": {
@@ -653,6 +659,25 @@ review_evidence_context = {
 }
 
 if errors:
+    failure_output_lines = [
+        "REVIEW_GATE_FAILED",
+        f"Mode: {validated_preflight['mode']}",
+        "Violations:",
+        *[f"- {err}" for err in errors],
+    ]
+    failure_output_result = apply_output_filter_profile(
+        failure_output_lines,
+        output_filters_path,
+        "review_gate_console",
+    )
+    filtered_failure_output_lines = list(failure_output_result["lines"])
+    failure_output_telemetry = build_output_telemetry(
+        failure_output_lines,
+        filtered_failure_output_lines,
+        filter_mode=failure_output_result["filter_mode"],
+        fallback_mode=failure_output_result["fallback_mode"],
+    )
+    review_evidence_context["output_telemetry"] = failure_output_telemetry
     write_review_evidence(
         review_evidence_path=review_evidence_path,
         task_id=resolved_task_id,
@@ -671,9 +696,11 @@ if errors:
         "mode": validated_preflight["mode"],
         "skip_reviews": skip_reviews_list,
         "skip_reason": skip_reason,
+        "output_filters_path": normalize_path(output_filters_path) if output_filters_path else None,
         "compile_gate": compile_gate_evidence,
         "violations": errors,
     }
+    failure_event.update(failure_output_telemetry)
     append_metrics_event(metrics_path, failure_event, emit_metrics)
     append_task_event(
         repo_root=repo_root,
@@ -692,11 +719,8 @@ if errors:
         },
     )
 
-    print("REVIEW_GATE_FAILED")
-    print(f"Mode: {validated_preflight['mode']}")
-    print("Violations:")
-    for err in errors:
-        print(f"- {err}")
+    for line in filtered_failure_output_lines:
+        print(line)
     sys.exit(1)
 
 override_artifact_path = args.override_artifact_path.strip()
@@ -732,7 +756,33 @@ if skip_code:
     override_path.write_text(json.dumps(override_artifact, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     override_artifact_path = str(override_path)
 
+if skip_code:
+    success_output_lines = [
+        "REVIEW_GATE_PASSED_WITH_OVERRIDE",
+        f"Mode: {validated_preflight['mode']}",
+        "SkippedReviews: code",
+    ]
+    if override_artifact_path:
+        success_output_lines.append(f"OverrideArtifact: {override_artifact_path}")
+else:
+    success_output_lines = [
+        "REVIEW_GATE_PASSED",
+        f"Mode: {validated_preflight['mode']}",
+    ]
+success_output_result = apply_output_filter_profile(
+    success_output_lines,
+    output_filters_path,
+    "review_gate_console",
+)
+filtered_success_output_lines = list(success_output_result["lines"])
+success_output_telemetry = build_output_telemetry(
+    success_output_lines,
+    filtered_success_output_lines,
+    filter_mode=success_output_result["filter_mode"],
+    fallback_mode=success_output_result["fallback_mode"],
+)
 review_evidence_context["override_artifact"] = normalize_path(override_artifact_path) if override_artifact_path else None
+review_evidence_context["output_telemetry"] = success_output_telemetry
 write_review_evidence(
     review_evidence_path=review_evidence_path,
     task_id=resolved_task_id,
@@ -752,9 +802,11 @@ success_event = {
     "mode": validated_preflight["mode"],
     "skip_reviews": skip_reviews_list,
     "skip_reason": skip_reason,
+    "output_filters_path": normalize_path(output_filters_path) if output_filters_path else None,
     "compile_gate": compile_gate_evidence,
     "override_artifact": normalize_path(override_artifact_path) if override_artifact_path else None,
 }
+success_event.update(success_output_telemetry)
 append_metrics_event(metrics_path, success_event, emit_metrics)
 
 if skip_code:
@@ -774,10 +826,8 @@ if skip_code:
             "override_artifact": normalize_path(override_artifact_path) if override_artifact_path else None,
         },
     )
-    print("REVIEW_GATE_PASSED_WITH_OVERRIDE")
-    print(f"Mode: {validated_preflight['mode']}")
-    print("SkippedReviews: code")
-    print(f"OverrideArtifact: {override_artifact_path}")
+    for line in filtered_success_output_lines:
+        print(line)
 else:
     append_task_event(
         repo_root=repo_root,
@@ -795,6 +845,6 @@ else:
             "override_artifact": normalize_path(override_artifact_path) if override_artifact_path else None,
         },
     )
-    print("REVIEW_GATE_PASSED")
-    print(f"Mode: {validated_preflight['mode']}")
+    for line in filtered_success_output_lines:
+        print(line)
 PY

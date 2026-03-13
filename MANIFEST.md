@@ -33,6 +33,7 @@ Materialized inside `Octopus-agent-orchestrator/live` by `scripts/init.ps1`:
 - live/config/review-capabilities.json
 - live/config/paths.json
 - live/config/token-economy.json
+- live/config/output-filters.json
 - live/docs/agent-rules/**
 - live/docs/changes/**
 - live/docs/reviews/**
