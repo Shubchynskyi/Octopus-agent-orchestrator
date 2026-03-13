@@ -28,6 +28,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Supported depth values: `1`, `2`, `3`.
 - Default depth: `2`.
 - Depth never bypasses mandatory gates.
+- When token economy mode is enabled, use `depth=1` only for small, well-localized tasks; prefer `depth=2` when broader context may affect correctness.
 - Depth escalation applies when:
   - preflight returns `FULL_PATH`;
   - preflight requires specialized review (`db`, `security`, `refactor`, or enabled optional specialist review).
@@ -60,10 +61,13 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Completion gate validates compile evidence, review-gate evidence, doc-impact evidence, timeline integrity (`COMPILE_GATE_PASSED`, review pass evidence, `REWORK_STARTED` after latest `REVIEW_GATE_FAILED`), and required review artifacts.
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
   `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
+- Orchestrator control-plane files (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and internal docs such as `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are local workflow artifacts; in deployed workspaces their ignored status is normal.
 - Terminal statuses (`DONE`, `BLOCKED`) require full cleanup of temporary reviewer/specialist logs after required artifacts are persisted.
 - Documentation impact updates are required when behavior/contracts/ops docs changed.
+- Required changelog or evidence updates to ignored orchestrator paths must stay local on disk; do not use `git add -f` unless the user explicitly requests versioning orchestrator internals.
 - Final user report order is mandatory: implementation summary -> `git commit -m "<message>"` suggestion -> `Do you want me to commit now? (yes/no)`.
 - Reviewer and specialist agents must be closed after verdict capture.
+- HARD STOP: do not force-stage ignored orchestration control-plane files just because gates, changelog, or reviews reference them.
 - HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order.
 - If compile command or workflow infra files are hotfixed inside current task, scope is expanded and full re-run is mandatory: preflight -> compile gate -> required reviews gate -> doc impact gate -> completion gate.
 

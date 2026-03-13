@@ -20,6 +20,34 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Summary: Added completion gate scripts (`completion-gate.ps1` and `.sh`) to enforce final readiness before `DONE`, including timeline integrity checks (`COMPILE_GATE_PASSED`, review pass evidence, rework-after-failure), required review artifact validation, and task-event/metrics emission (`COMPLETION_GATE_PASSED` or `COMPLETION_GATE_FAILED`). Added explicit task resume protocol and hard completion stop in workflow/skill docs, wired completion gate into command catalog and provider bridge contract, and extended contract migrations/verification to enforce these rules on upgrades.
 - Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/00-core.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/40-commands.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/90-skill-catalog.md`; `Octopus-agent-orchestrator/template/skills/orchestration/SKILL.md`; `Octopus-agent-orchestrator/template/skills/orchestration/references/stage-gates.md`; `Octopus-agent-orchestrator/scripts/lib/rule-contract-migrations.ps1`; `Octopus-agent-orchestrator/scripts/verify.ps1`; `Octopus-agent-orchestrator/scripts/install.ps1`; `Octopus-agent-orchestrator/VERSION`; `Octopus-agent-orchestrator/README.md`
 
+## 2026-03-13 - Ignored orchestrator artifacts are normal
+- Task: ad-hoc
+- Type: behavior-change
+- Scope: orchestration / rules / provider bridges
+- Summary: Clarified that ignored orchestration control-plane files in deployed workspaces (`TASK.md`, `runtime/**`, and internal docs such as `live/docs/changes/CHANGELOG.md`) are expected local artifacts. Added explicit anti-`git add -f` guidance to task/workflow rules, orchestration skill, and generated bridge profiles so agents stop force-staging internal orchestration documents just because gates or changelog policy reference them.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/template/TASK.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/35-strict-coding-rules.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/40-commands.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/50-structure-and-docs.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/60-operating-rules.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md`; `Octopus-agent-orchestrator/template/skills/orchestration/SKILL.md`; `Octopus-agent-orchestrator/scripts/install.ps1`; `Octopus-agent-orchestrator/scripts/verify.ps1`
+
+## 2026-03-13 - Token economy init toggle and depth recommendation
+- Task: ad-hoc
+- Type: behavior-change
+- Scope: initialization / token economy / docs
+- Summary: Added a dedicated init question for whether token economy should be enabled by default, wired the answer into materialized `live/config/token-economy.json`, and documented that `enabled=true + depth=1` should be used only for small, well-localized tasks because it reduces reviewer context breadth.
+- Docs Updated: `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md`; `Octopus-agent-orchestrator/template/skills/orchestration/SKILL.md`; `Octopus-agent-orchestrator/scripts/install.ps1`; `Octopus-agent-orchestrator/scripts/init.ps1`; `Octopus-agent-orchestrator/scripts/verify.ps1`
+
+## 2026-03-13 - Update-time init answer migration for existing deployments
+- Task: ad-hoc
+- Type: behavior-change
+- Scope: update workflow / initialization / release metadata
+- Summary: Added a migration layer for `scripts/update.ps1` so existing deployments with older `runtime/init-answers.json` files automatically backfill missing keys from current live metadata when possible, prompt only for missing answers in interactive runs, and otherwise fall back to safe defaults with full migration details written to update report. The migrated init answers file is now covered by update rollback snapshot, and `check-update.ps1 -Apply -NoPrompt` suppresses nested init migration prompts for silent updates.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/MANIFEST.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/scripts/check-update.ps1`; `Octopus-agent-orchestrator/scripts/update.ps1`; `Octopus-agent-orchestrator/scripts/lib/init-answer-migrations.ps1`; `Octopus-agent-orchestrator/VERSION`
+
+## 2026-03-13 - Runtime model clarified for PowerShell wrappers vs shell gates
+- Task: ad-hoc
+- Type: behavior-change
+- Scope: documentation / runtime model
+- Summary: Clarified that top-level bundle maintenance scripts are PowerShell-first (`scripts/*.ps1`) and that sibling `scripts/*.sh` files are only compatibility wrappers requiring `pwsh`, while `live/scripts/agent-gates/*.sh` remain real Bash + Python implementations for task execution gates.
+- Docs Updated: `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/MANIFEST.md`; `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md`; `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`
+
 ## 2026-03-11 - Platform-agnostic reviewer routing and version bump
 - Task: ad-hoc
 - Type: behavior-change

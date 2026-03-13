@@ -4,6 +4,8 @@ All notable changes to this bundle are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-03-13
+
 ### Added
 - Update workflow with remote version check and optional auto-apply from git:
   - `scripts/check-update.ps1` / `scripts/check-update.sh`
@@ -21,6 +23,7 @@ All notable changes to this bundle are documented in this file.
   - `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh`
 
 ### Changed
+- Bundle version bumped to `1.0.5` for distribution and update detection via `scripts/check-update.ps1`.
 - Security + token-economy + cleanup contracts hardened:
   - `scripts/verify.ps1` now requires and validates `live/config/token-economy.json` schema (`enabled`, `enabled_depths`, `strip_*`, `scoped_diffs`, `compact_reviewer_output`, `fail_tail_lines`);
   - `scripts/install.ps1` provider bridge profiles now explicitly require re-reading `live/config/token-economy.json`;
@@ -35,6 +38,7 @@ All notable changes to this bundle are documented in this file.
   - uses latest template managed block;
   - migrates existing active queue rows from previous task file;
   - keeps previous managed block if safe queue parsing is not possible.
+- `classify-change.ps1` / `.sh` now normalize explicit changed-file input when multiple paths are passed as one comma/semicolon/newline-delimited string (prevents false `changed_files_count=1`).
 - Orchestration review contract:
   - mandatory immediate fallback self-review on single-agent platforms;
   - explicit reviewer-agent execution mapping and verdict-to-gate parameter mapping;
@@ -58,6 +62,23 @@ All notable changes to this bundle are documented in this file.
   - version consistency checks;
   - provider bridge contracts;
   - optional commit-guard enforcement checks.
+- Orchestrator git-boundary guidance hardened:
+  - rules and orchestration skill now explicitly treat ignored control-plane files (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) as normal local artifacts in deployed workspaces;
+  - generated redirect/provider bridge profiles now explicitly forbid `git add -f` for those ignored orchestrator files unless the user explicitly asks to version orchestrator internals;
+  - `scripts/verify.ps1` now enforces the new ignored-artifact contract in task/workflow docs and generated entrypoints.
+- Init flow now asks whether token economy should be enabled by default and syncs that answer into `live/config/token-economy.json`.
+- Documentation now recommends using `enabled=true + depth=1` only for small, well-localized tasks.
+- Update workflow now migrates missing init answers for existing deployments:
+  - infers missing values from current `live/version.json` / `live/config/token-economy.json` when possible;
+  - prompts only for missing answers during interactive update runs;
+  - applies safe defaults during non-interactive updates and records migration details in update report;
+  - includes migrated `runtime/init-answers.json` in update rollback snapshot;
+  - `check-update.ps1 -Apply -NoPrompt` now also suppresses update-time init migration prompts.
+- Documentation now explicitly separates runtime layers:
+  - top-level `scripts/*.ps1` are canonical control-plane implementations;
+  - top-level `scripts/*.sh` are `pwsh` wrappers only;
+  - `live/scripts/agent-gates/*.sh` remain real Bash + Python gate implementations.
+- Added root `.gitattributes` to normalize repository text files to `LF`, keep shell/Python scripts Unix-safe, and reduce noisy `LF -> CRLF` warnings on Windows.
 
 ## [1.0.4] - 2026-03-11
 

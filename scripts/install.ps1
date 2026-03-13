@@ -207,6 +207,15 @@ $artifactSourceOfTruth = $artifactSourceOfTruth.Trim()
 $artifactEnforceNoAutoCommitRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'EnforceNoAutoCommit'
 $enforceNoAutoCommit = Convert-ToBooleanAnswer -Value $artifactEnforceNoAutoCommitRaw -FieldName 'EnforceNoAutoCommit' -DefaultValue $false
 
+$artifactClaudeOrchestratorFullAccessRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'ClaudeOrchestratorFullAccess'
+if ([string]::IsNullOrWhiteSpace($artifactClaudeOrchestratorFullAccessRaw)) {
+    throw "Init answers artifact missing ClaudeOrchestratorFullAccess: $initAnswersResolvedPath"
+}
+$enableClaudeOrchestratorFullAccess = Convert-ToBooleanAnswer -Value $artifactClaudeOrchestratorFullAccessRaw -FieldName 'ClaudeOrchestratorFullAccess' -DefaultValue $false
+
+$artifactTokenEconomyEnabledRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'TokenEconomyEnabled'
+$tokenEconomyEnabled = Convert-ToBooleanAnswer -Value $artifactTokenEconomyEnabledRaw -FieldName 'TokenEconomyEnabled' -DefaultValue $false
+
 $artifactCollectedVia = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'CollectedVia'
 if ([string]::IsNullOrWhiteSpace($artifactCollectedVia)) {
     throw "Init answers artifact must include CollectedVia='AGENT_INIT_PROMPT.md': $initAnswersResolvedPath"
@@ -287,6 +296,7 @@ $managedEnd = '<!-- Octopus-agent-orchestrator:managed-end -->'
 $taskDeploymentDatePlaceholder = '{{DEPLOYMENT_DATE}}'
 $taskCanonicalEntrypointPlaceholder = '{{CANONICAL_ENTRYPOINT}}'
 $qwenSettingsRelativePath = '.qwen/settings.json'
+$claudeLocalSettingsRelativePath = '.claude/settings.local.json'
 $deploymentDate = (Get-Date).ToString('yyyy-MM-dd')
 $preCommitHookRelativePath = '.git/hooks/pre-commit'
 $commitGuardStart = '# Octopus-agent-orchestrator:commit-guard-start'
@@ -732,6 +742,7 @@ Canonical source of truth for agent workflow rules: `{CANONICAL_FILE}`.
 Read `{CANONICAL_FILE}` first, then follow its routing links.
 Hard stop: before any task execution, open `TASK.md` and `{CANONICAL_FILE}`.
 Do not implement tasks directly without orchestration preflight and required review gates.
+Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are expected local artifacts; never `git add -f` them unless the user explicitly asks to version orchestrator internals.
 For GitHub Copilot Agents, run task execution through `.github/agents/orchestrator.md`.
 For Windsurf Agents, run task execution through `.windsurf/agents/orchestrator.md`.
 For Junie Agents, run task execution through `.junie/agents/orchestrator.md`.
@@ -823,6 +834,102 @@ function Get-QwenSettingsContent {
     }
 }
 
+function Get-ClaudeLocalSettingsContent {
+    param(
+        [AllowNull()]
+        [string]$ExistingContent,
+        [bool]$EnableOrchestratorAccess = $false
+    )
+
+    $requiredAllowEntries = @()
+    if ($EnableOrchestratorAccess) {
+        $requiredAllowEntries = @(
+            'Bash(pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
+            'Bash(bash Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
+            'Bash(pwsh -File Octopus-agent-orchestrator/scripts/*:*)',
+            'Bash(bash Octopus-agent-orchestrator/scripts/*:*)',
+            'Bash(cd * && pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
+            'Bash(cd * && bash Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
+            'Bash(cd * && pwsh -File Octopus-agent-orchestrator/scripts/*:*)',
+            'Bash(cd * && bash Octopus-agent-orchestrator/scripts/*:*)',
+            'Bash(cd * && git diff *:*)',
+            'Bash(cd * && git log *:*)',
+            'Bash(grep -n * | head * && echo * && grep -n * | head *:*)',
+            'Bash(cd * && grep -n * | head * && echo * && grep -n * | head *:*)'
+        )
+    }
+
+    $settingsMap = [ordered]@{}
+    $needsUpdate = $false
+    $parseMode = 'default'
+
+    if (-not [string]::IsNullOrWhiteSpace($ExistingContent)) {
+        try {
+            $parsed = $ExistingContent | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+            if ($parsed -is [System.Collections.IDictionary]) {
+                foreach ($key in $parsed.Keys) {
+                    $settingsMap[$key] = $parsed[$key]
+                }
+                $parseMode = 'merge-existing'
+            } else {
+                $needsUpdate = $true
+                $parseMode = 'invalid-root'
+            }
+        }
+        catch {
+            $needsUpdate = $true
+            $parseMode = 'invalid-json'
+        }
+    } else {
+        $needsUpdate = $true
+    }
+
+    if (-not $settingsMap.Contains('permissions') -or -not ($settingsMap['permissions'] -is [System.Collections.IDictionary])) {
+        $settingsMap['permissions'] = [ordered]@{}
+        $needsUpdate = $true
+    }
+
+    $permissionsMap = $settingsMap['permissions']
+    $allowEntries = @()
+    if ($permissionsMap.Contains('allow')) {
+        foreach ($item in @($permissionsMap['allow'])) {
+            if ($null -eq $item) {
+                continue
+            }
+
+            $text = [string]$item
+            if ([string]::IsNullOrWhiteSpace($text)) {
+                continue
+            }
+
+            $allowEntries += $text.Trim()
+        }
+    }
+
+    $existingAllowSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($entry in $allowEntries) {
+        [void]$existingAllowSet.Add($entry)
+    }
+
+    foreach ($requiredEntry in $requiredAllowEntries) {
+        if (-not $existingAllowSet.Contains($requiredEntry)) {
+            $allowEntries += $requiredEntry
+            [void]$existingAllowSet.Add($requiredEntry)
+            $needsUpdate = $true
+        }
+    }
+
+    $permissionsMap['allow'] = $allowEntries
+    $settingsMap['permissions'] = $permissionsMap
+
+    $json = $settingsMap | ConvertTo-Json -Depth 20
+    return [PSCustomObject]@{
+        Content     = $json
+        NeedsUpdate = $needsUpdate
+        ParseMode   = $parseMode
+    }
+}
+
 function Get-ProviderOrchestratorAgentContent {
     param(
         [Parameter(Mandatory = $true)]
@@ -841,6 +948,7 @@ Canonical source of truth for agent workflow rules: `{CANONICAL_FILE}`.
 
 Hard stop: first open `{CANONICAL_FILE}` and `TASK.md`.
 Do not implement tasks directly without orchestration preflight and required review gates.
+Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are expected local artifacts; never `git add -f` them unless the user explicitly asks to version orchestrator internals.
 This provider profile is a strict bridge to Octopus skills and gate scripts.
 Do not execute task or review workflow with provider-default reviewer agents that bypass this bridge.
 
@@ -911,6 +1019,7 @@ Canonical source of truth for agent workflow rules: `{CANONICAL_FILE}`.
 
 Hard stop: first open `.github/agents/orchestrator.md`, `{CANONICAL_FILE}`, and `TASK.md`.
 Do not implement tasks directly without orchestration preflight and required review gates.
+Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are expected local artifacts; never `git add -f` them unless the user explicitly asks to version orchestrator internals.
 
 ## Skill Bridge Contract
 - Use this profile only as a bridge to skill: `{SKILL_PATH}`
@@ -1173,6 +1282,47 @@ if (Test-Path $qwenSettingsPath) {
     $deployed++
 }
 
+$claudeLocalSettingsPath = Join-Path $TargetRoot $claudeLocalSettingsRelativePath
+$claudeLocalSettingsDir = Split-Path -Parent $claudeLocalSettingsPath
+$claudeLocalSettingsExistingContent = $null
+if (Test-Path $claudeLocalSettingsPath) {
+    $claudeLocalSettingsExistingContent = Get-Content -Path $claudeLocalSettingsPath -Raw
+}
+$claudeLocalSettingsPlan = Get-ClaudeLocalSettingsContent -ExistingContent $claudeLocalSettingsExistingContent -EnableOrchestratorAccess $enableClaudeOrchestratorFullAccess
+$claudeLocalSettingsContent = $claudeLocalSettingsPlan.Content
+$claudeLocalSettingsNeedsUpdate = [bool]$claudeLocalSettingsPlan.NeedsUpdate
+$claudeLocalSettingsParseMode = [string]$claudeLocalSettingsPlan.ParseMode
+$claudeLocalSettingsUpdated = $false
+
+if ($enableClaudeOrchestratorFullAccess) {
+    if (Test-Path $claudeLocalSettingsPath) {
+        if (-not $PreserveExisting -or $claudeLocalSettingsNeedsUpdate) {
+            Backup-DestinationFile -DestinationPath $claudeLocalSettingsPath -RelativePath $claudeLocalSettingsRelativePath
+            if (-not $DryRun) {
+                Set-Content -Path $claudeLocalSettingsPath -Value $claudeLocalSettingsContent
+            }
+            $claudeLocalSettingsUpdated = $true
+            if ($PreserveExisting) {
+                $aligned++
+            } else {
+                $deployed++
+            }
+        }
+    } else {
+        if (-not $DryRun) {
+            if ($claudeLocalSettingsDir -and -not (Test-Path $claudeLocalSettingsDir)) {
+                New-Item -ItemType Directory -Path $claudeLocalSettingsDir -Force | Out-Null
+            }
+            Set-Content -Path $claudeLocalSettingsPath -Value $claudeLocalSettingsContent
+        }
+        $claudeLocalSettingsUpdated = $true
+        $deployed++
+    }
+} else {
+    $claudeLocalSettingsParseMode = 'disabled_by_init_answer'
+    $claudeLocalSettingsNeedsUpdate = $false
+}
+
 $providerOrchestratorProfiles = @(
     [PSCustomObject]@{
         ProviderLabel = 'GitHub Copilot'
@@ -1286,6 +1436,9 @@ $gitignoreEntries = @(
     '.windsurf/',
     '.github/copilot-instructions.md'
 )
+if ($enableClaudeOrchestratorFullAccess) {
+    $gitignoreEntries += '.claude/'
+}
 
 $gitignoreAdded = 0
 $gitignorePath = Join-Path $TargetRoot '.gitignore'
@@ -1329,7 +1482,7 @@ if ($RunInit -and -not $DryRun) {
         throw "Init script not found: $initScriptPath"
     }
 
-    & $initScriptPath -TargetRoot $TargetRoot -AssistantLanguage $AssistantLanguage -AssistantBrevity $AssistantBrevity -SourceOfTruth $SourceOfTruth -EnforceNoAutoCommit $enforceNoAutoCommit
+    & $initScriptPath -TargetRoot $TargetRoot -AssistantLanguage $AssistantLanguage -AssistantBrevity $AssistantBrevity -SourceOfTruth $SourceOfTruth -EnforceNoAutoCommit $enforceNoAutoCommit -TokenEconomyEnabled $tokenEconomyEnabled
     $initInvoked = $true
 }
 
@@ -1348,6 +1501,8 @@ if (-not $DryRun) {
         AssistantLanguage  = $AssistantLanguage
         AssistantBrevity   = $AssistantBrevity
         EnforceNoAutoCommit = $enforceNoAutoCommit
+        ClaudeOrchestratorFullAccess = $enableClaudeOrchestratorFullAccess
+        TokenEconomyEnabled = $tokenEconomyEnabled
         InitAnswersPath    = $initAnswersResolvedPath
     }
     $liveVersionJson = $liveVersionPayload | ConvertTo-Json -Depth 5
@@ -1368,6 +1523,8 @@ Write-Output "AssistantLanguage: $AssistantLanguage"
 Write-Output "AssistantBrevity: $AssistantBrevity"
 Write-Output "SourceOfTruth: $SourceOfTruth"
 Write-Output "EnforceNoAutoCommit: $enforceNoAutoCommit"
+Write-Output "ClaudeOrchestratorFullAccess: $enableClaudeOrchestratorFullAccess"
+Write-Output "TokenEconomyEnabled: $tokenEconomyEnabled"
 Write-Output "CanonicalEntrypoint: $canonicalEntryFile"
 Write-Output "FilesDeployed: $deployed"
 Write-Output "FilesForcedOverwrite: $forcedOverwrites"
@@ -1378,6 +1535,9 @@ Write-Output "GitignoreEntriesAdded: $gitignoreAdded"
 Write-Output "QwenSettingsParseMode: $qwenSettingsParseMode"
 Write-Output "QwenSettingsNeedsUpdate: $qwenSettingsNeedsUpdate"
 Write-Output "QwenSettingsUpdated: $qwenSettingsUpdated"
+Write-Output "ClaudeLocalSettingsParseMode: $claudeLocalSettingsParseMode"
+Write-Output "ClaudeLocalSettingsNeedsUpdate: $claudeLocalSettingsNeedsUpdate"
+Write-Output "ClaudeLocalSettingsUpdated: $claudeLocalSettingsUpdated"
 Write-Output "InitInvoked: $initInvoked"
 Write-Output "PreCommitHookPath: $preCommitHookRelativePath"
 Write-Output "PreCommitHookUpdated: $commitGuardHookUpdated"

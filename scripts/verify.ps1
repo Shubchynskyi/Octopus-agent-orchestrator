@@ -170,6 +170,8 @@ $artifactAssistantLanguage = $null
 $artifactAssistantBrevity = $null
 $artifactSourceOfTruth = $null
 $artifactEnforceNoAutoCommit = $false
+$artifactClaudeOrchestratorFullAccess = $false
+$artifactTokenEconomyEnabled = $false
 
 if ($null -eq $initAnswersCandidatePath) {
     # Path resolution violation already captured above.
@@ -232,6 +234,26 @@ if ($null -eq $initAnswersCandidatePath) {
                 $artifactEnforceNoAutoCommitRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'EnforceNoAutoCommit'
                 try {
                     $artifactEnforceNoAutoCommit = Convert-ToBooleanAnswer -Value $artifactEnforceNoAutoCommitRaw -FieldName 'EnforceNoAutoCommit' -DefaultValue $false
+                }
+                catch {
+                    $initAnswersContractViolations += $_.Exception.Message
+                }
+
+                $artifactClaudeOrchestratorFullAccessRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'ClaudeOrchestratorFullAccess'
+                if ([string]::IsNullOrWhiteSpace($artifactClaudeOrchestratorFullAccessRaw)) {
+                    $initAnswersContractViolations += "Init answers artifact missing ClaudeOrchestratorFullAccess: $initAnswersResolvedPath"
+                } else {
+                    try {
+                        $artifactClaudeOrchestratorFullAccess = Convert-ToBooleanAnswer -Value $artifactClaudeOrchestratorFullAccessRaw -FieldName 'ClaudeOrchestratorFullAccess' -DefaultValue $false
+                    }
+                    catch {
+                        $initAnswersContractViolations += $_.Exception.Message
+                    }
+                }
+
+                $artifactTokenEconomyEnabledRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'TokenEconomyEnabled'
+                try {
+                    $artifactTokenEconomyEnabled = Convert-ToBooleanAnswer -Value $artifactTokenEconomyEnabledRaw -FieldName 'TokenEconomyEnabled' -DefaultValue $false
                 }
                 catch {
                     $initAnswersContractViolations += $_.Exception.Message
@@ -352,6 +374,10 @@ foreach ($ruleFile in $ruleFiles) {
     $requiredPaths += "Octopus-agent-orchestrator/live/docs/agent-rules/$ruleFile"
 }
 
+if ($artifactClaudeOrchestratorFullAccess) {
+    $requiredPaths += '.claude/settings.local.json'
+}
+
 $strictManagedFiles = @()
 
 $taskManagedFile = 'TASK.md'
@@ -367,6 +393,9 @@ $gitignoreEntries = @(
     '.windsurf/',
     '.github/copilot-instructions.md'
 )
+if ($artifactClaudeOrchestratorFullAccess) {
+    $gitignoreEntries += '.claude/'
+}
 
 $managedStart = '<!-- Octopus-agent-orchestrator:managed-start -->'
 $managedEnd = '<!-- Octopus-agent-orchestrator:managed-end -->'
@@ -450,6 +479,13 @@ if (-not (Test-Path -LiteralPath $tokenEconomyPath -PathType Leaf)) {
 
             if ($property.Value -isnot [bool]) {
                 $tokenEconomyContractViolations += "$tokenEconomyRelativePath '$key' must be boolean."
+            }
+        }
+
+        $enabledProperty = $tokenEconomyConfig.PSObject.Properties['enabled']
+        if ($null -ne $enabledProperty -and $enabledProperty.Value -is [bool]) {
+            if ([bool]$enabledProperty.Value -ne $artifactTokenEconomyEnabled) {
+                $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'enabled' value '$($enabledProperty.Value)' must match init answers TokenEconomyEnabled '$artifactTokenEconomyEnabled'."
             }
         }
 
@@ -708,6 +744,28 @@ if (Test-Path -LiteralPath $liveVersionPath -PathType Leaf) {
         catch {
             $versionContractViolations += $_.Exception.Message
         }
+
+        $liveClaudeOrchestratorFullAccessRaw = Get-ObjectPropertyString -Object $liveVersionObject -PropertyName 'ClaudeOrchestratorFullAccess'
+        try {
+            $liveClaudeOrchestratorFullAccess = Convert-ToBooleanAnswer -Value $liveClaudeOrchestratorFullAccessRaw -FieldName 'ClaudeOrchestratorFullAccess' -DefaultValue $false
+            if ($liveClaudeOrchestratorFullAccess -ne $artifactClaudeOrchestratorFullAccess) {
+                $versionContractViolations += "$liveVersionRelativePath ClaudeOrchestratorFullAccess '$liveClaudeOrchestratorFullAccess' must match init answers value '$artifactClaudeOrchestratorFullAccess'."
+            }
+        }
+        catch {
+            $versionContractViolations += $_.Exception.Message
+        }
+
+        $liveTokenEconomyEnabledRaw = Get-ObjectPropertyString -Object $liveVersionObject -PropertyName 'TokenEconomyEnabled'
+        try {
+            $liveTokenEconomyEnabled = Convert-ToBooleanAnswer -Value $liveTokenEconomyEnabledRaw -FieldName 'TokenEconomyEnabled' -DefaultValue $false
+            if ($liveTokenEconomyEnabled -ne $artifactTokenEconomyEnabled) {
+                $versionContractViolations += "$liveVersionRelativePath TokenEconomyEnabled '$liveTokenEconomyEnabled' must match init answers value '$artifactTokenEconomyEnabled'."
+            }
+        }
+        catch {
+            $versionContractViolations += $_.Exception.Message
+        }
     }
 }
 
@@ -769,6 +827,9 @@ if (Test-Path $taskPath) {
         if ($taskManagedBlock -notmatch [regex]::Escape('Orchestrator mode starts when task execution is requested from this file (`TASK.md`).')) {
             $taskContractViolations += 'TASK.md must include explicit orchestrator start note.'
         }
+        if ($taskManagedBlock -notmatch [regex]::Escape('Do not force-add it to git unless the user explicitly asks to version orchestration control-plane files.')) {
+            $taskContractViolations += 'TASK.md must explain that it should not be force-added to git.'
+        }
     }
 } else {
     $taskContractViolations += 'TASK.md missing.'
@@ -808,6 +869,56 @@ if (Test-Path $qwenSettingsPath) {
     }
     catch {
         $qwenSettingsViolations += ".qwen/settings.json is not valid JSON: $($_.Exception.Message)"
+    }
+}
+
+$claudeLocalSettingsViolations = @()
+$claudeLocalSettingsPath = Join-Path $TargetRoot '.claude/settings.local.json'
+if ($artifactClaudeOrchestratorFullAccess -and (Test-Path $claudeLocalSettingsPath)) {
+    try {
+        $claudeLocalSettings = Get-Content -Path $claudeLocalSettingsPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $configuredAllowEntries = @()
+        if ($null -ne $claudeLocalSettings.PSObject.Properties['permissions']) {
+            $permissionsValue = $claudeLocalSettings.permissions
+            if ($null -ne $permissionsValue -and $null -ne $permissionsValue.PSObject.Properties['allow']) {
+                foreach ($item in @($permissionsValue.allow)) {
+                    if ($null -eq $item) {
+                        continue
+                    }
+
+                    $text = [string]$item
+                    if ([string]::IsNullOrWhiteSpace($text)) {
+                        continue
+                    }
+
+                    $configuredAllowEntries += $text.Trim()
+                }
+            }
+        }
+
+        $configuredAllowEntries = @($configuredAllowEntries | Sort-Object -Unique)
+        $requiredClaudeAllowEntries = @(
+            'Bash(pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
+            'Bash(bash Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
+            'Bash(pwsh -File Octopus-agent-orchestrator/scripts/*:*)',
+            'Bash(bash Octopus-agent-orchestrator/scripts/*:*)',
+            'Bash(cd * && pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
+            'Bash(cd * && bash Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
+            'Bash(cd * && pwsh -File Octopus-agent-orchestrator/scripts/*:*)',
+            'Bash(cd * && bash Octopus-agent-orchestrator/scripts/*:*)',
+            'Bash(cd * && git diff *:*)',
+            'Bash(cd * && git log *:*)',
+            'Bash(grep -n * | head * && echo * && grep -n * | head *:*)',
+            'Bash(cd * && grep -n * | head * && echo * && grep -n * | head *:*)'
+        )
+        foreach ($requiredEntry in $requiredClaudeAllowEntries) {
+            if ($configuredAllowEntries -notcontains $requiredEntry) {
+                $claudeLocalSettingsViolations += ".claude/settings.local.json must include permissions.allow entry ``$requiredEntry``."
+            }
+        }
+    }
+    catch {
+        $claudeLocalSettingsViolations += ".claude/settings.local.json is not valid JSON: $($_.Exception.Message)"
     }
 }
 
@@ -891,6 +1002,11 @@ if (Test-Path $commandsRulePath) {
         }
     }
 
+    $expectedCommandBoundaryLine = 'Do not use `git add -f` for ignored orchestration control-plane files (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`); their absence from staged diff is expected.'
+    if ($commandsContent -notmatch [regex]::Escape($expectedCommandBoundaryLine)) {
+        $commandsContractViolations += '40-commands.md must document ignored orchestration control-plane staging behavior.'
+    }
+
     $compileSectionMatch = [regex]::Match(
         $commandsContent,
         '(?ms)^### Compile Gate \(Mandatory\)\s*```[^\r\n]*\r?\n(?<body>.*?)\r?\n```'
@@ -950,6 +1066,51 @@ if (Test-Path $coreRulePath) {
     $coreRuleContractViolations += '00-core.md missing; core contract validation failed.'
 }
 
+$orchestratorGitBoundaryRuleChecks = @(
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md'
+        Required = @(
+            'Every completed runtime behavior-change task requires an entry in `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`.',
+            'this internal changelog is local orchestration evidence and may stay gitignored; update it on disk, but do not use `git add -f` unless the user explicitly asks to version orchestrator internals.'
+        )
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md'
+        Required = @(
+            '## Orchestrator Git Boundary',
+            'Their absence from `git status`, staged diff, or PR scope is normal and must not be treated as a workflow failure.'
+        )
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/live/docs/agent-rules/60-operating-rules.md'
+        Required = @(
+            'Never use `git add -f` / `git add --force` to stage ignored orchestration files just to satisfy gates or documentation bookkeeping.',
+            'If doc-impact or audit trail requires updates to ignored orchestrator files, write them on disk and continue without expanding the project commit scope unless the user explicitly asks for it.'
+        )
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md'
+        Required = @(
+            'Required changelog or evidence updates to ignored orchestrator paths must stay local on disk; do not use `git add -f` unless the user explicitly requests versioning orchestrator internals.',
+            'HARD STOP: do not force-stage ignored orchestration control-plane files just because gates, changelog, or reviews reference them.'
+        )
+    }
+)
+
+foreach ($check in $orchestratorGitBoundaryRuleChecks) {
+    $rulePath = Join-Path $TargetRoot $check.RelativePath
+    if (-not (Test-Path -LiteralPath $rulePath -PathType Leaf)) {
+        continue
+    }
+
+    $content = Get-Content -Path $rulePath -Raw
+    foreach ($snippet in @($check.Required)) {
+        if ($content -notmatch [regex]::Escape([string]$snippet)) {
+            $ruleFileViolations += "$($check.RelativePath) must include orchestrator git-boundary snippet '$snippet'."
+        }
+    }
+}
+
 $entrypointContractViolations = @()
 $canonicalEntrypointPath = Join-Path $TargetRoot $canonicalEntrypoint
 if (Test-Path $canonicalEntrypointPath) {
@@ -1000,6 +1161,11 @@ foreach ($redirectEntrypoint in $redirectEntrypoints) {
     $expectedRedirectGateLine = 'Do not implement tasks directly without orchestration preflight and required review gates.'
     if ($redirectContent -notmatch [regex]::Escape($expectedRedirectGateLine)) {
         $entrypointContractViolations += "$redirectEntrypoint must include direct-implementation prohibition for orchestration gates."
+    }
+
+    $expectedIgnoredArtifactsLine = 'Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are expected local artifacts; never `git add -f` them unless the user explicitly asks to version orchestrator internals.'
+    if ($redirectContent -notmatch [regex]::Escape($expectedIgnoredArtifactsLine)) {
+        $entrypointContractViolations += "$redirectEntrypoint must explain ignored orchestration control-plane git boundary."
     }
 
     $expectedProviderBridgeLines = @(
@@ -1064,6 +1230,11 @@ foreach ($profile in $providerOrchestratorProfiles) {
     $expectedGateLine = 'Do not implement tasks directly without orchestration preflight and required review gates.'
     if ($profileContent -notmatch [regex]::Escape($expectedGateLine)) {
         $providerAgentContractViolations += "$($profile.RelativePath) must include direct-implementation prohibition for orchestration gates."
+    }
+
+    $expectedIgnoredArtifactsLine = 'Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are expected local artifacts; never `git add -f` them unless the user explicitly asks to version orchestrator internals.'
+    if ($profileContent -notmatch [regex]::Escape($expectedIgnoredArtifactsLine)) {
+        $providerAgentContractViolations += "$($profile.RelativePath) must explain ignored orchestration control-plane git boundary."
     }
 
     foreach ($skillPath in $providerSkillPaths) {
@@ -1188,6 +1359,11 @@ foreach ($profile in $githubSkillBridgeProfiles) {
         $githubSkillBridgeContractViolations += "$($profile.RelativePath) must include direct-implementation prohibition for orchestration gates."
     }
 
+    $expectedIgnoredArtifactsLine = 'Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are expected local artifacts; never `git add -f` them unless the user explicitly asks to version orchestrator internals.'
+    if ($profileContent -notmatch [regex]::Escape($expectedIgnoredArtifactsLine)) {
+        $githubSkillBridgeContractViolations += "$($profile.RelativePath) must explain ignored orchestration control-plane git boundary."
+    }
+
     if ($profileContent -notmatch [regex]::Escape($profile.SkillPath)) {
         $githubSkillBridgeContractViolations += "$($profile.RelativePath) must route to skill '$($profile.SkillPath)'."
     }
@@ -1255,6 +1431,11 @@ $initPromptPath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/AGENT_INIT_P
 if (Test-Path -LiteralPath $initPromptPath -PathType Leaf) {
     $initPromptContent = Get-Content -Path $initPromptPath -Raw
     $requiredInitPromptSnippets = @(
+        'ask (5th mandatory question): `Дать полный доступ для Claude к файлам оркестратора? (yes/no)`',
+        'ask (6th mandatory question): `Включить token-economy режим по умолчанию? (yes/no)`',
+        'Hard-stop rule: **if all 6 answers are not collected, do not run installation**.',
+        '"ClaudeOrchestratorFullAccess": "<claude-orchestrator-full-access>"',
+        '"TokenEconomyEnabled": "<token-economy-enabled>"',
         '`Already configured specialist skills`:',
         '`Available specialist skills to enable/create now`:',
         '`Recommendation for this project`:',
@@ -1293,7 +1474,9 @@ if (Test-Path -LiteralPath $orchestrationSkillPath -PathType Leaf) {
         '-InfraReviewVerdict "<...>"',
         '-DependencyReviewVerdict "<...>"',
         'COMPLETION_GATE_PASSED',
-        'single-agent fallback mode (no Agent tool)'
+        'single-agent fallback mode (no Agent tool)',
+        'use `enabled=true` with `depth=1` only for small, well-localized tasks',
+        'do not `git add -f` them unless the user explicitly asks to version orchestrator internals.'
     )
 
     foreach ($snippet in $requiredSkillSnippets) {
@@ -1356,6 +1539,8 @@ Write-Output "TemplateRoot: $sourceRoot"
 Write-Output "SourceOfTruth: $SourceOfTruth"
 Write-Output "InitAnswersPath: $initAnswersResolvedPath"
 Write-Output "EnforceNoAutoCommit: $artifactEnforceNoAutoCommit"
+Write-Output "ClaudeOrchestratorFullAccess: $artifactClaudeOrchestratorFullAccess"
+Write-Output "TokenEconomyEnabled: $artifactTokenEconomyEnabled"
 Write-Output "CanonicalEntrypoint: $canonicalEntrypoint"
 Write-Output "RequiredPathsChecked: $($requiredPaths.Count)"
 Write-Output "MissingPathCount: $($missingPaths.Count)"
@@ -1370,6 +1555,7 @@ Write-Output "ManagedFilesChecked: $($strictManagedFiles.Count + 1 + $entrypoint
 Write-Output "StyleViolationCount: $($styleViolations.Count)"
 Write-Output "TaskContractViolationCount: $($taskContractViolations.Count)"
 Write-Output "QwenSettingsViolationCount: $($qwenSettingsViolations.Count)"
+Write-Output "ClaudeLocalSettingsViolationCount: $($claudeLocalSettingsViolations.Count)"
 Write-Output "RuleFileViolationCount: $($ruleFileViolations.Count)"
 Write-Output "TemplatePlaceholderViolationCount: $($templatePlaceholderViolations.Count)"
 Write-Output "CommandsContractViolationCount: $($commandsContractViolations.Count)"
@@ -1450,6 +1636,13 @@ if ($taskContractViolations.Count -gt 0) {
 if ($qwenSettingsViolations.Count -gt 0) {
     Write-Output 'QwenSettingsViolations:'
     foreach ($item in $qwenSettingsViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($claudeLocalSettingsViolations.Count -gt 0) {
+    Write-Output 'ClaudeLocalSettingsViolations:'
+    foreach ($item in $claudeLocalSettingsViolations) {
         Write-Output " - $item"
     }
 }
@@ -1556,6 +1749,7 @@ if (
     $styleViolations.Count -gt 0 -or
     $taskContractViolations.Count -gt 0 -or
     $qwenSettingsViolations.Count -gt 0 -or
+    $claudeLocalSettingsViolations.Count -gt 0 -or
     $ruleFileViolations.Count -gt 0 -or
     $templatePlaceholderViolations.Count -gt 0 -or
     $commandsContractViolations.Count -gt 0 -or

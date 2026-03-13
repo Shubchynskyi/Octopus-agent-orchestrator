@@ -56,6 +56,10 @@ Configured when `EnforceNoAutoCommit=true`:
 - .git/hooks/pre-commit (managed guard block)
 
 Kept inside bundle:
+- Control-plane scripts:
+  - canonical implementations: `scripts/*.ps1`
+  - compatibility wrappers: `scripts/*.sh` (invoke `pwsh`, not standalone Bash implementations)
+- Gate scripts under `live/scripts/agent-gates/*.ps1` and `*.sh` are materialized runtime implementations; `.sh` gate files are real shell variants.
 - template/**
 - scripts/install.ps1
 - scripts/install.sh
@@ -67,7 +71,9 @@ Kept inside bundle:
 - scripts/update.sh
 - scripts/check-update.ps1
 - scripts/check-update.sh
+- scripts/lib/init-answer-migrations.ps1
 - scripts/lib/rule-contract-migrations.ps1
+- .gitattributes
 - README.md
 - CHANGELOG.md
 - LICENSE

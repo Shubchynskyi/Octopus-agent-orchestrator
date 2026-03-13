@@ -109,11 +109,67 @@ def git_lines(repo_root: Path, args, failure_message: str):
     return [line for line in completed.stdout.splitlines() if line.strip()]
 
 
-def get_workspace_snapshot(repo_root: Path, detection_source: str, include_untracked: bool):
+def get_workspace_snapshot(repo_root: Path, detection_source: str, include_untracked: bool, explicit_changed_files=None):
     source = (detection_source or "git_auto").strip().lower()
     use_staged = source in {"git_staged_only", "git_staged_plus_untracked"}
     if source == "git_staged_only":
         include_untracked = False
+
+    normalized_explicit_changed_files = sorted(
+        {
+            normalize_path(item, trim=True, strip_dot_slash=True, strip_leading_slash=True)
+            for item in (explicit_changed_files or [])
+            if normalize_path(item, trim=True, strip_dot_slash=True, strip_leading_slash=True)
+        }
+    )
+    if source == "explicit_changed_files" and normalized_explicit_changed_files:
+        numstat_rows = git_lines(
+            repo_root,
+            ["diff", "--numstat", "--diff-filter=ACMRTUXB", "HEAD", "--", *normalized_explicit_changed_files],
+            "Failed to collect explicit changed lines snapshot.",
+        )
+        numstat_rows_by_path = {}
+        for row in numstat_rows:
+            parts = row.split("\t")
+            if len(parts) < 3:
+                continue
+            normalized = normalize_path(parts[2], trim=True, strip_dot_slash=True, strip_leading_slash=True)
+            if not normalized:
+                continue
+            numstat_rows_by_path[normalized] = (parts[0], parts[1])
+
+        additions_total = 0
+        deletions_total = 0
+        for item in normalized_explicit_changed_files:
+            if item in numstat_rows_by_path:
+                additions, deletions = numstat_rows_by_path[item]
+                if additions.isdigit():
+                    additions_total += int(additions)
+                if deletions.isdigit():
+                    deletions_total += int(deletions)
+                continue
+
+            candidate = repo_root / item
+            if candidate.is_file():
+                additions_total += count_file_lines(candidate)
+
+        changed_lines_total = additions_total + deletions_total
+        changed_files_sha256 = string_sha256("\n".join(normalized_explicit_changed_files))
+        scope_sha256 = string_sha256(
+            f"{source}|{False}|{include_untracked}|{len(normalized_explicit_changed_files)}|{changed_lines_total}|{changed_files_sha256}"
+        )
+        return {
+            "detection_source": source,
+            "use_staged": False,
+            "include_untracked": bool(include_untracked),
+            "changed_files": normalized_explicit_changed_files,
+            "changed_files_count": len(normalized_explicit_changed_files),
+            "additions_total": additions_total,
+            "deletions_total": deletions_total,
+            "changed_lines_total": changed_lines_total,
+            "changed_files_sha256": changed_files_sha256,
+            "scope_sha256": scope_sha256,
+        }
 
     diff_args = ["diff", "--name-only", "--diff-filter=ACMRTUXB"]
     diff_args.extend(["--cached"] if use_staged else ["HEAD"])
@@ -258,6 +314,7 @@ def get_compile_gate_evidence(repo_root: Path, task_id: str, preflight_path: Pat
         "evidence_source": None,
         "evidence_scope_detection_source": None,
         "evidence_scope_include_untracked": True,
+        "evidence_scope_changed_files": [],
         "evidence_scope_changed_files_count": 0,
         "evidence_scope_changed_lines_total": 0,
         "evidence_scope_changed_files_sha256": None,
@@ -296,6 +353,8 @@ def get_compile_gate_evidence(repo_root: Path, task_id: str, preflight_path: Pat
     recorded_source = str(evidence.get("event_source", "")).strip().lower()
     recorded_scope_detection_source = str(evidence.get("scope_detection_source", "")).strip().lower()
     recorded_scope_include_untracked = bool(evidence.get("scope_include_untracked", True))
+    recorded_scope_changed_files = [normalize_path(item, trim=True, strip_dot_slash=True, strip_leading_slash=True) for item in list(evidence.get("scope_changed_files") or [])]
+    recorded_scope_changed_files = [item for item in recorded_scope_changed_files if item]
     recorded_scope_changed_files_count = int(evidence.get("scope_changed_files_count", 0))
     recorded_scope_changed_lines_total = int(evidence.get("scope_changed_lines_total", 0))
     recorded_scope_changed_files_sha = str(evidence.get("scope_changed_files_sha256", "")).strip().lower()
@@ -309,6 +368,7 @@ def get_compile_gate_evidence(repo_root: Path, task_id: str, preflight_path: Pat
     result["evidence_source"] = recorded_source or None
     result["evidence_scope_detection_source"] = recorded_scope_detection_source or None
     result["evidence_scope_include_untracked"] = bool(recorded_scope_include_untracked)
+    result["evidence_scope_changed_files"] = recorded_scope_changed_files
     result["evidence_scope_changed_files_count"] = recorded_scope_changed_files_count
     result["evidence_scope_changed_lines_total"] = recorded_scope_changed_lines_total
     result["evidence_scope_changed_files_sha256"] = recorded_scope_changed_files_sha or None
@@ -359,7 +419,12 @@ def test_compile_scope_drift(repo_root: Path, compile_evidence: dict):
         return result
 
     include_untracked = bool(compile_evidence.get("evidence_scope_include_untracked", True))
-    current_scope = get_workspace_snapshot(repo_root, detection_source, include_untracked)
+    current_scope = get_workspace_snapshot(
+        repo_root,
+        detection_source,
+        include_untracked,
+        explicit_changed_files=compile_evidence.get("evidence_scope_changed_files") or [],
+    )
 
     result["detection_source"] = detection_source
     result["include_untracked"] = include_untracked

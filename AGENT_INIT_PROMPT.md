@@ -17,7 +17,11 @@ Create a fully working agent orchestration workspace where canonical rules live 
    - Wait for answer and store as `<source-of-truth>`.
    - In `<assistant-language>`, ask (4th mandatory question): `Нужно ли усилить запрет на автокоммит? (yes/no)`
    - Wait for answer and store as `<enforce-no-auto-commit>`.
-   - Hard-stop rule: **if all 4 answers are not collected, do not run installation**.
+   - In `<assistant-language>`, ask (5th mandatory question): `Дать полный доступ для Claude к файлам оркестратора? (yes/no)`
+   - Wait for answer and store as `<claude-orchestrator-full-access>`.
+   - In `<assistant-language>`, ask (6th mandatory question): `Включить token-economy режим по умолчанию? (yes/no)`
+   - Wait for answer and store as `<token-economy-enabled>`.
+   - Hard-stop rule: **if all 6 answers are not collected, do not run installation**.
 3. Save required init answers artifact to `Octopus-agent-orchestrator/runtime/init-answers.json`:
 ```json
 {
@@ -25,6 +29,8 @@ Create a fully working agent orchestration workspace where canonical rules live 
   "AssistantBrevity": "<assistant-brevity>",
   "SourceOfTruth": "<source-of-truth>",
   "EnforceNoAutoCommit": "<enforce-no-auto-commit>",
+  "ClaudeOrchestratorFullAccess": "<claude-orchestrator-full-access>",
+  "TokenEconomyEnabled": "<token-economy-enabled>",
   "CollectedVia": "AGENT_INIT_PROMPT.md"
 }
 ```
@@ -77,6 +83,7 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 - `Octopus-agent-orchestrator/live/project-discovery.md` exists.
 - `Octopus-agent-orchestrator/live/source-inventory.md` exists.
 - `Octopus-agent-orchestrator/live/version.json` exists and matches `Octopus-agent-orchestrator/VERSION`.
+- `Octopus-agent-orchestrator/live/config/token-economy.json` exists and its `enabled` flag matches `<token-economy-enabled>`.
 - if `<enforce-no-auto-commit>` is true: `.git/hooks/pre-commit` contains Octopus managed commit guard block.
 - `Octopus-agent-orchestrator/live/config/review-capabilities.json` exists.
 - `Octopus-agent-orchestrator/live/config/paths.json` exists.
@@ -92,10 +99,11 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 - Read existing project docs and legacy agent files as input context.
 - Do not migrate files by moving/removing them.
 - Keep changes minimal and deterministic.
-- Never run `install.ps1` before writing `Octopus-agent-orchestrator/runtime/init-answers.json` with all 4 required answers.
+- Never run `install.ps1` before writing `Octopus-agent-orchestrator/runtime/init-answers.json` with all 6 required answers.
 - Never run initialization by directly calling `install.ps1` outside this prompt flow.
 - After `<assistant-language>` is collected, continue all following user-facing questions and reports in `<assistant-language>`.
-- For gate scripts during task execution, auto-detect environment:
+- For top-level bundle maintenance entrypoints (`scripts/install|init|verify|update|check-update`), treat `.ps1` as canonical implementation. The sibling `.sh` files are only `pwsh` wrappers.
+- For gate scripts during task execution under `live/scripts/agent-gates/`, auto-detect environment:
   - prefer `.ps1` via `pwsh` when `pwsh` is available;
   - otherwise use `.sh` equivalents via `bash`.
 - When using `.sh` gate scripts, ensure a Python runtime is available in PATH (`python3`, `python`, or `py -3`).
@@ -109,6 +117,7 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
   - executing a task (`Execute task <task-id> depth=<1|2|3>`);
   - using default depth (`Execute task <task-id>`);
   - when to use `depth=1`, `depth=2`, and `depth=3`.
+  - if token economy is enabled, use `depth=1` only for small, well-localized tasks.
   - where tasks are defined: tasks are managed in the root `TASK.md` file.
   - updating orchestrator workspace:
     - `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`

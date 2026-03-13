@@ -2,7 +2,7 @@
 
 # Octopus Agent Orchestrator Bootstrap
 
-This bundle deploys Octopus Agent Orchestrator entrypoints into project root and materializes canonical rules inside `Octopus-agent-orchestrator/live/`.
+This bundle deploys Octopus Agent Orchestrator entrypoints into project root, materializes canonical rules inside `Octopus-agent-orchestrator/live/`, and includes built-in token-usage optimization via `Octopus-agent-orchestrator/live/config/token-economy.json`.
 
 ## Quick Start
 - User guide: `HOW_TO.md`
@@ -10,9 +10,16 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 - Full changelog: `CHANGELOG.md`
 
 ## Version
-- Current bundle version: `1.0.4` (source: `VERSION`)
-- Update command: `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1` (or `bash Octopus-agent-orchestrator/scripts/check-update.sh`); `-InitAnswersPath` is optional when using default `Octopus-agent-orchestrator/runtime/init-answers.json`
-- Last documentation update: `2026-03-11`
+- Current bundle version: `1.0.5` (source: `VERSION`)
+- Update command: `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1`
+- Optional shell wrapper: `bash Octopus-agent-orchestrator/scripts/check-update.sh` (still requires `pwsh`; wrapper only)
+- Last documentation update: `2026-03-13`
+
+## Runtime Model
+- Top-level bundle maintenance scripts under `Octopus-agent-orchestrator/scripts/*.ps1` are the canonical control-plane implementations for install/init/verify/update/check-update.
+- Sibling top-level `Octopus-agent-orchestrator/scripts/*.sh` files are thin compatibility wrappers that call the corresponding `.ps1` script through `pwsh`; they are not standalone Bash implementations.
+- Task-execution gate scripts under `Octopus-agent-orchestrator/live/scripts/agent-gates/*.ps1` and `*.sh` are real dual-runtime implementations.
+- Shell gate scripts require `bash` plus a Python runtime in PATH (`python3`, `python`, or `py -3`).
 
 ## Recent Changes (Short)
 - Added update workflow with version check and optional auto-apply from git (`scripts/check-update.ps1`, `scripts/update.ps1`).
@@ -23,6 +30,8 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 - Clarified orchestration review mechanics: mandatory fallback self-review and explicit final commit decision prompt.
 - Added hard compile gate before review phase (`live/scripts/agent-gates/compile-gate.ps1` and `.sh`) driven by `live/docs/agent-rules/40-commands.md`.
 - Added hard completion gate before `DONE` (`live/scripts/agent-gates/completion-gate.ps1` and `.sh`) with resume protocol and mandatory finalization checks.
+- Added token-usage optimization controls (`live/config/token-economy.json`) for compact gate output, scoped diffs, and deterministic fail-tail limits.
+- Added update-time init-answer migration for existing deployments, with inference/default fallback and rollback-safe persistence of `runtime/init-answers.json`.
 
 ## Design
 - Canonical rule set lives only in `Octopus-agent-orchestrator/live/docs/agent-rules/*`.
@@ -33,10 +42,16 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
 - Existing project docs and legacy agent files are read as context input only.
 - No automatic moving or deleting of legacy files.
 
+## Token Economy
+- Token cost optimization is built in via `Octopus-agent-orchestrator/live/config/token-economy.json`.
+- Controls include compact reviewer output, scoped diffs for heavy reviews, and compile fail-tail limit (`fail_tail_lines`).
+- Recommended default: use `enabled=true` with `depth=1` only for small, well-localized tasks; prefer `depth=2` when review correctness depends on broader context.
+
 ## What Is Deployed To Project Root
 - `CLAUDE.md` (always refreshed from template)
 - `AGENTS.md`
 - `GEMINI.md`
+- `.claude/settings.local.json` (optional; created/merged when `ClaudeOrchestratorFullAccess=true`, contains Claude Code local permissions allowlist for orchestrator scripts)
 - `.qwen/settings.json` (Qwen context bootstrap with `AGENTS.md` + `TASK.md`)
 - `TASK.md`
 - `.antigravity/rules.md`
@@ -81,7 +96,9 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root and
    - preferred default response brevity (`concise` or `detailed`).
    - preferred source-of-truth entrypoint: `Claude (CLAUDE.md) | Codex (AGENTS.md) | Gemini (GEMINI.md) | GitHubCopilot (.github/copilot-instructions.md) | Windsurf (.windsurf/rules/rules.md) | Junie (.junie/guidelines.md) | Antigravity (.antigravity/rules.md)`; all non-selected entrypoint files will redirect to the selected file.
    - whether to enforce hard no-auto-commit guard (`yes` or `no`).
-4. Agent must hard-stop setup unless all 4 answers are collected, then writes `Octopus-agent-orchestrator/runtime/init-answers.json`.
+   - whether to grant Claude full access to orchestrator files/commands (`yes` or `no`) so gate scripts and task-event logs run without extra permission prompts.
+   - whether token economy should be enabled by default (`yes` or `no`).
+4. Agent must hard-stop setup unless all 6 answers are collected, then writes `Octopus-agent-orchestrator/runtime/init-answers.json`.
 5. Agent executes install and init with `-InitAnswersPath`, then reads `live/project-discovery.md`.
 6. Agent updates context rules (`10/20/30/40/60`) and `live/config/paths.json` to match the real repository.
 7. Agent runs verify and manifest validation with the same `-InitAnswersPath`.
@@ -98,6 +115,7 @@ pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<Claude
 pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md
 ```
 
+Real shell alternatives exist for gate scripts under `live/scripts/agent-gates/`:
 ```bash
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"
@@ -118,14 +136,22 @@ pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1
 bash Octopus-agent-orchestrator/scripts/check-update.sh
 ```
 
+The Bash form above is only a wrapper to `check-update.ps1` and still requires `pwsh`.
+
 Behavior:
 - if current version equals latest: `UP_TO_DATE`;
-- if newer version exists: asks `Apply now? (y/N)` and updates on confirmation.
+- if newer version exists: asks `Apply now? (y/N)` and updates on confirmation;
+- during update, missing keys in `runtime/init-answers.json` are migrated automatically:
+  - first from existing `live/version.json` / `live/config/token-economy.json` when possible;
+  - otherwise by prompting only for missing answers in interactive mode;
+  - otherwise by safe defaults (for example `AssistantLanguage=English`) with migration details written to update report.
 
 Auto-apply (CI/non-interactive):
 ```powershell
 pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -Apply -NoPrompt
 ```
+
+`-Apply -NoPrompt` also suppresses missing init-answer prompts in the nested `update.ps1` call and relies on inference/defaults only.
 
 Optional flags (only when needed):
 - `-InitAnswersPath "<path>"` if `init-answers.json` is not in default location.
@@ -140,6 +166,11 @@ pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -RepoUrl "<git-ur
 Manual fallback:
 ```powershell
 pwsh -File Octopus-agent-orchestrator/scripts/update.ps1
+```
+
+Optional manual silent mode:
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -NoInitAnswerPrompt
 ```
 
 ## Work Example
@@ -193,12 +224,13 @@ Timeline:
 
 Optional commit message suggestion returned by agent:
 ```text
-feat(invoices): add CSV export endpoint with async email delivery hooks
+add CSV export endpoint with async email delivery hooks
 ```
 
 ## Important
 - Run initialization only through `AGENT_INIT_PROMPT.md`; do not run `scripts/install.ps1` directly.
 - `scripts/install.ps1` and `scripts/verify.ps1` require `Octopus-agent-orchestrator/runtime/init-answers.json` with collected init answers.
+- Top-level `scripts/*.ps1` are canonical; top-level `scripts/*.sh` are `pwsh` wrappers for the same control-plane entrypoints.
 - For upgrades, use `scripts/check-update.ps1` (or `scripts/update.ps1` if bundle already replaced).
 - Installer defaults to non-destructive mode for non-canonical entry files.
 - During upgrades, `TASK.md` uses latest template and migrates existing queue rows (tasks are preserved).
@@ -206,6 +238,8 @@ feat(invoices): add CSV export endpoint with async email delivery hooks
 - Installer creates backups in `Octopus-agent-orchestrator/runtime/backups/<timestamp>/`.
 - If `EnforceNoAutoCommit=true`, installer configures `.git/hooks/pre-commit` guard that blocks detected agent sessions while allowing normal human commits (including IDE), plus manual commit helpers in `live/scripts/agent-gates/human-commit.*`.
 - Installer updates `.gitignore` with managed agent entries.
+- Commit message format is project-defined; conventional commit prefixes (for example `feat(...)`) are optional unless your repository policy requires them.
+- If `ClaudeOrchestratorFullAccess=true`, installer merges `.claude/settings.local.json` and ensures `permissions.allow` entries for orchestrator `pwsh`/`bash` scripts (including `cd && git diff` patterns).
 - Preflight roots and trigger regexes are configurable in `live/config/paths.json`.
 - Compile gate command is configured in `live/docs/agent-rules/40-commands.md` under `### Compile Gate (Mandatory)` and is required before `IN_REVIEW`.
 - Compile gate enforces preflight scope freshness; scope drift requires re-preflight before compile.
@@ -213,7 +247,7 @@ feat(invoices): add CSV export endpoint with async email delivery hooks
 - Doc impact gate (`doc-impact-gate`) writes machine-checkable documentation impact evidence (`<task-id>-doc-impact.json`) before completion.
 - Completion gate (`completion-gate`) is required before `DONE`; it validates compile/review/doc-impact evidence, review-loop timeline integrity, and required review artifacts.
 - Command placeholders in `live/docs/agent-rules/40-commands.md` must be replaced with real project commands; verify fails on unresolved placeholders.
-- Gate scripts support both `pwsh` (`*.ps1`) and `bash` (`*.sh`); agent should auto-detect environment.
+- Gate scripts under `live/scripts/agent-gates/` support both `pwsh` (`*.ps1`) and `bash` (`*.sh`); agent should auto-detect environment there.
 - Bash gate scripts require a Python runtime in PATH (`python3`, `python`, or `py -3`).
 - Specialist skills added after init are project-specific and should be created only in `Octopus-agent-orchestrator/live/skills/**`.
 - Copilot bridge profiles re-read `live/docs/agent-rules/90-skill-catalog.md` and `live/config/review-capabilities.json`, so post-init specialist skills are included in routing.

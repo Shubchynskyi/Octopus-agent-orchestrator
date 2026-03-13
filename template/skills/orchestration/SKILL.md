@@ -39,6 +39,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 ## Token Economy
 - Config source: `Octopus-agent-orchestrator/live/config/token-economy.json`.
 - Activate only when `enabled=true` and effective depth is in `enabled_depths`.
+- Recommendation: use `enabled=true` with `depth=1` only for small, well-localized tasks; prefer `depth=2` or `depth=3` when correctness depends on broader context.
 - Depth-aware reviewer context loading when active:
   - `depth=1`: load task goal, changed files, required review flags, and minimal diff context only.
   - `depth=2`: load `depth=1` context plus required checklists and only relevant rule sections.
@@ -125,6 +126,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"`
    - Completion gate writes task-scoped event `COMPLETION_GATE_PASSED` or `COMPLETION_GATE_FAILED` automatically.
 15. Update required docs and changelog when behavior changed.
+   - Internal orchestration artifacts (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) may remain gitignored in deployed workspaces; update them on disk but do not `git add -f` them unless the user explicitly asks to version orchestrator internals.
 16. Record artifacts and evidence in `TASK.md`.
 17. Set final status:
    - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed.
@@ -214,6 +216,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Do not bypass required reviews without deterministic gate override contract.
 - Do not set `DONE` without passing compile gate, `required-reviews-check.ps1`, `doc-impact-gate.ps1`, and `completion-gate.ps1`.
 - Do not continue after compile/review when scope changed; rerun preflight and full mandatory gates.
+- Do not use `git add -f` to stage ignored orchestration control-plane files just because gates or changelog rules mention them.
 - Do not change final report order: summary -> `git commit -m` suggestion -> `Do you want me to commit now? (yes/no)`.
 - Do not leave reviewer/specialist agents open after review completion (when platform supports agent lifecycle controls).
 
@@ -255,5 +258,6 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Override rejected:
   - Scope is too large or specialized reviews are required; remove override and run full review path.
 - Git noise in dirty workspace:
-  - Stage task-specific files and run preflight with `-UseStaged`.
+  - Stage task-specific project files and run preflight with `-UseStaged`.
+  - Ignored orchestration control-plane files should stay unstaged unless the user explicitly asks to version them.
 

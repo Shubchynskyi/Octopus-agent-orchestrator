@@ -8,6 +8,9 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 3. Follow existing project code style and stack constraints from `10-project-context.md` and `30-code-style.md`.
 4. Do not create files unnecessarily.
 5. Reuse existing utilities and helpers.
+6. Respect gitignore boundaries for orchestration control-plane files; ignored `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and internal orchestrator docs are expected.
+7. Never use `git add -f` / `git add --force` to stage ignored orchestration files just to satisfy gates or documentation bookkeeping.
+8. If doc-impact or audit trail requires updates to ignored orchestrator files, write them on disk and continue without expanding the project commit scope unless the user explicitly asks for it.
 
 ## Execution Depth
 1. Resolve execution depth from user request as `depth=1`, `depth=2`, or `depth=3`; default is `depth=2`.

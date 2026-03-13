@@ -5,7 +5,8 @@ param(
     [string]$AssistantBrevity = 'concise',
     [ValidateSet('Claude', 'Codex', 'Gemini', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')]
     [string]$SourceOfTruth = 'Claude',
-    [bool]$EnforceNoAutoCommit = $false
+    [bool]$EnforceNoAutoCommit = $false,
+    [bool]$TokenEconomyEnabled = $false
 )
 
 $ErrorActionPreference = 'Stop'
@@ -642,6 +643,19 @@ if ($null -ne $tokenEconomyExistingConfig) {
     }
 }
 
+if (Test-Path -LiteralPath $tokenEconomyDestinationPath -PathType Leaf) {
+    try {
+        $materializedTokenEconomyConfig = Get-Content -LiteralPath $tokenEconomyDestinationPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        $materializedTokenEconomyConfig['enabled'] = [bool]$TokenEconomyEnabled
+        if (-not $DryRun) {
+            Set-Content -LiteralPath $tokenEconomyDestinationPath -Value ($materializedTokenEconomyConfig | ConvertTo-Json -Depth 12)
+        }
+    }
+    catch {
+        Write-Warning "Failed to apply TokenEconomyEnabled init answer to token economy config: $($_.Exception.Message)."
+    }
+}
+
 $legacyEntrypoints = @(
     'CLAUDE.md',
     'AGENTS.md',
@@ -764,6 +778,7 @@ $initReportLines += '- Assistant response language: ' + $AssistantLanguage
 $initReportLines += '- Assistant response brevity: ' + $AssistantBrevity
 $initReportLines += '- Source of truth entrypoint: ' + $SourceOfTruth
 $initReportLines += '- Hard no-auto-commit guard: ' + ($(if ($EnforceNoAutoCommit) { 'enabled' } else { 'disabled' }))
+$initReportLines += '- Token economy mode: ' + ($(if ($TokenEconomyEnabled) { 'enabled' } else { 'disabled' }))
 $initReportLines += '- Project discovery source: ' + $projectDiscovery.source
 $initReportLines += '- Project discovery stack signals: ' + $discoveredStackSummary
 $initReportLines += '- Project discovery top-level directories: ' + $discoveredDirectorySummary
@@ -820,6 +835,7 @@ if (-not $DryRun) {
             '- `depth=1`: simple or low-risk change.',
             '- `depth=2`: default for most tasks.',
             '- `depth=3`: high-risk or cross-cutting work.',
+            '- If token economy mode is enabled, use `depth=1` only for small, well-localized tasks; otherwise prefer `depth=2`.',
             '',
             '## Update Workspace',
             '- Check/update (recommended): `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`',
@@ -849,6 +865,7 @@ Write-Output "AssistantLanguage: $AssistantLanguage"
 Write-Output "AssistantBrevity: $AssistantBrevity"
 Write-Output "SourceOfTruth: $SourceOfTruth"
 Write-Output "EnforceNoAutoCommit: $EnforceNoAutoCommit"
+Write-Output "TokenEconomyEnabled: $TokenEconomyEnabled"
 Write-Output "RuleFilesMaterialized: $($ruleFiles.Count)"
 Write-Output "SupportDirectoriesSynced: $copiedSupportDirs"
 Write-Output "TokenEconomyConfigMergeStatus: $tokenEconomyConfigMergeStatus"

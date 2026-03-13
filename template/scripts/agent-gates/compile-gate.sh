@@ -158,11 +158,68 @@ def git_lines(repo_root: Path, args, failure_message: str):
     return [line for line in completed.stdout.splitlines() if line.strip()]
 
 
-def get_workspace_snapshot(repo_root: Path, detection_source: str, include_untracked: bool):
+def get_workspace_snapshot(repo_root: Path, detection_source: str, include_untracked: bool, explicit_changed_files=None):
     source = (detection_source or "git_auto").strip().lower()
     use_staged = source in {"git_staged_only", "git_staged_plus_untracked"}
     if source == "git_staged_only":
         include_untracked = False
+
+    normalized_explicit_changed_files = sorted(
+        {
+            normalize_path(item)
+            for item in (explicit_changed_files or [])
+            if normalize_path(item)
+        }
+    )
+    if source == "explicit_changed_files" and normalized_explicit_changed_files:
+        numstat_rows = git_lines(
+            repo_root,
+            ["diff", "--numstat", "--diff-filter=ACMRTUXB", "HEAD", "--", *normalized_explicit_changed_files],
+            "Failed to collect explicit changed lines snapshot.",
+        )
+        numstat_rows_by_path = {}
+        for row in numstat_rows:
+            parts = row.split("\t")
+            if len(parts) < 3:
+                continue
+            normalized = normalize_path(parts[2])
+            if not normalized:
+                continue
+            numstat_rows_by_path[normalized] = (parts[0], parts[1])
+
+        additions_total = 0
+        deletions_total = 0
+        for item in normalized_explicit_changed_files:
+            if item in numstat_rows_by_path:
+                additions, deletions = numstat_rows_by_path[item]
+                if additions.isdigit():
+                    additions_total += int(additions)
+                if deletions.isdigit():
+                    deletions_total += int(deletions)
+                continue
+
+            candidate = repo_root / item
+            if candidate.is_file():
+                additions_total += count_file_lines(candidate)
+
+        changed_lines_total = additions_total + deletions_total
+        files_fingerprint = string_sha256("\n".join(normalized_explicit_changed_files))
+        scope_fingerprint = string_sha256(
+            f"{source}|{False}|{include_untracked}|{len(normalized_explicit_changed_files)}|{changed_lines_total}|{files_fingerprint}"
+        )
+
+        return {
+            "detection_source": source,
+            "use_staged": False,
+            "include_untracked": bool(include_untracked),
+            "changed_files": normalized_explicit_changed_files,
+            "changed_files_count": len(normalized_explicit_changed_files),
+            "additions_total": additions_total,
+            "deletions_total": deletions_total,
+            "changed_lines_total": changed_lines_total,
+            "changed_files_sha256": files_fingerprint,
+            "scope_sha256": scope_fingerprint,
+        }
 
     diff_args = ["diff", "--name-only", "--diff-filter=ACMRTUXB"]
     diff_args.extend(["--cached"] if use_staged else ["HEAD"])
@@ -364,6 +421,7 @@ try:
         repo_root=repo_root,
         detection_source=preflight_context["detection_source"],
         include_untracked=bool(preflight_context["include_untracked"]),
+        explicit_changed_files=preflight_context["changed_files"],
     )
     scope_violations = []
     if workspace_snapshot["changed_files_sha256"] != preflight_context["changed_files_sha256"]:

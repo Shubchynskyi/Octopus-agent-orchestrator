@@ -1,0 +1,398 @@
+function Get-InitAnswerMigrationSchema {
+    return @(
+        [PSCustomObject]@{
+            Key                  = 'AssistantLanguage'
+            Type                 = 'string'
+            DefaultValue         = 'English'
+            PromptOnUpdate       = $true
+            LiveVersionProperty  = 'AssistantLanguage'
+            TokenConfigProperty  = $null
+            Prompt               = 'Missing init answer AssistantLanguage. Which language should be used for assistant explanations and help in this project?'
+            ChangeHint           = "Defaulting to 'English'. You can change it later in runtime/init-answers.json and rerun update."
+        },
+        [PSCustomObject]@{
+            Key                  = 'AssistantBrevity'
+            Type                 = 'enum'
+            AllowedValues        = @('concise', 'detailed')
+            DefaultValue         = 'concise'
+            PromptOnUpdate       = $true
+            LiveVersionProperty  = 'AssistantBrevity'
+            TokenConfigProperty  = $null
+            Prompt               = 'Missing init answer AssistantBrevity. What response brevity should be default: concise or detailed?'
+            ChangeHint           = "Defaulting to 'concise'. You can change it later in runtime/init-answers.json and rerun update."
+        },
+        [PSCustomObject]@{
+            Key                  = 'SourceOfTruth'
+            Type                 = 'enum'
+            AllowedValues        = @('Claude', 'Codex', 'Gemini', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')
+            DefaultValue         = 'Claude'
+            PromptOnUpdate       = $true
+            LiveVersionProperty  = 'SourceOfTruth'
+            TokenConfigProperty  = $null
+            Prompt               = 'Missing init answer SourceOfTruth. Which source-of-truth entrypoint should be canonical: Claude, Codex, Gemini, GitHubCopilot, Windsurf, Junie, or Antigravity?'
+            ChangeHint           = "Defaulting to 'Claude'. You can change it later in runtime/init-answers.json and rerun update."
+        },
+        [PSCustomObject]@{
+            Key                  = 'EnforceNoAutoCommit'
+            Type                 = 'boolean'
+            DefaultValue         = 'false'
+            PromptOnUpdate       = $true
+            LiveVersionProperty  = 'EnforceNoAutoCommit'
+            TokenConfigProperty  = $null
+            Prompt               = 'Missing init answer EnforceNoAutoCommit. Strengthen the no-auto-commit guard? (yes/no)'
+            ChangeHint           = "Defaulting to 'false'. You can change it later in runtime/init-answers.json and rerun update."
+        },
+        [PSCustomObject]@{
+            Key                  = 'ClaudeOrchestratorFullAccess'
+            Type                 = 'boolean'
+            DefaultValue         = 'false'
+            PromptOnUpdate       = $true
+            LiveVersionProperty  = 'ClaudeOrchestratorFullAccess'
+            TokenConfigProperty  = $null
+            Prompt               = 'Missing init answer ClaudeOrchestratorFullAccess. Give Claude full access to orchestrator files? (yes/no)'
+            ChangeHint           = "Defaulting to 'false'. You can change it later in runtime/init-answers.json and rerun update."
+        },
+        [PSCustomObject]@{
+            Key                  = 'TokenEconomyEnabled'
+            Type                 = 'boolean'
+            DefaultValue         = 'false'
+            PromptOnUpdate       = $true
+            LiveVersionProperty  = 'TokenEconomyEnabled'
+            TokenConfigProperty  = 'enabled'
+            Prompt               = 'Missing init answer TokenEconomyEnabled. Enable token-economy mode by default? (yes/no)'
+            ChangeHint           = "Defaulting to 'false'. You can change it later in runtime/init-answers.json and rerun update."
+        },
+        [PSCustomObject]@{
+            Key                  = 'CollectedVia'
+            Type                 = 'literal'
+            DefaultValue         = 'AGENT_INIT_PROMPT.md'
+            PromptOnUpdate       = $false
+            LiveVersionProperty  = $null
+            TokenConfigProperty  = $null
+            Prompt               = $null
+            ChangeHint           = "Backfilling CollectedVia='AGENT_INIT_PROMPT.md' for compatibility with current install/verify contracts."
+        }
+    )
+}
+
+function Test-UpdateInitAnswerPromptSupport {
+    try {
+        if (-not [Environment]::UserInteractive) {
+            return $false
+        }
+
+        if ([Console]::IsInputRedirected) {
+            return $false
+        }
+
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
+function Get-InitAnswerMigrationValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [object]$Answers,
+        [Parameter(Mandatory = $true)]
+        [string]$LogicalName
+    )
+
+    if ($null -eq $Answers) {
+        return $null
+    }
+
+    $targetKey = $LogicalName.ToLowerInvariant().Replace('_', '').Replace('-', '')
+    foreach ($property in $Answers.PSObject.Properties) {
+        $propertyKey = $property.Name.ToLowerInvariant().Replace('_', '').Replace('-', '')
+        if ($propertyKey -eq $targetKey) {
+            return $property.Value
+        }
+    }
+
+    return $null
+}
+
+function Set-InitAnswerMigrationValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Answers,
+        [Parameter(Mandatory = $true)]
+        [string]$LogicalName,
+        [AllowNull()]
+        [object]$Value
+    )
+
+    $targetKey = $LogicalName.ToLowerInvariant().Replace('_', '').Replace('-', '')
+    $matchingProperties = @()
+    foreach ($property in $Answers.PSObject.Properties) {
+        $propertyKey = $property.Name.ToLowerInvariant().Replace('_', '').Replace('-', '')
+        if ($propertyKey -eq $targetKey) {
+            $matchingProperties += $property.Name
+        }
+    }
+
+    foreach ($propertyName in $matchingProperties) {
+        if ($propertyName -ne $LogicalName) {
+            [void]$Answers.PSObject.Properties.Remove($propertyName)
+        }
+    }
+
+    $canonicalProperty = $Answers.PSObject.Properties[$LogicalName]
+    if ($null -ne $canonicalProperty) {
+        $canonicalProperty.Value = $Value
+        return
+    }
+
+    Add-Member -InputObject $Answers -MemberType NoteProperty -Name $LogicalName -Value $Value
+}
+
+function Copy-InitAnswersForMigration {
+    param(
+        [AllowNull()]
+        [object]$Answers
+    )
+
+    $copy = [ordered]@{}
+    if ($null -ne $Answers) {
+        foreach ($property in $Answers.PSObject.Properties) {
+            $copy[$property.Name] = $property.Value
+        }
+    }
+
+    return [PSCustomObject]$copy
+}
+
+function Get-InitAnswerMigrationObjectProperty {
+    param(
+        [AllowNull()]
+        [object]$Object,
+        [Parameter(Mandatory = $true)]
+        [string]$PropertyName
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$PropertyName]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
+function Convert-InitAnswerMigrationValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Definition,
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+
+    $trimmed = $text.Trim()
+    switch ($Definition.Type) {
+        'string' {
+            return $trimmed
+        }
+        'enum' {
+            foreach ($allowedValue in @($Definition.AllowedValues)) {
+                if ([string]::Equals($trimmed, [string]$allowedValue, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    return [string]$allowedValue
+                }
+            }
+
+            $allowedText = (@($Definition.AllowedValues) -join ', ')
+            throw "Unsupported value '$trimmed' for $($Definition.Key). Allowed values: $allowedText."
+        }
+        'boolean' {
+            switch ($trimmed.ToLowerInvariant()) {
+                '1' { return 'true' }
+                '0' { return 'false' }
+                'true' { return 'true' }
+                'false' { return 'false' }
+                'yes' { return 'true' }
+                'no' { return 'false' }
+                'y' { return 'true' }
+                'n' { return 'false' }
+                'да' { return 'true' }
+                'нет' { return 'false' }
+                default {
+                    throw "Unsupported value '$trimmed' for $($Definition.Key). Allowed values: true, false, yes, no, 1, 0."
+                }
+            }
+        }
+        'literal' {
+            return [string]$Definition.DefaultValue
+        }
+        default {
+            throw "Unsupported migration definition type '$($Definition.Type)' for $($Definition.Key)."
+        }
+    }
+}
+
+function Get-InitAnswerMigrationInference {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Definition,
+        [AllowNull()]
+        [object]$LiveVersion,
+        [AllowNull()]
+        [hashtable]$TokenEconomyConfig
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace([string]$Definition.LiveVersionProperty)) {
+        $liveValue = Get-InitAnswerMigrationObjectProperty -Object $LiveVersion -PropertyName $Definition.LiveVersionProperty
+        if ($null -ne $liveValue) {
+            try {
+                return [PSCustomObject]@{
+                    Value  = Convert-InitAnswerMigrationValue -Definition $Definition -Value $liveValue
+                    Source = 'live/version.json'
+                }
+            }
+            catch {
+                # Ignore invalid inference values and continue to the next source.
+            }
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace([string]$Definition.TokenConfigProperty) -and $null -ne $TokenEconomyConfig) {
+        if ($TokenEconomyConfig.ContainsKey([string]$Definition.TokenConfigProperty)) {
+            try {
+                return [PSCustomObject]@{
+                    Value  = Convert-InitAnswerMigrationValue -Definition $Definition -Value $TokenEconomyConfig[[string]$Definition.TokenConfigProperty]
+                    Source = 'live/config/token-economy.json'
+                }
+            }
+            catch {
+                # Ignore invalid inference values and continue to defaults/prompt.
+            }
+        }
+    }
+
+    return $null
+}
+
+function Read-InitAnswerMigrationPrompt {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Definition
+    )
+
+    $defaultValue = [string]$Definition.DefaultValue
+    $promptText = if ([string]::IsNullOrWhiteSpace($defaultValue)) {
+        [string]$Definition.Prompt
+    } else {
+        "$($Definition.Prompt) [$defaultValue]"
+    }
+
+    while ($true) {
+        $response = Read-Host $promptText
+        if ([string]::IsNullOrWhiteSpace($response)) {
+            return [PSCustomObject]@{
+                Value          = [string]$Definition.DefaultValue
+                UsedDefault    = $true
+                PromptResponse = $null
+            }
+        }
+
+        try {
+            $normalized = Convert-InitAnswerMigrationValue -Definition $Definition -Value $response
+            return [PSCustomObject]@{
+                Value          = $normalized
+                UsedDefault    = $false
+                PromptResponse = $response
+            }
+        }
+        catch {
+            Write-Warning $_.Exception.Message
+        }
+    }
+}
+
+function Invoke-UpdateInitAnswerMigration {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Answers,
+        [AllowNull()]
+        [object]$LiveVersion,
+        [AllowNull()]
+        [hashtable]$TokenEconomyConfig,
+        [Parameter(Mandatory = $true)]
+        [string]$InitAnswersPath,
+        [bool]$InteractivePrompting = $false
+    )
+
+    $workingAnswers = Copy-InitAnswersForMigration -Answers $Answers
+    $changes = @()
+
+    foreach ($definition in Get-InitAnswerMigrationSchema) {
+        $existingValue = Get-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key
+        $normalizedExistingValue = $null
+        try {
+            $normalizedExistingValue = Convert-InitAnswerMigrationValue -Definition $definition -Value $existingValue
+        }
+        catch {
+            # Keep invalid existing values untouched; the caller's validation stage will fail later.
+            continue
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace([string]$normalizedExistingValue)) {
+            continue
+        }
+
+        $inference = Get-InitAnswerMigrationInference -Definition $definition -LiveVersion $LiveVersion -TokenEconomyConfig $TokenEconomyConfig
+        if ($null -ne $inference -and -not [string]::IsNullOrWhiteSpace([string]$inference.Value)) {
+            Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $inference.Value
+            $changes += [PSCustomObject]@{
+                Key    = $definition.Key
+                Action = 'inferred'
+                Value  = [string]$inference.Value
+                Source = [string]$inference.Source
+                Note   = "Backfilled from $($inference.Source)."
+            }
+            continue
+        }
+
+        if ($InteractivePrompting -and $definition.PromptOnUpdate -and -not [string]::IsNullOrWhiteSpace([string]$definition.Prompt)) {
+            $promptResult = Read-InitAnswerMigrationPrompt -Definition $definition
+            Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $promptResult.Value
+            $changes += [PSCustomObject]@{
+                Key    = $definition.Key
+                Action = if ($promptResult.UsedDefault) { 'defaulted' } else { 'prompted' }
+                Value  = [string]$promptResult.Value
+                Source = if ($promptResult.UsedDefault) { 'default' } else { 'interactive_prompt' }
+                Note   = if ($promptResult.UsedDefault) { [string]$definition.ChangeHint } else { 'Collected during interactive update migration.' }
+            }
+            continue
+        }
+
+        $defaultValue = Convert-InitAnswerMigrationValue -Definition $definition -Value $definition.DefaultValue
+        Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $defaultValue
+        $changes += [PSCustomObject]@{
+            Key    = $definition.Key
+            Action = 'defaulted'
+            Value  = [string]$defaultValue
+            Source = 'default'
+            Note   = [string]$definition.ChangeHint
+        }
+    }
+
+    return [PSCustomObject]@{
+        Answers  = $workingAnswers
+        Changes  = @($changes)
+    }
+}

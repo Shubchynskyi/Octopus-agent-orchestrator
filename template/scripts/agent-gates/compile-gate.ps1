@@ -184,13 +184,80 @@ function Get-WorkspaceSnapshot {
     param(
         [string]$RepoRootPath,
         [string]$DetectionSource,
-        [bool]$IncludeUntracked
+        [bool]$IncludeUntracked,
+        [string[]]$ExplicitChangedFiles = @()
     )
 
     $sourceValue = if ([string]::IsNullOrWhiteSpace($DetectionSource)) { 'git_auto' } else { $DetectionSource.Trim().ToLowerInvariant() }
     $useStaged = $sourceValue -in @('git_staged_only', 'git_staged_plus_untracked')
     if ($sourceValue -eq 'git_staged_only') {
         $IncludeUntracked = $false
+    }
+
+    $normalizedExplicitChangedFiles = @(
+        $ExplicitChangedFiles |
+            ForEach-Object { Normalize-RelativePath $_ } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Sort-Object -Unique
+    )
+
+    if ($sourceValue -eq 'explicit_changed_files' -and $normalizedExplicitChangedFiles.Count -gt 0) {
+        $numstatRowsByPath = @{}
+        $numstatArgs = @('diff', '--numstat', '--diff-filter=ACMRTUXB', 'HEAD', '--') + $normalizedExplicitChangedFiles
+        $numstatRows = Invoke-GitLines -RepoRootPath $RepoRootPath -Arguments $numstatArgs -FailureMessage 'Failed to collect explicit changed lines snapshot.'
+        foreach ($row in $numstatRows) {
+            $parts = $row -split "`t"
+            if ($parts.Count -lt 3) {
+                continue
+            }
+
+            $normalizedPath = Normalize-RelativePath $parts[2]
+            if ([string]::IsNullOrWhiteSpace($normalizedPath)) {
+                continue
+            }
+
+            $numstatRowsByPath[$normalizedPath] = @{
+                additions = $parts[0]
+                deletions = $parts[1]
+            }
+        }
+
+        $additionsTotal = 0
+        $deletionsTotal = 0
+        foreach ($filePath in $normalizedExplicitChangedFiles) {
+            if ($numstatRowsByPath.ContainsKey($filePath)) {
+                $row = $numstatRowsByPath[$filePath]
+                if ($row.additions -match '^\d+$') {
+                    $additionsTotal += [int]$row.additions
+                }
+                if ($row.deletions -match '^\d+$') {
+                    $deletionsTotal += [int]$row.deletions
+                }
+                continue
+            }
+
+            $fullPath = Join-Path $RepoRootPath $filePath
+            if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
+                $additionsTotal += Get-FileLineCount -PathValue $fullPath
+            }
+        }
+
+        $changedLinesTotal = $additionsTotal + $deletionsTotal
+        $filesFingerprint = Get-StringSha256 -Text ($normalizedExplicitChangedFiles -join "`n")
+        $scopeFingerprint = Get-StringSha256 -Text ("{0}|{1}|{2}|{3}|{4}|{5}" -f $sourceValue, $false, $IncludeUntracked, $normalizedExplicitChangedFiles.Count, $changedLinesTotal, $filesFingerprint)
+
+        return [PSCustomObject]@{
+            detection_source = $sourceValue
+            use_staged = $false
+            include_untracked = [bool]$IncludeUntracked
+            changed_files = $normalizedExplicitChangedFiles
+            changed_files_count = $normalizedExplicitChangedFiles.Count
+            additions_total = $additionsTotal
+            deletions_total = $deletionsTotal
+            changed_lines_total = $changedLinesTotal
+            changed_files_sha256 = $filesFingerprint
+            scope_sha256 = $scopeFingerprint
+        }
     }
 
     $diffArgs = @('diff', '--name-only', '--diff-filter=ACMRTUXB')
@@ -594,7 +661,7 @@ try {
     $compileCommands = @(Get-CompileCommands -RulePath $resolvedCommandsPath)
     $resolvedPreflightPath = Resolve-PreflightPath -ExplicitPreflightPath $PreflightPath -RepoRootPath $RepoRoot -ResolvedTaskId $resolvedTaskId
     $preflightContext = Get-PreflightContext -PreflightPathValue $resolvedPreflightPath -ResolvedTaskId $resolvedTaskId
-    $workspaceSnapshot = Get-WorkspaceSnapshot -RepoRootPath $RepoRoot -DetectionSource $preflightContext.detection_source -IncludeUntracked $preflightContext.include_untracked
+    $workspaceSnapshot = Get-WorkspaceSnapshot -RepoRootPath $RepoRoot -DetectionSource $preflightContext.detection_source -IncludeUntracked $preflightContext.include_untracked -ExplicitChangedFiles $preflightContext.changed_files
 
     $scopeViolations = @()
     if ($workspaceSnapshot.changed_files_sha256 -ne $preflightContext.changed_files_sha256) {

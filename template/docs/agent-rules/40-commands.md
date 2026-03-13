@@ -91,6 +91,7 @@ Notes:
 - Bash gate scripts require a Python runtime in PATH (`python3`, `python`, or `py -3`).
 - In a dirty workspace, prefer `-UseStaged` after staging task-related tracked files.
 - `-UseStaged` includes untracked files by default (`-IncludeUntracked=$true` for `ps1`, `--include-untracked true` for `sh`), so new files are classified even before `git add`.
+- Do not use `git add -f` for ignored orchestration control-plane files (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`); their absence from staged diff is expected.
 - For maximum precision, pass planned task file list via `-ChangedFiles` (`ps1`) or repeated `--changed-file` (`sh`).
 - In a clean workspace, `classify-change.ps1` and `classify-change.sh` can auto-detect changed files from git without additional flags.
 - Compile gate is mandatory before review phase; run `compile-gate.ps1` / `compile-gate.sh` and treat non-zero result as blocking.

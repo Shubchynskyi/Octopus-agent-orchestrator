@@ -385,6 +385,9 @@ try {
                     TargetRoot      = $TargetRoot
                     InitAnswersPath = $InitAnswersPath
                 }
+                if ($NoPrompt) {
+                    $updateParams.NoInitAnswerPrompt = $true
+                }
                 if ($SkipVerify) {
                     $updateParams.SkipVerify = $true
                 }

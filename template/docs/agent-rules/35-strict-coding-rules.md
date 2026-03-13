@@ -119,6 +119,7 @@ Review checks:
 - API contract changes require API documentation updates.
 - Architecture or integration flow changes require updates in architecture docs or ADR records.
 - Every completed runtime behavior-change task requires an entry in `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`.
+- In normal deployed workspaces, this internal changelog is local orchestration evidence and may stay gitignored; update it on disk, but do not use `git add -f` unless the user explicitly asks to version orchestrator internals.
 
 ## Exceptions
 Any exception to these rules must be documented in a review artifact (PR description or task log entry) with:

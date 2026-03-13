@@ -8,6 +8,7 @@ Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default
 ├── CLAUDE.md                     # Claude entrypoint; canonical only when source-of-truth=Claude
 ├── AGENTS.md                     # Codex entrypoint; canonical only when source-of-truth=Codex (recommended gitignore)
 ├── GEMINI.md                     # Gemini entrypoint; canonical only when source-of-truth=Gemini
+├── .claude/settings.local.json   # Optional (when ClaudeOrchestratorFullAccess=true): Claude Code local permission allowlist for orchestrator scripts
 ├── .qwen/settings.json           # Qwen context bootstrap (`AGENTS.md` + `TASK.md`)
 ├── TASK.md                       # Task queue for orchestration (recommended gitignore)
 ├── .antigravity/rules.md         # Platform instruction file (recommended gitignore)
@@ -57,6 +58,7 @@ Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default
 - `CLAUDE.md` - Claude entrypoint (canonical only when selected).
 - `AGENTS.md` - Codex entrypoint (canonical only when selected).
 - `GEMINI.md` - Gemini entrypoint (canonical only when selected).
+- `.claude/settings.local.json` - optional (when `ClaudeOrchestratorFullAccess=true`): Claude Code local permission allowlist for orchestrator scripts.
 - `.qwen/settings.json` - Qwen context bootstrap (loads `AGENTS.md` and `TASK.md`).
 - `TASK.md` - canonical task list for agent execution workflow.
 - `.github/agents/orchestrator.md` - mandatory orchestration profile for GitHub Agents task execution.
@@ -82,3 +84,9 @@ Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default
 - `Octopus-agent-orchestrator/live/skills/db-review/SKILL.md` - DB review skill.
 - `Octopus-agent-orchestrator/live/skills/security-review/SKILL.md` - security review skill.
 - `Octopus-agent-orchestrator/live/skills/refactor-review/SKILL.md` - refactor review skill.
+
+## Orchestrator Git Boundary
+- In normal project deployments, local orchestration control-plane files are expected to stay gitignored.
+- This includes `TASK.md`, installer-managed provider bridge files, `Octopus-agent-orchestrator/runtime/**`, and internal orchestrator docs such as `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`.
+- Their absence from `git status`, staged diff, or PR scope is normal and must not be treated as a workflow failure.
+- Only stage or version these paths when the user explicitly requests orchestrator-source changes or the current repository is the orchestrator bundle source itself.

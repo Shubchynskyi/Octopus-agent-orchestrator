@@ -320,7 +320,11 @@ test_trigger_regexes = classification_config["test_trigger_regexes"]
 performance_trigger_regexes = classification_config["performance_trigger_regexes"]
 code_like_regexes = classification_config["code_like_regexes"]
 
-explicit_changed = list(args.changed_file)
+explicit_changed = []
+for raw_item in list(args.changed_file):
+    for item in re.split(r"[,\n;]+", str(raw_item)):
+        if item.strip():
+            explicit_changed.append(item.strip())
 if args.changed_files:
     for item in re.split(r"[,\n;]+", args.changed_files):
         if item.strip():

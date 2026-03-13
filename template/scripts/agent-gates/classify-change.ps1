@@ -38,6 +38,32 @@ function Normalize-Path {
     return Convert-GatePathToUnix -PathValue $PathValue -TrimValue -StripLeadingRelative
 }
 
+function Expand-ChangedFilesInput {
+    param([string[]]$Values)
+
+    $expanded = @()
+    foreach ($value in @($Values)) {
+        if ($null -eq $value) {
+            continue
+        }
+
+        $text = [string]$value
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            continue
+        }
+
+        foreach ($part in ($text -split "[`r`n,;]+")) {
+            if ([string]::IsNullOrWhiteSpace($part)) {
+                continue
+            }
+
+            $expanded += $part.Trim()
+        }
+    }
+
+    return @($expanded | Sort-Object -Unique)
+}
+
 function Assert-ValidTaskId {
     param([string]$Value)
 
@@ -371,6 +397,9 @@ $performanceTriggerRegexes = @($classificationConfig.performance_trigger_regexes
 $codeLikeRegexes = @($classificationConfig.code_like_regexes)
 
 $isExplicitChangedFiles = $PSBoundParameters.ContainsKey('ChangedFiles')
+if ($isExplicitChangedFiles) {
+    $ChangedFiles = Expand-ChangedFilesInput -Values $ChangedFiles
+}
 if ($isExplicitChangedFiles -and $UseStaged) {
     throw 'Use either -ChangedFiles or -UseStaged, but not both.'
 }

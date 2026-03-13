@@ -2,6 +2,7 @@ param(
     [string]$TargetRoot,
     [string]$InitAnswersPath = 'Octopus-agent-orchestrator/runtime/init-answers.json',
     [switch]$DryRun,
+    [switch]$NoInitAnswerPrompt,
     [switch]$SkipVerify,
     [switch]$SkipManifestValidation
 )
@@ -16,6 +17,12 @@ if (-not (Test-Path -LiteralPath $ruleContractMigrationModulePath -PathType Leaf
     throw "Rule contract migrations module not found: $ruleContractMigrationModulePath"
 }
 . $ruleContractMigrationModulePath
+
+$initAnswerMigrationModulePath = Join-Path $scriptDir 'lib/init-answer-migrations.ps1'
+if (-not (Test-Path -LiteralPath $initAnswerMigrationModulePath -PathType Leaf)) {
+    throw "Init answer migrations module not found: $initAnswerMigrationModulePath"
+}
+. $initAnswerMigrationModulePath
 
 if ([string]::IsNullOrWhiteSpace($TargetRoot)) {
     $TargetRoot = Split-Path -Parent $bundleRoot
@@ -103,12 +110,37 @@ function Resolve-PathInsideRoot {
     return $candidatePath
 }
 
+function Get-RelativePathInsideRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RootPath,
+        [Parameter(Mandatory = $true)]
+        [string]$PathValue
+    )
+
+    $rootFull = Get-NormalizedPath -PathValue $RootPath
+    $candidateFull = Get-NormalizedPath -PathValue $PathValue
+    if (-not (Test-IsPathInsideRoot -RootPath $rootFull -CandidatePath $candidateFull)) {
+        throw "Path '$candidateFull' must resolve inside root '$rootFull'."
+    }
+
+    return [System.IO.Path]::GetRelativePath($rootFull, $candidateFull).Replace('\', '/')
+}
+
 function Get-UpdateRollbackItems {
-    return @(
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RootPath,
+        [Parameter(Mandatory = $true)]
+        [string]$InitAnswersResolvedPath
+    )
+
+    $items = @(
         'CLAUDE.md',
         'AGENTS.md',
         'GEMINI.md',
         'TASK.md',
+        '.claude/settings.local.json',
         '.qwen/settings.json',
         '.github/copilot-instructions.md',
         '.github/agents',
@@ -122,6 +154,9 @@ function Get-UpdateRollbackItems {
         '.git/hooks/pre-commit',
         'Octopus-agent-orchestrator/live'
     )
+
+    $items += Get-RelativePathInsideRoot -RootPath $RootPath -PathValue $InitAnswersResolvedPath
+    return @($items | Sort-Object -Unique)
 }
 
 function New-RollbackSnapshot {
@@ -240,6 +275,59 @@ catch {
     throw "Init answers artifact is not valid JSON: $initAnswersResolvedPath"
 }
 
+$liveVersionPath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/live/version.json'
+$existingLiveVersion = $null
+$previousVersion = 'unknown'
+$previousVersionSource = 'missing'
+if (Test-Path -LiteralPath $liveVersionPath -PathType Leaf) {
+    try {
+        $existingLiveVersion = Get-Content -LiteralPath $liveVersionPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        if ($null -ne $existingLiveVersion -and $null -ne $existingLiveVersion.PSObject.Properties['Version']) {
+            $parsedVersion = [string]$existingLiveVersion.Version
+            if (-not [string]::IsNullOrWhiteSpace($parsedVersion)) {
+                $previousVersion = $parsedVersion.Trim()
+                $previousVersionSource = 'live/version.json'
+            } else {
+                $previousVersionSource = 'live/version.json-empty'
+            }
+        } else {
+            $previousVersionSource = 'live/version.json-no-version-field'
+        }
+    }
+    catch {
+        $previousVersionSource = 'live/version.json-invalid-json'
+    }
+}
+
+$tokenEconomyConfigPath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/live/config/token-economy.json'
+$existingTokenEconomyConfig = $null
+if (Test-Path -LiteralPath $tokenEconomyConfigPath -PathType Leaf) {
+    try {
+        $existingTokenEconomyConfig = Get-Content -LiteralPath $tokenEconomyConfigPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+    }
+    catch {
+        $existingTokenEconomyConfig = $null
+    }
+}
+
+$initAnswerMigrationPromptingEnabled = (Test-UpdateInitAnswerPromptSupport) -and (-not $NoInitAnswerPrompt)
+$initAnswerMigrationResult = Invoke-UpdateInitAnswerMigration `
+    -Answers $initAnswers `
+    -LiveVersion $existingLiveVersion `
+    -TokenEconomyConfig $existingTokenEconomyConfig `
+    -InitAnswersPath $initAnswersResolvedPath `
+    -InteractivePrompting $initAnswerMigrationPromptingEnabled
+$initAnswers = $initAnswerMigrationResult.Answers
+$initAnswerMigrationChanges = @($initAnswerMigrationResult.Changes)
+$initAnswerMigrationStatus = if ($initAnswerMigrationChanges.Count -gt 0) {
+    if ($DryRun) { 'DRY_RUN_PENDING' } else { 'PENDING_WRITE' }
+} else {
+    'NOT_NEEDED'
+}
+$initAnswerMigrationPromptedCount = @($initAnswerMigrationChanges | Where-Object { $_.Action -eq 'prompted' }).Count
+$initAnswerMigrationDefaultedCount = @($initAnswerMigrationChanges | Where-Object { $_.Action -eq 'defaulted' }).Count
+$initAnswerMigrationInferredCount = @($initAnswerMigrationChanges | Where-Object { $_.Action -eq 'inferred' }).Count
+
 $assistantLanguage = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'AssistantLanguage'
 if ([string]::IsNullOrWhiteSpace($assistantLanguage)) {
     throw "Init answers artifact missing AssistantLanguage: $initAnswersResolvedPath"
@@ -266,6 +354,24 @@ if ($allowedSources -notcontains $sourceOfTruth) {
     throw "Init answers artifact has unsupported SourceOfTruth '$sourceOfTruth'. Allowed values: $($allowedSources -join ', ')."
 }
 
+$claudeOrchestratorFullAccessRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'ClaudeOrchestratorFullAccess'
+if ([string]::IsNullOrWhiteSpace($claudeOrchestratorFullAccessRaw)) {
+    throw "Init answers artifact missing ClaudeOrchestratorFullAccess: $initAnswersResolvedPath"
+}
+$claudeOrchestratorFullAccessNormalized = $claudeOrchestratorFullAccessRaw.Trim().ToLowerInvariant()
+$allowedBooleanAnswers = @('1', '0', 'true', 'false', 'yes', 'no', 'y', 'n', 'да', 'нет')
+if ($allowedBooleanAnswers -notcontains $claudeOrchestratorFullAccessNormalized) {
+    throw "Init answers artifact has unsupported ClaudeOrchestratorFullAccess '$claudeOrchestratorFullAccessRaw'. Allowed values: true, false, yes, no, 1, 0."
+}
+
+$tokenEconomyEnabledRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'TokenEconomyEnabled'
+if (-not [string]::IsNullOrWhiteSpace($tokenEconomyEnabledRaw)) {
+    $tokenEconomyEnabledNormalized = $tokenEconomyEnabledRaw.Trim().ToLowerInvariant()
+    if ($allowedBooleanAnswers -notcontains $tokenEconomyEnabledNormalized) {
+        throw "Init answers artifact has unsupported TokenEconomyEnabled '$tokenEconomyEnabledRaw'. Allowed values: true, false, yes, no, 1, 0."
+    }
+}
+
 $bundleVersionPath = Join-Path $bundleRoot 'VERSION'
 if (-not (Test-Path -LiteralPath $bundleVersionPath -PathType Leaf)) {
     throw "Bundle version file not found: $bundleVersionPath"
@@ -274,29 +380,6 @@ if (-not (Test-Path -LiteralPath $bundleVersionPath -PathType Leaf)) {
 $bundleVersion = (Get-Content -LiteralPath $bundleVersionPath -Raw).Trim()
 if ([string]::IsNullOrWhiteSpace($bundleVersion)) {
     throw "Bundle version file is empty: $bundleVersionPath"
-}
-
-$liveVersionPath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/live/version.json'
-$previousVersion = 'unknown'
-$previousVersionSource = 'missing'
-if (Test-Path -LiteralPath $liveVersionPath -PathType Leaf) {
-    try {
-        $liveVersion = Get-Content -LiteralPath $liveVersionPath -Raw | ConvertFrom-Json -ErrorAction Stop
-        if ($null -ne $liveVersion -and $null -ne $liveVersion.PSObject.Properties['Version']) {
-            $parsedVersion = [string]$liveVersion.Version
-            if (-not [string]::IsNullOrWhiteSpace($parsedVersion)) {
-                $previousVersion = $parsedVersion.Trim()
-                $previousVersionSource = 'live/version.json'
-            } else {
-                $previousVersionSource = 'live/version.json-empty'
-            }
-        } else {
-            $previousVersionSource = 'live/version.json-no-version-field'
-        }
-    }
-    catch {
-        $previousVersionSource = 'live/version.json-invalid-json'
-    }
 }
 
 $installScriptPath = Join-Path $scriptDir 'install.ps1'
@@ -328,6 +411,7 @@ $manifestStatus = 'NOT_RUN'
 $updatedVersion = $bundleVersion
 $contractMigrationCount = 0
 $contractMigrationFiles = @()
+$initAnswerMigrationAppliedCount = $initAnswerMigrationChanges.Count
 
 $installParams = @{
     TargetRoot        = $TargetRoot
@@ -346,13 +430,27 @@ if (-not $DryRun) {
         New-Item -ItemType Directory -Path $rollbackRootDir -Force | Out-Null
     }
 
-    $rollbackRecords = New-RollbackSnapshot -RootPath $TargetRoot -SnapshotRoot $rollbackSnapshotPath -RelativePaths (Get-UpdateRollbackItems)
+    $rollbackRecords = New-RollbackSnapshot -RootPath $TargetRoot -SnapshotRoot $rollbackSnapshotPath -RelativePaths (Get-UpdateRollbackItems -RootPath $TargetRoot -InitAnswersResolvedPath $initAnswersResolvedPath)
     $rollbackRecordCount = $rollbackRecords.Count
     $rollbackSnapshotCreated = $true
 }
 
-$currentStage = 'INSTALL'
+$currentStage = 'INIT_ANSWER_MIGRATION'
 try {
+    if (-not $DryRun -and $initAnswerMigrationChanges.Count -gt 0) {
+        $initAnswersDirectory = Split-Path -Parent $initAnswersResolvedPath
+        if ($initAnswersDirectory -and -not (Test-Path -LiteralPath $initAnswersDirectory -PathType Container)) {
+            New-Item -ItemType Directory -Path $initAnswersDirectory -Force | Out-Null
+        }
+
+        $initAnswersJson = $initAnswers | ConvertTo-Json -Depth 10
+        Set-Content -LiteralPath $initAnswersResolvedPath -Value $initAnswersJson
+        $initAnswerMigrationStatus = 'PASS'
+    } elseif ($initAnswerMigrationChanges.Count -eq 0) {
+        $initAnswerMigrationStatus = 'NOT_NEEDED'
+    }
+
+    $currentStage = 'INSTALL'
     & $installScriptPath @installParams
     $installStatus = 'PASS'
 
@@ -410,6 +508,7 @@ try {
 }
 catch {
     switch ($currentStage) {
+        'INIT_ANSWER_MIGRATION' { $initAnswerMigrationStatus = 'FAIL' }
         'INSTALL' { $installStatus = 'FAIL' }
         'CONTRACT_MIGRATIONS' { $contractMigrationStatus = 'FAIL' }
         'VERIFY' { $verifyStatus = 'FAIL' }
@@ -467,7 +566,23 @@ if (-not $DryRun) {
     $reportLines += "BundleVersion: $bundleVersion"
     $reportLines += "UpdatedVersion: $updatedVersion"
     $reportLines += ''
+    $reportLines += '## InitAnswerMigration'
+    $reportLines += "Status: $initAnswerMigrationStatus"
+    $reportLines += "PromptingEnabled: $initAnswerMigrationPromptingEnabled"
+    $reportLines += "AppliedCount: $initAnswerMigrationAppliedCount"
+    $reportLines += "PromptedCount: $initAnswerMigrationPromptedCount"
+    $reportLines += "DefaultedCount: $initAnswerMigrationDefaultedCount"
+    $reportLines += "InferredCount: $initAnswerMigrationInferredCount"
+    if ($initAnswerMigrationChanges.Count -gt 0) {
+        foreach ($change in $initAnswerMigrationChanges) {
+            $reportLines += "- $($change.Key): action=$($change.Action); value=$($change.Value); source=$($change.Source); note=$($change.Note)"
+        }
+    } else {
+        $reportLines += '- Changes: none'
+    }
+    $reportLines += ''
     $reportLines += '## CommandStatus'
+    $reportLines += "InitAnswerMigration: $initAnswerMigrationStatus"
     $reportLines += "Install: $installStatus"
     $reportLines += "ContractMigrations: $contractMigrationStatus"
     $reportLines += "Verify: $verifyStatus"
@@ -490,6 +605,17 @@ Write-Output "RollbackSnapshotPath: $rollbackSnapshotRelativePath"
 Write-Output "RollbackSnapshotCreated: $rollbackSnapshotCreated"
 Write-Output "RollbackSnapshotRecordCount: $rollbackRecordCount"
 Write-Output "RollbackStatus: $rollbackStatus"
+Write-Output "InitAnswerMigrationStatus: $initAnswerMigrationStatus"
+Write-Output "InitAnswerMigrationPromptingEnabled: $initAnswerMigrationPromptingEnabled"
+Write-Output "InitAnswerMigrationCount: $initAnswerMigrationAppliedCount"
+Write-Output "InitAnswerMigrationPromptedCount: $initAnswerMigrationPromptedCount"
+Write-Output "InitAnswerMigrationDefaultedCount: $initAnswerMigrationDefaultedCount"
+Write-Output "InitAnswerMigrationInferredCount: $initAnswerMigrationInferredCount"
+if ($initAnswerMigrationChanges.Count -gt 0) {
+    foreach ($change in $initAnswerMigrationChanges) {
+        Write-Output "InitAnswerMigration[$($change.Key)]: action=$($change.Action); value=$($change.Value); source=$($change.Source); note=$($change.Note)"
+    }
+}
 Write-Output "AssistantLanguage: $assistantLanguage"
 Write-Output "AssistantBrevity: $assistantBrevity"
 Write-Output "SourceOfTruth: $sourceOfTruth"

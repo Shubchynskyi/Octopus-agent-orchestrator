@@ -3,6 +3,7 @@
 
 Single-file task queue for local agent orchestration.
 This file is intentionally expected to be gitignored.
+Do not force-add it to git unless the user explicitly asks to version orchestration control-plane files.
 
 Canonical instructions entrypoint for orchestration: `{{CANONICAL_ENTRYPOINT}}`.
 Hard stop: first open `{{CANONICAL_ENTRYPOINT}}` and follow its routing links. Only then execute any task from `TASK.md`.
