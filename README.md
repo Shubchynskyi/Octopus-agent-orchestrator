@@ -10,7 +10,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 - Full changelog: `CHANGELOG.md`
 
 ## Version
-- Current bundle version: `1.0.5` (source: `VERSION`)
+- Current bundle version: `1.0.6` (source: `VERSION`)
 - Update command: `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1`
 - Optional shell wrapper: `bash Octopus-agent-orchestrator/scripts/check-update.sh` (still requires `pwsh`; wrapper only)
 - Last documentation update: `2026-03-13`
@@ -261,4 +261,3 @@ MIT License. See `LICENSE`.
 - Dmytro Shubchynskyi
 - Email: d.shubchynskyi@gmail.com
 - LinkedIn: https://www.linkedin.com/in/shubchynskyi
-

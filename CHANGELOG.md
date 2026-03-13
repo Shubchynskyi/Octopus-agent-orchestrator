@@ -4,6 +4,11 @@ All notable changes to this bundle are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-03-13
+
+### Changed
+- Bundle version bumped to `1.0.6` for distribution and update detection via `scripts/check-update.ps1`.
+
 ### Fixed
 - Update-time rule contract migrations now backfill the ignored orchestrator git-boundary snippets required by `scripts/verify.ps1` for existing deployments, so `scripts/update.ps1` no longer fails during VERIFY when older live rule files are missing the newer `35/40/50/60/80` guardrails.
 
