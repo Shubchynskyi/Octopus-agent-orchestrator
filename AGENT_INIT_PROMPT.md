@@ -15,11 +15,11 @@ Create a fully working agent orchestration workspace where canonical rules live 
    - Wait for answer and store as `<assistant-brevity>`.
    - In `<assistant-language>`, ask: `Which source-of-truth file should be canonical for rules: Claude (CLAUDE.md), Codex (AGENTS.md), Gemini (GEMINI.md), GitHubCopilot (.github/copilot-instructions.md), Windsurf (.windsurf/rules/rules.md), Junie (.junie/guidelines.md), or Antigravity (.antigravity/rules.md)? All non-selected entrypoint files will redirect to this selected file.`
    - Wait for answer and store as `<source-of-truth>`.
-   - In `<assistant-language>`, ask (4th mandatory question): `Нужно ли усилить запрет на автокоммит? (yes/no)`
+   - In `<assistant-language>`, ask (4th mandatory question): a localized equivalent of `Should the no-auto-commit guard be strengthened? (yes/no)`
    - Wait for answer and store as `<enforce-no-auto-commit>`.
-   - In `<assistant-language>`, ask (5th mandatory question): `Дать полный доступ для Claude к файлам оркестратора? (yes/no)`
+   - In `<assistant-language>`, ask (5th mandatory question): a localized equivalent of `Give Claude full access to orchestrator files? (yes/no)`
    - Wait for answer and store as `<claude-orchestrator-full-access>`.
-   - In `<assistant-language>`, ask (6th mandatory question): `Включить token-economy режим по умолчанию? (yes/no)`
+   - In `<assistant-language>`, ask (6th mandatory question): a localized equivalent of `Enable token-economy mode by default? (yes/no)`
    - Wait for answer and store as `<token-economy-enabled>`.
    - Hard-stop rule: **if all 6 answers are not collected, do not run installation**.
 3. Save required init answers artifact to `Octopus-agent-orchestrator/runtime/init-answers.json`:

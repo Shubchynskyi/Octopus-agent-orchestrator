@@ -7,6 +7,7 @@ param(
     [string]$PreflightPath,
     [string]$PathsConfigPath = 'Octopus-agent-orchestrator/live/config/paths.json',
     [string]$OutputPath = '',
+    [string]$MetadataPath = '',
     [string]$FullDiffPath = '',
     [switch]$UseStaged,
     [string]$RepoRoot
@@ -159,6 +160,24 @@ function Resolve-OutputPath {
     return Join-Path $preflightDirectory "$baseName-$ReviewTypeValue-scoped.diff"
 }
 
+function Resolve-MetadataPath {
+    param(
+        [string]$ExplicitMetadataPath,
+        [string]$ResolvedPreflightPath,
+        [string]$ReviewTypeValue,
+        [string]$RepoRootPath
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitMetadataPath)) {
+        return Resolve-PathInsideRepo -PathValue $ExplicitMetadataPath -RepoRootPath $RepoRootPath -AllowMissing
+    }
+
+    $preflightDirectory = Split-Path -Parent $ResolvedPreflightPath
+    $preflightName = [System.IO.Path]::GetFileNameWithoutExtension($ResolvedPreflightPath)
+    $baseName = [regex]::Replace($preflightName, '-preflight$', '')
+    return Join-Path $preflightDirectory "$baseName-$ReviewTypeValue-scoped.json"
+}
+
 function Get-LineCount {
     param([string]$Text)
 
@@ -236,6 +255,7 @@ $gitRepoRoot = Resolve-GitRootPath -RepoRootPath $RepoRoot
 $resolvedPreflightPath = Resolve-PathInsideRepo -PathValue $PreflightPath -RepoRootPath $RepoRoot
 $resolvedPathsConfigPath = Resolve-PathInsideRepo -PathValue $PathsConfigPath -RepoRootPath $RepoRoot
 $resolvedOutputPath = Resolve-OutputPath -ExplicitOutputPath $OutputPath -ResolvedPreflightPath $resolvedPreflightPath -ReviewTypeValue $ReviewType -RepoRootPath $RepoRoot
+$resolvedMetadataPath = Resolve-MetadataPath -ExplicitMetadataPath $MetadataPath -ResolvedPreflightPath $resolvedPreflightPath -ReviewTypeValue $ReviewType -RepoRootPath $RepoRoot
 $resolvedFullDiffPath = if ([string]::IsNullOrWhiteSpace($FullDiffPath)) { $null } else { Resolve-PathInsideRepo -PathValue $FullDiffPath -RepoRootPath $RepoRoot -AllowMissing }
 
 $preflight = Get-Content -LiteralPath $resolvedPreflightPath -Raw | ConvertFrom-Json
@@ -297,6 +317,7 @@ $result = [ordered]@{
     preflight_path = Normalize-Path $resolvedPreflightPath
     paths_config_path = Normalize-Path $resolvedPathsConfigPath
     output_path = Normalize-Path $resolvedOutputPath
+    metadata_path = Normalize-Path $resolvedMetadataPath
     git_repo_root = Normalize-Path $gitRepoRoot
     full_diff_path = Normalize-Path $resolvedFullDiffPath
     full_diff_source = $fullDiffSource
@@ -308,9 +329,13 @@ $result = [ordered]@{
     output_diff_line_count = Get-LineCount -Text $outputDiffText
 }
 
+Ensure-ParentDirectory -PathValue $resolvedMetadataPath
+Set-Content -LiteralPath $resolvedMetadataPath -Value ($result | ConvertTo-Json -Depth 10)
+
 Write-Output 'SCOPED_DIFF_READY'
 Write-Output "ReviewType: $ReviewType"
 Write-Output "MatchedFilesCount: $($matchedFiles.Count)"
 Write-Output "FallbackToFullDiff: $($fallbackToFullDiff.ToString().ToLowerInvariant())"
 Write-Output "OutputPath: $(Normalize-Path $resolvedOutputPath)"
+Write-Output "MetadataPath: $(Normalize-Path $resolvedMetadataPath)"
 Write-Output ($result | ConvertTo-Json -Depth 10)

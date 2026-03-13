@@ -51,7 +51,9 @@ After successful setup:
 - Preflight path and trigger config exists: `Octopus-agent-orchestrator/live/config/paths.json`
 - Token-economy config exists: `Octopus-agent-orchestrator/live/config/token-economy.json` (compact output and fail-tail controls).
 - Output-filter config exists: `Octopus-agent-orchestrator/live/config/output-filters.json` (shared gate-output filter profiles).
+- Review-context helper artifacts can be generated in `Octopus-agent-orchestrator/runtime/reviews/*-review-context.json` when token economy mode is active.
 - Discovery report exists: `Octopus-agent-orchestrator/live/project-discovery.md`
+- Usage guide exists: `Octopus-agent-orchestrator/live/USAGE.md`
 - Deployment version metadata exists: `Octopus-agent-orchestrator/live/version.json`
 - If enabled in init answers, no-auto-commit guard exists in `.git/hooks/pre-commit` and blocks detected agent sessions while keeping normal human commits available.
 - Builder skill exists: `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md`
@@ -96,6 +98,9 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --rationale "<why>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.sh --review-type "<db|security>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" --metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.sh --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --depth 2 --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh --task-id "<task-id>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "Octopus-agent-orchestrator/MANIFEST.md"
 ```
 Agent policy: auto-detect environment and run `.ps1` with `pwsh` when available, otherwise run `.sh` with `bash`.
@@ -124,9 +129,11 @@ Behavior:
 - if update is available: asks `Apply now? (y/N)`;
 - for CI/non-interactive mode: use `-Apply -NoPrompt`;
 - if `runtime/init-answers.json` is missing newer keys, update migrates them automatically:
-  - first by inferring values from existing `live/version.json` and `live/config/token-economy.json`;
-  - then by asking only the missing questions in interactive mode;
-  - otherwise by applying safe defaults and recording the decision in update report.
+  - in interactive mode, new user-facing settings are asked even when a safe value can be inferred from existing live state;
+  - when such an inferred value exists, update presents it as the recommended default answer instead of applying it silently;
+  - in non-interactive mode, update still infers values from existing `live/version.json` and `live/config/token-economy.json` when possible;
+  - otherwise it applies safe defaults and records the decision in update report.
+- during refresh, `init.ps1` preserves existing `live/config/output-filters.json` values and fills in any newly introduced template keys.
 
 ```powershell
 pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -Apply -NoPrompt -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
@@ -149,6 +156,7 @@ What update pipeline does:
 - syncs bundle files with backup to `Octopus-agent-orchestrator/runtime/bundle-backups/<timestamp>/`;
 - reads `AssistantLanguage`, `AssistantBrevity`, `SourceOfTruth`, `EnforceNoAutoCommit`, `ClaudeOrchestratorFullAccess`, and `TokenEconomyEnabled` from `runtime/init-answers.json`;
 - if some init answers are missing, backfills them into `runtime/init-answers.json` before install and includes that file in rollback snapshot;
+- preserves existing `live/config/output-filters.json` values while merging newly introduced template keys;
 - runs install/init sync, verification, and manifest validation;
 - rebuilds `TASK.md` from latest template and migrates existing queue rows from previous `TASK.md`;
 - if queue migration cannot be parsed safely, keeps existing `TASK.md` managed block unchanged;
@@ -181,4 +189,3 @@ The agent should use `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL
 - enable capability flags in `Octopus-agent-orchestrator/live/config/review-capabilities.json` when needed;
 - align trigger regexes in `Octopus-agent-orchestrator/live/config/paths.json` when new modules or file patterns are introduced;
 - re-run verification and manifest validation.
-

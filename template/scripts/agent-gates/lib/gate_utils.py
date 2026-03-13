@@ -171,6 +171,9 @@ def build_output_telemetry(
     *,
     filter_mode: str = "passthrough",
     fallback_mode: str = "none",
+    parser_mode: str = "NONE",
+    parser_name: str = "",
+    parser_strategy: str = "",
 ) -> dict:
     raw_line_list = to_string_array(raw_lines)
     filtered_line_list = to_string_array(filtered_lines)
@@ -188,6 +191,9 @@ def build_output_telemetry(
         "estimated_saved_tokens": estimated_saved_tokens,
         "filter_mode": filter_mode.strip() if str(filter_mode).strip() else "passthrough",
         "fallback_mode": str(fallback_mode).strip() if str(fallback_mode).strip() else "none",
+        "parser_mode": str(parser_mode).strip().upper() if str(parser_mode).strip() else "NONE",
+        "parser_name": str(parser_name).strip() if str(parser_name).strip() else None,
+        "parser_strategy": str(parser_strategy).strip() if str(parser_strategy).strip() else None,
     }
 
 
@@ -215,6 +221,31 @@ def _resolve_filter_int(value: Any, context: Optional[dict], field_name: str, mi
     return result
 
 
+def _resolve_filter_str(
+    value: Any,
+    context: Optional[dict],
+    field_name: str,
+    *,
+    allow_empty: bool = False,
+) -> str:
+    resolved_value = value
+    if isinstance(value, dict) and isinstance(value.get("context_key"), str) and value.get("context_key").strip():
+        context_key = value["context_key"].strip()
+        if not isinstance(context, dict) or context_key not in context:
+            raise ValueError(f"{field_name} references missing context key '{context_key}'.")
+        resolved_value = context[context_key]
+
+    if resolved_value is None:
+        if allow_empty:
+            return ""
+        raise ValueError(f"{field_name} must resolve to non-empty string.")
+
+    text = str(resolved_value).strip()
+    if not text and not allow_empty:
+        raise ValueError(f"{field_name} must resolve to non-empty string.")
+    return text
+
+
 def _get_filter_patterns(operation: dict) -> List[str]:
     patterns_value = operation.get("patterns", operation.get("pattern"))
     patterns = to_string_array(patterns_value, trim_values=True)
@@ -235,6 +266,288 @@ def _select_tail_lines(lines: List[str], count: int) -> List[str]:
     if count <= 0:
         return []
     return list(lines[-count:])
+
+
+def _add_unique_lines(destination: List[str], seen: set[str], lines: Any, *, limit: int = 0) -> None:
+    for line_value in to_string_array(lines):
+        line_text = str(line_value)
+        if not line_text.strip() or line_text in seen:
+            continue
+        destination.append(line_text)
+        seen.add(line_text)
+        if limit > 0 and len(destination) >= limit:
+            break
+
+
+def _select_matching_lines(lines: List[str], patterns: List[str], *, limit: int = 0) -> List[str]:
+    matches: List[str] = []
+    for line in lines:
+        if any(re.search(pattern, line) for pattern in patterns):
+            matches.append(line)
+            if limit > 0 and len(matches) >= limit:
+                break
+    return matches
+
+
+def _get_compile_failure_strategy_config(strategy: str) -> dict:
+    normalized = (strategy or "").strip().lower()
+    if normalized == "maven":
+        return {
+            "display_name": "maven",
+            "full_patterns": [
+                r"^\[ERROR\]",
+                r"BUILD FAILURE",
+                r"COMPILATION ERROR",
+                r"Failed to execute goal",
+                r"There are test failures",
+                r"Tests run: .*Failures:",
+                r"Re-run Maven",
+            ],
+            "degraded_patterns": [r"^\[ERROR\]", r"^\[WARNING\]", r"BUILD FAILURE", r"error"],
+        }
+    if normalized == "gradle":
+        return {
+            "display_name": "gradle",
+            "full_patterns": [
+                r"^FAILURE: Build failed with an exception\.",
+                r"^BUILD FAILED",
+                r"Execution failed for task",
+                r"^\* What went wrong:",
+                r"^> .*",
+                r"^> Task .*FAILED",
+            ],
+            "degraded_patterns": [r"^FAILURE:", r"^BUILD FAILED", r"FAILED", r"error"],
+        }
+    if normalized == "node":
+        return {
+            "display_name": "node-build",
+            "full_patterns": [
+                r"^npm ERR!",
+                r"^ERR!",
+                r"Command failed with exit code",
+                r"Failed to compile",
+                r"ERROR in",
+                r"Type error",
+                r"Module not found",
+            ],
+            "degraded_patterns": [r"^npm ERR!", r"warning", r"error", r"failed"],
+        }
+    if normalized == "cargo":
+        return {
+            "display_name": "cargo",
+            "full_patterns": [
+                r"^error(\[[A-Z0-9]+\])?:",
+                r"^Caused by:",
+                r"could not compile",
+                r"^failures:",
+                r"^test result: FAILED",
+            ],
+            "degraded_patterns": [r"^warning:", r"^error", r"FAILED"],
+        }
+    if normalized == "dotnet":
+        return {
+            "display_name": "dotnet",
+            "full_patterns": [
+                r"^Build FAILED\.",
+                r"^\s*error [A-Z]{2,}\d+:",
+                r"^\s*warning [A-Z]{2,}\d+:",
+                r"^Failed!  - Failed:",
+                r"^Test Run Failed\.",
+            ],
+            "degraded_patterns": [r"^\s*error ", r"^\s*warning ", r"FAILED"],
+        }
+    if normalized == "go":
+        return {
+            "display_name": "go",
+            "full_patterns": [
+                r"^# ",
+                r"^--- FAIL:",
+                r"^FAIL(\s|$)",
+                r"^panic:",
+                r"cannot use",
+                r"undefined:",
+            ],
+            "degraded_patterns": [r"^FAIL", r"^panic:", r"error"],
+        }
+    return {
+        "display_name": "generic-compile",
+        "full_patterns": [r"error", r"failed", r"exception", r"cannot ", r"undefined", r"not found"],
+        "degraded_patterns": [r"warning", r"error", r"failed"],
+    }
+
+
+def _invoke_compile_failure_parser(lines: List[str], parser_config: dict, context: Optional[dict]) -> dict:
+    strategy = _resolve_filter_str(parser_config.get("strategy"), context, "parser.strategy", allow_empty=True)
+    if not strategy:
+        strategy = _resolve_filter_str({"context_key": "command_filter_strategy"}, context, "parser.strategy_context", allow_empty=True)
+    if not strategy:
+        strategy = "generic"
+
+    config = _get_compile_failure_strategy_config(strategy)
+    max_matches = _resolve_filter_int(parser_config.get("max_matches"), context, "parser.max_matches", minimum=1)
+    tail_count = _resolve_filter_int(parser_config.get("tail_count"), context, "parser.tail_count", minimum=0)
+
+    full_matches = _select_matching_lines(lines, config["full_patterns"], limit=max_matches)
+    if full_matches:
+        summary_lines: List[str] = []
+        seen: set[str] = set()
+        _add_unique_lines(summary_lines, seen, [f"CompactSummary: FULL | strategy={config['display_name']}"])
+        _add_unique_lines(summary_lines, seen, full_matches, limit=max_matches + 1)
+        if tail_count > 0:
+            _add_unique_lines(summary_lines, seen, _select_tail_lines(lines, tail_count))
+        return {
+            "lines": summary_lines,
+            "parser_mode": "FULL",
+            "parser_name": "compile_failure_summary",
+            "parser_strategy": config["display_name"],
+            "fallback_mode": "none",
+        }
+
+    degraded_matches = _select_matching_lines(lines, config["degraded_patterns"], limit=max(max_matches, 8))
+    if degraded_matches:
+        summary_lines = []
+        seen = set()
+        _add_unique_lines(summary_lines, seen, [f"CompactSummary: DEGRADED | strategy={config['display_name']}"])
+        _add_unique_lines(summary_lines, seen, degraded_matches, limit=max(max_matches, 8) + 1)
+        if tail_count > 0:
+            _add_unique_lines(summary_lines, seen, _select_tail_lines(lines, tail_count))
+        return {
+            "lines": summary_lines,
+            "parser_mode": "DEGRADED",
+            "parser_name": "compile_failure_summary",
+            "parser_strategy": config["display_name"],
+            "fallback_mode": "none",
+        }
+
+    return {
+        "lines": list(lines),
+        "parser_mode": "PASSTHROUGH",
+        "parser_name": "compile_failure_summary",
+        "parser_strategy": config["display_name"],
+        "fallback_mode": "parser_passthrough",
+    }
+
+
+def _invoke_test_failure_parser(lines: List[str], parser_config: dict, context: Optional[dict]) -> dict:
+    max_matches = _resolve_filter_int(parser_config.get("max_matches"), context, "parser.max_matches", minimum=1)
+    tail_count = _resolve_filter_int(parser_config.get("tail_count"), context, "parser.tail_count", minimum=0)
+    patterns = [
+        r"^--- FAIL:",
+        r"^FAIL(\s|$)",
+        r"^FAILED",
+        r"^failures?:",
+        r"^panic:",
+        r"^AssertionError",
+        r"^Error:",
+        r"[0-9]+\s+failed",
+        r"Test Run Failed",
+        r"[✕×]",
+    ]
+    matches = _select_matching_lines(lines, patterns, limit=max_matches)
+    if matches:
+        summary_lines: List[str] = []
+        seen: set[str] = set()
+        _add_unique_lines(summary_lines, seen, ["CompactSummary: FULL | strategy=test"])
+        _add_unique_lines(summary_lines, seen, matches, limit=max_matches + 1)
+        if tail_count > 0:
+            _add_unique_lines(summary_lines, seen, _select_tail_lines(lines, tail_count))
+        return {
+            "lines": summary_lines,
+            "parser_mode": "FULL",
+            "parser_name": "test_failure_summary",
+            "parser_strategy": "test",
+            "fallback_mode": "none",
+        }
+
+    return {
+        "lines": list(lines),
+        "parser_mode": "PASSTHROUGH",
+        "parser_name": "test_failure_summary",
+        "parser_strategy": "test",
+        "fallback_mode": "parser_passthrough",
+    }
+
+
+def _invoke_lint_failure_parser(lines: List[str], parser_config: dict, context: Optional[dict]) -> dict:
+    max_matches = _resolve_filter_int(parser_config.get("max_matches"), context, "parser.max_matches", minimum=1)
+    tail_count = _resolve_filter_int(parser_config.get("tail_count"), context, "parser.tail_count", minimum=0)
+    patterns = [
+        r"^\s*error",
+        r"^\s*warning",
+        r":[0-9]+(:[0-9]+)?\s+(error|warning)",
+        r"^Found\s+[0-9]+\s+errors?",
+        r"^[✖×]",
+        r"problems?",
+    ]
+    matches = _select_matching_lines(lines, patterns, limit=max_matches)
+    if matches:
+        summary_lines: List[str] = []
+        seen: set[str] = set()
+        _add_unique_lines(summary_lines, seen, ["CompactSummary: FULL | strategy=lint"])
+        _add_unique_lines(summary_lines, seen, matches, limit=max_matches + 1)
+        if tail_count > 0:
+            _add_unique_lines(summary_lines, seen, _select_tail_lines(lines, tail_count))
+        return {
+            "lines": summary_lines,
+            "parser_mode": "FULL",
+            "parser_name": "lint_failure_summary",
+            "parser_strategy": "lint",
+            "fallback_mode": "none",
+        }
+
+    return {
+        "lines": list(lines),
+        "parser_mode": "PASSTHROUGH",
+        "parser_name": "lint_failure_summary",
+        "parser_strategy": "lint",
+        "fallback_mode": "parser_passthrough",
+    }
+
+
+def _invoke_review_summary_parser(lines: List[str], parser_config: dict, context: Optional[dict]) -> dict:
+    max_lines = _resolve_filter_int(parser_config.get("max_lines"), context, "parser.max_lines", minimum=1)
+    summary_lines = _select_head_lines(lines, max_lines)
+    if not summary_lines:
+        return {
+            "lines": list(lines),
+            "parser_mode": "PASSTHROUGH",
+            "parser_name": "review_gate_summary",
+            "parser_strategy": "review",
+            "fallback_mode": "parser_passthrough",
+        }
+
+    return {
+        "lines": summary_lines,
+        "parser_mode": "FULL",
+        "parser_name": "review_gate_summary",
+        "parser_strategy": "review",
+        "fallback_mode": "none",
+    }
+
+
+def _apply_output_parser(lines: List[str], parser_config: Any, context: Optional[dict]) -> dict:
+    if parser_config is None:
+        return {
+            "lines": list(lines),
+            "parser_mode": "NONE",
+            "parser_name": None,
+            "parser_strategy": None,
+            "fallback_mode": "none",
+        }
+    if not isinstance(parser_config, dict):
+        raise ValueError("Profile parser must be an object.")
+
+    parser_type = _resolve_filter_str(parser_config.get("type"), context, "parser.type")
+    normalized = parser_type.strip().lower()
+    if normalized == "compile_failure_summary":
+        return _invoke_compile_failure_parser(lines, parser_config, context)
+    if normalized == "test_failure_summary":
+        return _invoke_test_failure_parser(lines, parser_config, context)
+    if normalized == "lint_failure_summary":
+        return _invoke_lint_failure_parser(lines, parser_config, context)
+    if normalized == "review_gate_summary":
+        return _invoke_review_summary_parser(lines, parser_config, context)
+    raise ValueError(f"Unsupported profile parser type '{parser_type}'.")
 
 
 def apply_output_filter_operation(lines: Any, operation: dict, context: Optional[dict] = None) -> List[str]:
@@ -306,6 +619,9 @@ def apply_output_filter_profile(
         "lines": original_lines,
         "filter_mode": "passthrough",
         "fallback_mode": "none",
+        "parser_mode": "NONE",
+        "parser_name": None,
+        "parser_strategy": None,
     }
 
     if not str(profile_name or "").strip():
@@ -347,6 +663,8 @@ def apply_output_filter_profile(
         for operation in operations:
             filtered_lines = apply_output_filter_operation(filtered_lines, operation, context=context)
 
+        parser_result = _apply_output_parser(filtered_lines, profile.get("parser"), context)
+        filtered_lines = list(parser_result["lines"])
         emit_when_empty = str(profile.get("emit_when_empty", "")).strip()
         if not filtered_lines and emit_when_empty:
             filtered_lines = [emit_when_empty]
@@ -354,7 +672,10 @@ def apply_output_filter_profile(
         return {
             "lines": filtered_lines,
             "filter_mode": f"profile:{profile_name}",
-            "fallback_mode": "none",
+            "fallback_mode": parser_result["fallback_mode"],
+            "parser_mode": parser_result["parser_mode"],
+            "parser_name": parser_result["parser_name"],
+            "parser_strategy": parser_result["parser_strategy"],
         }
     except Exception as exc:
         print(f"WARNING: output filter profile '{profile_name}' is invalid: {exc}", file=sys.stderr)

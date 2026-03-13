@@ -232,7 +232,10 @@ function Get-GateOutputTelemetry {
         [object]$RawLines,
         [object]$FilteredLines,
         [string]$FilterMode = 'passthrough',
-        [string]$FallbackMode = 'none'
+        [string]$FallbackMode = 'none',
+        [string]$ParserMode = 'NONE',
+        [string]$ParserName = '',
+        [string]$ParserStrategy = ''
     )
 
     $rawLineArray = @(Convert-GateToStringArray -Value $RawLines)
@@ -251,6 +254,9 @@ function Get-GateOutputTelemetry {
         estimated_saved_tokens = [int]$estimatedSavedTokens
         filter_mode = $(if ([string]::IsNullOrWhiteSpace($FilterMode)) { 'passthrough' } else { $FilterMode })
         fallback_mode = $(if ([string]::IsNullOrWhiteSpace($FallbackMode)) { 'none' } else { $FallbackMode })
+        parser_mode = $(if ([string]::IsNullOrWhiteSpace($ParserMode)) { 'NONE' } else { $ParserMode.Trim().ToUpperInvariant() })
+        parser_name = $(if ([string]::IsNullOrWhiteSpace($ParserName)) { $null } else { $ParserName.Trim() })
+        parser_strategy = $(if ([string]::IsNullOrWhiteSpace($ParserStrategy)) { $null } else { $ParserStrategy.Trim() })
     }
 }
 
@@ -322,6 +328,40 @@ function Resolve-GateFilterIntegerSpec {
     return [int]$resolvedInt
 }
 
+function Resolve-GateFilterStringSpec {
+    param(
+        [AllowNull()]
+        [object]$Value,
+        [hashtable]$ContextData = @{},
+        [Parameter(Mandatory = $true)]
+        [string]$FieldName,
+        [switch]$AllowEmpty
+    )
+
+    $resolvedValue = $Value
+    $contextKey = Get-GateFilterConfigValue -Object $Value -Key 'context_key'
+    if (-not [string]::IsNullOrWhiteSpace([string]$contextKey)) {
+        if (-not $ContextData.ContainsKey([string]$contextKey)) {
+            throw "$FieldName references missing context key '$contextKey'."
+        }
+        $resolvedValue = $ContextData[[string]$contextKey]
+    }
+
+    if ($null -eq $resolvedValue) {
+        if ($AllowEmpty) {
+            return ''
+        }
+        throw "$FieldName must resolve to non-empty string."
+    }
+
+    $text = [string]$resolvedValue
+    if (-not $AllowEmpty -and [string]::IsNullOrWhiteSpace($text)) {
+        throw "$FieldName must resolve to non-empty string."
+    }
+
+    return $text.Trim()
+}
+
 function Get-GateFilterPatterns {
     param(
         [AllowNull()]
@@ -343,6 +383,419 @@ function Get-GateFilterPatterns {
     }
 
     return @($patterns)
+}
+
+function Add-GateUniqueLines {
+    param(
+        [System.Collections.Generic.List[string]]$Destination,
+        [System.Collections.Generic.HashSet[string]]$Seen,
+        [string[]]$Lines,
+        [int]$Limit = 0
+    )
+
+    foreach ($lineValue in @($Lines)) {
+        $lineText = [string]$lineValue
+        if ([string]::IsNullOrWhiteSpace($lineText)) {
+            continue
+        }
+
+        if (-not $Seen.Add($lineText)) {
+            continue
+        }
+
+        $Destination.Add($lineText) | Out-Null
+        if ($Limit -gt 0 -and $Destination.Count -ge $Limit) {
+            break
+        }
+    }
+}
+
+function Select-GateMatchingLines {
+    param(
+        [string[]]$Lines,
+        [string[]]$Patterns,
+        [int]$Limit = 0
+    )
+
+    $matches = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($line in @($Lines)) {
+        if (Test-GateMatchAnyRegex -PathValue ([string]$line) -Regexes $Patterns) {
+            $matches.Add([string]$line) | Out-Null
+            if ($Limit -gt 0 -and $matches.Count -ge $Limit) {
+                break
+            }
+        }
+    }
+
+    return @($matches.ToArray())
+}
+
+function Get-GateCompileFailureStrategyConfig {
+    param([string]$Strategy)
+
+    switch (($Strategy ?? '').Trim().ToLowerInvariant()) {
+        'maven' {
+            return [ordered]@{
+                display_name = 'maven'
+                full_patterns = @(
+                    '^\[ERROR\]',
+                    'BUILD FAILURE',
+                    'COMPILATION ERROR',
+                    'Failed to execute goal',
+                    'There are test failures',
+                    'Tests run: .*Failures:',
+                    'Re-run Maven'
+                )
+                degraded_patterns = @(
+                    '^\[ERROR\]',
+                    '^\[WARNING\]',
+                    'BUILD FAILURE',
+                    'error'
+                )
+            }
+        }
+        'gradle' {
+            return [ordered]@{
+                display_name = 'gradle'
+                full_patterns = @(
+                    '^FAILURE: Build failed with an exception\.',
+                    '^BUILD FAILED',
+                    'Execution failed for task',
+                    '^\* What went wrong:',
+                    '^> .*',
+                    '^> Task .*FAILED'
+                )
+                degraded_patterns = @(
+                    '^FAILURE:',
+                    '^BUILD FAILED',
+                    'FAILED',
+                    'error'
+                )
+            }
+        }
+        'node' {
+            return [ordered]@{
+                display_name = 'node-build'
+                full_patterns = @(
+                    '^npm ERR!',
+                    '^ERR!',
+                    'Command failed with exit code',
+                    'Failed to compile',
+                    'ERROR in',
+                    'Type error',
+                    'Module not found'
+                )
+                degraded_patterns = @(
+                    '^npm ERR!',
+                    'warning',
+                    'error',
+                    'failed'
+                )
+            }
+        }
+        'cargo' {
+            return [ordered]@{
+                display_name = 'cargo'
+                full_patterns = @(
+                    '^error(\[[A-Z0-9]+\])?:',
+                    '^Caused by:',
+                    'could not compile',
+                    '^failures:',
+                    '^test result: FAILED'
+                )
+                degraded_patterns = @(
+                    '^warning:',
+                    '^error',
+                    'FAILED'
+                )
+            }
+        }
+        'dotnet' {
+            return [ordered]@{
+                display_name = 'dotnet'
+                full_patterns = @(
+                    '^Build FAILED\.',
+                    '^\s*error [A-Z]{2,}\d+:',
+                    '^\s*warning [A-Z]{2,}\d+:',
+                    '^Failed!  - Failed:',
+                    '^Test Run Failed\.'
+                )
+                degraded_patterns = @(
+                    '^\s*error ',
+                    '^\s*warning ',
+                    'FAILED'
+                )
+            }
+        }
+        'go' {
+            return [ordered]@{
+                display_name = 'go'
+                full_patterns = @(
+                    '^# ',
+                    '^--- FAIL:',
+                    '^FAIL(\s|$)',
+                    '^panic:',
+                    'cannot use',
+                    'undefined:'
+                )
+                degraded_patterns = @(
+                    '^FAIL',
+                    '^panic:',
+                    'error'
+                )
+            }
+        }
+        default {
+            return [ordered]@{
+                display_name = 'generic-compile'
+                full_patterns = @(
+                    'error',
+                    'failed',
+                    'exception',
+                    'cannot ',
+                    'undefined',
+                    'not found'
+                )
+                degraded_patterns = @(
+                    'warning',
+                    'error',
+                    'failed'
+                )
+            }
+        }
+    }
+}
+
+function Invoke-GateCompileFailureParser {
+    param(
+        [string[]]$Lines,
+        [object]$Parser,
+        [hashtable]$ContextData = @{}
+    )
+
+    $strategy = Resolve-GateFilterStringSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'strategy') -ContextData $ContextData -FieldName 'parser.strategy' -AllowEmpty
+    if ([string]::IsNullOrWhiteSpace($strategy)) {
+        $strategy = Resolve-GateFilterStringSpec -Value @{ context_key = 'command_filter_strategy' } -ContextData $ContextData -FieldName 'parser.strategy_context' -AllowEmpty
+    }
+    if ([string]::IsNullOrWhiteSpace($strategy)) {
+        $strategy = 'generic'
+    }
+
+    $config = Get-GateCompileFailureStrategyConfig -Strategy $strategy
+    $maxMatches = Resolve-GateFilterIntegerSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'max_matches') -ContextData $ContextData -FieldName 'parser.max_matches' -Minimum 1
+    $tailCount = Resolve-GateFilterIntegerSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'tail_count') -ContextData $ContextData -FieldName 'parser.tail_count' -Minimum 0
+
+    $fullMatches = Select-GateMatchingLines -Lines $Lines -Patterns $config.full_patterns -Limit $maxMatches
+    if ($fullMatches.Count -gt 0) {
+        $summaryLines = New-Object 'System.Collections.Generic.List[string]'
+        $seenLines = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+        Add-GateUniqueLines -Destination $summaryLines -Seen $seenLines -Lines @("CompactSummary: FULL | strategy=$($config.display_name)")
+        Add-GateUniqueLines -Destination $summaryLines -Seen $seenLines -Lines $fullMatches -Limit ($maxMatches + 1)
+        if ($tailCount -gt 0) {
+            Add-GateUniqueLines -Destination $summaryLines -Seen $seenLines -Lines @(Select-GateTailLines -Lines $Lines -Count $tailCount)
+        }
+
+        return [ordered]@{
+            lines = @($summaryLines.ToArray())
+            parser_mode = 'FULL'
+            parser_name = 'compile_failure_summary'
+            parser_strategy = $config.display_name
+            fallback_mode = 'none'
+        }
+    }
+
+    $degradedMatches = Select-GateMatchingLines -Lines $Lines -Patterns $config.degraded_patterns -Limit ([Math]::Max($maxMatches, 8))
+    if ($degradedMatches.Count -gt 0) {
+        $summaryLines = New-Object 'System.Collections.Generic.List[string]'
+        $seenLines = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+        Add-GateUniqueLines -Destination $summaryLines -Seen $seenLines -Lines @("CompactSummary: DEGRADED | strategy=$($config.display_name)")
+        Add-GateUniqueLines -Destination $summaryLines -Seen $seenLines -Lines $degradedMatches -Limit ([Math]::Max($maxMatches, 8) + 1)
+        if ($tailCount -gt 0) {
+            Add-GateUniqueLines -Destination $summaryLines -Seen $seenLines -Lines @(Select-GateTailLines -Lines $Lines -Count $tailCount)
+        }
+
+        return [ordered]@{
+            lines = @($summaryLines.ToArray())
+            parser_mode = 'DEGRADED'
+            parser_name = 'compile_failure_summary'
+            parser_strategy = $config.display_name
+            fallback_mode = 'none'
+        }
+    }
+
+    return [ordered]@{
+        lines = @($Lines)
+        parser_mode = 'PASSTHROUGH'
+        parser_name = 'compile_failure_summary'
+        parser_strategy = $config.display_name
+        fallback_mode = 'parser_passthrough'
+    }
+}
+
+function Invoke-GateTestFailureParser {
+    param(
+        [string[]]$Lines,
+        [object]$Parser,
+        [hashtable]$ContextData = @{}
+    )
+
+    $maxMatches = Resolve-GateFilterIntegerSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'max_matches') -ContextData $ContextData -FieldName 'parser.max_matches' -Minimum 1
+    $tailCount = Resolve-GateFilterIntegerSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'tail_count') -ContextData $ContextData -FieldName 'parser.tail_count' -Minimum 0
+    $patterns = @(
+        '^--- FAIL:',
+        '^FAIL(\s|$)',
+        '^FAILED',
+        '^failures?:',
+        '^panic:',
+        '^AssertionError',
+        '^Error:',
+        '[0-9]+\s+failed',
+        'Test Run Failed',
+        '[✕×]'
+    )
+
+    $matches = Select-GateMatchingLines -Lines $Lines -Patterns $patterns -Limit $maxMatches
+    if ($matches.Count -gt 0) {
+        $summaryLines = New-Object 'System.Collections.Generic.List[string]'
+        $seenLines = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+        Add-GateUniqueLines -Destination $summaryLines -Seen $seenLines -Lines @('CompactSummary: FULL | strategy=test')
+        Add-GateUniqueLines -Destination $summaryLines -Seen $seenLines -Lines $matches -Limit ($maxMatches + 1)
+        if ($tailCount -gt 0) {
+            Add-GateUniqueLines -Destination $summaryLines -Seen $seenLines -Lines @(Select-GateTailLines -Lines $Lines -Count $tailCount)
+        }
+
+        return [ordered]@{
+            lines = @($summaryLines.ToArray())
+            parser_mode = 'FULL'
+            parser_name = 'test_failure_summary'
+            parser_strategy = 'test'
+            fallback_mode = 'none'
+        }
+    }
+
+    return [ordered]@{
+        lines = @($Lines)
+        parser_mode = 'PASSTHROUGH'
+        parser_name = 'test_failure_summary'
+        parser_strategy = 'test'
+        fallback_mode = 'parser_passthrough'
+    }
+}
+
+function Invoke-GateLintFailureParser {
+    param(
+        [string[]]$Lines,
+        [object]$Parser,
+        [hashtable]$ContextData = @{}
+    )
+
+    $maxMatches = Resolve-GateFilterIntegerSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'max_matches') -ContextData $ContextData -FieldName 'parser.max_matches' -Minimum 1
+    $tailCount = Resolve-GateFilterIntegerSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'tail_count') -ContextData $ContextData -FieldName 'parser.tail_count' -Minimum 0
+    $patterns = @(
+        '^\s*error',
+        '^\s*warning',
+        ':[0-9]+(:[0-9]+)?\s+(error|warning)',
+        '^Found\s+[0-9]+\s+errors?',
+        '^[✖×]',
+        'problems?'
+    )
+
+    $matches = Select-GateMatchingLines -Lines $Lines -Patterns $patterns -Limit $maxMatches
+    if ($matches.Count -gt 0) {
+        $summaryLines = New-Object 'System.Collections.Generic.List[string]'
+        $seenLines = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+        Add-GateUniqueLines -Destination $summaryLines -Seen $seenLines -Lines @('CompactSummary: FULL | strategy=lint')
+        Add-GateUniqueLines -Destination $summaryLines -Seen $seenLines -Lines $matches -Limit ($maxMatches + 1)
+        if ($tailCount -gt 0) {
+            Add-GateUniqueLines -Destination $summaryLines -Seen $seenLines -Lines @(Select-GateTailLines -Lines $Lines -Count $tailCount)
+        }
+
+        return [ordered]@{
+            lines = @($summaryLines.ToArray())
+            parser_mode = 'FULL'
+            parser_name = 'lint_failure_summary'
+            parser_strategy = 'lint'
+            fallback_mode = 'none'
+        }
+    }
+
+    return [ordered]@{
+        lines = @($Lines)
+        parser_mode = 'PASSTHROUGH'
+        parser_name = 'lint_failure_summary'
+        parser_strategy = 'lint'
+        fallback_mode = 'parser_passthrough'
+    }
+}
+
+function Invoke-GateReviewSummaryParser {
+    param(
+        [string[]]$Lines,
+        [object]$Parser,
+        [hashtable]$ContextData = @{}
+    )
+
+    $maxLines = Resolve-GateFilterIntegerSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'max_lines') -ContextData $ContextData -FieldName 'parser.max_lines' -Minimum 1
+    $summaryLines = @(Select-GateHeadLines -Lines $Lines -Count $maxLines)
+    if ($summaryLines.Count -eq 0) {
+        return [ordered]@{
+            lines = @($Lines)
+            parser_mode = 'PASSTHROUGH'
+            parser_name = 'review_gate_summary'
+            parser_strategy = 'review'
+            fallback_mode = 'parser_passthrough'
+        }
+    }
+
+    return [ordered]@{
+        lines = $summaryLines
+        parser_mode = 'FULL'
+        parser_name = 'review_gate_summary'
+        parser_strategy = 'review'
+        fallback_mode = 'none'
+    }
+}
+
+function Invoke-GateOutputParser {
+    param(
+        [string[]]$Lines,
+        [AllowNull()]
+        [object]$Parser,
+        [hashtable]$ContextData = @{}
+    )
+
+    if ($null -eq $Parser) {
+        return [ordered]@{
+            lines = @($Lines)
+            parser_mode = 'NONE'
+            parser_name = $null
+            parser_strategy = $null
+            fallback_mode = 'none'
+        }
+    }
+
+    if ($Parser -isnot [System.Collections.IDictionary] -and $Parser.PSObject.Properties.Count -eq 0) {
+        throw 'Profile parser must be an object.'
+    }
+
+    $parserType = Resolve-GateFilterStringSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'type') -ContextData $ContextData -FieldName 'parser.type'
+    switch ($parserType.Trim().ToLowerInvariant()) {
+        'compile_failure_summary' {
+            return Invoke-GateCompileFailureParser -Lines $Lines -Parser $Parser -ContextData $ContextData
+        }
+        'test_failure_summary' {
+            return Invoke-GateTestFailureParser -Lines $Lines -Parser $Parser -ContextData $ContextData
+        }
+        'lint_failure_summary' {
+            return Invoke-GateLintFailureParser -Lines $Lines -Parser $Parser -ContextData $ContextData
+        }
+        'review_gate_summary' {
+            return Invoke-GateReviewSummaryParser -Lines $Lines -Parser $Parser -ContextData $ContextData
+        }
+        default {
+            throw "Unsupported profile parser type '$parserType'."
+        }
+    }
 }
 
 function Select-GateHeadLines {
@@ -490,6 +943,9 @@ function Invoke-GateOutputFilter {
         lines = $originalLines
         filter_mode = 'passthrough'
         fallback_mode = 'none'
+        parser_mode = 'NONE'
+        parser_name = $null
+        parser_strategy = $null
     }
 
     if ([string]::IsNullOrWhiteSpace($ProfileName)) {
@@ -544,7 +1000,8 @@ function Invoke-GateOutputFilter {
             $filteredLines = @($(Invoke-GateOutputFilterOperation -Lines $filteredLines -Operation $operation -ContextData $ContextData))
         }
 
-        $filteredLines = @($filteredLines)
+        $parserResult = Invoke-GateOutputParser -Lines @($filteredLines) -Parser (Get-GateFilterConfigValue -Object $profile -Key 'parser') -ContextData $ContextData
+        $filteredLines = @($parserResult.lines)
         $emitWhenEmpty = Get-GateFilterConfigValue -Object $profile -Key 'emit_when_empty'
         if ($filteredLines.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$emitWhenEmpty)) {
             $filteredLines = @([string]$emitWhenEmpty)
@@ -553,7 +1010,10 @@ function Invoke-GateOutputFilter {
         return [ordered]@{
             lines = @($filteredLines)
             filter_mode = "profile:$ProfileName"
-            fallback_mode = 'none'
+            fallback_mode = $parserResult.fallback_mode
+            parser_mode = $parserResult.parser_mode
+            parser_name = $parserResult.parser_name
+            parser_strategy = $parserResult.parser_strategy
         }
     } catch {
         Write-Warning "Output filter profile '$ProfileName' is invalid: $($_.Exception.Message)"

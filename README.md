@@ -10,10 +10,10 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 - Full changelog: `CHANGELOG.md`
 
 ## Version
-- Current bundle version: `1.0.6` (source: `VERSION`)
+- Current bundle version: `1.0.7` (source: `VERSION`)
 - Update command: `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1`
 - Optional shell wrapper: `bash Octopus-agent-orchestrator/scripts/check-update.sh` (still requires `pwsh`; wrapper only)
-- Last documentation update: `2026-03-13`
+- Last documentation update: `2026-03-14`
 
 ## Runtime Model
 - Top-level bundle maintenance scripts under `Octopus-agent-orchestrator/scripts/*.ps1` are the canonical control-plane implementations for install/init/verify/update/check-update.
@@ -32,6 +32,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 - Added hard completion gate before `DONE` (`live/scripts/agent-gates/completion-gate.ps1` and `.sh`) with resume protocol and mandatory finalization checks.
 - Added token-usage optimization controls (`live/config/token-economy.json`) for compact gate output, scoped diffs, and deterministic fail-tail limits.
 - Added update-time init-answer migration for existing deployments, with inference/default fallback and rollback-safe persistence of `runtime/init-answers.json`.
+- Added parser-aware gate compaction and review-context artifacts for token-economy mode (`build-scoped-diff` metadata, `build-review-context`, compact compile/test/lint/review profiles).
 
 ## Design
 - Canonical rule set lives only in `Octopus-agent-orchestrator/live/docs/agent-rules/*`.
@@ -45,8 +46,9 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 ## Token Economy
 - Token cost optimization is built in via `Octopus-agent-orchestrator/live/config/token-economy.json`.
 - Controls include compact reviewer output, scoped diffs for heavy reviews, and compile fail-tail limit (`fail_tail_lines`).
-- Gate output filter profiles live in `Octopus-agent-orchestrator/live/config/output-filters.json` and drive shared compile/review output compaction behavior.
-- Gate metrics now record raw-vs-filtered payload size and estimated saved tokens for compile/review gates, giving a baseline before broader output-compression work lands.
+- Gate output filter profiles live in `Octopus-agent-orchestrator/live/config/output-filters.json` and drive shared compile/test/lint/review output compaction behavior.
+- Gate metrics now record raw-vs-filtered payload size, parser mode, parser strategy, and estimated saved tokens for compile/review gates.
+- Scoped-diff helpers can also persist metadata artifacts (`*-scoped.json`), and reviewer-context helpers can persist `*-review-context.json` with selected rule pack, omitted sections, and fallback evidence.
 - Recommended default: use `enabled=true` with `depth=1` only for small, well-localized tasks; prefer `depth=2` when review correctness depends on broader context.
 
 ## What Is Deployed To Project Root
@@ -88,6 +90,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 - `Octopus-agent-orchestrator/live/source-inventory.md`
 - `Octopus-agent-orchestrator/live/init-report.md`
 - `Octopus-agent-orchestrator/live/project-discovery.md`
+- `Octopus-agent-orchestrator/live/USAGE.md`
 - `Octopus-agent-orchestrator/live/version.json`
 
 ## Single-Agent Flow (Recommended)
@@ -125,6 +128,9 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --rationale "<why>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.sh --review-type "<db|security>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" --metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.sh --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --depth 2 --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh --task-id "<task-id>"
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "Octopus-agent-orchestrator/MANIFEST.md"
 ```
 
@@ -145,16 +151,18 @@ Behavior:
 - if current version equals latest: `UP_TO_DATE`;
 - if newer version exists: asks `Apply now? (y/N)` and updates on confirmation;
 - during update, missing keys in `runtime/init-answers.json` are migrated automatically:
-  - first from existing `live/version.json` / `live/config/token-economy.json` when possible;
-  - otherwise by prompting only for missing answers in interactive mode;
-  - otherwise by safe defaults (for example `AssistantLanguage=English`) with migration details written to update report.
+  - in interactive mode, new user-facing settings are asked even when a safe value can be inferred from existing live state;
+  - when such an inferred value exists, it is shown as the recommended default answer instead of being applied silently;
+  - in non-interactive mode (or with `-NoPrompt`), inference from existing `live/version.json` / `live/config/token-economy.json` is still applied automatically when possible;
+  - otherwise safe defaults (for example `AssistantLanguage=English`) are used, with migration details written to update report.
+- during refresh, `init.ps1` preserves existing `live/config/output-filters.json` values and fills in any newly introduced template keys.
 
 Auto-apply (CI/non-interactive):
 ```powershell
 pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -Apply -NoPrompt
 ```
 
-`-Apply -NoPrompt` also suppresses missing init-answer prompts in the nested `update.ps1` call and relies on inference/defaults only.
+`-Apply -NoPrompt` also suppresses update-time init-answer prompts in the nested `update.ps1` call and relies on inference/defaults only.
 
 Optional flags (only when needed):
 - `-InitAnswersPath "<path>"` if `init-answers.json` is not in default location.
@@ -208,6 +216,10 @@ Task timeline log commands:
 pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1 -TaskId "T-201"
 ```
 
+```bash
+bash Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh --task-id "T-201"
+```
+
 Example summary output:
 ```text
 Task: T-201
@@ -244,6 +256,8 @@ add CSV export endpoint with async email delivery hooks
 - Commit message format is project-defined; conventional commit prefixes (for example `feat(...)`) are optional unless your repository policy requires them.
 - If `ClaudeOrchestratorFullAccess=true`, installer merges `.claude/settings.local.json` and ensures `permissions.allow` entries for orchestrator `pwsh`/`bash` scripts (including `cd && git diff` patterns).
 - Preflight roots and trigger regexes are configurable in `live/config/paths.json`.
+- Scoped reviewer diff helper can persist both diff and fallback metadata artifacts (`build-scoped-diff.ps1` / `.sh`).
+- Review-context helper can persist selected rule-pack and omission evidence (`build-review-context.ps1` / `.sh`) before reviewer launch.
 - Compile gate command is configured in `live/docs/agent-rules/40-commands.md` under `### Compile Gate (Mandatory)` and is required before `IN_REVIEW`.
 - Compile gate enforces preflight scope freshness; scope drift requires re-preflight before compile.
 - Review gate (`required-reviews-check`) validates compile evidence plus post-compile drift and writes review evidence (`<task-id>-review-gate.json`).

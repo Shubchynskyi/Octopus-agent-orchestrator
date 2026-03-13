@@ -668,7 +668,7 @@ if errors:
     failure_output_result = apply_output_filter_profile(
         failure_output_lines,
         output_filters_path,
-        "review_gate_console",
+        "review_gate_failure_console",
     )
     filtered_failure_output_lines = list(failure_output_result["lines"])
     failure_output_telemetry = build_output_telemetry(
@@ -676,6 +676,9 @@ if errors:
         filtered_failure_output_lines,
         filter_mode=failure_output_result["filter_mode"],
         fallback_mode=failure_output_result["fallback_mode"],
+        parser_mode=failure_output_result["parser_mode"],
+        parser_name=failure_output_result["parser_name"],
+        parser_strategy=failure_output_result["parser_strategy"],
     )
     review_evidence_context["output_telemetry"] = failure_output_telemetry
     write_review_evidence(
@@ -772,7 +775,7 @@ else:
 success_output_result = apply_output_filter_profile(
     success_output_lines,
     output_filters_path,
-    "review_gate_console",
+    "review_gate_success_console",
 )
 filtered_success_output_lines = list(success_output_result["lines"])
 success_output_telemetry = build_output_telemetry(
@@ -780,6 +783,9 @@ success_output_telemetry = build_output_telemetry(
     filtered_success_output_lines,
     filter_mode=success_output_result["filter_mode"],
     fallback_mode=success_output_result["fallback_mode"],
+    parser_mode=success_output_result["parser_mode"],
+    parser_name=success_output_result["parser_name"],
+    parser_strategy=success_output_result["parser_strategy"],
 )
 review_evidence_context["override_artifact"] = normalize_path(override_artifact_path) if override_artifact_path else None
 review_evidence_context["output_telemetry"] = success_output_telemetry

@@ -107,6 +107,16 @@ def resolve_output_path(explicit_output_path: str, preflight_path: Path, review_
     return (preflight_dir / f"{base_name}-{review_type}-scoped.diff").resolve()
 
 
+def resolve_metadata_path(explicit_metadata_path: str, preflight_path: Path, review_type: str, repo_root: Path) -> Path:
+    if explicit_metadata_path and explicit_metadata_path.strip():
+        return resolve_path_inside_repo(explicit_metadata_path, repo_root, allow_missing=True)
+
+    preflight_dir = preflight_path.parent
+    preflight_name = preflight_path.stem
+    base_name = re.sub(r"-preflight$", "", preflight_name)
+    return (preflight_dir / f"{base_name}-{review_type}-scoped.json").resolve()
+
+
 def line_count(text: str) -> int:
     if not text:
         return 0
@@ -132,6 +142,7 @@ parser.add_argument("--review-type", choices=["db", "security"], required=True)
 parser.add_argument("--preflight-path", required=True)
 parser.add_argument("--paths-config-path", default="Octopus-agent-orchestrator/live/config/paths.json")
 parser.add_argument("--output-path", default="")
+parser.add_argument("--metadata-path", default="")
 parser.add_argument("--full-diff-path", default="")
 parser.add_argument("--repo-root", default="")
 parser.add_argument("--use-staged", action="store_true")
@@ -144,6 +155,7 @@ git_repo_root = resolve_git_root(repo_root)
 preflight_path = resolve_path_inside_repo(args.preflight_path, repo_root)
 paths_config_path = resolve_path_inside_repo(args.paths_config_path, repo_root)
 output_path = resolve_output_path(args.output_path, preflight_path, args.review_type, repo_root)
+metadata_path = resolve_metadata_path(args.metadata_path, preflight_path, args.review_type, repo_root)
 full_diff_path = None
 if args.full_diff_path and args.full_diff_path.strip():
     full_diff_path = resolve_path_inside_repo(args.full_diff_path, repo_root, allow_missing=True)
@@ -195,6 +207,7 @@ result = {
     "preflight_path": normalize_path(preflight_path),
     "paths_config_path": normalize_path(paths_config_path),
     "output_path": normalize_path(output_path),
+    "metadata_path": normalize_path(metadata_path),
     "git_repo_root": normalize_path(git_repo_root),
     "full_diff_path": normalize_path(full_diff_path) if full_diff_path else None,
     "full_diff_source": full_diff_source,
@@ -206,10 +219,14 @@ result = {
     "output_diff_line_count": line_count(output_payload),
 }
 
+metadata_path.parent.mkdir(parents=True, exist_ok=True)
+metadata_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
 print("SCOPED_DIFF_READY")
 print(f"ReviewType: {args.review_type}")
 print(f"MatchedFilesCount: {len(matched_files)}")
 print(f"FallbackToFullDiff: {str(bool(fallback_to_full_diff)).lower()}")
 print(f"OutputPath: {normalize_path(output_path)}")
+print(f"MetadataPath: {normalize_path(metadata_path)}")
 print(json.dumps(result, ensure_ascii=False, indent=2))
 PY

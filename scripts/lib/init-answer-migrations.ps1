@@ -289,10 +289,23 @@ function Get-InitAnswerMigrationInference {
 function Read-InitAnswerMigrationPrompt {
     param(
         [Parameter(Mandatory = $true)]
-        [object]$Definition
+        [object]$Definition,
+        [AllowNull()]
+        [string]$PromptDefaultValue,
+        [AllowNull()]
+        [string]$RecommendationSource
     )
 
-    $defaultValue = [string]$Definition.DefaultValue
+    $defaultValue = if ([string]::IsNullOrWhiteSpace($PromptDefaultValue)) {
+        [string]$Definition.DefaultValue
+    } else {
+        [string]$PromptDefaultValue
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($RecommendationSource) -and -not [string]::IsNullOrWhiteSpace($defaultValue)) {
+        Write-Host "Recommended default for $($Definition.Key): $defaultValue (inferred from $RecommendationSource). Press Enter to accept it or enter a different value."
+    }
+
     $promptText = if ([string]::IsNullOrWhiteSpace($defaultValue)) {
         [string]$Definition.Prompt
     } else {
@@ -303,9 +316,10 @@ function Read-InitAnswerMigrationPrompt {
         $response = Read-Host $promptText
         if ([string]::IsNullOrWhiteSpace($response)) {
             return [PSCustomObject]@{
-                Value          = [string]$Definition.DefaultValue
+                Value          = $defaultValue
                 UsedDefault    = $true
                 PromptResponse = $null
+                DefaultSource  = if ([string]::IsNullOrWhiteSpace($RecommendationSource)) { 'definition_default' } else { 'recommended_inference' }
             }
         }
 
@@ -315,6 +329,7 @@ function Read-InitAnswerMigrationPrompt {
                 Value          = $normalized
                 UsedDefault    = $false
                 PromptResponse = $response
+                DefaultSource  = $null
             }
         }
         catch {
@@ -355,6 +370,61 @@ function Invoke-UpdateInitAnswerMigration {
         }
 
         $inference = Get-InitAnswerMigrationInference -Definition $definition -LiveVersion $LiveVersion -TokenEconomyConfig $TokenEconomyConfig
+
+        if ($InteractivePrompting -and $definition.PromptOnUpdate -and -not [string]::IsNullOrWhiteSpace([string]$definition.Prompt)) {
+            $promptDefaultValue = if ($null -ne $inference -and -not [string]::IsNullOrWhiteSpace([string]$inference.Value)) {
+                [string]$inference.Value
+            } else {
+                [string]$definition.DefaultValue
+            }
+            $recommendationSource = if ($null -ne $inference -and -not [string]::IsNullOrWhiteSpace([string]$inference.Value)) {
+                [string]$inference.Source
+            } else {
+                $null
+            }
+
+            $promptResult = Read-InitAnswerMigrationPrompt `
+                -Definition $definition `
+                -PromptDefaultValue $promptDefaultValue `
+                -RecommendationSource $recommendationSource
+            Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $promptResult.Value
+            $changeAction = if ($promptResult.UsedDefault) {
+                if ($promptResult.DefaultSource -eq 'recommended_inference') { 'recommended_default' } else { 'defaulted' }
+            } else {
+                'prompted'
+            }
+            $changeSource = if ($promptResult.UsedDefault) {
+                if ($promptResult.DefaultSource -eq 'recommended_inference') {
+                    "interactive_prompt_default:$recommendationSource"
+                } else {
+                    'default'
+                }
+            } else {
+                'interactive_prompt'
+            }
+            $changeNote = if ($promptResult.UsedDefault) {
+                if ($promptResult.DefaultSource -eq 'recommended_inference') {
+                    "Recommended value from $recommendationSource was shown during interactive update migration and accepted."
+                } else {
+                    [string]$definition.ChangeHint
+                }
+            } else {
+                if ([string]::IsNullOrWhiteSpace($recommendationSource)) {
+                    'Collected during interactive update migration.'
+                } else {
+                    "Collected during interactive update migration. Recommended default from $recommendationSource was offered."
+                }
+            }
+            $changes += [PSCustomObject]@{
+                Key    = $definition.Key
+                Action = $changeAction
+                Value  = [string]$promptResult.Value
+                Source = $changeSource
+                Note   = $changeNote
+            }
+            continue
+        }
+
         if ($null -ne $inference -and -not [string]::IsNullOrWhiteSpace([string]$inference.Value)) {
             Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $inference.Value
             $changes += [PSCustomObject]@{
@@ -363,19 +433,6 @@ function Invoke-UpdateInitAnswerMigration {
                 Value  = [string]$inference.Value
                 Source = [string]$inference.Source
                 Note   = "Backfilled from $($inference.Source)."
-            }
-            continue
-        }
-
-        if ($InteractivePrompting -and $definition.PromptOnUpdate -and -not [string]::IsNullOrWhiteSpace([string]$definition.Prompt)) {
-            $promptResult = Read-InitAnswerMigrationPrompt -Definition $definition
-            Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $promptResult.Value
-            $changes += [PSCustomObject]@{
-                Key    = $definition.Key
-                Action = if ($promptResult.UsedDefault) { 'defaulted' } else { 'prompted' }
-                Value  = [string]$promptResult.Value
-                Source = if ($promptResult.UsedDefault) { 'default' } else { 'interactive_prompt' }
-                Note   = if ($promptResult.UsedDefault) { [string]$definition.ChangeHint } else { 'Collected during interactive update migration.' }
             }
             continue
         }

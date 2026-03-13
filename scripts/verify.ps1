@@ -346,6 +346,10 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.ps1',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.sh',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.ps1',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1',
@@ -357,6 +361,7 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1',
+    'Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.ps1',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.sh',
     'Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1',
@@ -636,6 +641,37 @@ function Test-VerifyFilterIntegerSpec {
     }
 }
 
+function Test-VerifyFilterStringSpec {
+    param(
+        [AllowNull()]
+        [object]$Value,
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath,
+        [Parameter(Mandatory = $true)]
+        [string]$FieldName,
+        [Parameter(Mandatory = $true)]
+        [ref]$Violations,
+        [switch]$AllowEmpty
+    )
+
+    $contextKey = Get-VerifyConfigValue -Object $Value -Key 'context_key'
+    if ($null -ne $contextKey) {
+        if ($contextKey -isnot [string] -or [string]::IsNullOrWhiteSpace($contextKey.Trim())) {
+            $Violations.Value += "$RelativePath $FieldName context reference must define non-empty string 'context_key'."
+        }
+        return
+    }
+
+    if ($Value -isnot [string]) {
+        $Violations.Value += "$RelativePath $FieldName must be string or object with non-empty 'context_key'."
+        return
+    }
+
+    if (-not $AllowEmpty -and [string]::IsNullOrWhiteSpace($Value.Trim())) {
+        $Violations.Value += "$RelativePath $FieldName must not be empty."
+    }
+}
+
 $outputFiltersContractViolations = @()
 $outputFiltersRelativePath = 'Octopus-agent-orchestrator/live/config/output-filters.json'
 $outputFiltersPath = Join-Path $TargetRoot $outputFiltersRelativePath
@@ -685,6 +721,43 @@ if (-not (Test-Path -LiteralPath $outputFiltersPath -PathType Leaf)) {
                 $emitWhenEmptyValue = Get-VerifyConfigValue -Object $profileValue -Key 'emit_when_empty'
                 if ($null -ne $emitWhenEmptyValue -and $emitWhenEmptyValue -isnot [string]) {
                     $outputFiltersContractViolations += "$outputFiltersRelativePath profile '$profileName' field 'emit_when_empty' must be string when present."
+                }
+
+                $parserValue = Get-VerifyConfigValue -Object $profileValue -Key 'parser'
+                if ($null -ne $parserValue) {
+                    if ($parserValue -isnot [System.Collections.IDictionary]) {
+                        $outputFiltersContractViolations += "$outputFiltersRelativePath profile '$profileName' field 'parser' must be an object."
+                    } else {
+                        $parserType = Get-VerifyConfigValue -Object $parserValue -Key 'type'
+                        if ($parserType -isnot [string] -or [string]::IsNullOrWhiteSpace($parserType.Trim())) {
+                            $outputFiltersContractViolations += "$outputFiltersRelativePath profile '$profileName' parser requires non-empty string 'type'."
+                        } else {
+                            switch ($parserType.Trim().ToLowerInvariant()) {
+                                'compile_failure_summary' {
+                                    $strategyValue = Get-VerifyConfigValue -Object $parserValue -Key 'strategy'
+                                    if ($null -ne $strategyValue) {
+                                        Test-VerifyFilterStringSpec -Value $strategyValue -RelativePath $outputFiltersRelativePath -FieldName "profile '$profileName' parser.strategy" -Violations ([ref]$outputFiltersContractViolations) -AllowEmpty
+                                    }
+                                    Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $parserValue -Key 'max_matches') -RelativePath $outputFiltersRelativePath -FieldName "profile '$profileName' parser.max_matches" -Violations ([ref]$outputFiltersContractViolations) -Minimum 1
+                                    Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $parserValue -Key 'tail_count') -RelativePath $outputFiltersRelativePath -FieldName "profile '$profileName' parser.tail_count" -Violations ([ref]$outputFiltersContractViolations) -Minimum 0
+                                }
+                                'test_failure_summary' {
+                                    Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $parserValue -Key 'max_matches') -RelativePath $outputFiltersRelativePath -FieldName "profile '$profileName' parser.max_matches" -Violations ([ref]$outputFiltersContractViolations) -Minimum 1
+                                    Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $parserValue -Key 'tail_count') -RelativePath $outputFiltersRelativePath -FieldName "profile '$profileName' parser.tail_count" -Violations ([ref]$outputFiltersContractViolations) -Minimum 0
+                                }
+                                'lint_failure_summary' {
+                                    Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $parserValue -Key 'max_matches') -RelativePath $outputFiltersRelativePath -FieldName "profile '$profileName' parser.max_matches" -Violations ([ref]$outputFiltersContractViolations) -Minimum 1
+                                    Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $parserValue -Key 'tail_count') -RelativePath $outputFiltersRelativePath -FieldName "profile '$profileName' parser.tail_count" -Violations ([ref]$outputFiltersContractViolations) -Minimum 0
+                                }
+                                'review_gate_summary' {
+                                    Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $parserValue -Key 'max_lines') -RelativePath $outputFiltersRelativePath -FieldName "profile '$profileName' parser.max_lines" -Violations ([ref]$outputFiltersContractViolations) -Minimum 1
+                                }
+                                default {
+                                    $outputFiltersContractViolations += "$outputFiltersRelativePath profile '$profileName' parser type '$parserType' is unsupported."
+                                }
+                            }
+                        }
+                    }
                 }
 
                 $operationsValue = Get-VerifyConfigValue -Object $profileValue -Key 'operations'
@@ -781,6 +854,29 @@ if (-not (Test-Path -LiteralPath $outputFiltersPath -PathType Leaf)) {
                             $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel has unsupported type '$operationType'."
                         }
                     }
+                }
+            }
+
+            $requiredOutputFilterProfiles = @(
+                'compile_failure_console',
+                'compile_failure_console_generic',
+                'compile_failure_console_maven',
+                'compile_failure_console_gradle',
+                'compile_failure_console_node',
+                'compile_failure_console_cargo',
+                'compile_failure_console_dotnet',
+                'compile_failure_console_go',
+                'compile_success_console',
+                'test_failure_console',
+                'test_success_console',
+                'lint_failure_console',
+                'lint_success_console',
+                'review_gate_failure_console',
+                'review_gate_success_console'
+            )
+            foreach ($requiredProfileName in $requiredOutputFilterProfiles) {
+                if (-not $profilesValue.Contains($requiredProfileName)) {
+                    $outputFiltersContractViolations += "$outputFiltersRelativePath must include profile '$requiredProfileName'."
                 }
             }
         }
@@ -928,6 +1024,40 @@ foreach ($check in $terminalCleanupScriptChecks) {
     foreach ($requiredSnippet in @($check.Required)) {
         if ($scriptContent -notmatch [regex]::Escape([string]$requiredSnippet)) {
             $terminalCleanupContractViolations += "$($check.RelativePath) must include '$requiredSnippet' to enforce terminal full-log cleanup."
+        }
+    }
+}
+
+$taskEventsSummaryContractViolations = @()
+$taskEventsSummaryScriptChecks = @(
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/task-events-summary.ps1'
+        Forbidden = @('Invoke-Expression')
+        Required = @('TaskId', 'AsJson', 'IncludeDetails', 'runtime/task-events', 'Timeline:', 'source_path')
+    },
+    [PSCustomObject]@{
+        RelativePath = 'Octopus-agent-orchestrator/template/scripts/agent-gates/task-events-summary.sh'
+        Forbidden = @('shell=True')
+        Required = @('--task-id', '--as-json', '--include-details', 'runtime/task-events', 'Timeline:', 'source_path')
+    }
+)
+
+foreach ($check in $taskEventsSummaryScriptChecks) {
+    $scriptPath = Join-Path $TargetRoot $check.RelativePath
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        $taskEventsSummaryContractViolations += "$($check.RelativePath) missing."
+        continue
+    }
+
+    $scriptContent = Get-Content -LiteralPath $scriptPath -Raw
+    foreach ($forbiddenSnippet in @($check.Forbidden)) {
+        if ($scriptContent -match [regex]::Escape([string]$forbiddenSnippet)) {
+            $taskEventsSummaryContractViolations += "$($check.RelativePath) must not contain '$forbiddenSnippet'."
+        }
+    }
+    foreach ($requiredSnippet in @($check.Required)) {
+        if ($scriptContent -notmatch [regex]::Escape([string]$requiredSnippet)) {
+            $taskEventsSummaryContractViolations += "$($check.RelativePath) must include '$requiredSnippet'."
         }
     }
 }
@@ -1209,7 +1339,13 @@ if (Test-Path $commandsRulePath) {
     $requiredCommandSnippets = @(
         '### Compile Gate (Mandatory)',
         'compile-gate.ps1',
-        'compile-gate.sh'
+        'compile-gate.sh',
+        'build-scoped-diff.ps1',
+        'build-scoped-diff.sh',
+        'build-review-context.ps1',
+        'build-review-context.sh',
+        'task-events-summary.ps1',
+        'task-events-summary.sh'
     )
     $commandContractMigrations = @(Get-RuleContractMigrationsForPath -RelativePath 'Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md')
     foreach ($migration in $commandContractMigrations) {
@@ -1274,6 +1410,17 @@ if (Test-Path $commandsRulePath) {
             $commandsContractViolations += '40-commands.md compile gate section must contain at least one non-comment command.'
         } elseif ($compileCommandLines[0] -match '^\s*<[^>]+>\s*$') {
             $commandsContractViolations += "40-commands.md compile gate command is unresolved placeholder: $($compileCommandLines[0])"
+        }
+    }
+}
+
+$manifestContractViolations = @()
+$manifestPath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/MANIFEST.md'
+if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+    $manifestContent = Get-Content -LiteralPath $manifestPath -Raw
+    foreach ($snippet in @('live/USAGE.md')) {
+        if ($manifestContent -notmatch [regex]::Escape($snippet)) {
+            $manifestContractViolations += "MANIFEST.md must include '$snippet'."
         }
     }
 }
@@ -1688,8 +1835,9 @@ $initPromptPath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/AGENT_INIT_P
 if (Test-Path -LiteralPath $initPromptPath -PathType Leaf) {
     $initPromptContent = Get-Content -Path $initPromptPath -Raw
     $requiredInitPromptSnippets = @(
-        'ask (5th mandatory question): `Дать полный доступ для Claude к файлам оркестратора? (yes/no)`',
-        'ask (6th mandatory question): `Включить token-economy режим по умолчанию? (yes/no)`',
+        'ask (4th mandatory question): a localized equivalent of `Should the no-auto-commit guard be strengthened? (yes/no)`',
+        'ask (5th mandatory question): a localized equivalent of `Give Claude full access to orchestrator files? (yes/no)`',
+        'ask (6th mandatory question): a localized equivalent of `Enable token-economy mode by default? (yes/no)`',
         'Hard-stop rule: **if all 6 answers are not collected, do not run installation**.',
         '"ClaudeOrchestratorFullAccess": "<claude-orchestrator-full-access>"',
         '"TokenEconomyEnabled": "<token-economy-enabled>"',
@@ -1714,10 +1862,13 @@ if (Test-Path -LiteralPath $orchestrationSkillPath -PathType Leaf) {
     $requiredSkillSnippets = @(
         'compile-gate.ps1 -TaskId "<task-id>" -CommandsPath "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"',
         'COMPILE_GATE_PASSED',
+        'build-review-context.ps1 -ReviewType "<review-type>" -Depth "<1|2|3>"',
+        'build-scoped-diff.ps1 -ReviewType "<db|security>"',
         'review artifact write path: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.',
         'required-reviews-check.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',
         'doc-impact-gate.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',
         'completion-gate.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',
+        'bash Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh --task-id "<task-id>"',
         'runtime/reviews/<task-id>-review-gate.json',
         'runtime/reviews/<task-id>-doc-impact.json',
         'DOC_IMPACT_ASSESSED',
@@ -1733,6 +1884,7 @@ if (Test-Path -LiteralPath $orchestrationSkillPath -PathType Leaf) {
         'COMPLETION_GATE_PASSED',
         'single-agent fallback mode (no Agent tool)',
         'use `enabled=true` with `depth=1` only for small, well-localized tasks',
+        'Optional timeline summary for final report: `task-events-summary.ps1` / `.sh` output.',
         'do not `git add -f` them unless the user explicitly asks to version orchestrator internals.'
     )
 
@@ -1807,6 +1959,7 @@ Write-Output "CompileGateContractViolationCount: $($compileGateContractViolation
 Write-Output "CompletionGateContractViolationCount: $($completionGateContractViolations.Count)"
 Write-Output "DocImpactGateContractViolationCount: $($docImpactGateContractViolations.Count)"
 Write-Output "TerminalCleanupContractViolationCount: $($terminalCleanupContractViolations.Count)"
+Write-Output "TaskEventsSummaryContractViolationCount: $($taskEventsSummaryContractViolations.Count)"
 Write-Output "BundleVersion: $bundleVersion"
 Write-Output "VersionContractViolationCount: $($versionContractViolations.Count)"
 Write-Output "ManagedFilesChecked: $($strictManagedFiles.Count + 1 + $entrypointFiles.Count)"
@@ -1817,6 +1970,7 @@ Write-Output "ClaudeLocalSettingsViolationCount: $($claudeLocalSettingsViolation
 Write-Output "RuleFileViolationCount: $($ruleFileViolations.Count)"
 Write-Output "TemplatePlaceholderViolationCount: $($templatePlaceholderViolations.Count)"
 Write-Output "CommandsContractViolationCount: $($commandsContractViolations.Count)"
+Write-Output "ManifestContractViolationCount: $($manifestContractViolations.Count)"
 Write-Output "InitAnswersContractViolationCount: $($initAnswersContractViolations.Count)"
 Write-Output "CoreRuleContractViolationCount: $($coreRuleContractViolations.Count)"
 Write-Output "EntrypointContractViolationCount: $($entrypointContractViolations.Count)"
@@ -1877,6 +2031,13 @@ if ($terminalCleanupContractViolations.Count -gt 0) {
     }
 }
 
+if ($taskEventsSummaryContractViolations.Count -gt 0) {
+    Write-Output 'TaskEventsSummaryContractViolations:'
+    foreach ($item in $taskEventsSummaryContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
 if ($versionContractViolations.Count -gt 0) {
     Write-Output 'VersionContractViolations:'
     foreach ($item in $versionContractViolations) {
@@ -1929,6 +2090,13 @@ if ($templatePlaceholderViolations.Count -gt 0) {
 if ($commandsContractViolations.Count -gt 0) {
     Write-Output 'CommandsContractViolations:'
     foreach ($item in $commandsContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($manifestContractViolations.Count -gt 0) {
+    Write-Output 'ManifestContractViolations:'
+    foreach ($item in $manifestContractViolations) {
         Write-Output " - $item"
     }
 }
@@ -2011,6 +2179,7 @@ if (
     $completionGateContractViolations.Count -gt 0 -or
     $docImpactGateContractViolations.Count -gt 0 -or
     $terminalCleanupContractViolations.Count -gt 0 -or
+    $taskEventsSummaryContractViolations.Count -gt 0 -or
     $versionContractViolations.Count -gt 0 -or
     $styleViolations.Count -gt 0 -or
     $taskContractViolations.Count -gt 0 -or
@@ -2019,6 +2188,7 @@ if (
     $ruleFileViolations.Count -gt 0 -or
     $templatePlaceholderViolations.Count -gt 0 -or
     $commandsContractViolations.Count -gt 0 -or
+    $manifestContractViolations.Count -gt 0 -or
     $initAnswersContractViolations.Count -gt 0 -or
     $coreRuleContractViolations.Count -gt 0 -or
     $entrypointContractViolations.Count -gt 0 -or
@@ -2034,4 +2204,3 @@ if (
 }
 
 Write-Output 'Verification: PASS'
-

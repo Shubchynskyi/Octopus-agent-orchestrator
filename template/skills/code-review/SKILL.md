@@ -22,6 +22,7 @@ Review for defects and risks first. Keep summary secondary.
 - Task goal and expected behavior.
 - Changed files list.
 - Diff summary or patch.
+- Optional review-context artifact from orchestration: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json`.
 - Rule context package selected by orchestration and explicitly passed to reviewer:
   - token economy active + `depth=1`: only `00-core.md`, `80-task-workflow.md`, and rule ids/snippets directly triggered by changed scope.
   - token economy active + `depth=2`: `00-core.md`, `35-strict-coding-rules.md`, `50-structure-and-docs.md`, `70-security.md`, `80-task-workflow.md`.
@@ -31,6 +32,7 @@ Review for defects and risks first. Keep summary secondary.
 - Config source: `Octopus-agent-orchestrator/live/config/token-economy.json`.
 - Apply this section only when `enabled=true` and effective depth is in `enabled_depths`.
 - While active, this section takes precedence over any static rule-file list in `Required Inputs`.
+- If orchestration provides review-context artifact, treat its `rule_pack.selected_rule_files`, `rule_pack.omitted_rule_files`, and `token_economy.omitted_sections` as the source of truth for compact review scope and omission evidence.
 - Depth-aware required-rules behavior:
   - `depth=1`: evaluate only required rules directly triggered by changed scope; do not request full static rule bundle; list deferred required rules in `not_applicable_rule_ids` with reason `deferred_by_depth`.
   - `depth=2`: evaluate all required code-review rules for changed scope.

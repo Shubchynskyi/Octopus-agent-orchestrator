@@ -22,6 +22,7 @@ Prioritize exploitability, authorization integrity, and payment safety.
 - Task goal and expected secure behavior.
 - Changed files list and diff.
 - Auth, payment, webhook, and secret-related code changes.
+- Optional review-context artifact from orchestration: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json`.
 - Rule context package selected by orchestration and explicitly passed to reviewer:
   - token economy active + `depth=1`: only `00-core.md`, `80-task-workflow.md`, and security-triggered rule ids/snippets for changed scope.
   - token economy active + `depth=2`: `00-core.md`, `35-strict-coding-rules.md`, `70-security.md`, `80-task-workflow.md`.
@@ -31,6 +32,7 @@ Prioritize exploitability, authorization integrity, and payment safety.
 - Config source: `Octopus-agent-orchestrator/live/config/token-economy.json`.
 - Apply this section only when `enabled=true` and effective depth is in `enabled_depths`.
 - While active, this section takes precedence over any static rule-file list in `Required Inputs`.
+- If orchestration provides review-context artifact, treat its `rule_pack.selected_rule_files`, `rule_pack.omitted_rule_files`, `token_economy.omitted_sections`, and `scoped_diff` fallback metadata as the source of truth for compact security review scope.
 - Depth-aware required-rules behavior:
   - `depth=1`: evaluate required security rules directly triggered by changed scope first; avoid unrelated rule expansion and full static rule loading.
   - `depth=2`: evaluate the full required security checklist for changed scope.

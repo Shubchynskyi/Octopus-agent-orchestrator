@@ -39,8 +39,9 @@ Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default
     │   ├── docs/changes/CHANGELOG.md
     │   ├── docs/reviews/TEMPLATE.md
     │   ├── docs/tasks/TASKS.md
-    │   ├── scripts/agent-gates/**# Gate scripts (`.ps1` + `.sh`)
+    │   ├── scripts/agent-gates/** # Gate scripts (`.ps1` + `.sh`)
     │   ├── skills/**             # Orchestration and review skills
+    │   ├── USAGE.md              # Post-init usage instructions for the selected assistant language
     │   ├── project-discovery.md  # Auto-detected stack and command signals
     │   ├── init-report.md        # Init execution report
     │   └── source-inventory.md   # Discovered legacy docs and agent files
@@ -73,12 +74,15 @@ Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default
 - `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md` - mandatory skill invocation policy.
 - `Octopus-agent-orchestrator/live/config/paths.json` - configurable preflight path roots and trigger regexes.
 - `Octopus-agent-orchestrator/live/config/output-filters.json` - shared compile/review output filter profiles for gate compaction.
-- `Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1` - path mode and required review preflight gate.
+- `Octopus-agent-orchestrator/live/USAGE.md` - post-init usage instructions rendered in the selected assistant language.
+- `Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1` / `.sh` - path mode and required review preflight gate.
 - `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1` / `.sh` - mandatory compile gate before review phase.
-- `Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1` - mandatory post-review gate checker.
+- `Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1` / `.sh` - mandatory post-review gate checker.
 - `Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1` / `.sh` - task timeline event logger by task id.
-- `Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1` - human-readable task timeline summary by task id.
-- `Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1` - manifest duplicate-entry validator.
+- `Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1` / `.sh` - human-readable task timeline summary by task id.
+- `Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.ps1` / `.sh` - reviewer scoped-diff artifact builder with fallback metadata.
+- `Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.ps1` / `.sh` - reviewer context artifact builder for token economy rule-pack selection.
+- `Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1` / `.sh` - manifest duplicate-entry validator.
 - `Octopus-agent-orchestrator/live/project-discovery.md` - auto-detected stack signals and suggested command baselines.
 - `Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md` - orchestration skill.
 - `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md` - optional live-only specialist skill generator and wiring workflow.

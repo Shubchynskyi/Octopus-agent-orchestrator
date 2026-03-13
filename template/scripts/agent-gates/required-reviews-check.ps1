@@ -916,9 +916,9 @@ if ($errors.Count -gt 0) {
     foreach ($errorLine in @($errors)) {
         $failureOutputLines.Add("- $errorLine")
     }
-    $filteredFailureOutput = Invoke-GateOutputFilter -Lines $failureOutputLines -ConfigPath $resolvedOutputFiltersPath -ProfileName 'review_gate_console'
+    $filteredFailureOutput = Invoke-GateOutputFilter -Lines $failureOutputLines -ConfigPath $resolvedOutputFiltersPath -ProfileName 'review_gate_failure_console'
     $filteredFailureOutputLines = @($filteredFailureOutput.lines)
-    $failureOutputTelemetry = Get-GateOutputTelemetry -RawLines $failureOutputLines -FilteredLines $filteredFailureOutputLines -FilterMode $filteredFailureOutput.filter_mode -FallbackMode $filteredFailureOutput.fallback_mode
+    $failureOutputTelemetry = Get-GateOutputTelemetry -RawLines $failureOutputLines -FilteredLines $filteredFailureOutputLines -FilterMode $filteredFailureOutput.filter_mode -FallbackMode $filteredFailureOutput.fallback_mode -ParserMode $filteredFailureOutput.parser_mode -ParserName $filteredFailureOutput.parser_name -ParserStrategy $filteredFailureOutput.parser_strategy
     $reviewEvidenceContext['output_telemetry'] = $failureOutputTelemetry
 
     Write-ReviewEvidence -EvidencePath $resolvedReviewEvidencePath -ResolvedTaskId $resolvedTaskId -Context $reviewEvidenceContext -Status 'FAILED' -Outcome 'FAIL' -Violations @($errors)
@@ -1007,9 +1007,9 @@ if ($skipCode) {
     $successOutputLines.Add('REVIEW_GATE_PASSED')
     $successOutputLines.Add("Mode: $($validatedPreflight.mode)")
 }
-$filteredSuccessOutput = Invoke-GateOutputFilter -Lines $successOutputLines -ConfigPath $resolvedOutputFiltersPath -ProfileName 'review_gate_console'
+$filteredSuccessOutput = Invoke-GateOutputFilter -Lines $successOutputLines -ConfigPath $resolvedOutputFiltersPath -ProfileName 'review_gate_success_console'
 $filteredSuccessOutputLines = @($filteredSuccessOutput.lines)
-$successOutputTelemetry = Get-GateOutputTelemetry -RawLines $successOutputLines -FilteredLines $filteredSuccessOutputLines -FilterMode $filteredSuccessOutput.filter_mode -FallbackMode $filteredSuccessOutput.fallback_mode
+$successOutputTelemetry = Get-GateOutputTelemetry -RawLines $successOutputLines -FilteredLines $filteredSuccessOutputLines -FilterMode $filteredSuccessOutput.filter_mode -FallbackMode $filteredSuccessOutput.fallback_mode -ParserMode $filteredSuccessOutput.parser_mode -ParserName $filteredSuccessOutput.parser_name -ParserStrategy $filteredSuccessOutput.parser_strategy
 $reviewEvidenceContext['override_artifact'] = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
 $reviewEvidenceContext['output_telemetry'] = $successOutputTelemetry
 Write-ReviewEvidence -EvidencePath $resolvedReviewEvidencePath -ResolvedTaskId $resolvedTaskId -Context $reviewEvidenceContext -Status 'PASSED' -Outcome 'PASS' -Violations @()
@@ -1055,5 +1055,4 @@ Append-TaskEvent -RepoRootPath $repoRoot -TaskId $resolvedTaskId -EventType 'REV
 foreach ($line in $filteredSuccessOutputLines) {
     Write-Output $line
 }
-
 

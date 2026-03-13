@@ -43,6 +43,7 @@ Materialized inside `Octopus-agent-orchestrator/live` by `scripts/init.ps1`:
 - live/source-inventory.md
 - live/init-report.md
 - live/project-discovery.md
+- live/USAGE.md
 - live/version.json
 
 Generated during task execution:
@@ -81,4 +82,3 @@ Kept inside bundle:
 - AGENT_INIT_PROMPT.md
 - MANIFEST.md
 - VERSION
-

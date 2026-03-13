@@ -4,6 +4,8 @@ All notable changes to this bundle are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-03-14
+
 ### Added
 - Token-economy output telemetry baseline for gate payloads:
   - compile and review gates now emit `raw_line_count`, `raw_char_count`, `filtered_line_count`, `filtered_char_count`, `estimated_saved_chars`, `estimated_saved_tokens`, `filter_mode`, and `fallback_mode` into runtime metrics;
@@ -13,6 +15,19 @@ All notable changes to this bundle are documented in this file.
   - new config artifact `Octopus-agent-orchestrator/live/config/output-filters.json`;
   - PowerShell and shell gate runtimes now support shared line-based filter primitives (`strip_ansi`, regex replace, keep/drop matching lines, line truncation, head/tail, max-total-lines, emit-when-empty);
   - compile and required-review gates now resolve named output-filter profiles from config and fall back to passthrough with visible warning when config is missing or invalid.
+- Token-economy context observability:
+  - `build-scoped-diff.ps1` / `.sh` now write scoped-diff metadata sidecars (`*-scoped.json`) alongside diff artifacts;
+  - new `build-review-context.ps1` / `.sh` emit reviewer-context artifacts with selected rule pack, omitted sections, `deferred_by_depth` evidence, token-economy flags, and scoped-diff fallback metadata;
+  - new Bash parity script `task-events-summary.sh` mirrors the existing task timeline summary helper.
+
+### Changed
+- Compile/test/lint/review gate compaction is now parser-aware:
+  - compile gate classifies command families (`maven`, `gradle`, `node`, `cargo`, `dotnet`, `go`, generic) and command kinds (`compile`, `test`, `lint`);
+  - output filters can run structured `FULL -> DEGRADED -> PASSTHROUGH` parsers before line-level filtering;
+  - success paths stay compact, while failure paths surface compact summaries plus deterministic fallback context.
+- Interactive updates now ask about new user-facing init settings even when a safe inferred value already exists, and present that inferred value as the recommended default answer instead of silently applying it.
+- `init.ps1` now preserves existing `live/config/output-filters.json` values during refresh while filling missing keys from the latest template.
+- Bundle version bumped to `1.0.7` for distribution and update detection via `scripts/check-update.ps1`.
 
 ## [1.0.6] - 2026-03-13
 

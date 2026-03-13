@@ -107,6 +107,72 @@ def get_compile_commands(rule_path: Path):
     return commands
 
 
+def get_compile_command_profile(command: str) -> dict:
+    normalized = (command or "").strip().lower()
+    kind = "compile"
+    strategy = "generic"
+    label = "compile"
+
+    if (
+        re.search(r"(^|\s)(pytest|nosetests|tox)(\s|$)", normalized)
+        or re.search(r"(^|\s)(jest|vitest|ava|mocha)(\s|$)", normalized)
+        or re.search(r"(^|\s)(playwright\s+test|cypress\s+run)(\s|$)", normalized)
+        or re.search(r"(^|\s)(go\s+test|cargo\s+test|dotnet\s+test)(\s|$)", normalized)
+        or re.search(r"(^|\s)(\./)?mvnw(\.cmd)?(\s+.*)?\s+test(\s|$)", normalized)
+        or re.search(r"(^|\s)mvn(\s+.*)?\s+test(\s|$)", normalized)
+        or re.search(r"(^|\s)(\./)?gradlew(\.bat)?(\s+.*)?\s+test(\s|$)", normalized)
+        or re.search(r"(^|\s)gradle(\s+.*)?\s+test(\s|$)", normalized)
+        or re.search(r"(^|\s)(npm|pnpm|yarn|bun)(\s+run)?\s+(test|test:ci|test:unit|test:integration)(\s|$)", normalized)
+    ):
+        kind = "test"
+        strategy = "test"
+        label = "test"
+    elif (
+        re.search(r"(^|\s)(eslint|stylelint|ruff(\s+check)?|flake8|mypy|pyright|shellcheck|hadolint|ktlint|golangci-lint|phpstan|psalm)(\s|$)", normalized)
+        or re.search(r"(^|\s)(npm|pnpm|yarn|bun)(\s+run)?\s+(lint|typecheck|check)(\s|$)", normalized)
+        or re.search(r"(^|\s)(cargo\s+clippy|dotnet\s+format|tsc(\s|$).*(--noemit|--no-emit))", normalized)
+    ):
+        kind = "lint"
+        strategy = "lint"
+        label = "lint"
+    elif re.search(r"(^|\s)(\./)?mvnw(\.cmd)?(\s|$)", normalized) or re.search(r"(^|\s)mvn(\s|$)", normalized):
+        strategy = "maven"
+        label = "maven"
+    elif re.search(r"(^|\s)(\./)?gradlew(\.bat)?(\s|$)", normalized) or re.search(r"(^|\s)gradle(\s|$)", normalized):
+        strategy = "gradle"
+        label = "gradle"
+    elif re.search(r"(^|\s)(npm|pnpm|yarn|bun|npx|vite|webpack|turbo|nx)(\s|$)", normalized):
+        strategy = "node"
+        label = "node-build"
+    elif re.search(r"(^|\s)cargo(\s|$)", normalized):
+        strategy = "cargo"
+        label = "cargo"
+    elif re.search(r"(^|\s)dotnet(\s|$)", normalized):
+        strategy = "dotnet"
+        label = "dotnet"
+    elif re.search(r"(^|\s)go(\s|$)", normalized):
+        strategy = "go"
+        label = "go"
+
+    if kind == "test":
+        failure_profile = "test_failure_console"
+        success_profile = "test_success_console"
+    elif kind == "lint":
+        failure_profile = "lint_failure_console"
+        success_profile = "lint_success_console"
+    else:
+        failure_profile = f"compile_failure_console_{strategy}"
+        success_profile = "compile_success_console"
+
+    return {
+        "kind": kind,
+        "strategy": strategy,
+        "label": label,
+        "failure_profile": failure_profile,
+        "success_profile": success_profile,
+    }
+
+
 def resolve_preflight_path(explicit_preflight_path: str, repo_root: Path, task_id: str):
     if explicit_preflight_path and explicit_preflight_path.strip():
         return resolve_path_inside_repo(explicit_preflight_path, repo_root)
@@ -462,6 +528,7 @@ try:
     for command_index, compile_command in enumerate(compile_commands, start=1):
         command_output_lines = []
         command_exit_code = 0
+        command_profile = get_compile_command_profile(compile_command)
         try:
             completed = subprocess.run(
                 [bash_executable, "-lc", compile_command],
@@ -493,7 +560,12 @@ try:
         if command_exit_code != 0:
             exit_code = command_exit_code
             error_message = f"Compile command #{command_index} exited with code {command_exit_code}."
+            selected_command_profile = command_profile
+            selected_command_index = command_index
             break
+        if command_index == 1:
+            selected_command_profile = command_profile
+            selected_command_index = 1
 except Exception as exc:
     if not error_message:
         error_message = str(exc)
@@ -524,25 +596,44 @@ gate_context = {
     "evidence_path": normalize_path(compile_evidence_path) if compile_evidence_path else None,
     "compile_output_path": normalize_path(compile_output_path) if compile_output_path else None,
     "output_filters_path": normalize_path(output_filters_path) if output_filters_path else None,
+    "command_kind": selected_command_profile["kind"] if "selected_command_profile" in locals() and selected_command_profile else "compile",
+    "command_filter_strategy": selected_command_profile["strategy"] if "selected_command_profile" in locals() and selected_command_profile else "generic",
+    "command_profile_label": selected_command_profile["label"] if "selected_command_profile" in locals() and selected_command_profile else "compile",
+    "selected_command_index": selected_command_index if "selected_command_index" in locals() else (1 if compile_commands else 0),
     "compile_output_lines": len(compile_output_lines),
     "compile_output_warning_lines": warning_count,
     "compile_output_error_lines": error_count,
     "duration_ms": duration_ms,
     "exit_code": exit_code if error_message else 0,
 }
-compile_output_context = {"fail_tail_lines": fail_tail_lines}
+selected_command_profile = selected_command_profile if "selected_command_profile" in locals() and selected_command_profile else (
+    get_compile_command_profile(compile_commands[0]) if compile_commands else {
+        "kind": "compile",
+        "strategy": "generic",
+        "label": "compile",
+        "failure_profile": "compile_failure_console_generic",
+        "success_profile": "compile_success_console",
+    }
+)
+selected_output_profile = selected_command_profile["failure_profile"] if error_message else selected_command_profile["success_profile"]
+gate_context["selected_output_profile"] = selected_output_profile
+compile_output_context = {
+    "fail_tail_lines": fail_tail_lines,
+    "command_filter_strategy": selected_command_profile["strategy"],
+    "command_kind": selected_command_profile["kind"],
+}
 if error_message:
     filtered_output_result = apply_output_filter_profile(
         compile_output_lines,
         output_filters_path,
-        "compile_failure_console",
+        selected_output_profile,
         context=compile_output_context,
     )
 else:
     filtered_output_result = apply_output_filter_profile(
         compile_output_lines,
         output_filters_path,
-        "compile_success_console",
+        selected_output_profile,
         context=compile_output_context,
     )
 filtered_output_lines = list(filtered_output_result["lines"])
@@ -551,6 +642,9 @@ compile_output_telemetry = build_output_telemetry(
     filtered_output_lines,
     filter_mode=filtered_output_result["filter_mode"],
     fallback_mode=filtered_output_result["fallback_mode"],
+    parser_mode=filtered_output_result["parser_mode"],
+    parser_name=filtered_output_result["parser_name"],
+    parser_strategy=filtered_output_result["parser_strategy"],
 )
 gate_context.update(compile_output_telemetry)
 
@@ -581,11 +675,15 @@ if error_message:
     if compile_output_path:
         print(f"CompileOutputPath: {normalize_path(compile_output_path)}")
     if filtered_output_lines:
-        if (
-            compile_output_telemetry["filter_mode"] == "profile:compile_failure_console"
-            and compile_output_telemetry["fallback_mode"] == "none"
-        ):
-            print(f"CompileOutputTailLast{min(fail_tail_lines, len(filtered_output_lines))}Lines:")
+        if compile_output_telemetry["parser_mode"] in {"FULL", "DEGRADED"}:
+            print(
+                "CompileOutputCompactSummary: "
+                f"parser={compile_output_telemetry['parser_name']} "
+                f"mode={compile_output_telemetry['parser_mode']} "
+                f"strategy={compile_output_telemetry['parser_strategy']}"
+            )
+        elif compile_output_telemetry["filter_mode"].startswith("profile:") and compile_output_telemetry["fallback_mode"] == "none":
+            print(f"CompileOutputFilteredLines: profile={compile_output_telemetry['filter_mode']}")
         else:
             print("CompileOutputFilteredLines:")
         for line in filtered_output_lines:

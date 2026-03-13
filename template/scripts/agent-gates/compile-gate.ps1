@@ -181,6 +181,74 @@ function Get-FileLineCount {
     }
 }
 
+function Get-CompileCommandProfile {
+    param(
+        [string]$Command
+    )
+
+    $normalizedCommand = if ([string]::IsNullOrWhiteSpace($Command)) { '' } else { $Command.Trim().ToLowerInvariant() }
+    $kind = 'compile'
+    $strategy = 'generic'
+    $label = 'compile'
+
+    if ($normalizedCommand -match '(^|\s)(pytest|nosetests|tox)(\s|$)' -or
+        $normalizedCommand -match '(^|\s)(jest|vitest|ava|mocha)(\s|$)' -or
+        $normalizedCommand -match '(^|\s)(playwright\s+test|cypress\s+run)(\s|$)' -or
+        $normalizedCommand -match '(^|\s)(go\s+test|cargo\s+test|dotnet\s+test)(\s|$)' -or
+        $normalizedCommand -match '(^|\s)(\.\/)?mvnw(\.cmd)?(\s+.*)?\s+test(\s|$)' -or
+        $normalizedCommand -match '(^|\s)mvn(\s+.*)?\s+test(\s|$)' -or
+        $normalizedCommand -match '(^|\s)(\.\/)?gradlew(\.bat)?(\s+.*)?\s+test(\s|$)' -or
+        $normalizedCommand -match '(^|\s)gradle(\s+.*)?\s+test(\s|$)' -or
+        $normalizedCommand -match '(^|\s)(npm|pnpm|yarn|bun)(\s+run)?\s+(test|test:ci|test:unit|test:integration)(\s|$)') {
+        $kind = 'test'
+        $strategy = 'test'
+        $label = 'test'
+    } elseif ($normalizedCommand -match '(^|\s)(eslint|stylelint|ruff(\s+check)?|flake8|mypy|pyright|shellcheck|hadolint|ktlint|golangci-lint|phpstan|psalm)(\s|$)' -or
+        $normalizedCommand -match '(^|\s)(npm|pnpm|yarn|bun)(\s+run)?\s+(lint|typecheck|check)(\s|$)' -or
+        $normalizedCommand -match '(^|\s)(cargo\s+clippy|dotnet\s+format|tsc(\s|$).*(--noemit|--no-emit))') {
+        $kind = 'lint'
+        $strategy = 'lint'
+        $label = 'lint'
+    } elseif ($normalizedCommand -match '(^|\s)(\.\/)?mvnw(\.cmd)?(\s|$)' -or $normalizedCommand -match '(^|\s)mvn(\s|$)') {
+        $strategy = 'maven'
+        $label = 'maven'
+    } elseif ($normalizedCommand -match '(^|\s)(\.\/)?gradlew(\.bat)?(\s|$)' -or $normalizedCommand -match '(^|\s)gradle(\s|$)') {
+        $strategy = 'gradle'
+        $label = 'gradle'
+    } elseif ($normalizedCommand -match '(^|\s)(npm|pnpm|yarn|bun|npx|vite|webpack|turbo|nx)(\s|$)') {
+        $strategy = 'node'
+        $label = 'node-build'
+    } elseif ($normalizedCommand -match '(^|\s)cargo(\s|$)') {
+        $strategy = 'cargo'
+        $label = 'cargo'
+    } elseif ($normalizedCommand -match '(^|\s)dotnet(\s|$)') {
+        $strategy = 'dotnet'
+        $label = 'dotnet'
+    } elseif ($normalizedCommand -match '(^|\s)go(\s|$)') {
+        $strategy = 'go'
+        $label = 'go'
+    }
+
+    $failureProfileName = switch ($kind) {
+        'test' { 'test_failure_console' }
+        'lint' { 'lint_failure_console' }
+        default { "compile_failure_console_$strategy" }
+    }
+    $successProfileName = switch ($kind) {
+        'test' { 'test_success_console' }
+        'lint' { 'lint_success_console' }
+        default { 'compile_success_console' }
+    }
+
+    return [ordered]@{
+        kind = $kind
+        strategy = $strategy
+        label = $label
+        failure_profile = $failureProfileName
+        success_profile = $successProfileName
+    }
+}
+
 function Get-WorkspaceSnapshot {
     param(
         [string]$RepoRootPath,
@@ -701,6 +769,7 @@ try {
         $compileCommand = $compileCommands[$index]
         $commandOutputLines = @()
         $commandExitCode = 0
+        $commandProfile = Get-CompileCommandProfile -Command $compileCommand
 
         try {
             $commandOutput = & $pwshExecutable -NoProfile -NonInteractive -Command $compileCommand 2>&1
@@ -725,7 +794,14 @@ try {
         if ($commandExitCode -ne 0) {
             $exitCode = $commandExitCode
             $exceptionMessage = "Compile command #$($index + 1) exited with code $commandExitCode."
+            $selectedCommandProfile = $commandProfile
+            $selectedCommandIndex = $index + 1
             break
+        }
+
+        if ($index -eq 0) {
+            $selectedCommandProfile = $commandProfile
+            $selectedCommandIndex = 1
         }
     }
 }
@@ -747,16 +823,21 @@ finally {
 $durationMs = [int][Math]::Round($stopwatch.Elapsed.TotalMilliseconds)
 $totalOutputLines = $compileOutputLines.Count
 $compileOutputArray = @($compileOutputLines.ToArray())
+$selectedCommandProfile = if ($null -ne $selectedCommandProfile) { $selectedCommandProfile } elseif ($compileCommands.Count -gt 0) { Get-CompileCommandProfile -Command $compileCommands[0] } else { [ordered]@{ kind = 'compile'; strategy = 'generic'; label = 'compile'; failure_profile = 'compile_failure_console_generic'; success_profile = 'compile_success_console' } }
+$selectedCommandIndex = if ($selectedCommandIndex -gt 0) { $selectedCommandIndex } else { $(if ($compileCommands.Count -gt 0) { 1 } else { 0 }) }
+$selectedOutputProfile = if ($null -ne $exceptionMessage) { $selectedCommandProfile.failure_profile } else { $selectedCommandProfile.success_profile }
 $compileOutputContext = @{
     fail_tail_lines = $FailTailLines
+    command_filter_strategy = $selectedCommandProfile.strategy
+    command_kind = $selectedCommandProfile.kind
 }
 $filteredCompileOutput = if ($null -ne $exceptionMessage) {
-    Invoke-GateOutputFilter -Lines $compileOutputArray -ConfigPath $resolvedOutputFiltersPath -ProfileName 'compile_failure_console' -ContextData $compileOutputContext
+    Invoke-GateOutputFilter -Lines $compileOutputArray -ConfigPath $resolvedOutputFiltersPath -ProfileName $selectedOutputProfile -ContextData $compileOutputContext
 } else {
-    Invoke-GateOutputFilter -Lines $compileOutputArray -ConfigPath $resolvedOutputFiltersPath -ProfileName 'compile_success_console' -ContextData $compileOutputContext
+    Invoke-GateOutputFilter -Lines $compileOutputArray -ConfigPath $resolvedOutputFiltersPath -ProfileName $selectedOutputProfile -ContextData $compileOutputContext
 }
 $filteredCompileOutputLines = @($filteredCompileOutput.lines)
-$compileOutputTelemetry = Get-GateOutputTelemetry -RawLines $compileOutputArray -FilteredLines $filteredCompileOutputLines -FilterMode $filteredCompileOutput.filter_mode -FallbackMode $filteredCompileOutput.fallback_mode
+$compileOutputTelemetry = Get-GateOutputTelemetry -RawLines $compileOutputArray -FilteredLines $filteredCompileOutputLines -FilterMode $filteredCompileOutput.filter_mode -FallbackMode $filteredCompileOutput.fallback_mode -ParserMode $filteredCompileOutput.parser_mode -ParserName $filteredCompileOutput.parser_name -ParserStrategy $filteredCompileOutput.parser_strategy
 
 $gateContext = [ordered]@{
     commands_path = Normalize-Path $resolvedCommandsPath
@@ -780,6 +861,11 @@ $gateContext = [ordered]@{
     evidence_path = Normalize-Path $resolvedCompileEvidencePath
     compile_output_path = Normalize-Path $resolvedCompileOutputPath
     output_filters_path = Normalize-Path $resolvedOutputFiltersPath
+    command_kind = $selectedCommandProfile.kind
+    command_filter_strategy = $selectedCommandProfile.strategy
+    command_profile_label = $selectedCommandProfile.label
+    selected_output_profile = $selectedOutputProfile
+    selected_command_index = $selectedCommandIndex
     compile_output_lines = $totalOutputLines
     compile_output_warning_lines = $warningCount
     compile_output_error_lines = $errorCount
@@ -812,8 +898,10 @@ if ($null -ne $exceptionMessage) {
         Write-Output ("CompileOutputPath: {0}" -f (Normalize-Path $resolvedCompileOutputPath))
     }
     if ($filteredCompileOutputLines.Count -gt 0) {
-        if ($compileOutputTelemetry.filter_mode -eq 'profile:compile_failure_console' -and $compileOutputTelemetry.fallback_mode -eq 'none') {
-            Write-Output ("CompileOutputTailLast{0}Lines:" -f [Math]::Min($FailTailLines, $filteredCompileOutputLines.Count))
+        if ($compileOutputTelemetry.parser_mode -in @('FULL', 'DEGRADED')) {
+            Write-Output ("CompileOutputCompactSummary: parser={0} mode={1} strategy={2}" -f $compileOutputTelemetry.parser_name, $compileOutputTelemetry.parser_mode, $compileOutputTelemetry.parser_strategy)
+        } elseif ($compileOutputTelemetry.filter_mode -like 'profile:*' -and $compileOutputTelemetry.fallback_mode -eq 'none') {
+            Write-Output ("CompileOutputFilteredLines: profile={0}" -f $compileOutputTelemetry.filter_mode)
         } else {
             Write-Output 'CompileOutputFilteredLines:'
         }

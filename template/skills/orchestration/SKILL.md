@@ -63,10 +63,15 @@ Rule files provide policy context, but lifecycle steps and gate order are define
   - `strip_code_blocks=true`: remove code blocks from loaded review/rule context.
 - Scoped diff contract when active:
   - if `scoped_diffs=true` and reviewer type is `db` or `security`, generate scoped artifact before reviewer launch:
-    - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.ps1 -ReviewType "<db|security>" -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff"`
-    - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.sh --review-type "<db|security>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff"`
+    - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.ps1 -ReviewType "<db|security>" -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" -MetadataPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"`
+    - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.sh --review-type "<db|security>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" --metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"`
   - helper resolves trigger regexes from `Octopus-agent-orchestrator/live/config/paths.json` `triggers.<review-type>`.
   - if helper reports `fallback_to_full_diff=true`, pass full diff to reviewer and continue required review.
+- Review-context artifact contract when active:
+  - generate reviewer context artifact before reviewer launch:
+    - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.ps1 -ReviewType "<review-type>" -Depth "<1|2|3>" -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -ScopedDiffMetadataPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"`
+    - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.sh --review-type "<review-type>" --depth "<1|2|3>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"`
+  - artifact must record selected rule pack, omitted sections, `deferred_by_depth` reason when applicable, and scoped-diff fallback evidence.
 - Compact reviewer output contract when active:
   - if `compact_reviewer_output=true`, require compact reviewer artifacts but keep mandatory sections and exact verdict tokens.
   - on failed command/test evidence, cap pasted tail output to `fail_tail_lines`.
@@ -110,7 +115,8 @@ Rule files provide policy context, but lifecycle steps and gate order are define
     - fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewer and do not require extra user confirmation to start review passes.
     - baseline: `code`, `db`, `security`, `refactor`
     - optional when enabled in `Octopus-agent-orchestrator/live/config/review-capabilities.json`: `api`, `test`, `performance`, `infra`, `dependency`
-    - when `scoped_diffs=true` and required reviewer is `db` or `security`, run scoped diff helper and attach scoped artifact path (plus fallback flag) to reviewer prompt.
+    - when token economy mode is active, generate review-context artifact and attach it to reviewer prompt.
+    - when `scoped_diffs=true` and required reviewer is `db` or `security`, run scoped diff helper and attach scoped artifact path plus scoped metadata fallback flag to reviewer prompt.
     - Log event per reviewer invocation: `REVIEW_REQUESTED`.
 11. Run `required-reviews-check.ps1` and treat result as release gate.
    - `required-reviews-check` writes task-scoped event `REVIEW_GATE_PASSED` or `REVIEW_GATE_FAILED` automatically.
@@ -156,8 +162,9 @@ Rule files provide policy context, but lifecycle steps and gate order are define
      - diff summary (or exact staged diff if available);
      - mandatory skill path for this review type;
      - explicit rule-context package paths selected for this reviewer/depth (do not include non-selected rule files while token economy mode is active);
+     - review-context artifact path (`Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json`) when token economy mode is active;
      - token economy flags when active (`depth`, `compact_reviewer_output`, `strip_examples`, `strip_code_blocks`);
-     - for `db` / `security` required reviews when scoped diffs are enabled: scoped artifact produced by `build-scoped-diff.ps1/.sh`, with full-diff fallback when helper reports empty scope;
+     - for `db` / `security` required reviews when scoped diffs are enabled: scoped artifact produced by `build-scoped-diff.ps1/.sh`, with scoped metadata artifact and full-diff fallback when helper reports empty scope;
      - required output contract:
        - verdict token (`... PASSED` or `... FAILED`);
        - findings list with file evidence;
@@ -196,6 +203,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Terminal events `TASK_DONE` and `TASK_BLOCKED` trigger full log cleanup for temporary reviewer/specialist logs after required artifacts are persisted.
 - Human-readable summary:
   - `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1 -TaskId "<task-id>"`
+  - `bash Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh --task-id "<task-id>"`
 
 ## Escape Hatch Policy (Audited Override)
 - Supported only for code review and only for tiny low-risk scopes.
@@ -232,7 +240,8 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Documentation impact gate result and artifact: `DOC_IMPACT_ASSESSED` + `Octopus-agent-orchestrator/runtime/reviews/<task-id>-doc-impact.json`.
 - Completion gate result (`COMPLETION_GATE_PASSED`).
 - Task event trace: `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
-- Optional timeline summary for final report: `task-events-summary.ps1` output.
+- Optional timeline summary for final report: `task-events-summary.ps1` / `.sh` output.
+- Optional review-context artifact for token economy mode: `build-review-context.ps1` / `.sh` output.
 - Final user report.
 
 ## Examples
@@ -261,4 +270,3 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Git noise in dirty workspace:
   - Stage task-specific project files and run preflight with `-UseStaged`.
   - Ignored orchestration control-plane files should stay unstaged unless the user explicitly asks to version them.
-

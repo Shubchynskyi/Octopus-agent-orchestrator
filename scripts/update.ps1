@@ -324,7 +324,8 @@ $initAnswerMigrationStatus = if ($initAnswerMigrationChanges.Count -gt 0) {
 } else {
     'NOT_NEEDED'
 }
-$initAnswerMigrationPromptedCount = @($initAnswerMigrationChanges | Where-Object { $_.Action -eq 'prompted' }).Count
+$initAnswerMigrationPromptedCount = @($initAnswerMigrationChanges | Where-Object { $_.Action -in @('prompted', 'recommended_default') }).Count
+$initAnswerMigrationRecommendedDefaultCount = @($initAnswerMigrationChanges | Where-Object { $_.Action -eq 'recommended_default' }).Count
 $initAnswerMigrationDefaultedCount = @($initAnswerMigrationChanges | Where-Object { $_.Action -eq 'defaulted' }).Count
 $initAnswerMigrationInferredCount = @($initAnswerMigrationChanges | Where-Object { $_.Action -eq 'inferred' }).Count
 
@@ -571,6 +572,7 @@ if (-not $DryRun) {
     $reportLines += "PromptingEnabled: $initAnswerMigrationPromptingEnabled"
     $reportLines += "AppliedCount: $initAnswerMigrationAppliedCount"
     $reportLines += "PromptedCount: $initAnswerMigrationPromptedCount"
+    $reportLines += "RecommendedDefaultCount: $initAnswerMigrationRecommendedDefaultCount"
     $reportLines += "DefaultedCount: $initAnswerMigrationDefaultedCount"
     $reportLines += "InferredCount: $initAnswerMigrationInferredCount"
     if ($initAnswerMigrationChanges.Count -gt 0) {
@@ -609,6 +611,7 @@ Write-Output "InitAnswerMigrationStatus: $initAnswerMigrationStatus"
 Write-Output "InitAnswerMigrationPromptingEnabled: $initAnswerMigrationPromptingEnabled"
 Write-Output "InitAnswerMigrationCount: $initAnswerMigrationAppliedCount"
 Write-Output "InitAnswerMigrationPromptedCount: $initAnswerMigrationPromptedCount"
+Write-Output "InitAnswerMigrationRecommendedDefaultCount: $initAnswerMigrationRecommendedDefaultCount"
 Write-Output "InitAnswerMigrationDefaultedCount: $initAnswerMigrationDefaultedCount"
 Write-Output "InitAnswerMigrationInferredCount: $initAnswerMigrationInferredCount"
 if ($initAnswerMigrationChanges.Count -gt 0) {

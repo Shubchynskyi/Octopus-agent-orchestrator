@@ -553,6 +553,10 @@ $tokenEconomyTemplatePath = Join-Path $templateRoot 'config/token-economy.json'
 $tokenEconomyDestinationPath = Join-Path $liveRoot 'config/token-economy.json'
 $tokenEconomyExistingConfig = $null
 $tokenEconomyConfigMergeStatus = 'no_existing_live_config_template_applied'
+$outputFiltersTemplatePath = Join-Path $templateRoot 'config/output-filters.json'
+$outputFiltersDestinationPath = Join-Path $liveRoot 'config/output-filters.json'
+$outputFiltersExistingConfig = $null
+$outputFiltersConfigMergeStatus = 'no_existing_live_config_template_applied'
 
 if (Test-Path -LiteralPath $tokenEconomyDestinationPath -PathType Leaf) {
     try {
@@ -562,6 +566,17 @@ if (Test-Path -LiteralPath $tokenEconomyDestinationPath -PathType Leaf) {
     catch {
         Write-Warning "Token economy live config is invalid JSON and cannot be preserved: $tokenEconomyDestinationPath. Template defaults will be applied."
         $tokenEconomyConfigMergeStatus = 'existing_config_invalid_template_applied'
+    }
+}
+
+if (Test-Path -LiteralPath $outputFiltersDestinationPath -PathType Leaf) {
+    try {
+        $outputFiltersExistingConfig = Get-Content -LiteralPath $outputFiltersDestinationPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        $outputFiltersConfigMergeStatus = 'existing_config_detected'
+    }
+    catch {
+        Write-Warning "Output filters live config is invalid JSON and cannot be preserved: $outputFiltersDestinationPath. Template defaults will be applied."
+        $outputFiltersConfigMergeStatus = 'existing_config_invalid_template_applied'
     }
 }
 
@@ -591,6 +606,91 @@ function Merge-TokenEconomyConfig {
     }
 
     return $merged
+}
+
+function Convert-ToConfigHashtable {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $copy = [ordered]@{}
+        foreach ($key in $Value.Keys) {
+            $copy[[string]$key] = Convert-ToConfigHashtable -Value $Value[$key]
+        }
+        return $copy
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $items = @()
+        foreach ($item in $Value) {
+            $items += ,(Convert-ToConfigHashtable -Value $item)
+        }
+        return $items
+    }
+
+    if ($Value.PSObject -and $Value.PSObject.Properties.Count -gt 0 -and $Value -isnot [string]) {
+        $copy = [ordered]@{}
+        foreach ($property in $Value.PSObject.Properties) {
+            $copy[[string]$property.Name] = Convert-ToConfigHashtable -Value $property.Value
+        }
+        return $copy
+    }
+
+    return $Value
+}
+
+function Merge-ManagedConfigPreserveExisting {
+    param(
+        [AllowNull()]
+        [object]$TemplateValue,
+        [AllowNull()]
+        [object]$ExistingValue
+    )
+
+    if ($null -eq $TemplateValue) {
+        return Convert-ToConfigHashtable -Value $ExistingValue
+    }
+
+    if ($TemplateValue -is [System.Collections.IDictionary]) {
+        $templateMap = Convert-ToConfigHashtable -Value $TemplateValue
+        $existingMap = if ($ExistingValue -is [System.Collections.IDictionary] -or ($null -ne $ExistingValue -and $ExistingValue.PSObject -and $ExistingValue.PSObject.Properties.Count -gt 0 -and $ExistingValue -isnot [string])) { Convert-ToConfigHashtable -Value $ExistingValue } else { $null }
+        $merged = [ordered]@{}
+        foreach ($key in $templateMap.Keys) {
+            if ($null -ne $existingMap -and $existingMap.Contains($key)) {
+                $merged[$key] = Merge-ManagedConfigPreserveExisting -TemplateValue $templateMap[$key] -ExistingValue $existingMap[$key]
+            } else {
+                $merged[$key] = Convert-ToConfigHashtable -Value $templateMap[$key]
+            }
+        }
+
+        if ($null -ne $existingMap) {
+            foreach ($key in $existingMap.Keys) {
+                if (-not $merged.Contains($key)) {
+                    $merged[$key] = Convert-ToConfigHashtable -Value $existingMap[$key]
+                }
+            }
+        }
+        return $merged
+    }
+
+    if ($TemplateValue -is [System.Collections.IEnumerable] -and $TemplateValue -isnot [string]) {
+        if ($ExistingValue -is [System.Collections.IEnumerable] -and $ExistingValue -isnot [string]) {
+            return Convert-ToConfigHashtable -Value $ExistingValue
+        }
+        return Convert-ToConfigHashtable -Value $TemplateValue
+    }
+
+    if ($null -ne $ExistingValue) {
+        return Convert-ToConfigHashtable -Value $ExistingValue
+    }
+
+    return Convert-ToConfigHashtable -Value $TemplateValue
 }
 
 $supportDirectories = @(
@@ -639,6 +739,30 @@ if ($null -ne $tokenEconomyExistingConfig) {
         catch {
             Write-Warning "Failed to merge token economy config while preserving existing values: $($_.Exception.Message)."
             $tokenEconomyConfigMergeStatus = 'merge_failed_template_applied'
+        }
+    }
+}
+
+if ($null -ne $outputFiltersExistingConfig) {
+    if (-not (Test-Path -LiteralPath $outputFiltersTemplatePath -PathType Leaf)) {
+        Write-Warning "Output filters template config not found: $outputFiltersTemplatePath. Existing live config preservation skipped."
+        $outputFiltersConfigMergeStatus = 'template_missing_preservation_skipped'
+    } else {
+        try {
+            $outputFiltersTemplateConfig = Get-Content -LiteralPath $outputFiltersTemplatePath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+            $mergedOutputFiltersConfig = Merge-ManagedConfigPreserveExisting -TemplateValue $outputFiltersTemplateConfig -ExistingValue $outputFiltersExistingConfig
+            if (-not $DryRun) {
+                Set-Content -LiteralPath $outputFiltersDestinationPath -Value ($mergedOutputFiltersConfig | ConvertTo-Json -Depth 24)
+            }
+            $outputFiltersConfigMergeStatus = if ($DryRun) {
+                'dry_run_existing_values_would_be_preserved'
+            } else {
+                'existing_values_preserved_and_missing_keys_filled'
+            }
+        }
+        catch {
+            Write-Warning "Failed to merge output filters config while preserving existing values: $($_.Exception.Message)."
+            $outputFiltersConfigMergeStatus = 'merge_failed_template_applied'
         }
     }
 }
@@ -774,6 +898,8 @@ $initReportLines += '- Rule files materialized in `Octopus-agent-orchestrator/li
 $initReportLines += '- Support directories synced into `Octopus-agent-orchestrator/live`: ' + $copiedSupportDirs
 $initReportLines += '- Token economy config sync policy: preserve existing live values and fill missing keys from template.'
 $initReportLines += '- Token economy config merge status: ' + $tokenEconomyConfigMergeStatus
+$initReportLines += '- Output filters config sync policy: preserve existing live values and fill missing keys from template.'
+$initReportLines += '- Output filters config merge status: ' + $outputFiltersConfigMergeStatus
 $initReportLines += '- Assistant response language: ' + $AssistantLanguage
 $initReportLines += '- Assistant response brevity: ' + $AssistantBrevity
 $initReportLines += '- Source of truth entrypoint: ' + $SourceOfTruth
@@ -869,6 +995,7 @@ Write-Output "TokenEconomyEnabled: $TokenEconomyEnabled"
 Write-Output "RuleFilesMaterialized: $($ruleFiles.Count)"
 Write-Output "SupportDirectoriesSynced: $copiedSupportDirs"
 Write-Output "TokenEconomyConfigMergeStatus: $tokenEconomyConfigMergeStatus"
+Write-Output "OutputFiltersConfigMergeStatus: $outputFiltersConfigMergeStatus"
 Write-Output "RuleContractMigrationCount: $ruleContractMigrationCount"
 if ($ruleContractMigrationFiles.Count -gt 0) {
     Write-Output "RuleContractMigrationFiles: $($ruleContractMigrationFiles -join ', ')"
