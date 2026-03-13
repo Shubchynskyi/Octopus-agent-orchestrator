@@ -4,6 +4,9 @@ All notable changes to this bundle are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Update-time rule contract migrations now backfill the ignored orchestrator git-boundary snippets required by `scripts/verify.ps1` for existing deployments, so `scripts/update.ps1` no longer fails during VERIFY when older live rule files are missing the newer `35/40/50/60/80` guardrails.
+
 ## [1.0.5] - 2026-03-13
 
 ### Added

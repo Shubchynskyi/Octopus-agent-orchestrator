@@ -105,6 +105,101 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-
         )
     },
     @{
+        Id = 'strict-coding-orchestrator-git-boundary-snippets'
+        FilePattern = '(^|/)35-strict-coding-rules\.md$'
+        TargetRelativePaths = @(
+            'Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md'
+        )
+        SectionTitle = '## Contract Compatibility Snippets (Auto-added by init/update)'
+        IntroLine = '- Added by migration to satisfy ignored orchestrator git-boundary contract during upgrade.'
+        Entries = @(
+            @{
+                Match = 'this internal changelog is local orchestration evidence and may stay gitignored; update it on disk, but do not use `git add -f` unless the user explicitly asks to version orchestrator internals.'
+                Insert = 'In normal deployed workspaces, this internal changelog is local orchestration evidence and may stay gitignored; update it on disk, but do not use `git add -f` unless the user explicitly asks to version orchestrator internals.'
+                InsertMode = 'line'
+            }
+        )
+    },
+    @{
+        Id = 'commands-orchestrator-git-boundary-snippets'
+        FilePattern = '(^|/)40-commands\.md$'
+        TargetRelativePaths = @(
+            'Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md'
+        )
+        SectionTitle = '## Contract Compatibility Snippets (Auto-added by init/update)'
+        IntroLine = '- Added by migration to satisfy ignored orchestrator git-boundary command contract during upgrade.'
+        Entries = @(
+            @{
+                Match = 'Do not use `git add -f` for ignored orchestration control-plane files (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`); their absence from staged diff is expected.'
+                Insert = 'Do not use `git add -f` for ignored orchestration control-plane files (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`); their absence from staged diff is expected.'
+                InsertMode = 'line'
+            }
+        )
+    },
+    @{
+        Id = 'structure-docs-orchestrator-git-boundary-snippets'
+        FilePattern = '(^|/)50-structure-and-docs\.md$'
+        TargetRelativePaths = @(
+            'Octopus-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md'
+        )
+        SectionTitle = '## Contract Compatibility Snippets (Auto-added by init/update)'
+        IntroLine = '- Added by migration to satisfy ignored orchestrator git-boundary documentation contract during upgrade.'
+        Entries = @(
+            @{
+                Match = '## Orchestrator Git Boundary'
+                Insert = '## Orchestrator Git Boundary'
+                InsertMode = 'line'
+            },
+            @{
+                Match = 'Their absence from `git status`, staged diff, or PR scope is normal and must not be treated as a workflow failure.'
+                Insert = 'Their absence from `git status`, staged diff, or PR scope is normal and must not be treated as a workflow failure.'
+                InsertMode = 'line'
+            }
+        )
+    },
+    @{
+        Id = 'operating-rules-orchestrator-git-boundary-snippets'
+        FilePattern = '(^|/)60-operating-rules\.md$'
+        TargetRelativePaths = @(
+            'Octopus-agent-orchestrator/live/docs/agent-rules/60-operating-rules.md'
+        )
+        SectionTitle = '## Contract Compatibility Snippets (Auto-added by init/update)'
+        IntroLine = '- Added by migration to satisfy ignored orchestrator git-boundary operating contract during upgrade.'
+        Entries = @(
+            @{
+                Match = 'Never use `git add -f` / `git add --force` to stage ignored orchestration files just to satisfy gates or documentation bookkeeping.'
+                Insert = 'Never use `git add -f` / `git add --force` to stage ignored orchestration files just to satisfy gates or documentation bookkeeping.'
+                InsertMode = 'line'
+            },
+            @{
+                Match = 'If doc-impact or audit trail requires updates to ignored orchestrator files, write them on disk and continue without expanding the project commit scope unless the user explicitly asks for it.'
+                Insert = 'If doc-impact or audit trail requires updates to ignored orchestrator files, write them on disk and continue without expanding the project commit scope unless the user explicitly asks for it.'
+                InsertMode = 'line'
+            }
+        )
+    },
+    @{
+        Id = 'task-workflow-orchestrator-git-boundary-snippets'
+        FilePattern = '(^|/)80-task-workflow\.md$'
+        TargetRelativePaths = @(
+            'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md'
+        )
+        SectionTitle = '## Contract Compatibility Snippets (Auto-added by init/update)'
+        IntroLine = '- Added by migration to satisfy ignored orchestrator git-boundary workflow contract during upgrade.'
+        Entries = @(
+            @{
+                Match = 'Required changelog or evidence updates to ignored orchestrator paths must stay local on disk; do not use `git add -f` unless the user explicitly requests versioning orchestrator internals.'
+                Insert = 'Required changelog or evidence updates to ignored orchestrator paths must stay local on disk; do not use `git add -f` unless the user explicitly requests versioning orchestrator internals.'
+                InsertMode = 'line'
+            },
+            @{
+                Match = 'HARD STOP: do not force-stage ignored orchestration control-plane files just because gates, changelog, or reviews reference them.'
+                Insert = 'HARD STOP: do not force-stage ignored orchestration control-plane files just because gates, changelog, or reviews reference them.'
+                InsertMode = 'line'
+            }
+        )
+    },
+    @{
         Id = 'core-finalization-reminder-snippets'
         FilePattern = '(^|/)00-core\.md$'
         TargetRelativePaths = @(

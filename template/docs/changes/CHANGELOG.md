@@ -48,6 +48,13 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Summary: Clarified that top-level bundle maintenance scripts are PowerShell-first (`scripts/*.ps1`) and that sibling `scripts/*.sh` files are only compatibility wrappers requiring `pwsh`, while `live/scripts/agent-gates/*.sh` remain real Bash + Python implementations for task execution gates.
 - Docs Updated: `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/MANIFEST.md`; `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md`; `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`
 
+## 2026-03-13 - Update migrations now restore ignored-artifact rule snippets
+- Task: ad-hoc
+- Type: behavior-change
+- Scope: update workflow / rule-contract migrations / verification
+- Summary: Extended `scripts/lib/rule-contract-migrations.ps1` so update runs patch older deployed `live/docs/agent-rules/35/40/50/60/80` files with the ignored-orchestrator git-boundary snippets now enforced by `scripts/verify.ps1`, preventing rollback-only failures during VERIFY on existing installations.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/scripts/lib/rule-contract-migrations.ps1`
+
 ## 2026-03-11 - Platform-agnostic reviewer routing and version bump
 - Task: ad-hoc
 - Type: behavior-change
@@ -103,7 +110,6 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Scope: agent process
 - Summary: Added post-init optional specialist-skill flow, live-only skill-builder package, capability-based optional review triggers (`api/test/performance/infra/dependency`), expanded deterministic gate contracts, and strengthened security baseline guidance.
 - Docs Updated: `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md`; `Octopus-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md`; `Octopus-agent-orchestrator/live/docs/agent-rules/60-operating-rules.md`; `Octopus-agent-orchestrator/live/docs/agent-rules/70-security.md`; `Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md`; `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md`; `Octopus-agent-orchestrator/live/docs/reviews/TEMPLATE.md`; `Octopus-agent-orchestrator/live/docs/tasks/TASKS.md`
-
 
 
 
