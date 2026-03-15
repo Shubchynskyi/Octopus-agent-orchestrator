@@ -739,7 +739,7 @@ function Build-RedirectManagedBlock {
 This file is a redirect.
 Canonical source of truth for agent workflow rules: `{CANONICAL_FILE}`.
 
-Read `{CANONICAL_FILE}` first, then follow its routing links.
+Hard stop: read `{CANONICAL_FILE}` first and follow its routing links before responding to anything.
 Hard stop: before any task execution, open `TASK.md` and `{CANONICAL_FILE}`.
 Do not implement tasks directly without orchestration preflight and required review gates.
 Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are expected local artifacts; never `git add -f` them unless the user explicitly asks to version orchestrator internals.
@@ -1548,4 +1548,3 @@ Write-Output "LiveVersionWritten: $liveVersionWritten"
 if (-not $DryRun) {
     Write-Output "BackupRoot: $backupRoot"
 }
-

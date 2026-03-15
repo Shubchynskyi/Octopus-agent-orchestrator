@@ -22,3 +22,4 @@ __pycache__/
 *.pyc
 .tmp_rtk_bin_*/
 /Octopus-agent-orchestrator/
+/TASK.md

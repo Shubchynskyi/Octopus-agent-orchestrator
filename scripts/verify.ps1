@@ -1549,6 +1549,11 @@ foreach ($redirectEntrypoint in $redirectEntrypoints) {
         $entrypointContractViolations += "$redirectEntrypoint must redirect to $canonicalEntrypoint."
     }
 
+    $expectedRedirectReadLine = "Hard stop: read ``$canonicalEntrypoint`` first and follow its routing links before responding to anything."
+    if ($redirectContent -notmatch [regex]::Escape($expectedRedirectReadLine)) {
+        $entrypointContractViolations += "$redirectEntrypoint must include hard-stop instruction to read $canonicalEntrypoint before any response."
+    }
+
     $expectedRedirectHardStopLine = "Hard stop: before any task execution, open ``TASK.md`` and ``$canonicalEntrypoint``."
     if ($redirectContent -notmatch [regex]::Escape($expectedRedirectHardStopLine)) {
         $entrypointContractViolations += "$redirectEntrypoint must include hard-stop instruction for TASK.md + $canonicalEntrypoint."
