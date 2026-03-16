@@ -86,6 +86,7 @@ parser.add_argument("--decision", default="NO_DOC_UPDATES", choices=["NO_DOC_UPD
 parser.add_argument("--behavior-changed", default="false")
 parser.add_argument("--docs-updated", action="append", default=[])
 parser.add_argument("--changelog-updated", default="false")
+parser.add_argument("--sensitive-scope-reviewed", default="false")
 parser.add_argument("--rationale", default="")
 parser.add_argument("--artifact-path", default="")
 parser.add_argument("--metrics-path", default="")
@@ -105,8 +106,16 @@ resolved_task_id = validated_preflight["resolved_task_id"]
 decision = str(args.decision).strip().upper()
 behavior_changed = parse_bool(args.behavior_changed)
 changelog_updated = parse_bool(args.changelog_updated)
+sensitive_scope_reviewed = parse_bool(args.sensitive_scope_reviewed)
 docs_updated = sorted({item for item in to_string_array(args.docs_updated, trim_values=True) if item})
 rationale = (args.rationale or "").strip()
+
+sensitive_triggers_fired = []
+preflight_obj = validated_preflight.get("preflight", {}) or {}
+triggers_obj = preflight_obj.get("triggers") or {}
+for trigger_name in ("api", "security", "infra", "dependency", "db"):
+    if triggers_obj.get(trigger_name):
+        sensitive_triggers_fired.append(trigger_name)
 
 if args.artifact_path.strip():
     artifact_path = Path(args.artifact_path.strip())
@@ -133,6 +142,12 @@ if behavior_changed and decision != "DOCS_UPDATED":
     errors.append("BehaviorChanged=true requires Decision=DOCS_UPDATED.")
 if behavior_changed and not changelog_updated:
     errors.append("BehaviorChanged=true requires ChangelogUpdated=true.")
+if sensitive_triggers_fired and decision == "NO_DOC_UPDATES" and not sensitive_scope_reviewed:
+    triggers_str = ", ".join(sensitive_triggers_fired)
+    errors.append(
+        f"Sensitive scope triggers detected ({triggers_str}): NO_DOC_UPDATES requires "
+        f"--sensitive-scope-reviewed true with rationale explaining why no documentation updates are needed."
+    )
 
 status = "FAILED" if errors else "PASSED"
 outcome = "FAIL" if errors else "PASS"
@@ -148,6 +163,8 @@ artifact = {
     "decision": decision,
     "behavior_changed": behavior_changed,
     "changelog_updated": changelog_updated,
+    "sensitive_triggers_detected": sensitive_triggers_fired,
+    "sensitive_scope_reviewed": sensitive_scope_reviewed,
     "docs_updated": docs_updated,
     "rationale": rationale,
     "violations": errors,

@@ -8,6 +8,7 @@ param(
     [bool]$BehaviorChanged = $false,
     [string[]]$DocsUpdated = @(),
     [bool]$ChangelogUpdated = $false,
+    [bool]$SensitiveScopeReviewed = $false,
     [string]$Rationale = '',
     [string]$ArtifactPath,
     [string]$MetricsPath,
@@ -177,6 +178,19 @@ $normalizedDocsUpdated = @(
 )
 
 $normalizedDecision = $Decision.Trim().ToUpperInvariant()
+
+$sensitiveTriggersFired = @()
+$preflightObj = $validatedPreflight.preflight
+if ($null -ne $preflightObj -and $null -ne $preflightObj.PSObject.Properties['triggers']) {
+    $triggersObj = $preflightObj.PSObject.Properties['triggers'].Value
+    foreach ($triggerName in @('api', 'security', 'infra', 'dependency', 'db')) {
+        $prop = $triggersObj.PSObject.Properties[$triggerName]
+        if ($null -ne $prop -and [bool]$prop.Value) {
+            $sensitiveTriggersFired += $triggerName
+        }
+    }
+}
+
 $errors = @()
 $errors += @($validatedPreflight.errors)
 if ([string]::IsNullOrWhiteSpace($Rationale) -or $Rationale.Trim().Length -lt 12) {
@@ -190,6 +204,10 @@ if ($BehaviorChanged -and $normalizedDecision -ne 'DOCS_UPDATED') {
 }
 if ($BehaviorChanged -and -not $ChangelogUpdated) {
     $errors += 'BehaviorChanged=true requires ChangelogUpdated=true.'
+}
+if ($sensitiveTriggersFired.Count -gt 0 -and $normalizedDecision -eq 'NO_DOC_UPDATES' -and -not $SensitiveScopeReviewed) {
+    $triggersStr = $sensitiveTriggersFired -join ', '
+    $errors += "Sensitive scope triggers detected ($triggersStr): NO_DOC_UPDATES requires -SensitiveScopeReviewed:`$true with rationale explaining why no documentation updates are needed."
 }
 
 $status = if ($errors.Count -gt 0) { 'FAILED' } else { 'PASSED' }
@@ -206,6 +224,8 @@ $artifact = [ordered]@{
     decision = $normalizedDecision
     behavior_changed = [bool]$BehaviorChanged
     changelog_updated = [bool]$ChangelogUpdated
+    sensitive_triggers_detected = $sensitiveTriggersFired
+    sensitive_scope_reviewed = [bool]$SensitiveScopeReviewed
     docs_updated = $normalizedDocsUpdated
     rationale = $(if ([string]::IsNullOrWhiteSpace($Rationale)) { '' } else { $Rationale.Trim() })
     violations = @($errors)

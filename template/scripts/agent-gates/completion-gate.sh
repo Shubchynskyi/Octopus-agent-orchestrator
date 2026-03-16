@@ -475,6 +475,8 @@ def get_doc_impact_evidence(
     recorded_behavior_changed = bool(evidence.get("behavior_changed", False))
     recorded_changelog_updated = bool(evidence.get("changelog_updated", False))
     docs_updated = [str(item).strip() for item in (evidence.get("docs_updated") or []) if str(item).strip()]
+    recorded_sensitive_triggers = [str(item).strip() for item in (evidence.get("sensitive_triggers_detected") or []) if str(item).strip()]
+    recorded_sensitive_scope_reviewed = bool(evidence.get("sensitive_scope_reviewed", False))
 
     if recorded_task_id != task_id:
         result["violations"].append(f"Doc impact evidence task mismatch. Expected '{task_id}', got '{recorded_task_id}'.")
@@ -498,6 +500,11 @@ def get_doc_impact_evidence(
         result["violations"].append("Behavior-changed tasks must set decision=DOCS_UPDATED.")
     if recorded_behavior_changed and not recorded_changelog_updated:
         result["violations"].append("Behavior-changed tasks must set changelog_updated=true.")
+    if recorded_sensitive_triggers and recorded_decision == "NO_DOC_UPDATES" and not recorded_sensitive_scope_reviewed:
+        triggers_str = ", ".join(recorded_sensitive_triggers)
+        result["violations"].append(
+            f"Sensitive scope triggers ({triggers_str}) detected: NO_DOC_UPDATES requires sensitive_scope_reviewed=true."
+        )
 
     result["evidence"] = evidence
     result["status"] = "FAILED" if result["violations"] else "PASS"

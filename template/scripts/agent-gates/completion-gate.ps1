@@ -693,6 +693,17 @@ function Get-DocImpactEvidence {
                 Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
         )
     }
+    $recordedSensitiveTriggers = @()
+    if ($null -ne $evidenceObject.PSObject.Properties['sensitive_triggers_detected']) {
+        $recordedSensitiveTriggers = @(
+            Convert-GateToStringArray -Value $evidenceObject.sensitive_triggers_detected -TrimValues |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+    }
+    $recordedSensitiveScopeReviewed = $false
+    if ($null -ne $evidenceObject.PSObject.Properties['sensitive_scope_reviewed']) {
+        $recordedSensitiveScopeReviewed = [bool]$evidenceObject.sensitive_scope_reviewed
+    }
 
     if (-not [string]::Equals($recordedTaskId.Trim(), $ResolvedTaskId, [System.StringComparison]::Ordinal)) {
         $result.violations += "Doc impact evidence task mismatch. Expected '$ResolvedTaskId', got '$recordedTaskId'."
@@ -728,6 +739,10 @@ function Get-DocImpactEvidence {
     }
     if ($recordedBehaviorChanged -and -not $recordedChangelogUpdated) {
         $result.violations += 'Behavior-changed tasks must set changelog_updated=true.'
+    }
+    if ($recordedSensitiveTriggers.Count -gt 0 -and $decisionNormalized -eq 'NO_DOC_UPDATES' -and -not $recordedSensitiveScopeReviewed) {
+        $triggersStr = $recordedSensitiveTriggers -join ', '
+        $result.violations += "Sensitive scope triggers ($triggersStr) detected: NO_DOC_UPDATES requires sensitive_scope_reviewed=true."
     }
 
     $result.evidence = $evidenceObject
