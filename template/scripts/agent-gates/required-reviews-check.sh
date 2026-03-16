@@ -485,6 +485,76 @@ def write_review_evidence(
     review_evidence_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+REVIEW_CONTRACTS = (
+    ("code", "REVIEW PASSED"),
+    ("db", "DB REVIEW PASSED"),
+    ("security", "SECURITY REVIEW PASSED"),
+    ("refactor", "REFACTOR REVIEW PASSED"),
+    ("api", "API REVIEW PASSED"),
+    ("test", "TEST REVIEW PASSED"),
+    ("performance", "PERFORMANCE REVIEW PASSED"),
+    ("infra", "INFRA REVIEW PASSED"),
+    ("dependency", "DEPENDENCY REVIEW PASSED"),
+)
+
+
+def verify_review_artifacts(repo_root, task_id, required_reviews, verdicts, skip_reviews, reviews_root_arg):
+    """For each required review where a passing verdict is claimed, verify the artifact exists and contains the pass token."""
+    if reviews_root_arg and reviews_root_arg.strip():
+        reviews_root = Path(reviews_root_arg.strip())
+        if not reviews_root.is_absolute():
+            reviews_root = (repo_root / reviews_root).resolve()
+    else:
+        reviews_root = (repo_root / "Octopus-agent-orchestrator/runtime/reviews").resolve()
+
+    result = {
+        "reviews_root": normalize_path(reviews_root),
+        "checked": [],
+        "violations": [],
+    }
+
+    skip_set = {v.lower() for v in skip_reviews}
+
+    for review_key, pass_token in REVIEW_CONTRACTS:
+        if not bool(required_reviews.get(review_key, False)):
+            continue
+        actual_verdict = verdicts.get(review_key, "NOT_REQUIRED")
+        if actual_verdict != pass_token:
+            continue
+        if review_key in skip_set:
+            continue
+
+        artifact_path = (reviews_root / f"{task_id}-{review_key}.md").resolve()
+        entry = {
+            "review": review_key,
+            "path": normalize_path(artifact_path),
+            "pass_token": pass_token,
+            "present": False,
+            "token_found": False,
+            "sha256": None,
+        }
+
+        if not artifact_path.exists() or not artifact_path.is_file():
+            result["violations"].append(
+                f"Review artifact not found for claimed '{pass_token}': {entry['path']}"
+            )
+            result["checked"].append(entry)
+            continue
+
+        entry["present"] = True
+        entry["sha256"] = file_sha256(artifact_path)
+        content = artifact_path.read_text(encoding="utf-8")
+        if pass_token in content:
+            entry["token_found"] = True
+        else:
+            result["violations"].append(
+                f"Review artifact '{entry['path']}' does not contain pass token '{pass_token}'."
+            )
+        result["checked"].append(entry)
+
+    return result
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--preflight-path", required=True)
 parser.add_argument("--task-id", default="")
@@ -501,6 +571,7 @@ parser.add_argument("--skip-reviews", default="")
 parser.add_argument("--skip-reason", default="")
 parser.add_argument("--override-artifact-path", default="")
 parser.add_argument("--compile-evidence-path", default="")
+parser.add_argument("--reviews-root", default="")
 parser.add_argument("--review-evidence-path", default="")
 parser.add_argument("--output-filters-path", default="Octopus-agent-orchestrator/live/config/output-filters.json")
 parser.add_argument("--metrics-path", default="")
@@ -632,6 +703,26 @@ test_expected_verdict(errors, "Performance review", required_performance, False,
 test_expected_verdict(errors, "Infra review", required_infra, False, args.infra_review_verdict, "INFRA REVIEW PASSED")
 test_expected_verdict(errors, "Dependency review", required_dependency, False, args.dependency_review_verdict, "DEPENDENCY REVIEW PASSED")
 
+artifact_evidence = verify_review_artifacts(
+    repo_root=repo_root,
+    task_id=resolved_task_id,
+    required_reviews=validated_preflight["required_reviews"],
+    verdicts={
+        "code": args.code_review_verdict,
+        "db": args.db_review_verdict,
+        "security": args.security_review_verdict,
+        "refactor": args.refactor_review_verdict,
+        "api": args.api_review_verdict,
+        "test": args.test_review_verdict,
+        "performance": args.performance_review_verdict,
+        "infra": args.infra_review_verdict,
+        "dependency": args.dependency_review_verdict,
+    },
+    skip_reviews=skip_reviews_list,
+    reviews_root_arg=args.reviews_root,
+)
+errors.extend(artifact_evidence["violations"])
+
 review_evidence_path = resolve_review_evidence_path(repo_root, resolved_task_id, args.review_evidence_path)
 review_evidence_context = {
     "preflight_path": normalize_path(preflight_path.resolve()),
@@ -656,6 +747,7 @@ review_evidence_context = {
     "skip_reviews": skip_reviews_list,
     "skip_reason": skip_reason,
     "override_artifact": normalize_path(args.override_artifact_path) if args.override_artifact_path.strip() else None,
+    "artifact_evidence": artifact_evidence,
 }
 
 if errors:
