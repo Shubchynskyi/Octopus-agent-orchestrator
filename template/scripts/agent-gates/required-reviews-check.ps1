@@ -16,6 +16,7 @@ param(
     [string]$SkipReason = '',
     [string]$OverrideArtifactPath,
     [string]$CompileEvidencePath,
+    [string]$ReviewsRoot = '',
     [string]$ReviewEvidencePath,
     [string]$OutputFiltersPath = 'Octopus-agent-orchestrator/live/config/output-filters.json',
     [string]$MetricsPath,
@@ -590,6 +591,91 @@ function Test-ExpectedVerdict {
     $script:errors += "$Label is not required. Expected 'NOT_REQUIRED' or '$PassVerdict', got '$ActualVerdict'."
 }
 
+$script:REVIEW_CONTRACTS = @(
+    @{ key = 'code';        pass_token = 'REVIEW PASSED' },
+    @{ key = 'db';          pass_token = 'DB REVIEW PASSED' },
+    @{ key = 'security';    pass_token = 'SECURITY REVIEW PASSED' },
+    @{ key = 'refactor';    pass_token = 'REFACTOR REVIEW PASSED' },
+    @{ key = 'api';         pass_token = 'API REVIEW PASSED' },
+    @{ key = 'test';        pass_token = 'TEST REVIEW PASSED' },
+    @{ key = 'performance'; pass_token = 'PERFORMANCE REVIEW PASSED' },
+    @{ key = 'infra';       pass_token = 'INFRA REVIEW PASSED' },
+    @{ key = 'dependency';  pass_token = 'DEPENDENCY REVIEW PASSED' }
+)
+
+function Test-ReviewArtifacts {
+    param(
+        [string]$RepoRootPath,
+        [string]$ResolvedTaskId,
+        [object]$RequiredReviews,
+        [object]$Verdicts,
+        [string[]]$SkipReviewsList,
+        [string]$ReviewsRootValue
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ReviewsRootValue)) {
+        if ([System.IO.Path]::IsPathRooted($ReviewsRootValue)) {
+            $reviewsRoot = $ReviewsRootValue
+        } else {
+            $reviewsRoot = Join-Path $RepoRootPath $ReviewsRootValue
+        }
+    } else {
+        $reviewsRoot = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/reviews'
+    }
+
+    $result = [ordered]@{
+        reviews_root = Normalize-Path $reviewsRoot
+        checked = @()
+        violations = @()
+    }
+
+    $skipSet = @($SkipReviewsList | ForEach-Object { $_.ToLowerInvariant() })
+
+    foreach ($contract in $script:REVIEW_CONTRACTS) {
+        $reviewKey = $contract.key
+        $passToken = $contract.pass_token
+
+        if (-not [bool]$RequiredReviews[$reviewKey]) {
+            continue
+        }
+        $actualVerdict = if ($Verdicts.ContainsKey($reviewKey)) { $Verdicts[$reviewKey] } else { 'NOT_REQUIRED' }
+        if ($actualVerdict -ne $passToken) {
+            continue
+        }
+        if ($skipSet -contains $reviewKey) {
+            continue
+        }
+
+        $artifactPath = [System.IO.Path]::GetFullPath((Join-Path $reviewsRoot "$ResolvedTaskId-$reviewKey.md"))
+        $entry = [ordered]@{
+            review     = $reviewKey
+            path       = Normalize-Path $artifactPath
+            pass_token = $passToken
+            present    = $false
+            token_found = $false
+            sha256     = $null
+        }
+
+        if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+            $result.violations += "Review artifact not found for claimed '$passToken': $($entry.path)"
+            $result.checked += $entry
+            continue
+        }
+
+        $entry.present = $true
+        $entry.sha256 = Get-FileSha256 -Path $artifactPath
+        $content = Get-Content -LiteralPath $artifactPath -Raw -Encoding UTF8
+        if ($content -and $content.Contains($passToken)) {
+            $entry.token_found = $true
+        } else {
+            $result.violations += "Review artifact '$($entry.path)' does not contain pass token '$passToken'."
+        }
+        $result.checked += $entry
+    }
+
+    return $result
+}
+
 function Get-CompileGateEvidence {
     param(
         [string]$RepoRootPath,
@@ -882,6 +968,19 @@ Test-ExpectedVerdict -Label 'Performance review' -Required $requiredPerformance 
 Test-ExpectedVerdict -Label 'Infra review' -Required $requiredInfra -SkippedByOverride $false -ActualVerdict $InfraReviewVerdict -PassVerdict 'INFRA REVIEW PASSED'
 Test-ExpectedVerdict -Label 'Dependency review' -Required $requiredDependency -SkippedByOverride $false -ActualVerdict $DependencyReviewVerdict -PassVerdict 'DEPENDENCY REVIEW PASSED'
 
+$artifactEvidence = Test-ReviewArtifacts `
+    -RepoRootPath $repoRoot `
+    -ResolvedTaskId $resolvedTaskId `
+    -RequiredReviews $validatedPreflight.required_reviews `
+    -Verdicts @{
+        code = $CodeReviewVerdict; db = $DbReviewVerdict; security = $SecurityReviewVerdict
+        refactor = $RefactorReviewVerdict; api = $ApiReviewVerdict; test = $TestReviewVerdict
+        performance = $PerformanceReviewVerdict; infra = $InfraReviewVerdict; dependency = $DependencyReviewVerdict
+    } `
+    -SkipReviewsList $skipReviewsList `
+    -ReviewsRootValue $ReviewsRoot
+$errors += @($artifactEvidence.violations)
+
 $resolvedReviewEvidencePath = Resolve-ReviewEvidencePath -RepoRootPath $repoRoot -ResolvedTaskId $resolvedTaskId -ReviewEvidencePathValue $ReviewEvidencePath
 $reviewEvidenceContext = [ordered]@{
     preflight_path = Normalize-Path $validatedPreflight.preflight_path
@@ -906,6 +1005,7 @@ $reviewEvidenceContext = [ordered]@{
     skip_reviews = $skipReviewsList
     skip_reason = $SkipReason
     override_artifact = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
+    artifact_evidence = $artifactEvidence
 }
 
 if ($errors.Count -gt 0) {
