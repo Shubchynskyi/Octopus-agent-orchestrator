@@ -930,6 +930,44 @@ function Invoke-GateOutputFilterOperation {
     }
 }
 
+function Invoke-GatePassthroughCeiling {
+    param(
+        [string[]]$Lines,
+        [AllowNull()][object]$Config,
+        [string]$FallbackMode
+    )
+
+    $defaultMax = 60
+    $maxLines = $defaultMax
+    $strategy = 'tail'
+
+    if ($null -ne $Config -and $Config -is [System.Collections.IDictionary]) {
+        $ceilingCfg = Get-GateFilterConfigValue -Object $Config -Key 'passthrough_ceiling'
+        if ($ceilingCfg -is [System.Collections.IDictionary]) {
+            $cfgMax = Get-GateFilterConfigValue -Object $ceilingCfg -Key 'max_lines'
+            $cfgStrategy = Get-GateFilterConfigValue -Object $ceilingCfg -Key 'strategy'
+            if (($cfgMax -is [int] -or $cfgMax -is [long]) -and [int]$cfgMax -gt 0) {
+                $maxLines = [int]$cfgMax
+            }
+            if ([string]$cfgStrategy -eq 'head') { $strategy = 'head' }
+        }
+    }
+
+    $allLines = @($Lines)
+    $total = $allLines.Count
+    if ($total -le $maxLines) {
+        return $allLines
+    }
+
+    $capped = if ($strategy -eq 'head') {
+        @(Select-GateHeadLines -Lines $allLines -Count $maxLines)
+    } else {
+        @(Select-GateTailLines -Lines $allLines -Count $maxLines)
+    }
+    $header = "[passthrough-ceiling] fallback=$FallbackMode total=$total ceiling=$maxLines strategy=$strategy"
+    return @($header) + $capped
+}
+
 function Invoke-GateOutputFilter {
     param(
         [object]$Lines,
@@ -955,6 +993,7 @@ function Invoke-GateOutputFilter {
     if ([string]::IsNullOrWhiteSpace($ConfigPath) -or -not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
         Write-Warning "Output filter config missing for profile '$ProfileName': $ConfigPath"
         $passthroughResult['fallback_mode'] = 'missing_config_passthrough'
+        $passthroughResult['lines'] = @(Invoke-GatePassthroughCeiling -Lines $originalLines -Config $null -FallbackMode 'missing_config_passthrough')
         return $passthroughResult
     }
 
@@ -964,6 +1003,7 @@ function Invoke-GateOutputFilter {
     } catch {
         Write-Warning "Output filter config is invalid JSON for profile '$ProfileName': $($_.Exception.Message)"
         $passthroughResult['fallback_mode'] = 'invalid_config_passthrough'
+        $passthroughResult['lines'] = @(Invoke-GatePassthroughCeiling -Lines $originalLines -Config $null -FallbackMode 'invalid_config_passthrough')
         return $passthroughResult
     }
 
@@ -971,12 +1011,14 @@ function Invoke-GateOutputFilter {
     if ($profiles -isnot [System.Collections.IDictionary]) {
         Write-Warning "Output filter config must contain object 'profiles'."
         $passthroughResult['fallback_mode'] = 'invalid_config_passthrough'
+        $passthroughResult['lines'] = @(Invoke-GatePassthroughCeiling -Lines $originalLines -Config $config -FallbackMode 'invalid_config_passthrough')
         return $passthroughResult
     }
 
     if (-not $profiles.Contains($ProfileName)) {
         Write-Warning "Output filter profile '$ProfileName' not found in $ConfigPath."
         $passthroughResult['fallback_mode'] = 'missing_profile_passthrough'
+        $passthroughResult['lines'] = @(Invoke-GatePassthroughCeiling -Lines $originalLines -Config $config -FallbackMode 'missing_profile_passthrough')
         return $passthroughResult
     }
 
@@ -984,6 +1026,7 @@ function Invoke-GateOutputFilter {
     if ($profile -isnot [System.Collections.IDictionary]) {
         Write-Warning "Output filter profile '$ProfileName' must be an object."
         $passthroughResult['fallback_mode'] = 'invalid_profile_passthrough'
+        $passthroughResult['lines'] = @(Invoke-GatePassthroughCeiling -Lines $originalLines -Config $config -FallbackMode 'invalid_profile_passthrough')
         return $passthroughResult
     }
 
@@ -1002,6 +1045,9 @@ function Invoke-GateOutputFilter {
 
         $parserResult = Invoke-GateOutputParser -Lines @($filteredLines) -Parser (Get-GateFilterConfigValue -Object $profile -Key 'parser') -ContextData $ContextData
         $filteredLines = @($parserResult.lines)
+        if ($parserResult.parser_mode -eq 'PASSTHROUGH') {
+            $filteredLines = @(Invoke-GatePassthroughCeiling -Lines $filteredLines -Config $config -FallbackMode 'parser_passthrough')
+        }
         $emitWhenEmpty = Get-GateFilterConfigValue -Object $profile -Key 'emit_when_empty'
         if ($filteredLines.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$emitWhenEmpty)) {
             $filteredLines = @([string]$emitWhenEmpty)
@@ -1018,6 +1064,7 @@ function Invoke-GateOutputFilter {
     } catch {
         Write-Warning "Output filter profile '$ProfileName' is invalid: $($_.Exception.Message)"
         $passthroughResult['fallback_mode'] = 'invalid_profile_passthrough'
+        $passthroughResult['lines'] = @(Invoke-GatePassthroughCeiling -Lines $originalLines -Config $config -FallbackMode 'invalid_profile_passthrough')
         return $passthroughResult
     }
 }

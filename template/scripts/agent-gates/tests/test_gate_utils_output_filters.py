@@ -90,6 +90,8 @@ ANSI_LINES = [
     "Plain line",
 ]
 
+LARGE_PASSTHROUGH_LINES = [f"[INFO] Build step {i + 1}" for i in range(10)]
+
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -339,6 +341,61 @@ class TestFallbacks:
         result = run("p_legacy_ops", ["line with \x1b[31merror\x1b[0m"])
         assert result["fallback_mode"] == "invalid_profile_passthrough"
         assert result["filter_mode"] == "passthrough"
+
+
+# ---------------------------------------------------------------------------
+# Passthrough ceiling
+# ---------------------------------------------------------------------------
+class TestPassthroughCeiling:
+    def test_parser_passthrough_ceiling_applied_when_over_limit(self):
+        result = run("p_compile_maven", LARGE_PASSTHROUGH_LINES)
+        assert result["parser_mode"] == "PASSTHROUGH"
+        assert result["fallback_mode"] == "parser_passthrough"
+        # ceiling=5 from fixture, so 1 header + 5 tail lines = 6
+        assert len(result["lines"]) == 6
+
+    def test_parser_passthrough_ceiling_header_is_first_line(self):
+        result = run("p_compile_maven", LARGE_PASSTHROUGH_LINES)
+        assert result["lines"][0].startswith("[passthrough-ceiling]")
+
+    def test_parser_passthrough_ceiling_header_contains_fallback(self):
+        result = run("p_compile_maven", LARGE_PASSTHROUGH_LINES)
+        assert "fallback=parser_passthrough" in result["lines"][0]
+
+    def test_parser_passthrough_ceiling_header_contains_total(self):
+        result = run("p_compile_maven", LARGE_PASSTHROUGH_LINES)
+        assert "total=10" in result["lines"][0]
+
+    def test_parser_passthrough_ceiling_header_contains_ceiling(self):
+        result = run("p_compile_maven", LARGE_PASSTHROUGH_LINES)
+        assert "ceiling=5" in result["lines"][0]
+
+    def test_parser_passthrough_ceiling_tail_strategy_keeps_last_lines(self):
+        result = run("p_compile_maven", LARGE_PASSTHROUGH_LINES)
+        assert result["lines"][1] == "[INFO] Build step 6"
+        assert result["lines"][-1] == "[INFO] Build step 10"
+
+    def test_parser_passthrough_no_ceiling_when_under_limit(self):
+        result = run("p_compile_maven", MAVEN_PASSTHROUGH_LINES)
+        assert result["parser_mode"] == "PASSTHROUGH"
+        assert result["lines"] == MAVEN_PASSTHROUGH_LINES
+
+    def test_profile_passthrough_ceiling_applied_for_unknown_profile(self):
+        result = run("nonexistent_profile", LARGE_PASSTHROUGH_LINES)
+        assert result["fallback_mode"] == "missing_profile_passthrough"
+        assert len(result["lines"]) == 6
+        assert result["lines"][0].startswith("[passthrough-ceiling]")
+        assert "fallback=missing_profile_passthrough" in result["lines"][0]
+
+    def test_missing_config_uses_hardcoded_default_ceiling(self):
+        big_lines = [f"line {i}" for i in range(70)]
+        result = apply_output_filter_profile(
+            big_lines, Path("/nonexistent/path.json"), "p_compile_maven"
+        )
+        assert result["fallback_mode"] == "missing_config_passthrough"
+        # hardcoded default is 60, so 1 header + 60 tail = 61 lines
+        assert len(result["lines"]) == 61
+        assert "ceiling=60" in result["lines"][0]
 
 
 # ---------------------------------------------------------------------------

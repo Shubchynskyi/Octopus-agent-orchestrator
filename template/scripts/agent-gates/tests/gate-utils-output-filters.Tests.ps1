@@ -19,6 +19,7 @@ BeforeAll {
     $script:FixtureConfig = Join-Path $PSScriptRoot 'fixtures' 'output-filters-parity.json'
 
     # Shared input line sets (identical values used in the Python tests)
+    $script:LargePassthroughLines = 1..10 | ForEach-Object { "[INFO] Build step $_" }
     $script:MavenFullLines = @(
         "`e[34m[INFO]`e[0m Scanning for projects...",
         '[ERROR] COMPILATION ERROR',
@@ -360,6 +361,91 @@ Describe 'Fallback cases' {
         #>
         $result = Invoke-Filter 'p_legacy_ops' @("line with `e[31merror`e[0m")
         $result.filter_mode | Should -Be 'profile:p_legacy_ops'
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Passthrough ceiling
+# ---------------------------------------------------------------------------
+Describe 'Passthrough ceiling' {
+    Context 'parser PASSTHROUGH with >ceiling lines applies ceiling' {
+        BeforeAll { $script:r = Invoke-Filter 'p_compile_maven' $script:LargePassthroughLines }
+
+        It 'sets parser_mode to PASSTHROUGH' {
+            $script:r.parser_mode | Should -Be 'PASSTHROUGH'
+        }
+        It 'sets fallback_mode to parser_passthrough' {
+            $script:r.fallback_mode | Should -Be 'parser_passthrough'
+        }
+        It 'returns ceiling+1 lines (header + 5 tail)' {
+            $script:r.lines.Count | Should -Be 6
+        }
+        It 'first line is passthrough-ceiling header' {
+            $script:r.lines[0] | Should -Match '^\[passthrough-ceiling\]'
+        }
+        It 'header contains fallback=parser_passthrough' {
+            $script:r.lines[0] | Should -Match 'fallback=parser_passthrough'
+        }
+        It 'header contains total=10' {
+            $script:r.lines[0] | Should -Match 'total=10'
+        }
+        It 'header contains ceiling=5' {
+            $script:r.lines[0] | Should -Match 'ceiling=5'
+        }
+        It 'last line is the final input line (tail strategy)' {
+            $script:r.lines[-1] | Should -Be '[INFO] Build step 10'
+        }
+        It 'second line is the 6th input line (tail of 5 from 10)' {
+            $script:r.lines[1] | Should -Be '[INFO] Build step 6'
+        }
+    }
+
+    Context 'parser PASSTHROUGH with <=ceiling lines passes through unchanged' {
+        BeforeAll { $script:r = Invoke-Filter 'p_compile_maven' $script:MavenPassthroughLines }
+
+        It 'sets parser_mode to PASSTHROUGH' {
+            $script:r.parser_mode | Should -Be 'PASSTHROUGH'
+        }
+        It 'preserves lines unchanged (no header added)' {
+            $script:r.lines | Should -Be $script:MavenPassthroughLines
+        }
+    }
+
+    Context 'profile-level passthrough (unknown profile) with >ceiling lines applies ceiling' {
+        BeforeAll { $script:r = Invoke-Filter 'nonexistent_profile' $script:LargePassthroughLines }
+
+        It 'sets fallback_mode to missing_profile_passthrough' {
+            $script:r.fallback_mode | Should -Be 'missing_profile_passthrough'
+        }
+        It 'returns ceiling+1 lines' {
+            $script:r.lines.Count | Should -Be 6
+        }
+        It 'first line is passthrough-ceiling header' {
+            $script:r.lines[0] | Should -Match '^\[passthrough-ceiling\]'
+        }
+        It 'header contains fallback=missing_profile_passthrough' {
+            $script:r.lines[0] | Should -Match 'fallback=missing_profile_passthrough'
+        }
+    }
+
+    Context 'missing config (no ceiling config) uses hardcoded default and applies ceiling' {
+        BeforeAll {
+            $bigLines = 1..70 | ForEach-Object { "line $_" }
+            $script:r = Invoke-GateOutputFilter -Lines $bigLines -ConfigPath 'C:\nonexistent\path.json' -ProfileName 'p_compile_maven'
+        }
+
+        It 'sets fallback_mode to missing_config_passthrough' {
+            $script:r.fallback_mode | Should -Be 'missing_config_passthrough'
+        }
+        It 'returns hardcoded-ceiling+1 lines (61 = header + 60)' {
+            $script:r.lines.Count | Should -Be 61
+        }
+        It 'first line is passthrough-ceiling header' {
+            $script:r.lines[0] | Should -Match '^\[passthrough-ceiling\]'
+        }
+        It 'header contains ceiling=60' {
+            $script:r.lines[0] | Should -Match 'ceiling=60'
+        }
     }
 }
 

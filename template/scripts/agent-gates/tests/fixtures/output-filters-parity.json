@@ -1,5 +1,9 @@
 {
   "version": 2,
+  "passthrough_ceiling": {
+    "max_lines": 5,
+    "strategy": "tail"
+  },
   "profiles": {
     "p_compile_maven": {
       "description": "Maven compile — fixture profile for parity tests.",

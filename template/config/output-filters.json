@@ -1,5 +1,9 @@
 {
   "version": 2,
+  "passthrough_ceiling": {
+    "max_lines": 60,
+    "strategy": "tail"
+  },
   "profiles": {
     "compile_failure_console": {
       "description": "Compact compile/build failures with parser degradation and configurable failure tail.",

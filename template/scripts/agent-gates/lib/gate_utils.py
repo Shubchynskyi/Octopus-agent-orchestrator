@@ -607,6 +607,30 @@ def apply_output_filter_operation(lines: Any, operation: dict, context: Optional
     raise ValueError(f"Unsupported filter operation type '{operation_type}'.")
 
 
+def _apply_passthrough_ceiling(lines: List[str], config: Optional[dict], fallback_mode: str) -> List[str]:
+    DEFAULT_MAX = 60
+    max_lines = DEFAULT_MAX
+    strategy = "tail"
+
+    if isinstance(config, dict):
+        ceiling_cfg = config.get("passthrough_ceiling")
+        if isinstance(ceiling_cfg, dict):
+            cfg_max = ceiling_cfg.get("max_lines")
+            cfg_strategy = ceiling_cfg.get("strategy")
+            if isinstance(cfg_max, int) and cfg_max > 0:
+                max_lines = cfg_max
+            if cfg_strategy == "head":
+                strategy = "head"
+
+    total = len(lines)
+    if total <= max_lines:
+        return list(lines)
+
+    capped = _select_head_lines(lines, max_lines) if strategy == "head" else _select_tail_lines(lines, max_lines)
+    header = f"[passthrough-ceiling] fallback={fallback_mode} total={total} ceiling={max_lines} strategy={strategy}"
+    return [header] + capped
+
+
 def apply_output_filter_profile(
     lines: Any,
     config_path: Optional[Path],
@@ -630,6 +654,7 @@ def apply_output_filter_profile(
     if not config_path or not Path(config_path).exists():
         print(f"WARNING: output filter config missing for profile '{profile_name}': {config_path}", file=sys.stderr)
         passthrough["fallback_mode"] = "missing_config_passthrough"
+        passthrough["lines"] = _apply_passthrough_ceiling(original_lines, None, "missing_config_passthrough")
         return passthrough
 
     try:
@@ -637,22 +662,26 @@ def apply_output_filter_profile(
     except Exception as exc:
         print(f"WARNING: output filter config is invalid JSON for profile '{profile_name}': {exc}", file=sys.stderr)
         passthrough["fallback_mode"] = "invalid_config_passthrough"
+        passthrough["lines"] = _apply_passthrough_ceiling(original_lines, None, "invalid_config_passthrough")
         return passthrough
 
     profiles = config.get("profiles")
     if not isinstance(profiles, dict):
         print("WARNING: output filter config must contain object 'profiles'.", file=sys.stderr)
         passthrough["fallback_mode"] = "invalid_config_passthrough"
+        passthrough["lines"] = _apply_passthrough_ceiling(original_lines, config, "invalid_config_passthrough")
         return passthrough
 
     profile = profiles.get(profile_name)
     if profile is None:
         print(f"WARNING: output filter profile '{profile_name}' not found in {config_path}.", file=sys.stderr)
         passthrough["fallback_mode"] = "missing_profile_passthrough"
+        passthrough["lines"] = _apply_passthrough_ceiling(original_lines, config, "missing_profile_passthrough")
         return passthrough
     if not isinstance(profile, dict):
         print(f"WARNING: output filter profile '{profile_name}' must be an object.", file=sys.stderr)
         passthrough["fallback_mode"] = "invalid_profile_passthrough"
+        passthrough["lines"] = _apply_passthrough_ceiling(original_lines, config, "invalid_profile_passthrough")
         return passthrough
 
     try:
@@ -665,6 +694,8 @@ def apply_output_filter_profile(
 
         parser_result = _apply_output_parser(filtered_lines, profile.get("parser"), context)
         filtered_lines = list(parser_result["lines"])
+        if parser_result["parser_mode"] == "PASSTHROUGH":
+            filtered_lines = _apply_passthrough_ceiling(filtered_lines, config, "parser_passthrough")
         emit_when_empty = str(profile.get("emit_when_empty", "")).strip()
         if not filtered_lines and emit_when_empty:
             filtered_lines = [emit_when_empty]
@@ -680,6 +711,7 @@ def apply_output_filter_profile(
     except Exception as exc:
         print(f"WARNING: output filter profile '{profile_name}' is invalid: {exc}", file=sys.stderr)
         passthrough["fallback_mode"] = "invalid_profile_passthrough"
+        passthrough["lines"] = _apply_passthrough_ceiling(original_lines, config, "invalid_profile_passthrough")
         return passthrough
 
 
