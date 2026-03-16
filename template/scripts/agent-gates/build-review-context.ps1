@@ -225,6 +225,41 @@ function Resolve-OutputPath {
     return Join-Path $preflightDirectory "$baseName-$ReviewTypeValue-context.json"
 }
 
+function Resolve-RuleContextArtifactPath {
+    param([string]$ContextOutputPath)
+
+    if ([string]::IsNullOrWhiteSpace($ContextOutputPath)) {
+        return $null
+    }
+
+    return [System.IO.Path]::ChangeExtension($ContextOutputPath, '.md')
+}
+
+function Convert-ToNullableNonNegativeInt {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [short] -or $Value -is [byte]) {
+        if ([int64]$Value -lt 0) {
+            return $null
+        }
+        return [int][int64]$Value
+    }
+
+    $parsed = 0
+    if ([int]::TryParse(([string]$Value).Trim(), [ref]$parsed)) {
+        if ($parsed -lt 0) {
+            return $null
+        }
+        return $parsed
+    }
+
+    return $null
+}
+
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Resolve-ProjectRoot
 } else {
@@ -235,6 +270,7 @@ $resolvedPreflightPath = Resolve-PathInsideRepo -PathValue $PreflightPath -RepoR
 $resolvedTokenEconomyConfigPath = Resolve-PathInsideRepo -PathValue $TokenEconomyConfigPath -RepoRootPath $RepoRoot -AllowMissing
 $resolvedScopedDiffMetadataPath = Resolve-ScopedDiffMetadataPath -ExplicitMetadataPath $ScopedDiffMetadataPath -ResolvedPreflightPath $resolvedPreflightPath -ReviewTypeValue $ReviewType -RepoRootPath $RepoRoot
 $resolvedOutputPath = Resolve-OutputPath -ExplicitOutputPath $OutputPath -ResolvedPreflightPath $resolvedPreflightPath -ReviewTypeValue $ReviewType -RepoRootPath $RepoRoot
+$resolvedRuleContextArtifactPath = Resolve-RuleContextArtifactPath -ContextOutputPath $resolvedOutputPath
 $ruleFilesBasePath = Get-GateOrchestratorRelativePath -RepoRootPath $RepoRoot -PathValue 'live/docs/agent-rules'
 
 $preflight = Get-Content -LiteralPath $resolvedPreflightPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
@@ -266,7 +302,15 @@ $rulePackOmissionReason = if ($omittedRulePaths.Count -gt 0) { 'deferred_by_dept
 $requiredReviews = Get-ObjectPropertyValue -Object $preflight -PropertyName 'required_reviews'
 $requiredReviewFlag = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $requiredReviews -PropertyName $ReviewType)
 
-$scopedDiffExpected = $tokenEconomyActive -and $ReviewType -in @('db', 'security', 'refactor') -and (Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'scoped_diffs'))
+$stripExamplesFlag = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'strip_examples')
+$stripCodeBlocksFlag = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'strip_code_blocks')
+$scopedDiffsFlag = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'scoped_diffs')
+$compactReviewerOutputFlag = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'compact_reviewer_output')
+$failTailLines = Convert-ToNullableNonNegativeInt -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'fail_tail_lines')
+$stripExamplesApplied = $tokenEconomyActive -and $stripExamplesFlag
+$stripCodeBlocksApplied = $tokenEconomyActive -and $stripCodeBlocksFlag
+
+$scopedDiffExpected = $tokenEconomyActive -and $ReviewType -in @('db', 'security', 'refactor') -and $scopedDiffsFlag
 $scopedDiffMetadata = $null
 if (-not [string]::IsNullOrWhiteSpace($resolvedScopedDiffMetadataPath) -and (Test-Path -LiteralPath $resolvedScopedDiffMetadataPath -PathType Leaf)) {
     try {
@@ -288,14 +332,14 @@ if ($tokenEconomyActive -and $Depth -eq 1) {
         details = 'Only minimal reviewer rule context is selected at depth=1.'
     }
 }
-if ($tokenEconomyActive -and (Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'strip_examples'))) {
+if ($tokenEconomyActive -and $stripExamplesFlag) {
     $omittedSections += [ordered]@{
         section = 'examples'
         reason = 'token_economy_strip_examples'
         details = 'Examples may be omitted from reviewer context.'
     }
 }
-if ($tokenEconomyActive -and (Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'strip_code_blocks'))) {
+if ($tokenEconomyActive -and $stripCodeBlocksFlag) {
     $omittedSections += [ordered]@{
         section = 'code_blocks'
         reason = 'token_economy_strip_code_blocks'
@@ -306,12 +350,19 @@ if ($tokenEconomyActive -and (Convert-ToBoolean -Value (Get-ObjectPropertyValue 
 $tokenEconomyFlags = [ordered]@{
     enabled = [bool]$tokenEconomyEnabled
     enabled_depths = $enabledDepths
-    strip_examples = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'strip_examples')
-    strip_code_blocks = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'strip_code_blocks')
-    scoped_diffs = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'scoped_diffs')
-    compact_reviewer_output = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'compact_reviewer_output')
+    strip_examples = [bool]$stripExamplesFlag
+    strip_code_blocks = [bool]$stripCodeBlocksFlag
+    scoped_diffs = [bool]$scopedDiffsFlag
+    compact_reviewer_output = [bool]$compactReviewerOutputFlag
+    fail_tail_lines = $failTailLines
 }
 $tokenEconomyOmissionReason = if ($omittedSections.Count -gt 0 -or $omittedRulePaths.Count -gt 0) { 'token_economy_compaction' } else { 'none' }
+$ruleContextArtifact = New-GateRuleContextArtifact `
+    -RepoRootPath $RepoRoot `
+    -SelectedRulePaths $selectedRulePaths `
+    -ArtifactPath $resolvedRuleContextArtifactPath `
+    -StripExamples:$stripExamplesApplied `
+    -StripCodeBlocks:$stripCodeBlocksApplied
 $compatibilityInfo = [ordered]@{
     note = 'Use nested rule_pack.* and token_economy.* fields. Legacy top-level duplicates were removed in schema_version=2.'
     legacy_top_level_fields_removed = [ordered]@{
@@ -352,6 +403,16 @@ $result = [ordered]@{
         omitted_sections_count = $omittedSections.Count
         omission_reason = $tokenEconomyOmissionReason
     }
+    rule_context = [ordered]@{
+        artifact_path = $ruleContextArtifact.artifact_path
+        artifact_sha256 = $ruleContextArtifact.artifact_sha256
+        source_file_count = $ruleContextArtifact.source_file_count
+        strip_examples_applied = [bool]$stripExamplesApplied
+        strip_code_blocks_applied = [bool]$stripCodeBlocksApplied
+        summary = $ruleContextArtifact.summary
+        source_files = $ruleContextArtifact.source_files
+        preferred_prompt_artifact = $ruleContextArtifact.artifact_path
+    }
     scoped_diff = [ordered]@{
         expected = [bool]$scopedDiffExpected
         metadata_path = Normalize-Path $resolvedScopedDiffMetadataPath
@@ -367,5 +428,6 @@ Write-Output "ReviewType: $ReviewType"
 Write-Output "Depth: $Depth"
 Write-Output "TokenEconomyActive: $($tokenEconomyActive.ToString().ToLowerInvariant())"
 Write-Output "OmittedRuleCount: $($omittedRulePaths.Count)"
+Write-Output "RuleContextArtifactPath: $($ruleContextArtifact.artifact_path)"
 Write-Output "OutputPath: $(Normalize-Path $resolvedOutputPath)"
 Write-Output ($result | ConvertTo-Json -Depth 16)

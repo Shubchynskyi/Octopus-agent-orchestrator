@@ -32,7 +32,8 @@ Primary goal is behavior preservation with lower maintenance risk.
 - Config source: `Octopus-agent-orchestrator/live/config/token-economy.json`.
 - Apply this section only when `enabled=true` and effective depth is in `enabled_depths`.
 - While active, this section takes precedence over any static rule-file list in `Required Inputs`.
-- If orchestration provides review-context artifact, treat its `rule_pack.selected_rule_files`, `rule_pack.omitted_rule_files`, and `token_economy.omitted_sections` as the source of truth for compact refactor review scope and omission evidence.
+- If orchestration provides review-context artifact, treat its `rule_pack.selected_rule_files`, `rule_pack.omitted_rule_files`, `token_economy.omitted_sections`, and nested `rule_context.*` metadata as the source of truth for compact refactor review scope and omission evidence.
+- When `rule_context.artifact_path` is present, use that markdown snapshot as the primary rule text instead of reloading raw rule files.
 - Depth-aware required-rules behavior:
   - `depth=1`: evaluate required refactor rules directly triggered by changed scope first; avoid unrelated rule expansion and full static rule loading.
   - `depth=2`: evaluate the full required refactor checklist for changed scope.
@@ -41,6 +42,7 @@ Primary goal is behavior preservation with lower maintenance risk.
   - when `compact_reviewer_output=true`, keep the same mandatory output sections and exact verdict token.
   - keep findings concise (`risk -> evidence -> required action`) and move detail overflow to residual risks.
   - when including failing command/test snippets, cap pasted tail output to `fail_tail_lines`.
+  - review/completion gates may emit non-blocking warnings if the artifact exceeds compactness budgets or still contains stripped example markers.
 
 ## Review Workflow
 1. Detect refactor-impact scope using canonical trigger matrix:
@@ -69,4 +71,3 @@ Return `REFACTOR REVIEW FAILED` when any item is true:
 - Use file references with line numbers for findings.
 - Link each FAIL to specific behavior or contract risk.
 - Include remediation suggestions per blocking finding.
-

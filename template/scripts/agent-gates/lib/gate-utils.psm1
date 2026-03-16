@@ -177,6 +177,387 @@ function Convert-GatePathToUnix {
     return $normalized
 }
 
+function Get-GateStringSha256 {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$Value)
+        $hash = $sha.ComputeHash($bytes)
+        return ([System.BitConverter]::ToString($hash)).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-GateCompactReviewBudget {
+    param([AllowNull()][object]$FailTailLines)
+
+    $resolvedFailTailLines = 50
+    if ($FailTailLines -is [int] -or $FailTailLines -is [long] -or $FailTailLines -is [short] -or $FailTailLines -is [byte]) {
+        $resolvedFailTailLines = [int]$FailTailLines
+    } elseif ($null -ne $FailTailLines) {
+        $parsed = 0
+        if ([int]::TryParse(([string]$FailTailLines).Trim(), [ref]$parsed)) {
+            $resolvedFailTailLines = $parsed
+        }
+    }
+
+    if ($resolvedFailTailLines -lt 1) {
+        $resolvedFailTailLines = 50
+    }
+
+    $maxLines = [Math]::Max(120, $resolvedFailTailLines + 70)
+    $maxChars = [Math]::Max(12000, $maxLines * 100)
+    return [ordered]@{
+        fail_tail_lines = $resolvedFailTailLines
+        max_lines = $maxLines
+        max_chars = $maxChars
+        max_code_fence_lines = 4
+        max_example_markers = 0
+    }
+}
+
+function Invoke-GateMarkdownCompaction {
+    param(
+        [AllowNull()][string]$Content,
+        [bool]$StripExamples = $false,
+        [bool]$StripCodeBlocks = $false
+    )
+
+    $sourceText = if ($null -eq $Content) { '' } else { $Content.Replace("`r`n", "`n").Replace("`r", "`n") }
+    $lines = @($sourceText -split "`n", 0, 'SimpleMatch')
+    if ($sourceText.Length -eq 0) {
+        $lines = @('')
+    }
+
+    $outputLines = New-Object 'System.Collections.Generic.List[string]'
+    $exampleHeadingLevel = $null
+    $insideRemovedCodeBlock = $false
+    $pendingExampleLabel = $false
+    $removedCodeBlocks = 0
+    $removedExampleSections = 0
+    $removedExampleLabels = 0
+    $removedExampleContentLines = 0
+    $insertedExamplePlaceholder = $false
+    $insertedCodeBlockPlaceholder = $false
+    $headingPattern = '^(#{1,6})\s+(.+?)\s*$'
+    $exampleLabelPattern = '^\s*(?:bad|good)?\s*examples?\s*:\s*$'
+    $codeFencePattern = '^\s*```'
+
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        $line = [string]$lines[$index]
+        $headingMatch = [regex]::Match($line, $headingPattern)
+
+        if ($null -ne $exampleHeadingLevel) {
+            if ($headingMatch.Success -and $headingMatch.Groups[1].Value.Length -le $exampleHeadingLevel) {
+                $exampleHeadingLevel = $null
+                $insertedExamplePlaceholder = $false
+                $index--
+                continue
+            }
+            $removedExampleContentLines++
+            continue
+        }
+
+        if ($insideRemovedCodeBlock) {
+            if ($line -match $codeFencePattern) {
+                $insideRemovedCodeBlock = $false
+                $insertedCodeBlockPlaceholder = $false
+            }
+            continue
+        }
+
+        if ($StripExamples -and $headingMatch.Success -and $headingMatch.Groups[2].Value.ToLowerInvariant().Contains('example')) {
+            if ($outputLines.Count -gt 0 -and $outputLines[$outputLines.Count - 1] -ne '') {
+                $outputLines.Add('')
+            }
+            $outputLines.Add($line)
+            $outputLines.Add('> Example section omitted due to token economy.')
+            $removedExampleSections++
+            $exampleHeadingLevel = $headingMatch.Groups[1].Value.Length
+            $insertedExamplePlaceholder = $true
+            continue
+        }
+
+        if ($StripExamples -and $line -match $exampleLabelPattern) {
+            if (-not $insertedExamplePlaceholder) {
+                if ($outputLines.Count -gt 0 -and $outputLines[$outputLines.Count - 1] -ne '') {
+                    $outputLines.Add('')
+                }
+                $outputLines.Add('> Example content omitted due to token economy.')
+                $insertedExamplePlaceholder = $true
+            }
+            $removedExampleLabels++
+            $pendingExampleLabel = $true
+            continue
+        }
+
+        if ($pendingExampleLabel) {
+            if ($line -match $codeFencePattern) {
+                if (-not $insertedCodeBlockPlaceholder) {
+                    if ($outputLines.Count -gt 0 -and $outputLines[$outputLines.Count - 1] -ne '') {
+                        $outputLines.Add('')
+                    }
+                    $outputLines.Add('> Code block omitted due to token economy.')
+                    $insertedCodeBlockPlaceholder = $true
+                }
+                $removedCodeBlocks++
+                $insideRemovedCodeBlock = $true
+                $pendingExampleLabel = $false
+                continue
+            }
+            if ([string]::IsNullOrWhiteSpace($line)) {
+                continue
+            }
+            if ($headingMatch.Success) {
+                $pendingExampleLabel = $false
+                $index--
+                continue
+            }
+            $removedExampleContentLines++
+            continue
+        }
+
+        if ($StripCodeBlocks -and $line -match $codeFencePattern) {
+            if (-not $insertedCodeBlockPlaceholder) {
+                if ($outputLines.Count -gt 0 -and $outputLines[$outputLines.Count - 1] -ne '') {
+                    $outputLines.Add('')
+                }
+                $outputLines.Add('> Code block omitted due to token economy.')
+                $insertedCodeBlockPlaceholder = $true
+            }
+            $removedCodeBlocks++
+            $insideRemovedCodeBlock = $true
+            continue
+        }
+
+        $outputLines.Add($line)
+    }
+
+    $sanitizedText = (@($outputLines) -join "`n").Trim("`n")
+    if ($sourceText.EndsWith("`n", [System.StringComparison]::Ordinal)) {
+        $sanitizedText += "`n"
+    }
+
+    return [ordered]@{
+        content = $sanitizedText
+        original_line_count = $lines.Count
+        output_line_count = if ([string]::IsNullOrEmpty($sanitizedText)) { 0 } else { (@($sanitizedText -split "`n")).Count }
+        original_char_count = $sourceText.Length
+        output_char_count = $sanitizedText.Length
+        removed_code_blocks = $removedCodeBlocks
+        removed_example_sections = $removedExampleSections
+        removed_example_labels = $removedExampleLabels
+        removed_example_content_lines = $removedExampleContentLines
+    }
+}
+
+function New-GateRuleContextArtifact {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRootPath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$SelectedRulePaths,
+        [Parameter(Mandatory = $true)]
+        [string]$ArtifactPath,
+        [bool]$StripExamples = $false,
+        [bool]$StripCodeBlocks = $false
+    )
+
+    $outputSections = New-Object 'System.Collections.Generic.List[string]'
+    $outputSections.Add('# Reviewer Rule Context')
+    $outputSections.Add('')
+    $outputSections.Add("- strip_examples: $($StripExamples.ToString().ToLowerInvariant())")
+    $outputSections.Add("- strip_code_blocks: $($StripCodeBlocks.ToString().ToLowerInvariant())")
+    $outputSections.Add('')
+
+    $fileEntries = @()
+    $originalLineTotal = 0
+    $outputLineTotal = 0
+    $originalCharTotal = 0
+    $outputCharTotal = 0
+
+    foreach ($selectedRulePath in @($SelectedRulePaths)) {
+        $resolvedRulePath = Resolve-GatePathInsideRepo -PathValue $selectedRulePath -RepoRootPath $RepoRootPath
+        $rawContent = Get-Content -LiteralPath $resolvedRulePath -Raw -Encoding UTF8
+        $compacted = Invoke-GateMarkdownCompaction -Content $rawContent -StripExamples:$StripExamples -StripCodeBlocks:$StripCodeBlocks
+        $artifactContent = [string]$compacted.content
+        if ([string]::IsNullOrWhiteSpace($artifactContent)) {
+            $artifactContent = "_No remaining content after token-economy compaction._`n"
+        } elseif (-not $artifactContent.EndsWith("`n", [System.StringComparison]::Ordinal)) {
+            $artifactContent += "`n"
+        }
+
+        $outputSections.Add("## Source: $selectedRulePath")
+        $outputSections.Add('')
+        foreach ($contentLine in @($artifactContent.TrimEnd("`n") -split "`n")) {
+            $outputSections.Add([string]$contentLine)
+        }
+        $outputSections.Add('')
+        $outputSections.Add('---')
+        $outputSections.Add('')
+
+        $originalLineTotal += [int]$compacted.original_line_count
+        $outputLineTotal += [int]$compacted.output_line_count
+        $originalCharTotal += [int]$compacted.original_char_count
+        $outputCharTotal += [int]$compacted.output_char_count
+
+        $fileEntries += [ordered]@{
+            path = $selectedRulePath
+            artifact_source_path = Convert-GatePathToUnix -PathValue $resolvedRulePath
+            original_line_count = [int]$compacted.original_line_count
+            output_line_count = [int]$compacted.output_line_count
+            original_char_count = [int]$compacted.original_char_count
+            output_char_count = [int]$compacted.output_char_count
+            removed_code_blocks = [int]$compacted.removed_code_blocks
+            removed_example_sections = [int]$compacted.removed_example_sections
+            removed_example_labels = [int]$compacted.removed_example_labels
+            removed_example_content_lines = [int]$compacted.removed_example_content_lines
+            content_sha256 = Get-GateStringSha256 -Value ([string]$compacted.content)
+        }
+    }
+
+    $artifactParent = Split-Path -Parent $ArtifactPath
+    if ($artifactParent -and -not (Test-Path -LiteralPath $artifactParent)) {
+        New-Item -Path $artifactParent -ItemType Directory -Force | Out-Null
+    }
+    $artifactText = (@($outputSections) -join "`n").TrimEnd() + "`n"
+    Set-Content -LiteralPath $ArtifactPath -Value $artifactText -Encoding UTF8
+
+    return [ordered]@{
+        artifact_path = Convert-GatePathToUnix -PathValue $ArtifactPath
+        artifact_sha256 = Get-GateStringSha256 -Value $artifactText
+        source_file_count = $fileEntries.Count
+        source_files = $fileEntries
+        summary = [ordered]@{
+            original_line_count = $originalLineTotal
+            output_line_count = $outputLineTotal
+            original_char_count = $originalCharTotal
+            output_char_count = $outputCharTotal
+            estimated_saved_chars = [Math]::Max($originalCharTotal - $outputCharTotal, 0)
+            estimated_saved_tokens = [Math]::Max([int](($originalCharTotal - $outputCharTotal) / 4), 0)
+        }
+    }
+}
+
+function Test-GateReviewArtifactCompaction {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ArtifactPath,
+        [AllowNull()][string]$Content,
+        [AllowNull()][object]$ReviewContext
+    )
+
+    $tokenEconomyObject = $null
+    $tokenEconomyActive = $false
+    $flagsObject = $null
+    if ($null -ne $ReviewContext) {
+        if ($ReviewContext -is [System.Collections.IDictionary]) {
+            if ($ReviewContext.Contains('token_economy')) {
+                $tokenEconomyObject = $ReviewContext['token_economy']
+            }
+            if ($ReviewContext.Contains('token_economy_active')) {
+                $tokenEconomyActive = [bool]$ReviewContext['token_economy_active']
+            }
+        } elseif ($null -ne $ReviewContext.PSObject.Properties['token_economy']) {
+            $tokenEconomyObject = $ReviewContext.token_economy
+            if ($null -ne $ReviewContext.PSObject.Properties['token_economy_active']) {
+                $tokenEconomyActive = [bool]$ReviewContext.token_economy_active
+            }
+        }
+    }
+
+    if (-not $tokenEconomyActive -and $null -ne $tokenEconomyObject) {
+        if ($tokenEconomyObject -is [System.Collections.IDictionary]) {
+            $tokenEconomyActive = [bool]$tokenEconomyObject['active']
+            $flagsObject = $tokenEconomyObject['flags']
+        } else {
+            if ($null -ne $tokenEconomyObject.PSObject.Properties['active']) {
+                $tokenEconomyActive = [bool]$tokenEconomyObject.active
+            }
+            if ($null -ne $tokenEconomyObject.PSObject.Properties['flags']) {
+                $flagsObject = $tokenEconomyObject.flags
+            }
+        }
+    }
+
+    if ($null -eq $flagsObject -and $null -ne $tokenEconomyObject) {
+        if ($tokenEconomyObject -is [System.Collections.IDictionary]) {
+            $flagsObject = $tokenEconomyObject['flags']
+        } elseif ($null -ne $tokenEconomyObject.PSObject.Properties['flags']) {
+            $flagsObject = $tokenEconomyObject.flags
+        }
+    }
+
+    $compactReviewerOutput = $false
+    $stripExamples = $false
+    $failTailLines = 50
+    if ($null -ne $flagsObject) {
+        if ($flagsObject -is [System.Collections.IDictionary]) {
+            $compactReviewerOutput = [bool]$flagsObject['compact_reviewer_output']
+            $stripExamples = [bool]$flagsObject['strip_examples']
+            if ($flagsObject.Contains('fail_tail_lines')) { $failTailLines = $flagsObject['fail_tail_lines'] }
+        } else {
+            if ($null -ne $flagsObject.PSObject.Properties['compact_reviewer_output']) { $compactReviewerOutput = [bool]$flagsObject.compact_reviewer_output }
+            if ($null -ne $flagsObject.PSObject.Properties['strip_examples']) { $stripExamples = [bool]$flagsObject.strip_examples }
+            if ($null -ne $flagsObject.PSObject.Properties['fail_tail_lines']) { $failTailLines = $flagsObject.fail_tail_lines }
+        }
+    }
+
+    $compactExpected = $tokenEconomyActive -and $compactReviewerOutput
+    $budget = Get-GateCompactReviewBudget -FailTailLines $failTailLines
+    $contentText = if ($null -eq $Content) { '' } else { $Content.Replace("`r`n", "`n").Replace("`r", "`n") }
+    $lines = if ([string]::IsNullOrEmpty($contentText)) { @() } else { @($contentText -split "`n") }
+    $codeFenceLineCount = @($lines | Where-Object { $_ -match '^\s*```' }).Count
+    $exampleMarkerCount = @($lines | Where-Object { $_ -match '^\s*(?:#{1,6}\s+.*example.*|(?:bad|good)?\s*examples?\s*:)\s*$' }).Count
+    $warnings = @()
+
+    if ($compactExpected) {
+        if ($lines.Count -gt [int]$budget.max_lines) {
+            $warnings += "Review artifact '$ArtifactPath' exceeds compact line budget ($($lines.Count) > $($budget.max_lines))."
+        }
+        if ($contentText.Length -gt [int]$budget.max_chars) {
+            $warnings += "Review artifact '$ArtifactPath' exceeds compact char budget ($($contentText.Length) > $($budget.max_chars))."
+        }
+        if ($codeFenceLineCount -gt [int]$budget.max_code_fence_lines) {
+            $warnings += "Review artifact '$ArtifactPath' exceeds code-fence budget ($codeFenceLineCount > $($budget.max_code_fence_lines))."
+        }
+        if ($stripExamples -and $exampleMarkerCount -gt [int]$budget.max_example_markers) {
+            $warnings += "Review artifact '$ArtifactPath' still contains example markers while strip_examples=true."
+        }
+    }
+
+    $reviewContextPath = $null
+    if ($null -ne $ReviewContext) {
+        if ($ReviewContext -is [System.Collections.IDictionary]) {
+            if ($ReviewContext.Contains('output_path')) {
+                $reviewContextPath = Convert-GatePathToUnix -PathValue $ReviewContext['output_path']
+            }
+        } elseif ($null -ne $ReviewContext.PSObject.Properties['output_path']) {
+            $reviewContextPath = Convert-GatePathToUnix -PathValue $ReviewContext.output_path
+        }
+    }
+
+    return [ordered]@{
+        expected = [bool]$compactExpected
+        token_economy_active = [bool]$tokenEconomyActive
+        review_context_path = $reviewContextPath
+        line_count = $lines.Count
+        char_count = $contentText.Length
+        code_fence_line_count = $codeFenceLineCount
+        example_marker_count = $exampleMarkerCount
+        budget = $budget
+        warnings = $warnings
+        warning_count = $warnings.Count
+    }
+}
+
 function Assert-GateTaskId {
     param(
         [Parameter(Mandatory = $true)]
@@ -1776,6 +2157,11 @@ Export-ModuleMember -Function @(
     'Resolve-GatePathInsideRepo',
     'Convert-GateToStringArray',
     'Test-GateMatchAnyRegex',
+    'Get-GateStringSha256',
+    'Get-GateCompactReviewBudget',
+    'Invoke-GateMarkdownCompaction',
+    'New-GateRuleContextArtifact',
+    'Test-GateReviewArtifactCompaction',
     'Add-GateMetricsEvent',
     'Get-GateOutputTelemetry',
     'Invoke-GateOutputFilter',

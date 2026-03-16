@@ -63,6 +63,12 @@ def file_sha256(path: Optional[Path]) -> Optional[str]:
     return hashlib.sha256(path.read_bytes()).hexdigest().lower()
 
 
+def string_sha256(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest().lower()
+
+
 def _normalize_integrity_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _normalize_integrity_value(val) for key, val in sorted(value.items(), key=lambda item: str(item[0]))}
@@ -558,6 +564,293 @@ def _resolve_filter_int(value: Any, context: Optional[dict], field_name: str, mi
     if result < minimum:
         raise ValueError(f"{field_name} must resolve to integer >= {minimum}.")
     return result
+
+
+def get_compact_review_budget(fail_tail_lines: Any = None) -> dict:
+    resolved_fail_tail_lines = 50
+    if isinstance(fail_tail_lines, bool):
+        resolved_fail_tail_lines = 50
+    elif isinstance(fail_tail_lines, int):
+        resolved_fail_tail_lines = fail_tail_lines
+    elif fail_tail_lines is not None:
+        try:
+            resolved_fail_tail_lines = int(str(fail_tail_lines).strip())
+        except Exception:
+            resolved_fail_tail_lines = 50
+
+    resolved_fail_tail_lines = max(resolved_fail_tail_lines, 1)
+    max_lines = max(120, resolved_fail_tail_lines + 70)
+    max_chars = max(12000, max_lines * 100)
+    max_code_fence_lines = 4
+    max_example_markers = 0
+    return {
+        "fail_tail_lines": resolved_fail_tail_lines,
+        "max_lines": max_lines,
+        "max_chars": max_chars,
+        "max_code_fence_lines": max_code_fence_lines,
+        "max_example_markers": max_example_markers,
+    }
+
+
+def compact_markdown_content(content: Any, *, strip_examples: bool = False, strip_code_blocks: bool = False) -> dict:
+    source_text = "" if content is None else str(content)
+    source_text = source_text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = source_text.split("\n")
+    output_lines: List[str] = []
+    example_heading_level: Optional[int] = None
+    inside_removed_code_block = False
+    pending_example_label = False
+    removed_code_blocks = 0
+    removed_example_sections = 0
+    removed_example_labels = 0
+    removed_example_content_lines = 0
+    inserted_example_placeholder = False
+    inserted_code_block_placeholder = False
+
+    def ensure_blank_line() -> None:
+        if output_lines and output_lines[-1] != "":
+            output_lines.append("")
+
+    def add_example_placeholder() -> None:
+        nonlocal inserted_example_placeholder
+        if inserted_example_placeholder:
+            return
+        ensure_blank_line()
+        output_lines.append("> Example content omitted due to token economy.")
+        inserted_example_placeholder = True
+
+    def add_code_block_placeholder() -> None:
+        nonlocal inserted_code_block_placeholder
+        if inserted_code_block_placeholder:
+            return
+        ensure_blank_line()
+        output_lines.append("> Code block omitted due to token economy.")
+        inserted_code_block_placeholder = True
+
+    example_heading_pattern = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+    example_label_pattern = re.compile(r"^\s*(?:bad|good)?\s*examples?\s*:\s*$", re.IGNORECASE)
+    code_fence_pattern = re.compile(r"^\s*```")
+
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        heading_match = example_heading_pattern.match(line)
+
+        if example_heading_level is not None:
+            if heading_match and len(heading_match.group(1)) <= example_heading_level:
+                example_heading_level = None
+                inserted_example_placeholder = False
+                continue
+            removed_example_content_lines += 1
+            index += 1
+            continue
+
+        if inside_removed_code_block:
+            if code_fence_pattern.match(line):
+                inside_removed_code_block = False
+                inserted_code_block_placeholder = False
+            index += 1
+            continue
+
+        if strip_examples and heading_match and "example" in heading_match.group(2).lower():
+            ensure_blank_line()
+            output_lines.append(line)
+            output_lines.append("> Example section omitted due to token economy.")
+            removed_example_sections += 1
+            example_heading_level = len(heading_match.group(1))
+            inserted_example_placeholder = True
+            index += 1
+            continue
+
+        if strip_examples and example_label_pattern.match(line):
+            add_example_placeholder()
+            removed_example_labels += 1
+            pending_example_label = True
+            index += 1
+            continue
+
+        if pending_example_label:
+            if code_fence_pattern.match(line):
+                add_code_block_placeholder()
+                removed_code_blocks += 1
+                inside_removed_code_block = True
+                pending_example_label = False
+                index += 1
+                continue
+            if not line.strip():
+                index += 1
+                continue
+            if heading_match:
+                pending_example_label = False
+                continue
+            removed_example_content_lines += 1
+            index += 1
+            continue
+
+        if strip_code_blocks and code_fence_pattern.match(line):
+            add_code_block_placeholder()
+            removed_code_blocks += 1
+            inside_removed_code_block = True
+            index += 1
+            continue
+
+        output_lines.append(line)
+        index += 1
+
+    sanitized_text = "\n".join(output_lines).strip("\n")
+    if source_text.endswith("\n"):
+        sanitized_text += "\n"
+
+    return {
+        "content": sanitized_text,
+        "original_line_count": len(lines),
+        "output_line_count": len(sanitized_text.splitlines()) if sanitized_text else 0,
+        "original_char_count": len(source_text),
+        "output_char_count": len(sanitized_text),
+        "removed_code_blocks": removed_code_blocks,
+        "removed_example_sections": removed_example_sections,
+        "removed_example_labels": removed_example_labels,
+        "removed_example_content_lines": removed_example_content_lines,
+    }
+
+
+def build_rule_context_artifact(
+    repo_root: Path,
+    *,
+    selected_rule_paths: List[str],
+    artifact_path: Path,
+    strip_examples: bool = False,
+    strip_code_blocks: bool = False,
+) -> dict:
+    file_entries = []
+    output_sections = [
+        "# Reviewer Rule Context",
+        "",
+        f"- strip_examples: {str(bool(strip_examples)).lower()}",
+        f"- strip_code_blocks: {str(bool(strip_code_blocks)).lower()}",
+        "",
+    ]
+    original_line_total = 0
+    output_line_total = 0
+    original_char_total = 0
+    output_char_total = 0
+
+    for selected_rule_path in selected_rule_paths:
+        resolved_rule_path = resolve_path_inside_repo(selected_rule_path, repo_root)
+        raw_content = resolved_rule_path.read_text(encoding="utf-8")
+        compacted = compact_markdown_content(
+            raw_content,
+            strip_examples=strip_examples,
+            strip_code_blocks=strip_code_blocks,
+        )
+        artifact_content = compacted["content"] or "_No remaining content after token-economy compaction._\n"
+        if not artifact_content.endswith("\n"):
+            artifact_content += "\n"
+
+        output_sections.extend(
+            [
+                f"## Source: {selected_rule_path}",
+                "",
+                artifact_content.rstrip("\n"),
+                "",
+                "---",
+                "",
+            ]
+        )
+
+        original_line_total += compacted["original_line_count"]
+        output_line_total += compacted["output_line_count"]
+        original_char_total += compacted["original_char_count"]
+        output_char_total += compacted["output_char_count"]
+
+        file_entries.append(
+            {
+                "path": selected_rule_path,
+                "artifact_source_path": normalize_path(resolved_rule_path),
+                "original_line_count": compacted["original_line_count"],
+                "output_line_count": compacted["output_line_count"],
+                "original_char_count": compacted["original_char_count"],
+                "output_char_count": compacted["output_char_count"],
+                "removed_code_blocks": compacted["removed_code_blocks"],
+                "removed_example_sections": compacted["removed_example_sections"],
+                "removed_example_labels": compacted["removed_example_labels"],
+                "removed_example_content_lines": compacted["removed_example_content_lines"],
+                "content_sha256": string_sha256(compacted["content"] or ""),
+            }
+        )
+
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_text = "\n".join(output_sections).rstrip() + "\n"
+    artifact_path.write_text(artifact_text, encoding="utf-8")
+
+    return {
+        "artifact_path": normalize_path(artifact_path),
+        "artifact_sha256": file_sha256(artifact_path),
+        "source_file_count": len(file_entries),
+        "source_files": file_entries,
+        "summary": {
+            "original_line_count": original_line_total,
+            "output_line_count": output_line_total,
+            "original_char_count": original_char_total,
+            "output_char_count": output_char_total,
+            "estimated_saved_chars": max(original_char_total - output_char_total, 0),
+            "estimated_saved_tokens": max((original_char_total - output_char_total) // 4, 0),
+        },
+    }
+
+
+def audit_review_artifact_compaction(
+    *,
+    artifact_path: Path,
+    content: str,
+    review_context: Optional[dict],
+) -> dict:
+    review_context = review_context if isinstance(review_context, dict) else {}
+    token_economy = review_context.get("token_economy") or {}
+    flags = token_economy.get("flags") or {}
+    token_economy_active = bool(review_context.get("token_economy_active")) or bool(token_economy.get("active"))
+    compact_expected = token_economy_active and bool(flags.get("compact_reviewer_output"))
+    budget = get_compact_review_budget(flags.get("fail_tail_lines"))
+
+    lines = content.splitlines()
+    code_fence_lines = sum(1 for line in lines if re.match(r"^\s*```", line))
+    example_marker_lines = sum(
+        1
+        for line in lines
+        if re.match(r"^\s*(?:#{1,6}\s+.*example.*|(?:bad|good)?\s*examples?\s*:)\s*$", line, re.IGNORECASE)
+    )
+
+    warnings = []
+    if compact_expected:
+        if len(lines) > budget["max_lines"]:
+            warnings.append(
+                f"Review artifact '{normalize_path(artifact_path)}' exceeds compact line budget ({len(lines)} > {budget['max_lines']})."
+            )
+        if len(content) > budget["max_chars"]:
+            warnings.append(
+                f"Review artifact '{normalize_path(artifact_path)}' exceeds compact char budget ({len(content)} > {budget['max_chars']})."
+            )
+        if code_fence_lines > budget["max_code_fence_lines"]:
+            warnings.append(
+                f"Review artifact '{normalize_path(artifact_path)}' exceeds code-fence budget ({code_fence_lines} > {budget['max_code_fence_lines']})."
+            )
+        if bool(flags.get("strip_examples")) and example_marker_lines > budget["max_example_markers"]:
+            warnings.append(
+                f"Review artifact '{normalize_path(artifact_path)}' still contains example markers while strip_examples=true."
+            )
+
+    return {
+        "expected": compact_expected,
+        "token_economy_active": token_economy_active,
+        "review_context_path": normalize_path(review_context.get("output_path")) if isinstance(review_context, dict) else None,
+        "line_count": len(lines),
+        "char_count": len(content),
+        "code_fence_line_count": code_fence_lines,
+        "example_marker_count": example_marker_lines,
+        "budget": budget,
+        "warnings": warnings,
+        "warning_count": len(warnings),
+    }
 
 
 def _resolve_filter_str(

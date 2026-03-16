@@ -32,6 +32,7 @@ sys.path.insert(0, str(script_dir / "lib"))
 
 from gate_utils import (
     apply_output_filter_profile,
+    audit_review_artifact_compaction,
     append_metrics_event,
     append_task_event,
     assert_valid_task_id,
@@ -505,6 +506,8 @@ def verify_review_artifacts(repo_root, task_id, required_reviews, verdicts, skip
         "reviews_root": normalize_path(reviews_root),
         "checked": [],
         "violations": [],
+        "compaction_warnings": [],
+        "compaction_warning_count": 0,
     }
 
     skip_set = {v.lower() for v in skip_reviews}
@@ -526,6 +529,10 @@ def verify_review_artifacts(repo_root, task_id, required_reviews, verdicts, skip
             "present": False,
             "token_found": False,
             "sha256": None,
+            "review_context_path": None,
+            "review_context_present": False,
+            "review_context_valid": False,
+            "compaction_audit": None,
         }
 
         if not artifact_path.exists() or not artifact_path.is_file():
@@ -544,8 +551,30 @@ def verify_review_artifacts(repo_root, task_id, required_reviews, verdicts, skip
             result["violations"].append(
                 f"Review artifact '{entry['path']}' does not contain pass token '{pass_token}'."
             )
+
+        review_context_path = (reviews_root / f"{task_id}-{review_key}-context.json").resolve()
+        entry["review_context_path"] = normalize_path(review_context_path)
+        review_context = None
+        if review_context_path.exists() and review_context_path.is_file():
+            entry["review_context_present"] = True
+            try:
+                review_context = json.loads(review_context_path.read_text(encoding="utf-8"))
+                entry["review_context_valid"] = True
+            except Exception as exc:
+                result["compaction_warnings"].append(
+                    f"Review context artifact '{entry['review_context_path']}' is invalid JSON: {exc}"
+                )
+
+        compaction_audit = audit_review_artifact_compaction(
+            artifact_path=artifact_path,
+            content=content,
+            review_context=review_context,
+        )
+        entry["compaction_audit"] = compaction_audit
+        result["compaction_warnings"].extend(compaction_audit["warnings"])
         result["checked"].append(entry)
 
+    result["compaction_warning_count"] = len(result["compaction_warnings"])
     return result
 
 
@@ -782,6 +811,7 @@ if errors:
         "skip_reason": skip_reason,
         "output_filters_path": normalize_path(output_filters_path) if output_filters_path else None,
         "compile_gate": compile_gate_evidence,
+        "artifact_evidence": artifact_evidence,
         "violations": errors,
     }
     failure_event.update(failure_output_telemetry)
@@ -799,6 +829,7 @@ if errors:
             "skip_reviews": skip_reviews_list,
             "skip_reason": skip_reason,
             "compile_gate": compile_gate_evidence,
+            "artifact_evidence": artifact_evidence,
             "violations": errors,
         },
     )
@@ -853,6 +884,8 @@ else:
         "REVIEW_GATE_PASSED",
         f"Mode: {validated_preflight['mode']}",
     ]
+if artifact_evidence["compaction_warning_count"] > 0:
+    success_output_lines.append(f"CompactionWarnings: {artifact_evidence['compaction_warning_count']}")
 success_output_result = apply_output_filter_profile(
     success_output_lines,
     output_filters_path,
@@ -892,6 +925,7 @@ success_event = {
     "output_filters_path": normalize_path(output_filters_path) if output_filters_path else None,
     "compile_gate": compile_gate_evidence,
     "override_artifact": normalize_path(override_artifact_path) if override_artifact_path else None,
+    "artifact_evidence": artifact_evidence,
 }
 success_event.update(success_output_telemetry)
 append_metrics_event(metrics_path, success_event, emit_metrics)
@@ -911,6 +945,7 @@ if skip_code:
             "skip_reason": skip_reason,
             "compile_gate": compile_gate_evidence,
             "override_artifact": normalize_path(override_artifact_path) if override_artifact_path else None,
+            "artifact_evidence": artifact_evidence,
         },
     )
     for line in filtered_success_output_lines:
@@ -930,6 +965,7 @@ else:
             "skip_reason": skip_reason,
             "compile_gate": compile_gate_evidence,
             "override_artifact": normalize_path(override_artifact_path) if override_artifact_path else None,
+            "artifact_evidence": artifact_evidence,
         },
     )
     for line in filtered_success_output_lines:

@@ -29,6 +29,7 @@ script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
 sys.path.insert(0, str(script_dir / "lib"))
 
 from gate_utils import (  # noqa: E402
+    audit_review_artifact_compaction,
     append_metrics_event,
     append_task_event,
     assert_valid_task_id,
@@ -239,6 +240,8 @@ def get_review_artifact_evidence(repo_root: Path, task_id: str, required_reviews
         "missing": [],
         "token_missing": [],
         "violations": [],
+        "compaction_warnings": [],
+        "compaction_warning_count": 0,
     }
 
     if not task_id:
@@ -269,6 +272,10 @@ def get_review_artifact_evidence(repo_root: Path, task_id: str, required_reviews
             "pass_token": pass_token,
             "present": False,
             "token_found": False,
+            "review_context_path": None,
+            "review_context_present": False,
+            "review_context_valid": False,
+            "compaction_audit": None,
         }
 
         if not artifact_path.exists() or not artifact_path.is_file():
@@ -285,8 +292,30 @@ def get_review_artifact_evidence(repo_root: Path, task_id: str, required_reviews
             result["token_missing"].append(review_key)
             result["violations"].append(f"Review artifact '{entry['path']}' does not contain pass token '{pass_token}'.")
 
+        review_context_path = (reviews_root / f"{task_id}-{review_key}-context.json").resolve()
+        entry["review_context_path"] = normalize_path(review_context_path)
+        review_context = None
+        if review_context_path.exists() and review_context_path.is_file():
+            entry["review_context_present"] = True
+            try:
+                review_context = json.loads(review_context_path.read_text(encoding="utf-8"))
+                entry["review_context_valid"] = True
+            except Exception as exc:
+                result["compaction_warnings"].append(
+                    f"Review context artifact '{entry['review_context_path']}' is invalid JSON: {exc}"
+                )
+
+        compaction_audit = audit_review_artifact_compaction(
+            artifact_path=artifact_path,
+            content=content,
+            review_context=review_context,
+        )
+        entry["compaction_audit"] = compaction_audit
+        result["compaction_warnings"].extend(compaction_audit["warnings"])
+
         result["checked"].append(entry)
 
+    result["compaction_warning_count"] = len(result["compaction_warnings"])
     result["status"] = "FAILED" if result["violations"] else "PASS"
     return result
 
@@ -649,4 +678,6 @@ print("COMPLETION_GATE_PASSED")
 print(f"RequiredReviewArtifactsChecked: {len(artifact_evidence['checked'])}")
 if artifact_evidence["skipped_by_override"]:
     print(f"SkippedByOverride: {','.join(artifact_evidence['skipped_by_override'])}")
+if artifact_evidence["compaction_warning_count"] > 0:
+    print(f"CompactionWarnings: {artifact_evidence['compaction_warning_count']}")
 PY

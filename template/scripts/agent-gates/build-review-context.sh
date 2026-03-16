@@ -28,7 +28,15 @@ import sys
 
 sys.path.insert(0, str(script_dir / "lib"))
 
-from gate_utils import normalize_path, orchestrator_relative_path, parse_bool, resolve_path_inside_repo, resolve_project_root, to_string_array
+from gate_utils import (
+    build_rule_context_artifact,
+    normalize_path,
+    orchestrator_relative_path,
+    parse_bool,
+    resolve_path_inside_repo,
+    resolve_project_root,
+    to_string_array,
+)
 
 
 def get_rule_pack(review_type: str) -> dict:
@@ -73,6 +81,22 @@ def resolve_scoped_diff_metadata_path(explicit_metadata_path: str, preflight_pat
     return (preflight_dir / f"{base_name}-{review_type}-scoped.json").resolve()
 
 
+def resolve_rule_context_artifact_path(context_output_path: Path) -> Path:
+    return context_output_path.with_suffix(".md")
+
+
+def to_non_negative_int(value):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        return None
+    return parsed if parsed >= 0 else None
+
+
 def to_bool(value, default=False) -> bool:
     if value is None:
         return bool(default)
@@ -99,6 +123,7 @@ preflight_path = resolve_path_inside_repo(args.preflight_path, repo_root)
 token_config_path = resolve_path_inside_repo(args.token_economy_config_path, repo_root, allow_missing=True)
 scoped_diff_metadata_path = resolve_scoped_diff_metadata_path(args.scoped_diff_metadata_path, preflight_path, args.review_type, repo_root)
 output_path = resolve_output_path(args.output_path, preflight_path, args.review_type, repo_root)
+rule_context_artifact_path = resolve_rule_context_artifact_path(output_path)
 
 preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
 token_config = {}
@@ -127,7 +152,14 @@ rule_pack_omission_reason = "deferred_by_depth" if omitted_rule_paths else "none
 
 required_reviews = preflight.get("required_reviews") or {}
 required_review = to_bool(required_reviews.get(args.review_type))
-scoped_diff_expected = token_economy_active and args.review_type in {"db", "security", "refactor"} and to_bool(token_config.get("scoped_diffs"))
+strip_examples_flag = bool(to_bool(token_config.get("strip_examples")))
+strip_code_blocks_flag = bool(to_bool(token_config.get("strip_code_blocks")))
+scoped_diffs_flag = bool(to_bool(token_config.get("scoped_diffs")))
+compact_reviewer_output_flag = bool(to_bool(token_config.get("compact_reviewer_output")))
+fail_tail_lines = to_non_negative_int(token_config.get("fail_tail_lines"))
+strip_examples_applied = bool(token_economy_active and strip_examples_flag)
+strip_code_blocks_applied = bool(token_economy_active and strip_code_blocks_flag)
+scoped_diff_expected = token_economy_active and args.review_type in {"db", "security", "refactor"} and scoped_diffs_flag
 
 scoped_diff_metadata = None
 if scoped_diff_metadata_path.exists() and scoped_diff_metadata_path.is_file():
@@ -148,7 +180,7 @@ if token_economy_active and args.depth == 1:
             "details": "Only minimal reviewer rule context is selected at depth=1.",
         }
     )
-if token_economy_active and to_bool(token_config.get("strip_examples")):
+if token_economy_active and strip_examples_flag:
     omitted_sections.append(
         {
             "section": "examples",
@@ -156,7 +188,7 @@ if token_economy_active and to_bool(token_config.get("strip_examples")):
             "details": "Examples may be omitted from reviewer context.",
         }
     )
-if token_economy_active and to_bool(token_config.get("strip_code_blocks")):
+if token_economy_active and strip_code_blocks_flag:
     omitted_sections.append(
         {
             "section": "code_blocks",
@@ -168,12 +200,20 @@ if token_economy_active and to_bool(token_config.get("strip_code_blocks")):
 token_economy_flags = {
     "enabled": bool(enabled),
     "enabled_depths": enabled_depths,
-    "strip_examples": bool(to_bool(token_config.get("strip_examples"))),
-    "strip_code_blocks": bool(to_bool(token_config.get("strip_code_blocks"))),
-    "scoped_diffs": bool(to_bool(token_config.get("scoped_diffs"))),
-    "compact_reviewer_output": bool(to_bool(token_config.get("compact_reviewer_output"))),
+    "strip_examples": strip_examples_flag,
+    "strip_code_blocks": strip_code_blocks_flag,
+    "scoped_diffs": scoped_diffs_flag,
+    "compact_reviewer_output": compact_reviewer_output_flag,
+    "fail_tail_lines": fail_tail_lines,
 }
 token_economy_omission_reason = "token_economy_compaction" if omitted_sections or omitted_rule_paths else "none"
+rule_context_artifact = build_rule_context_artifact(
+    repo_root,
+    selected_rule_paths=selected_rule_paths,
+    artifact_path=rule_context_artifact_path,
+    strip_examples=strip_examples_applied,
+    strip_code_blocks=strip_code_blocks_applied,
+)
 compatibility = {
     "note": "Use nested rule_pack.* and token_economy.* fields. Legacy top-level duplicates were removed in schema_version=2.",
     "legacy_top_level_fields_removed": {
@@ -214,6 +254,16 @@ result = {
         "omitted_sections_count": len(omitted_sections),
         "omission_reason": token_economy_omission_reason,
     },
+    "rule_context": {
+        "artifact_path": rule_context_artifact["artifact_path"],
+        "artifact_sha256": rule_context_artifact["artifact_sha256"],
+        "source_file_count": rule_context_artifact["source_file_count"],
+        "strip_examples_applied": strip_examples_applied,
+        "strip_code_blocks_applied": strip_code_blocks_applied,
+        "summary": rule_context_artifact["summary"],
+        "source_files": rule_context_artifact["source_files"],
+        "preferred_prompt_artifact": rule_context_artifact["artifact_path"],
+    },
     "scoped_diff": {
         "expected": bool(scoped_diff_expected),
         "metadata_path": normalize_path(scoped_diff_metadata_path),
@@ -229,6 +279,7 @@ print(f"ReviewType: {args.review_type}")
 print(f"Depth: {args.depth}")
 print(f"TokenEconomyActive: {str(bool(token_economy_active)).lower()}")
 print(f"OmittedRuleCount: {len(omitted_rule_paths)}")
+print(f"RuleContextArtifactPath: {rule_context_artifact['artifact_path']}")
 print(f"OutputPath: {normalize_path(output_path)}")
 print(json.dumps(result, ensure_ascii=False, indent=2))
 PY

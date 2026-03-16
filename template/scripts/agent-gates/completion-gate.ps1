@@ -390,6 +390,8 @@ function Get-ReviewArtifactEvidence {
         missing = @()
         token_missing = @()
         violations = @()
+        compaction_warnings = @()
+        compaction_warning_count = 0
     }
 
     if ([string]::IsNullOrWhiteSpace($ResolvedTaskId)) {
@@ -438,6 +440,10 @@ function Get-ReviewArtifactEvidence {
             pass_token = [string]$contract.pass_token
             present = $false
             token_found = $false
+            review_context_path = $null
+            review_context_present = $false
+            review_context_valid = $false
+            compaction_audit = $null
         }
 
         if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
@@ -456,9 +462,29 @@ function Get-ReviewArtifactEvidence {
             $result.violations += "Review artifact '$($artifactEntry.path)' does not contain pass token '$([string]$contract.pass_token)'."
         }
 
+        $reviewContextPath = Join-Path $resolvedReviewsRoot "$ResolvedTaskId-$reviewKey-context.json"
+        $artifactEntry.review_context_path = Normalize-Path $reviewContextPath
+        $reviewContext = $null
+        if (Test-Path -LiteralPath $reviewContextPath -PathType Leaf) {
+            $artifactEntry.review_context_present = $true
+            try {
+                $reviewContext = Get-Content -LiteralPath $reviewContextPath -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+                $artifactEntry.review_context_valid = $true
+            } catch {
+                $result.compaction_warnings += "Review context artifact '$($artifactEntry.review_context_path)' is invalid JSON: $($_.Exception.Message)"
+            }
+        }
+
+        $compactionAudit = Test-GateReviewArtifactCompaction -ArtifactPath $artifactEntry.path -Content $content -ReviewContext $reviewContext
+        $artifactEntry.compaction_audit = $compactionAudit
+        if ($compactionAudit.warning_count -gt 0) {
+            $result.compaction_warnings += @($compactionAudit.warnings)
+        }
+
         $result.checked += [PSCustomObject]$artifactEntry
     }
 
+    $result.compaction_warning_count = @($result.compaction_warnings).Count
     if ($result.violations.Count -gt 0) {
         $result.status = 'FAILED'
         return $result
@@ -848,4 +874,7 @@ Write-Output 'COMPLETION_GATE_PASSED'
 Write-Output "RequiredReviewArtifactsChecked: $($artifactEvidence.checked.Count)"
 if (@($artifactEvidence.skipped_by_override).Count -gt 0) {
     Write-Output "SkippedByOverride: $(@($artifactEvidence.skipped_by_override) -join ',')"
+}
+if ($artifactEvidence.compaction_warning_count -gt 0) {
+    Write-Output "CompactionWarnings: $($artifactEvidence.compaction_warning_count)"
 }

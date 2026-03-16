@@ -627,6 +627,8 @@ function Test-ReviewArtifacts {
         reviews_root = Normalize-Path $reviewsRoot
         checked = @()
         violations = @()
+        compaction_warnings = @()
+        compaction_warning_count = 0
     }
 
     $skipSet = @(
@@ -658,6 +660,10 @@ function Test-ReviewArtifacts {
             present    = $false
             token_found = $false
             sha256     = $null
+            review_context_path = $null
+            review_context_present = $false
+            review_context_valid = $false
+            compaction_audit = $null
         }
 
         if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
@@ -674,9 +680,29 @@ function Test-ReviewArtifacts {
         } else {
             $result.violations += "Review artifact '$($entry.path)' does not contain pass token '$passToken'."
         }
+
+        $reviewContextPath = [System.IO.Path]::GetFullPath((Join-Path $reviewsRoot "$ResolvedTaskId-$reviewKey-context.json"))
+        $entry.review_context_path = Normalize-Path $reviewContextPath
+        $reviewContext = $null
+        if (Test-Path -LiteralPath $reviewContextPath -PathType Leaf) {
+            $entry.review_context_present = $true
+            try {
+                $reviewContext = Get-Content -LiteralPath $reviewContextPath -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+                $entry.review_context_valid = $true
+            } catch {
+                $result.compaction_warnings += "Review context artifact '$($entry.review_context_path)' is invalid JSON: $($_.Exception.Message)"
+            }
+        }
+
+        $compactionAudit = Test-GateReviewArtifactCompaction -ArtifactPath $entry.path -Content $content -ReviewContext $reviewContext
+        $entry.compaction_audit = $compactionAudit
+        if ($compactionAudit.warning_count -gt 0) {
+            $result.compaction_warnings += @($compactionAudit.warnings)
+        }
         $result.checked += $entry
     }
 
+    $result.compaction_warning_count = @($result.compaction_warnings).Count
     return $result
 }
 
@@ -1039,6 +1065,7 @@ if ($errors.Count -gt 0) {
         skip_reason = $SkipReason
         output_filters_path = Normalize-Path $resolvedOutputFiltersPath
         compile_gate = $compileGateEvidence
+        artifact_evidence = $artifactEvidence
         violations = $errors
     }
     foreach ($key in $failureOutputTelemetry.Keys) {
@@ -1053,6 +1080,7 @@ if ($errors.Count -gt 0) {
         skip_reviews = $skipReviewsList
         skip_reason = $SkipReason
         compile_gate = $compileGateEvidence
+        artifact_evidence = $artifactEvidence
         violations = $errors
     }
     Append-TaskEvent -RepoRootPath $repoRoot -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_FAILED' -Outcome 'FAIL' -Message 'Required reviews gate failed.' -Details $taskFailureDetails
@@ -1111,6 +1139,9 @@ if ($skipCode) {
     $successOutputLines.Add('REVIEW_GATE_PASSED')
     $successOutputLines.Add("Mode: $($validatedPreflight.mode)")
 }
+if ($artifactEvidence.compaction_warning_count -gt 0) {
+    $successOutputLines.Add("CompactionWarnings: $($artifactEvidence.compaction_warning_count)")
+}
 $filteredSuccessOutput = Invoke-GateOutputFilter -Lines $successOutputLines -ConfigPath $resolvedOutputFiltersPath -ProfileName 'review_gate_success_console'
 $filteredSuccessOutputLines = @($filteredSuccessOutput.lines)
 $successOutputTelemetry = Get-GateOutputTelemetry -RawLines $successOutputLines -FilteredLines $filteredSuccessOutputLines -FilterMode $filteredSuccessOutput.filter_mode -FallbackMode $filteredSuccessOutput.fallback_mode -ParserMode $filteredSuccessOutput.parser_mode -ParserName $filteredSuccessOutput.parser_name -ParserStrategy $filteredSuccessOutput.parser_strategy
@@ -1131,6 +1162,7 @@ $successEvent = [ordered]@{
     output_filters_path = Normalize-Path $resolvedOutputFiltersPath
     compile_gate = $compileGateEvidence
     override_artifact = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
+    artifact_evidence = $artifactEvidence
 }
 foreach ($key in $successOutputTelemetry.Keys) {
     $successEvent[$key] = $successOutputTelemetry[$key]
@@ -1145,6 +1177,7 @@ $taskSuccessDetails = [ordered]@{
     skip_reason = $SkipReason
     compile_gate = $compileGateEvidence
     override_artifact = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
+    artifact_evidence = $artifactEvidence
 }
 
 if ($skipCode) {

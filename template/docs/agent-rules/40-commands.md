@@ -109,7 +109,7 @@ Notes:
 - `doc-impact-gate` is mandatory before completion; it writes `runtime/reviews/<task-id>-doc-impact.json`. When the preflight detected `api`, `security`, `infra`, `dependency`, or `db` triggers, `NO_DOC_UPDATES` requires `-SensitiveScopeReviewed:$true` / `--sensitive-scope-reviewed true` with a rationale explaining why no documentation updates are needed.
 - `completion-gate` validates compile evidence, review-gate evidence, doc-impact evidence, rework-after-failure evidence, required review artifacts, and best-effort task-event integrity before `DONE`.
 - `build-scoped-diff.ps1` / `.sh` can also write `runtime/reviews/<task-id>-<review-type>-scoped.json` so reviewer prompts know whether scoped diff fell back to full diff.
-- `build-review-context.ps1` / `.sh` writes `runtime/reviews/<task-id>-<review-type>-review-context.json` with selected rule pack, omitted sections, and scoped-diff fallback evidence for token economy mode.
+- `build-review-context.ps1` / `.sh` writes `runtime/reviews/<task-id>-<review-type>-review-context.json` plus a sibling markdown snapshot referenced by `rule_context.artifact_path`; the JSON records selected rule pack, omitted sections, sanitized rule-context metadata, and scoped-diff fallback evidence for token economy mode.
 - Classification roots and trigger regexes are configurable in `Octopus-agent-orchestrator/live/config/paths.json`.
 - Optional specialist reviews (`api`, `test`, `performance`, `infra`, `dependency`) become required only when enabled in `Octopus-agent-orchestrator/live/config/review-capabilities.json`.
 - Gate scripts can append JSONL metrics to `Octopus-agent-orchestrator/runtime/metrics.jsonl` for threshold tuning.

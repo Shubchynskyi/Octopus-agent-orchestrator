@@ -32,7 +32,8 @@ Review for defects and risks first. Keep summary secondary.
 - Config source: `Octopus-agent-orchestrator/live/config/token-economy.json`.
 - Apply this section only when `enabled=true` and effective depth is in `enabled_depths`.
 - While active, this section takes precedence over any static rule-file list in `Required Inputs`.
-- If orchestration provides review-context artifact, treat its `rule_pack.selected_rule_files`, `rule_pack.omitted_rule_files`, and `token_economy.omitted_sections` as the source of truth for compact review scope and omission evidence.
+- If orchestration provides review-context artifact, treat its `rule_pack.selected_rule_files`, `rule_pack.omitted_rule_files`, `token_economy.omitted_sections`, and nested `rule_context.*` metadata as the source of truth for compact review scope and omission evidence.
+- When `rule_context.artifact_path` is present, use that markdown snapshot as the primary rule text instead of reloading raw rule files.
 - Depth-aware required-rules behavior:
   - `depth=1`: evaluate only required rules directly triggered by changed scope; do not request full static rule bundle; list deferred required rules in `not_applicable_rule_ids` with reason `deferred_by_depth`.
   - `depth=2`: evaluate all required code-review rules for changed scope.
@@ -41,6 +42,7 @@ Review for defects and risks first. Keep summary secondary.
   - when `compact_reviewer_output=true`, keep the same mandatory output sections and exact verdict token.
   - keep findings concise (`risk -> evidence -> required action`) and move detail overflow to residual risks.
   - when including failing command/test snippets, cap pasted tail output to `fail_tail_lines`.
+  - review/completion gates may emit non-blocking warnings if the artifact exceeds compactness budgets or still contains stripped example markers.
 
 ## Review Workflow
 1. Build scope from changed files and diff.
@@ -75,4 +77,3 @@ Return `REVIEW FAILED` when any item is true:
 ## Escalation
 - Escalation triggers are defined only in `Octopus-agent-orchestrator/live/skills/orchestration/references/review-trigger-matrix.md`.
 - Do not duplicate trigger rules in this skill.
-

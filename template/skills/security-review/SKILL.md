@@ -32,7 +32,8 @@ Prioritize exploitability, authorization integrity, and payment safety.
 - Config source: `Octopus-agent-orchestrator/live/config/token-economy.json`.
 - Apply this section only when `enabled=true` and effective depth is in `enabled_depths`.
 - While active, this section takes precedence over any static rule-file list in `Required Inputs`.
-- If orchestration provides review-context artifact, treat its `rule_pack.selected_rule_files`, `rule_pack.omitted_rule_files`, `token_economy.omitted_sections`, and `scoped_diff` fallback metadata as the source of truth for compact security review scope.
+- If orchestration provides review-context artifact, treat its `rule_pack.selected_rule_files`, `rule_pack.omitted_rule_files`, `token_economy.omitted_sections`, nested `rule_context.*`, and `scoped_diff` fallback metadata as the source of truth for compact security review scope.
+- When `rule_context.artifact_path` is present, use that markdown snapshot as the primary rule text instead of reloading raw rule files.
 - Depth-aware required-rules behavior:
   - `depth=1`: evaluate required security rules directly triggered by changed scope first; avoid unrelated rule expansion and full static rule loading.
   - `depth=2`: evaluate the full required security checklist for changed scope.
@@ -41,6 +42,7 @@ Prioritize exploitability, authorization integrity, and payment safety.
   - when `compact_reviewer_output=true`, keep the same mandatory output sections and exact verdict token.
   - keep findings concise (`risk -> evidence -> required action`) and move detail overflow to residual risks.
   - when including failing command/test snippets, cap pasted tail output to `fail_tail_lines`.
+  - review/completion gates may emit non-blocking warnings if the artifact exceeds compactness budgets or still contains stripped example markers.
 
 ## Review Workflow
 1. Detect security-impact scope using canonical trigger matrix:
@@ -70,4 +72,3 @@ Return `SECURITY REVIEW FAILED` when any item is true:
 - Use file references with line numbers for each finding.
 - Include concrete exploit path or abuse scenario for high-risk findings.
 - Include required remediation action per finding.
-
