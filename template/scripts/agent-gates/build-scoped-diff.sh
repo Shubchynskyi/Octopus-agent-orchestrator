@@ -138,7 +138,7 @@ def normalize_pathspecs_for_git(pathspecs, repo_root: Path, git_root: Path):
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--review-type", choices=["db", "security"], required=True)
+parser.add_argument("--review-type", choices=["db", "security", "refactor"], required=True)
 parser.add_argument("--preflight-path", required=True)
 parser.add_argument("--paths-config-path", default="Octopus-agent-orchestrator/live/config/paths.json")
 parser.add_argument("--output-path", default="")

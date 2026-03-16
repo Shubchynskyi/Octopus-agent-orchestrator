@@ -1868,7 +1868,7 @@ if (Test-Path -LiteralPath $orchestrationSkillPath -PathType Leaf) {
         'compile-gate.ps1 -TaskId "<task-id>" -CommandsPath "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"',
         'COMPILE_GATE_PASSED',
         'build-review-context.ps1 -ReviewType "<review-type>" -Depth "<1|2|3>"',
-        'build-scoped-diff.ps1 -ReviewType "<db|security>"',
+        'build-scoped-diff.ps1 -ReviewType "<db|security|refactor>"',
         'review artifact write path: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.',
         'required-reviews-check.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',
         'doc-impact-gate.ps1 -PreflightPath "<path>" -TaskId "<task-id>"',

@@ -127,7 +127,7 @@ rule_pack_omission_reason = "deferred_by_depth" if omitted_rule_paths else "none
 
 required_reviews = preflight.get("required_reviews") or {}
 required_review = to_bool(required_reviews.get(args.review_type))
-scoped_diff_expected = token_economy_active and args.review_type in {"db", "security"} and to_bool(token_config.get("scoped_diffs"))
+scoped_diff_expected = token_economy_active and args.review_type in {"db", "security", "refactor"} and to_bool(token_config.get("scoped_diffs"))
 
 scoped_diff_metadata = None
 if scoped_diff_metadata_path.exists() and scoped_diff_metadata_path.is_file():

@@ -266,7 +266,7 @@ $rulePackOmissionReason = if ($omittedRulePaths.Count -gt 0) { 'deferred_by_dept
 $requiredReviews = Get-ObjectPropertyValue -Object $preflight -PropertyName 'required_reviews'
 $requiredReviewFlag = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $requiredReviews -PropertyName $ReviewType)
 
-$scopedDiffExpected = $tokenEconomyActive -and $ReviewType -in @('db', 'security') -and (Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'scoped_diffs'))
+$scopedDiffExpected = $tokenEconomyActive -and $ReviewType -in @('db', 'security', 'refactor') -and (Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'scoped_diffs'))
 $scopedDiffMetadata = $null
 if (-not [string]::IsNullOrWhiteSpace($resolvedScopedDiffMetadataPath) -and (Test-Path -LiteralPath $resolvedScopedDiffMetadataPath -PathType Leaf)) {
     try {

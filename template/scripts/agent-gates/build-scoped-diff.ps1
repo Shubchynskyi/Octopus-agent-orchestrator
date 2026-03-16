@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('db', 'security')]
+    [ValidateSet('db', 'security', 'refactor')]
     [string]$ReviewType,
     [Parameter(Mandatory = $true)]
     [string]$PreflightPath,
