@@ -629,7 +629,11 @@ function Test-ReviewArtifacts {
         violations = @()
     }
 
-    $skipSet = @($SkipReviewsList | ForEach-Object { $_.ToLowerInvariant() })
+    $skipSet = @(
+        $SkipReviewsList |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_.ToLowerInvariant() }
+    )
 
     foreach ($contract in $script:REVIEW_CONTRACTS) {
         $reviewKey = $contract.key
@@ -1155,4 +1159,3 @@ Append-TaskEvent -RepoRootPath $repoRoot -TaskId $resolvedTaskId -EventType 'REV
 foreach ($line in $filteredSuccessOutputLines) {
     Write-Output $line
 }
-

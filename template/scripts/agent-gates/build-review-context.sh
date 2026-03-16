@@ -122,6 +122,7 @@ omitted_rule_files = [item for item in full_rule_files if item not in selected_r
 selected_rule_paths = [f"Octopus-agent-orchestrator/live/docs/agent-rules/{item}" for item in selected_rule_files]
 full_rule_paths = [f"Octopus-agent-orchestrator/live/docs/agent-rules/{item}" for item in full_rule_files]
 omitted_rule_paths = [f"Octopus-agent-orchestrator/live/docs/agent-rules/{item}" for item in omitted_rule_files]
+rule_pack_omission_reason = "deferred_by_depth" if omitted_rule_paths else "none"
 
 required_reviews = preflight.get("required_reviews") or {}
 required_review = to_bool(required_reviews.get(args.review_type))
@@ -163,7 +164,32 @@ if token_economy_active and to_bool(token_config.get("strip_code_blocks")):
         }
     )
 
+token_economy_flags = {
+    "enabled": bool(enabled),
+    "enabled_depths": enabled_depths,
+    "strip_examples": bool(to_bool(token_config.get("strip_examples"))),
+    "strip_code_blocks": bool(to_bool(token_config.get("strip_code_blocks"))),
+    "scoped_diffs": bool(to_bool(token_config.get("scoped_diffs"))),
+    "compact_reviewer_output": bool(to_bool(token_config.get("compact_reviewer_output"))),
+}
+token_economy_omission_reason = "token_economy_compaction" if omitted_sections or omitted_rule_paths else "none"
+compatibility = {
+    "note": "Use nested rule_pack.* and token_economy.* fields. Legacy top-level duplicates were removed in schema_version=2.",
+    "legacy_top_level_fields_removed": {
+        "selected_rule_files": "rule_pack.selected_rule_files",
+        "selected_rule_count": "rule_pack.selected_rule_count",
+        "full_rule_pack_files": "rule_pack.full_rule_pack_files",
+        "omitted_rule_files": "rule_pack.omitted_rule_files",
+        "omitted_rule_count": "rule_pack.omitted_rule_count",
+        "omission_reason": "rule_pack.omission_reason",
+        "token_economy_flags": "token_economy.flags",
+        "omitted_sections": "token_economy.omitted_sections",
+        "omitted_sections_count": "token_economy.omitted_sections_count",
+    },
+}
+
 result = {
+    "schema_version": 2,
     "review_type": args.review_type,
     "depth": args.depth,
     "token_economy_active": bool(token_economy_active),
@@ -171,43 +197,21 @@ result = {
     "preflight_path": normalize_path(preflight_path),
     "output_path": normalize_path(output_path),
     "token_economy_config_path": normalize_path(token_config_path),
-    "selected_rule_files": selected_rule_paths,
-    "selected_rule_count": len(selected_rule_paths),
-    "full_rule_pack_files": full_rule_paths,
-    "omitted_rule_files": omitted_rule_paths,
-    "omitted_rule_count": len(omitted_rule_paths),
-    "omitted_sections": omitted_sections,
-    "omitted_sections_count": len(omitted_sections),
-    "omission_reason": "deferred_by_depth" if omitted_rule_paths else "none",
+    "compatibility": compatibility,
     "rule_pack": {
         "selected_rule_files": selected_rule_paths,
         "selected_rule_count": len(selected_rule_paths),
         "full_rule_pack_files": full_rule_paths,
         "omitted_rule_files": omitted_rule_paths,
         "omitted_rule_count": len(omitted_rule_paths),
-        "omission_reason": "deferred_by_depth" if omitted_rule_paths else "none",
-    },
-    "token_economy_flags": {
-        "enabled": bool(enabled),
-        "enabled_depths": enabled_depths,
-        "strip_examples": bool(to_bool(token_config.get("strip_examples"))),
-        "strip_code_blocks": bool(to_bool(token_config.get("strip_code_blocks"))),
-        "scoped_diffs": bool(to_bool(token_config.get("scoped_diffs"))),
-        "compact_reviewer_output": bool(to_bool(token_config.get("compact_reviewer_output"))),
+        "omission_reason": rule_pack_omission_reason,
     },
     "token_economy": {
         "active": bool(token_economy_active),
-        "flags": {
-            "enabled": bool(enabled),
-            "enabled_depths": enabled_depths,
-            "strip_examples": bool(to_bool(token_config.get("strip_examples"))),
-            "strip_code_blocks": bool(to_bool(token_config.get("strip_code_blocks"))),
-            "scoped_diffs": bool(to_bool(token_config.get("scoped_diffs"))),
-            "compact_reviewer_output": bool(to_bool(token_config.get("compact_reviewer_output"))),
-        },
+        "flags": token_economy_flags,
         "omitted_sections": omitted_sections,
         "omitted_sections_count": len(omitted_sections),
-        "omission_reason": "token_economy_compaction" if omitted_sections or omitted_rule_paths else "none",
+        "omission_reason": token_economy_omission_reason,
     },
     "scoped_diff": {
         "expected": bool(scoped_diff_expected),

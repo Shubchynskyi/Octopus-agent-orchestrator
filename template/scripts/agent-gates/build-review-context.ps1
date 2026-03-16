@@ -257,8 +257,10 @@ $selectedRuleFiles = if (-not $tokenEconomyActive -or $Depth -ge 3) {
 }
 
 $omittedRuleFiles = @($fullRuleFiles | Where-Object { $selectedRuleFiles -notcontains $_ })
+$fullRulePaths = @($fullRuleFiles | ForEach-Object { "Octopus-agent-orchestrator/live/docs/agent-rules/$_" })
 $selectedRulePaths = @($selectedRuleFiles | ForEach-Object { "Octopus-agent-orchestrator/live/docs/agent-rules/$_" })
 $omittedRulePaths = @($omittedRuleFiles | ForEach-Object { "Octopus-agent-orchestrator/live/docs/agent-rules/$_" })
+$rulePackOmissionReason = if ($omittedRulePaths.Count -gt 0) { 'deferred_by_depth' } else { 'none' }
 
 $requiredReviews = Get-ObjectPropertyValue -Object $preflight -PropertyName 'required_reviews'
 $requiredReviewFlag = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $requiredReviews -PropertyName $ReviewType)
@@ -300,7 +302,32 @@ if ($tokenEconomyActive -and (Convert-ToBoolean -Value (Get-ObjectPropertyValue 
     }
 }
 
+$tokenEconomyFlags = [ordered]@{
+    enabled = [bool]$tokenEconomyEnabled
+    enabled_depths = $enabledDepths
+    strip_examples = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'strip_examples')
+    strip_code_blocks = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'strip_code_blocks')
+    scoped_diffs = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'scoped_diffs')
+    compact_reviewer_output = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'compact_reviewer_output')
+}
+$tokenEconomyOmissionReason = if ($omittedSections.Count -gt 0 -or $omittedRulePaths.Count -gt 0) { 'token_economy_compaction' } else { 'none' }
+$compatibilityInfo = [ordered]@{
+    note = 'Use nested rule_pack.* and token_economy.* fields. Legacy top-level duplicates were removed in schema_version=2.'
+    legacy_top_level_fields_removed = [ordered]@{
+        selected_rule_files = 'rule_pack.selected_rule_files'
+        selected_rule_count = 'rule_pack.selected_rule_count'
+        full_rule_pack_files = 'rule_pack.full_rule_pack_files'
+        omitted_rule_files = 'rule_pack.omitted_rule_files'
+        omitted_rule_count = 'rule_pack.omitted_rule_count'
+        omission_reason = 'rule_pack.omission_reason'
+        token_economy_flags = 'token_economy.flags'
+        omitted_sections = 'token_economy.omitted_sections'
+        omitted_sections_count = 'token_economy.omitted_sections_count'
+    }
+}
+
 $result = [ordered]@{
+    schema_version = 2
     review_type = $ReviewType
     depth = $Depth
     token_economy_active = [bool]$tokenEconomyActive
@@ -308,43 +335,21 @@ $result = [ordered]@{
     preflight_path = Normalize-Path $resolvedPreflightPath
     output_path = Normalize-Path $resolvedOutputPath
     token_economy_config_path = Normalize-Path $resolvedTokenEconomyConfigPath
-    selected_rule_files = $selectedRulePaths
-    selected_rule_count = $selectedRulePaths.Count
-    full_rule_pack_files = @($fullRuleFiles | ForEach-Object { "Octopus-agent-orchestrator/live/docs/agent-rules/$_" })
-    omitted_rule_files = $omittedRulePaths
-    omitted_rule_count = $omittedRulePaths.Count
-    omitted_sections = $omittedSections
-    omitted_sections_count = $omittedSections.Count
-    omission_reason = $(if ($omittedRulePaths.Count -gt 0) { 'deferred_by_depth' } else { 'none' })
+    compatibility = $compatibilityInfo
     rule_pack = [ordered]@{
         selected_rule_files = $selectedRulePaths
         selected_rule_count = $selectedRulePaths.Count
-        full_rule_pack_files = @($fullRuleFiles | ForEach-Object { "Octopus-agent-orchestrator/live/docs/agent-rules/$_" })
+        full_rule_pack_files = $fullRulePaths
         omitted_rule_files = $omittedRulePaths
         omitted_rule_count = $omittedRulePaths.Count
-        omission_reason = $(if ($omittedRulePaths.Count -gt 0) { 'deferred_by_depth' } else { 'none' })
-    }
-    token_economy_flags = [ordered]@{
-        enabled = [bool]$tokenEconomyEnabled
-        enabled_depths = $enabledDepths
-        strip_examples = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'strip_examples')
-        strip_code_blocks = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'strip_code_blocks')
-        scoped_diffs = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'scoped_diffs')
-        compact_reviewer_output = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'compact_reviewer_output')
+        omission_reason = $rulePackOmissionReason
     }
     token_economy = [ordered]@{
         active = [bool]$tokenEconomyActive
-        flags = [ordered]@{
-            enabled = [bool]$tokenEconomyEnabled
-            enabled_depths = $enabledDepths
-            strip_examples = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'strip_examples')
-            strip_code_blocks = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'strip_code_blocks')
-            scoped_diffs = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'scoped_diffs')
-            compact_reviewer_output = Convert-ToBoolean -Value (Get-ObjectPropertyValue -Object $tokenEconomyConfig -PropertyName 'compact_reviewer_output')
-        }
+        flags = $tokenEconomyFlags
         omitted_sections = $omittedSections
         omitted_sections_count = $omittedSections.Count
-        omission_reason = $(if ($omittedSections.Count -gt 0 -or $omittedRulePaths.Count -gt 0) { 'token_economy_compaction' } else { 'none' })
+        omission_reason = $tokenEconomyOmissionReason
     }
     scoped_diff = [ordered]@{
         expected = [bool]$scopedDiffExpected
