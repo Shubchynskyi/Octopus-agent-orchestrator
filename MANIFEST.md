@@ -75,6 +75,7 @@ Kept inside bundle:
 - scripts/check-update.sh
 - scripts/lib/init-answer-migrations.ps1
 - scripts/lib/rule-contract-migrations.ps1
+- scripts/lib/managed-config-contracts.ps1
 - .gitattributes
 - README.md
 - CHANGELOG.md

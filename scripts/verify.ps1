@@ -14,6 +14,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $bundleRoot = Split-Path -Parent $scriptDir
 $sourceRoot = Join-Path $bundleRoot 'template'
 $ruleContractMigrationModulePath = Join-Path $scriptDir 'lib/rule-contract-migrations.ps1'
+$managedConfigContractsModulePath = Join-Path $scriptDir 'lib/managed-config-contracts.ps1'
 
 if (-not (Test-Path $sourceRoot)) {
     throw "Template directory not found: $sourceRoot"
@@ -23,6 +24,11 @@ if (-not (Test-Path -LiteralPath $ruleContractMigrationModulePath -PathType Leaf
     throw "Rule contract migrations module not found: $ruleContractMigrationModulePath"
 }
 . $ruleContractMigrationModulePath
+
+if (-not (Test-Path -LiteralPath $managedConfigContractsModulePath -PathType Leaf)) {
+    throw "Managed config contracts module not found: $managedConfigContractsModulePath"
+}
+. $managedConfigContractsModulePath
 
 if ([string]::IsNullOrWhiteSpace($TargetRoot)) {
     $TargetRoot = Split-Path -Parent $bundleRoot
@@ -336,6 +342,7 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/scripts/check-update.sh',
     'Octopus-agent-orchestrator/scripts/update.ps1',
     'Octopus-agent-orchestrator/scripts/update.sh',
+    'Octopus-agent-orchestrator/scripts/lib/managed-config-contracts.ps1',
     'Octopus-agent-orchestrator/scripts/lib/rule-contract-migrations.ps1',
     'Octopus-agent-orchestrator/MANIFEST.md',
     'Octopus-agent-orchestrator/live/version.json',
@@ -454,94 +461,60 @@ foreach ($relativePath in $requiredPaths) {
     }
 }
 
-$tokenEconomyContractViolations = @()
-$tokenEconomyRelativePath = 'Octopus-agent-orchestrator/live/config/token-economy.json'
-$tokenEconomyPath = Join-Path $TargetRoot $tokenEconomyRelativePath
-if (-not (Test-Path -LiteralPath $tokenEconomyPath -PathType Leaf)) {
-    $tokenEconomyContractViolations += "$tokenEconomyRelativePath is missing."
-} else {
+function Get-ManagedConfigContractResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ConfigName,
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath,
+        [Parameter(Mandatory = $true)]
+        [ref]$Violations
+    )
+
+    $result = [PSCustomObject]@{
+        Value   = $null
+        Changes = @()
+    }
+
+    $configPath = Join-Path $TargetRoot $RelativePath
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+        $Violations.Value += "$RelativePath is missing."
+        return $result
+    }
+
     try {
-        $tokenEconomyConfig = Get-Content -LiteralPath $tokenEconomyPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $rawConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
     }
     catch {
-        $tokenEconomyContractViolations += "$tokenEconomyRelativePath must contain valid JSON."
-        $tokenEconomyConfig = $null
+        $Violations.Value += "$RelativePath must contain valid JSON."
+        return $result
     }
 
-    if ($null -ne $tokenEconomyConfig) {
-        $requiredBooleanKeys = @(
-            'enabled',
-            'strip_examples',
-            'strip_code_blocks',
-            'scoped_diffs',
-            'compact_reviewer_output'
-        )
-        foreach ($key in $requiredBooleanKeys) {
-            $property = $tokenEconomyConfig.PSObject.Properties[$key]
-            if ($null -eq $property) {
-                $tokenEconomyContractViolations += "$tokenEconomyRelativePath must include boolean '$key'."
-                continue
-            }
-
-            if ($property.Value -isnot [bool]) {
-                $tokenEconomyContractViolations += "$tokenEconomyRelativePath '$key' must be boolean."
-            }
-        }
-
-        $enabledProperty = $tokenEconomyConfig.PSObject.Properties['enabled']
-        if ($null -ne $enabledProperty -and $enabledProperty.Value -is [bool]) {
-            if ([bool]$enabledProperty.Value -ne $artifactTokenEconomyEnabled) {
-                $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'enabled' value '$($enabledProperty.Value)' must match init answers TokenEconomyEnabled '$artifactTokenEconomyEnabled'."
-            }
-        }
-
-        $enabledDepthsProperty = $tokenEconomyConfig.PSObject.Properties['enabled_depths']
-        if ($null -eq $enabledDepthsProperty) {
-            $tokenEconomyContractViolations += "$tokenEconomyRelativePath must include array 'enabled_depths'."
-        } else {
-            $enabledDepthsValue = $enabledDepthsProperty.Value
-            if ($enabledDepthsValue -is [string] -or $null -eq $enabledDepthsValue) {
-                $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'enabled_depths' must be an array of integers in range 1..3."
-            } else {
-                foreach ($depthValue in @($enabledDepthsValue)) {
-                    $depthInt = $null
-                    if ($depthValue -is [int] -or $depthValue -is [long] -or $depthValue -is [short] -or $depthValue -is [byte]) {
-                        $depthInt = [int]$depthValue
-                    } elseif ($depthValue -is [double] -or $depthValue -is [decimal] -or $depthValue -is [single]) {
-                        $depthNumeric = [double]$depthValue
-                        if ($depthNumeric -eq [Math]::Floor($depthNumeric)) {
-                            $depthInt = [int]$depthNumeric
-                        }
-                    }
-
-                    if ($null -eq $depthInt -or $depthInt -lt 1 -or $depthInt -gt 3) {
-                        $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'enabled_depths' must contain only integers in range 1..3."
-                        break
-                    }
-                }
-            }
-        }
-
-        $failTailLinesProperty = $tokenEconomyConfig.PSObject.Properties['fail_tail_lines']
-        if ($null -eq $failTailLinesProperty) {
-            $tokenEconomyContractViolations += "$tokenEconomyRelativePath must include positive integer 'fail_tail_lines'."
-        } else {
-            $failTailLines = $null
-            $failTailRaw = $failTailLinesProperty.Value
-            if ($failTailRaw -is [int] -or $failTailRaw -is [long] -or $failTailRaw -is [short] -or $failTailRaw -is [byte]) {
-                $failTailLines = [int]$failTailRaw
-            } elseif ($failTailRaw -is [double] -or $failTailRaw -is [decimal] -or $failTailRaw -is [single]) {
-                $failTailNumeric = [double]$failTailRaw
-                if ($failTailNumeric -eq [Math]::Floor($failTailNumeric)) {
-                    $failTailLines = [int]$failTailNumeric
-                }
-            }
-
-            if ($null -eq $failTailLines -or $failTailLines -le 0) {
-                $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'fail_tail_lines' must be a positive integer."
-            }
-        }
+    $definition = Get-ManagedConfigDefinition -ConfigName $ConfigName
+    $templatePath = Join-Path $sourceRoot $definition.TemplateRelativePath
+    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
+        $Violations.Value += "Template config for '$ConfigName' is missing: $templatePath"
+        $result.Value = $rawConfig
+        return $result
     }
+
+    try {
+        $templateConfig = Get-Content -LiteralPath $templatePath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+    }
+    catch {
+        $Violations.Value += "Template config for '$ConfigName' must contain valid JSON: $templatePath"
+        $result.Value = $rawConfig
+        return $result
+    }
+
+    $mergeResult = Merge-ManagedConfigWithTemplate -ConfigName $ConfigName -TemplateConfig $templateConfig -ExistingConfig $rawConfig
+    $result.Value = Convert-ToManagedConfigHashtable -Value $mergeResult.Value
+    $result.Changes = @($mergeResult.Changes)
+    foreach ($change in $result.Changes) {
+        $Violations.Value += Format-ManagedConfigChange -RelativePath $RelativePath -Change $change
+    }
+
+    return $result
 }
 
 function Get-VerifyConfigValue {
@@ -672,21 +645,86 @@ function Test-VerifyFilterStringSpec {
     }
 }
 
-$outputFiltersContractViolations = @()
-$outputFiltersRelativePath = 'Octopus-agent-orchestrator/live/config/output-filters.json'
-$outputFiltersPath = Join-Path $TargetRoot $outputFiltersRelativePath
-if (-not (Test-Path -LiteralPath $outputFiltersPath -PathType Leaf)) {
-    $outputFiltersContractViolations += "$outputFiltersRelativePath is missing."
-} else {
-    try {
-        $outputFiltersConfig = Get-Content -LiteralPath $outputFiltersPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
-    }
-    catch {
-        $outputFiltersContractViolations += "$outputFiltersRelativePath must contain valid JSON."
-        $outputFiltersConfig = $null
+$tokenEconomyContractViolations = @()
+$tokenEconomyRelativePath = 'Octopus-agent-orchestrator/live/config/token-economy.json'
+$tokenEconomyContract = Get-ManagedConfigContractResult -ConfigName 'token-economy' -RelativePath $tokenEconomyRelativePath -Violations ([ref]$tokenEconomyContractViolations)
+$tokenEconomyConfig = $tokenEconomyContract.Value
+if ($null -ne $tokenEconomyConfig) {
+    $requiredBooleanKeys = @(
+        'enabled',
+        'strip_examples',
+        'strip_code_blocks',
+        'scoped_diffs',
+        'compact_reviewer_output'
+    )
+    foreach ($key in $requiredBooleanKeys) {
+        $value = Get-VerifyConfigValue -Object $tokenEconomyConfig -Key $key
+        if ($null -eq $value) {
+            $tokenEconomyContractViolations += "$tokenEconomyRelativePath must include boolean '$key'."
+            continue
+        }
+
+        if ($value -isnot [bool]) {
+            $tokenEconomyContractViolations += "$tokenEconomyRelativePath '$key' must be boolean."
+        }
     }
 
-    if ($null -ne $outputFiltersConfig) {
+    $enabledValue = Get-VerifyConfigValue -Object $tokenEconomyConfig -Key 'enabled'
+    if ($enabledValue -is [bool] -and [bool]$enabledValue -ne $artifactTokenEconomyEnabled) {
+        $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'enabled' value '$enabledValue' must match init answers TokenEconomyEnabled '$artifactTokenEconomyEnabled'."
+    }
+
+    $enabledDepthsValue = Get-VerifyConfigValue -Object $tokenEconomyConfig -Key 'enabled_depths'
+    if ($null -eq $enabledDepthsValue) {
+        $tokenEconomyContractViolations += "$tokenEconomyRelativePath must include array 'enabled_depths'."
+    } else {
+        if ($enabledDepthsValue -is [string]) {
+            $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'enabled_depths' must be an array of integers in range 1..3."
+        } else {
+            foreach ($depthValue in @($enabledDepthsValue)) {
+                $depthInt = $null
+                if ($depthValue -is [int] -or $depthValue -is [long] -or $depthValue -is [short] -or $depthValue -is [byte]) {
+                    $depthInt = [int]$depthValue
+                } elseif ($depthValue -is [double] -or $depthValue -is [decimal] -or $depthValue -is [single]) {
+                    $depthNumeric = [double]$depthValue
+                    if ($depthNumeric -eq [Math]::Floor($depthNumeric)) {
+                        $depthInt = [int]$depthNumeric
+                    }
+                }
+
+                if ($null -eq $depthInt -or $depthInt -lt 1 -or $depthInt -gt 3) {
+                    $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'enabled_depths' must contain only integers in range 1..3."
+                    break
+                }
+            }
+        }
+    }
+
+    $failTailRaw = Get-VerifyConfigValue -Object $tokenEconomyConfig -Key 'fail_tail_lines'
+    if ($null -eq $failTailRaw) {
+        $tokenEconomyContractViolations += "$tokenEconomyRelativePath must include positive integer 'fail_tail_lines'."
+    } else {
+        $failTailLines = $null
+        if ($failTailRaw -is [int] -or $failTailRaw -is [long] -or $failTailRaw -is [short] -or $failTailRaw -is [byte]) {
+            $failTailLines = [int]$failTailRaw
+        } elseif ($failTailRaw -is [double] -or $failTailRaw -is [decimal] -or $failTailRaw -is [single]) {
+            $failTailNumeric = [double]$failTailRaw
+            if ($failTailNumeric -eq [Math]::Floor($failTailNumeric)) {
+                $failTailLines = [int]$failTailNumeric
+            }
+        }
+
+        if ($null -eq $failTailLines -or $failTailLines -le 0) {
+            $tokenEconomyContractViolations += "$tokenEconomyRelativePath 'fail_tail_lines' must be a positive integer."
+        }
+    }
+}
+
+$outputFiltersContractViolations = @()
+$outputFiltersRelativePath = 'Octopus-agent-orchestrator/live/config/output-filters.json'
+$outputFiltersContract = Get-ManagedConfigContractResult -ConfigName 'output-filters' -RelativePath $outputFiltersRelativePath -Violations ([ref]$outputFiltersContractViolations)
+$outputFiltersConfig = $outputFiltersContract.Value
+if ($null -ne $outputFiltersConfig) {
         $versionValue = Get-VerifyConfigValue -Object $outputFiltersConfig -Key 'version'
         $versionInt = $null
         if ($versionValue -is [int] -or $versionValue -is [long] -or $versionValue -is [short] -or $versionValue -is [byte]) {
@@ -699,6 +737,17 @@ if (-not (Test-Path -LiteralPath $outputFiltersPath -PathType Leaf)) {
         }
         if ($null -eq $versionInt -or $versionInt -lt 1) {
             $outputFiltersContractViolations += "$outputFiltersRelativePath must include integer 'version' >= 1."
+        }
+
+        $passthroughCeilingValue = Get-VerifyConfigValue -Object $outputFiltersConfig -Key 'passthrough_ceiling'
+        if ($passthroughCeilingValue -isnot [System.Collections.IDictionary]) {
+            $outputFiltersContractViolations += "$outputFiltersRelativePath must include object 'passthrough_ceiling'."
+        } else {
+            Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $passthroughCeilingValue -Key 'max_lines') -RelativePath $outputFiltersRelativePath -FieldName 'passthrough_ceiling.max_lines' -Violations ([ref]$outputFiltersContractViolations) -Minimum 1
+            $strategyValue = Get-VerifyConfigValue -Object $passthroughCeilingValue -Key 'strategy'
+            if ($strategyValue -isnot [string] -or @('head', 'tail') -notcontains $strategyValue.Trim().ToLowerInvariant()) {
+                $outputFiltersContractViolations += "$outputFiltersRelativePath passthrough_ceiling.strategy must be 'head' or 'tail'."
+            }
         }
 
         $profilesValue = Get-VerifyConfigValue -Object $outputFiltersConfig -Key 'profiles'
@@ -797,6 +846,11 @@ if (-not (Test-Path -LiteralPath $outputFiltersPath -PathType Leaf)) {
                                     $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel pattern '$patternValue' is invalid regex."
                                 }
                             }
+
+                            $replacementValue = Get-VerifyConfigValue -Object $operation -Key 'replacement'
+                            if ($null -ne $replacementValue -and $replacementValue -isnot [string]) {
+                                $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel replacement must be string when present."
+                            }
                         }
                         'drop_lines_matching' {
                             $patterns = Get-VerifyConfigStringArray -Value $(Get-VerifyConfigValue -Object $operation -Key 'patterns')
@@ -834,6 +888,10 @@ if (-not (Test-Path -LiteralPath $outputFiltersPath -PathType Leaf)) {
                         }
                         'truncate_line_length' {
                             Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $operation -Key 'max_chars') -RelativePath $outputFiltersRelativePath -FieldName "$operationLabel max_chars" -Violations ([ref]$outputFiltersContractViolations) -Minimum 1
+                            $suffixValue = Get-VerifyConfigValue -Object $operation -Key 'suffix'
+                            if ($null -ne $suffixValue -and $suffixValue -isnot [string]) {
+                                $outputFiltersContractViolations += "$outputFiltersRelativePath $operationLabel suffix must be string when present."
+                            }
                         }
                         'head' {
                             Test-VerifyFilterIntegerSpec -Value (Get-VerifyConfigValue -Object $operation -Key 'count') -RelativePath $outputFiltersRelativePath -FieldName "$operationLabel count" -Violations ([ref]$outputFiltersContractViolations) -Minimum 1
@@ -877,6 +935,111 @@ if (-not (Test-Path -LiteralPath $outputFiltersPath -PathType Leaf)) {
             foreach ($requiredProfileName in $requiredOutputFilterProfiles) {
                 if (-not $profilesValue.Contains($requiredProfileName)) {
                     $outputFiltersContractViolations += "$outputFiltersRelativePath must include profile '$requiredProfileName'."
+                }
+            }
+        }
+    }
+
+$reviewCapabilitiesContractViolations = @()
+$reviewCapabilitiesRelativePath = 'Octopus-agent-orchestrator/live/config/review-capabilities.json'
+$reviewCapabilitiesContract = Get-ManagedConfigContractResult -ConfigName 'review-capabilities' -RelativePath $reviewCapabilitiesRelativePath -Violations ([ref]$reviewCapabilitiesContractViolations)
+$reviewCapabilitiesConfig = $reviewCapabilitiesContract.Value
+if ($null -ne $reviewCapabilitiesConfig) {
+    $requiredCapabilityKeys = @('code', 'db', 'security', 'refactor', 'api', 'test', 'performance', 'infra', 'dependency')
+    foreach ($key in $requiredCapabilityKeys) {
+        $value = Get-VerifyConfigValue -Object $reviewCapabilitiesConfig -Key $key
+        if ($value -isnot [bool]) {
+            $reviewCapabilitiesContractViolations += "$reviewCapabilitiesRelativePath '$key' must be boolean."
+        }
+    }
+
+    foreach ($entry in @(Get-ManagedConfigEntries -Object $reviewCapabilitiesConfig)) {
+        if ($requiredCapabilityKeys -contains [string]$entry.Name) {
+            continue
+        }
+
+        if ($entry.Value -isnot [bool]) {
+            $reviewCapabilitiesContractViolations += "$reviewCapabilitiesRelativePath custom capability '$($entry.Name)' must be boolean."
+        }
+    }
+}
+
+$pathsContractViolations = @()
+$pathsRelativePath = 'Octopus-agent-orchestrator/live/config/paths.json'
+$pathsContract = Get-ManagedConfigContractResult -ConfigName 'paths' -RelativePath $pathsRelativePath -Violations ([ref]$pathsContractViolations)
+$pathsConfig = $pathsContract.Value
+if ($null -ne $pathsConfig) {
+    $metricsPathValue = Get-VerifyConfigValue -Object $pathsConfig -Key 'metrics_path'
+    if ($metricsPathValue -isnot [string] -or [string]::IsNullOrWhiteSpace($metricsPathValue.Trim())) {
+        $pathsContractViolations += "$pathsRelativePath must include non-empty string 'metrics_path'."
+    }
+
+    $stringArrayFields = @(
+        'runtime_roots',
+        'fast_path_roots',
+        'fast_path_allowed_regexes',
+        'fast_path_sensitive_regexes',
+        'sql_or_migration_regexes',
+        'code_like_regexes'
+    )
+    foreach ($field in $stringArrayFields) {
+        $values = Get-VerifyConfigStringArray -Value (Get-VerifyConfigValue -Object $pathsConfig -Key $field)
+        if ($values.Count -eq 0) {
+            $pathsContractViolations += "$pathsRelativePath must include non-empty string array '$field'."
+            continue
+        }
+
+        if ($field -in @('fast_path_allowed_regexes', 'fast_path_sensitive_regexes', 'sql_or_migration_regexes', 'code_like_regexes')) {
+            foreach ($pattern in $values) {
+                try {
+                    [void][regex]::new($pattern)
+                }
+                catch {
+                    $pathsContractViolations += "$pathsRelativePath $field regex '$pattern' is invalid."
+                }
+            }
+        }
+    }
+
+    $triggersValue = Get-VerifyConfigValue -Object $pathsConfig -Key 'triggers'
+    if ($triggersValue -isnot [System.Collections.IDictionary]) {
+        $pathsContractViolations += "$pathsRelativePath must include object 'triggers'."
+    } else {
+        $requiredTriggerKeys = @('db', 'security', 'refactor', 'api', 'dependency', 'infra', 'test', 'performance')
+        foreach ($triggerKey in $requiredTriggerKeys) {
+            $patterns = Get-VerifyConfigStringArray -Value (Get-VerifyConfigValue -Object $triggersValue -Key $triggerKey)
+            if ($patterns.Count -eq 0) {
+                $pathsContractViolations += "$pathsRelativePath triggers.$triggerKey must be a non-empty string array."
+                continue
+            }
+
+            foreach ($pattern in $patterns) {
+                try {
+                    [void][regex]::new($pattern)
+                }
+                catch {
+                    $pathsContractViolations += "$pathsRelativePath triggers.$triggerKey regex '$pattern' is invalid."
+                }
+            }
+        }
+
+        foreach ($entry in @(Get-ManagedConfigEntries -Object $triggersValue)) {
+            if ($requiredTriggerKeys -contains [string]$entry.Name) {
+                continue
+            }
+
+            $patterns = Get-VerifyConfigStringArray -Value $entry.Value
+            if ($patterns.Count -eq 0) {
+                $pathsContractViolations += "$pathsRelativePath triggers.$($entry.Name) must be a non-empty string array."
+                continue
+            }
+
+            foreach ($pattern in $patterns) {
+                try {
+                    [void][regex]::new($pattern)
+                }
+                catch {
+                    $pathsContractViolations += "$pathsRelativePath triggers.$($entry.Name) regex '$pattern' is invalid."
                 }
             }
         }
@@ -1958,6 +2121,8 @@ Write-Output "TokenEconomyEnabled: $artifactTokenEconomyEnabled"
 Write-Output "CanonicalEntrypoint: $canonicalEntrypoint"
 Write-Output "RequiredPathsChecked: $($requiredPaths.Count)"
 Write-Output "MissingPathCount: $($missingPaths.Count)"
+Write-Output "ReviewCapabilitiesContractViolationCount: $($reviewCapabilitiesContractViolations.Count)"
+Write-Output "PathsContractViolationCount: $($pathsContractViolations.Count)"
 Write-Output "TokenEconomyContractViolationCount: $($tokenEconomyContractViolations.Count)"
 Write-Output "OutputFiltersContractViolationCount: $($outputFiltersContractViolations.Count)"
 Write-Output "CompileGateContractViolationCount: $($compileGateContractViolations.Count)"
@@ -1990,6 +2155,20 @@ Write-Output "GitignoreMissingCount: $($gitignoreMissing.Count)"
 if ($missingPaths.Count -gt 0) {
     Write-Output 'MissingPaths:'
     foreach ($item in $missingPaths) {
+        Write-Output " - $item"
+    }
+}
+
+if ($reviewCapabilitiesContractViolations.Count -gt 0) {
+    Write-Output 'ReviewCapabilitiesContractViolations:'
+    foreach ($item in $reviewCapabilitiesContractViolations) {
+        Write-Output " - $item"
+    }
+}
+
+if ($pathsContractViolations.Count -gt 0) {
+    Write-Output 'PathsContractViolations:'
+    foreach ($item in $pathsContractViolations) {
         Write-Output " - $item"
     }
 }
@@ -2178,6 +2357,8 @@ if ($gitignoreMissing.Count -gt 0) {
 
 if (
     $missingPaths.Count -gt 0 -or
+    $reviewCapabilitiesContractViolations.Count -gt 0 -or
+    $pathsContractViolations.Count -gt 0 -or
     $tokenEconomyContractViolations.Count -gt 0 -or
     $outputFiltersContractViolations.Count -gt 0 -or
     $compileGateContractViolations.Count -gt 0 -or

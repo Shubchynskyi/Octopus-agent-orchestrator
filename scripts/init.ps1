@@ -108,6 +108,12 @@ if (-not (Test-Path -LiteralPath $ruleContractMigrationModulePath -PathType Leaf
 }
 . $ruleContractMigrationModulePath
 
+$managedConfigContractsModulePath = Join-Path $scriptDir 'lib/managed-config-contracts.ps1'
+if (-not (Test-Path -LiteralPath $managedConfigContractsModulePath -PathType Leaf)) {
+    throw "Managed config contracts module not found: $managedConfigContractsModulePath"
+}
+. $managedConfigContractsModulePath
+
 $script:ruleContractMigrationLog = @()
 
 function Ensure-Directory {
@@ -549,148 +555,35 @@ if ($ruleContractMigrationCount -gt 0) {
     $ruleContractMigrationFiles = @($script:ruleContractMigrationLog | Select-Object -ExpandProperty RuleFile -Unique | Sort-Object)
 }
 
-$tokenEconomyTemplatePath = Join-Path $templateRoot 'config/token-economy.json'
-$tokenEconomyDestinationPath = Join-Path $liveRoot 'config/token-economy.json'
-$tokenEconomyExistingConfig = $null
-$tokenEconomyConfigMergeStatus = 'no_existing_live_config_template_applied'
-$outputFiltersTemplatePath = Join-Path $templateRoot 'config/output-filters.json'
-$outputFiltersDestinationPath = Join-Path $liveRoot 'config/output-filters.json'
-$outputFiltersExistingConfig = $null
-$outputFiltersConfigMergeStatus = 'no_existing_live_config_template_applied'
-
-if (Test-Path -LiteralPath $tokenEconomyDestinationPath -PathType Leaf) {
-    try {
-        $tokenEconomyExistingConfig = Get-Content -LiteralPath $tokenEconomyDestinationPath -Raw | ConvertFrom-Json -ErrorAction Stop
-        $tokenEconomyConfigMergeStatus = 'existing_config_detected'
+$managedConfigDefinitions = @(Get-ManagedConfigDefinitions)
+$managedConfigStates = [ordered]@{}
+foreach ($definition in $managedConfigDefinitions) {
+    $templatePath = Join-Path $templateRoot $definition.TemplateRelativePath
+    $destinationPath = Join-Path $liveRoot $definition.LiveRelativePath
+    $state = [ordered]@{
+        TemplatePath          = $templatePath
+        DestinationPath       = $destinationPath
+        Exists                = $false
+        Parsed                = $false
+        ExistingConfig        = $null
+        MergeStatus           = 'no_existing_live_config_template_applied'
+        NormalizationChanges  = @()
     }
-    catch {
-        Write-Warning "Token economy live config is invalid JSON and cannot be preserved: $tokenEconomyDestinationPath. Template defaults will be applied."
-        $tokenEconomyConfigMergeStatus = 'existing_config_invalid_template_applied'
-    }
-}
 
-if (Test-Path -LiteralPath $outputFiltersDestinationPath -PathType Leaf) {
-    try {
-        $outputFiltersExistingConfig = Get-Content -LiteralPath $outputFiltersDestinationPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
-        $outputFiltersConfigMergeStatus = 'existing_config_detected'
-    }
-    catch {
-        Write-Warning "Output filters live config is invalid JSON and cannot be preserved: $outputFiltersDestinationPath. Template defaults will be applied."
-        $outputFiltersConfigMergeStatus = 'existing_config_invalid_template_applied'
-    }
-}
-
-function Merge-TokenEconomyConfig {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object]$TemplateConfig,
-        [Parameter(Mandatory = $true)]
-        [object]$ExistingConfig
-    )
-
-    $merged = [ordered]@{}
-    foreach ($property in $TemplateConfig.PSObject.Properties) {
-        $propertyName = [string]$property.Name
-        if ($null -ne $ExistingConfig.PSObject.Properties[$propertyName]) {
-            $merged[$propertyName] = $ExistingConfig.$propertyName
-        } else {
-            $merged[$propertyName] = $TemplateConfig.$propertyName
+    if (Test-Path -LiteralPath $destinationPath -PathType Leaf) {
+        $state.Exists = $true
+        try {
+            $state.ExistingConfig = Get-Content -LiteralPath $destinationPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+            $state.Parsed = $true
+            $state.MergeStatus = 'existing_config_detected'
+        }
+        catch {
+            Write-Warning "$($definition.Name) live config is invalid JSON and cannot be preserved: $destinationPath. Template defaults will be applied."
+            $state.MergeStatus = 'existing_config_invalid_template_applied'
         }
     }
 
-    foreach ($property in $ExistingConfig.PSObject.Properties) {
-        $propertyName = [string]$property.Name
-        if (-not $merged.Contains($propertyName)) {
-            $merged[$propertyName] = $ExistingConfig.$propertyName
-        }
-    }
-
-    return $merged
-}
-
-function Convert-ToConfigHashtable {
-    param(
-        [AllowNull()]
-        [object]$Value
-    )
-
-    if ($null -eq $Value) {
-        return $null
-    }
-
-    if ($Value -is [System.Collections.IDictionary]) {
-        $copy = [ordered]@{}
-        foreach ($key in $Value.Keys) {
-            $copy[[string]$key] = Convert-ToConfigHashtable -Value $Value[$key]
-        }
-        return $copy
-    }
-
-    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
-        $items = @()
-        foreach ($item in $Value) {
-            $items += ,(Convert-ToConfigHashtable -Value $item)
-        }
-        return $items
-    }
-
-    if ($Value.PSObject -and $Value.PSObject.Properties.Count -gt 0 -and $Value -isnot [string]) {
-        $copy = [ordered]@{}
-        foreach ($property in $Value.PSObject.Properties) {
-            $copy[[string]$property.Name] = Convert-ToConfigHashtable -Value $property.Value
-        }
-        return $copy
-    }
-
-    return $Value
-}
-
-function Merge-ManagedConfigPreserveExisting {
-    param(
-        [AllowNull()]
-        [object]$TemplateValue,
-        [AllowNull()]
-        [object]$ExistingValue
-    )
-
-    if ($null -eq $TemplateValue) {
-        return Convert-ToConfigHashtable -Value $ExistingValue
-    }
-
-    if ($TemplateValue -is [System.Collections.IDictionary]) {
-        $templateMap = Convert-ToConfigHashtable -Value $TemplateValue
-        $existingMap = if ($ExistingValue -is [System.Collections.IDictionary] -or ($null -ne $ExistingValue -and $ExistingValue.PSObject -and $ExistingValue.PSObject.Properties.Count -gt 0 -and $ExistingValue -isnot [string])) { Convert-ToConfigHashtable -Value $ExistingValue } else { $null }
-        $merged = [ordered]@{}
-        foreach ($key in $templateMap.Keys) {
-            if ($null -ne $existingMap -and $existingMap.Contains($key)) {
-                $merged[$key] = Merge-ManagedConfigPreserveExisting -TemplateValue $templateMap[$key] -ExistingValue $existingMap[$key]
-            } else {
-                $merged[$key] = Convert-ToConfigHashtable -Value $templateMap[$key]
-            }
-        }
-
-        if ($null -ne $existingMap) {
-            foreach ($key in $existingMap.Keys) {
-                if (-not $merged.Contains($key)) {
-                    $merged[$key] = Convert-ToConfigHashtable -Value $existingMap[$key]
-                }
-            }
-        }
-        return $merged
-    }
-
-    if ($TemplateValue -is [System.Collections.IEnumerable] -and $TemplateValue -isnot [string]) {
-        if ($ExistingValue -is [System.Collections.IEnumerable] -and $ExistingValue -isnot [string]) {
-            return Convert-ToConfigHashtable -Value $ExistingValue
-        }
-        return Convert-ToConfigHashtable -Value $TemplateValue
-    }
-
-    if ($null -ne $ExistingValue) {
-        return Convert-ToConfigHashtable -Value $ExistingValue
-    }
-
-    return Convert-ToConfigHashtable -Value $TemplateValue
+    $managedConfigStates[[string]$definition.Name] = $state
 }
 
 $supportDirectories = @(
@@ -719,66 +612,56 @@ foreach ($relativeDirectory in $supportDirectories) {
     $copiedSupportDirs++
 }
 
-if ($null -ne $tokenEconomyExistingConfig) {
-    if (-not (Test-Path -LiteralPath $tokenEconomyTemplatePath -PathType Leaf)) {
-        Write-Warning "Token economy template config not found: $tokenEconomyTemplatePath. Existing live config preservation skipped."
-        $tokenEconomyConfigMergeStatus = 'template_missing_preservation_skipped'
-    } else {
-        try {
-            $tokenEconomyTemplateConfig = Get-Content -LiteralPath $tokenEconomyTemplatePath -Raw | ConvertFrom-Json -ErrorAction Stop
-            $mergedTokenEconomyConfig = Merge-TokenEconomyConfig -TemplateConfig $tokenEconomyTemplateConfig -ExistingConfig $tokenEconomyExistingConfig
-            if (-not $DryRun) {
-                Set-Content -LiteralPath $tokenEconomyDestinationPath -Value ($mergedTokenEconomyConfig | ConvertTo-Json -Depth 12)
-            }
-            $tokenEconomyConfigMergeStatus = if ($DryRun) {
-                'dry_run_existing_values_would_be_preserved'
-            } else {
-                'existing_values_preserved_and_missing_keys_filled'
-            }
-        }
-        catch {
-            Write-Warning "Failed to merge token economy config while preserving existing values: $($_.Exception.Message)."
-            $tokenEconomyConfigMergeStatus = 'merge_failed_template_applied'
-        }
+foreach ($definition in $managedConfigDefinitions) {
+    $state = $managedConfigStates[[string]$definition.Name]
+    if (-not (Test-Path -LiteralPath $state.TemplatePath -PathType Leaf)) {
+        Write-Warning "$($definition.Name) template config not found: $($state.TemplatePath). Existing live config preservation skipped."
+        $state.MergeStatus = 'template_missing_preservation_skipped'
+        continue
     }
-}
 
-if ($null -ne $outputFiltersExistingConfig) {
-    if (-not (Test-Path -LiteralPath $outputFiltersTemplatePath -PathType Leaf)) {
-        Write-Warning "Output filters template config not found: $outputFiltersTemplatePath. Existing live config preservation skipped."
-        $outputFiltersConfigMergeStatus = 'template_missing_preservation_skipped'
-    } else {
-        try {
-            $outputFiltersTemplateConfig = Get-Content -LiteralPath $outputFiltersTemplatePath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
-            $mergedOutputFiltersConfig = Merge-ManagedConfigPreserveExisting -TemplateValue $outputFiltersTemplateConfig -ExistingValue $outputFiltersExistingConfig
-            if (-not $DryRun) {
-                Set-Content -LiteralPath $outputFiltersDestinationPath -Value ($mergedOutputFiltersConfig | ConvertTo-Json -Depth 24)
-            }
-            $outputFiltersConfigMergeStatus = if ($DryRun) {
-                'dry_run_existing_values_would_be_preserved'
-            } else {
-                'existing_values_preserved_and_missing_keys_filled'
-            }
-        }
-        catch {
-            Write-Warning "Failed to merge output filters config while preserving existing values: $($_.Exception.Message)."
-            $outputFiltersConfigMergeStatus = 'merge_failed_template_applied'
-        }
-    }
-}
-
-if (Test-Path -LiteralPath $tokenEconomyDestinationPath -PathType Leaf) {
     try {
-        $materializedTokenEconomyConfig = Get-Content -LiteralPath $tokenEconomyDestinationPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
-        $materializedTokenEconomyConfig['enabled'] = [bool]$TokenEconomyEnabled
+        $templateConfig = Get-Content -LiteralPath $state.TemplatePath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        $mergeResult = Merge-ManagedConfigWithTemplate -ConfigName $definition.Name -TemplateConfig $templateConfig -ExistingConfig $state.ExistingConfig
+        $materializedConfig = Convert-ToManagedConfigHashtable -Value $mergeResult.Value
+        if ($definition.Name -eq 'token-economy') {
+            $materializedConfig['enabled'] = [bool]$TokenEconomyEnabled
+        }
+
         if (-not $DryRun) {
-            Set-Content -LiteralPath $tokenEconomyDestinationPath -Value ($materializedTokenEconomyConfig | ConvertTo-Json -Depth 12)
+            $jsonDepth = if ($definition.Name -eq 'output-filters') { 64 } else { 24 }
+            Set-Content -LiteralPath $state.DestinationPath -Value ($materializedConfig | ConvertTo-Json -Depth $jsonDepth)
+        }
+
+        $state.NormalizationChanges = @($mergeResult.Changes)
+        if (-not $state.Exists) {
+            $state.MergeStatus = 'no_existing_live_config_template_applied'
+        } elseif (-not $state.Parsed) {
+            $state.MergeStatus = 'existing_config_invalid_template_applied'
+        } elseif ($mergeResult.Changes.Count -gt 0) {
+            $state.MergeStatus = if ($DryRun) {
+                'dry_run_existing_values_would_be_normalized'
+            } else {
+                'existing_values_normalized_and_missing_keys_filled'
+            }
+        } else {
+            $state.MergeStatus = if ($DryRun) {
+                'dry_run_existing_values_would_be_preserved'
+            } else {
+                'existing_values_preserved_and_missing_keys_filled'
+            }
         }
     }
     catch {
-        Write-Warning "Failed to apply TokenEconomyEnabled init answer to token economy config: $($_.Exception.Message)."
+        Write-Warning "Failed to merge $($definition.Name) config while preserving existing values: $($_.Exception.Message)."
+        $state.MergeStatus = 'merge_failed_template_applied'
     }
 }
+
+$reviewCapabilitiesConfigMergeStatus = [string]$managedConfigStates['review-capabilities'].MergeStatus
+$pathsConfigMergeStatus = [string]$managedConfigStates['paths'].MergeStatus
+$tokenEconomyConfigMergeStatus = [string]$managedConfigStates['token-economy'].MergeStatus
+$outputFiltersConfigMergeStatus = [string]$managedConfigStates['output-filters'].MergeStatus
 
 $legacyEntrypoints = @(
     'CLAUDE.md',
@@ -896,9 +779,13 @@ $initReportLines += ''
 $initReportLines += '## Summary'
 $initReportLines += '- Rule files materialized in `Octopus-agent-orchestrator/live/docs/agent-rules`: ' + $ruleFiles.Count
 $initReportLines += '- Support directories synced into `Octopus-agent-orchestrator/live`: ' + $copiedSupportDirs
-$initReportLines += '- Token economy config sync policy: preserve existing live values and fill missing keys from template.'
+$initReportLines += '- Review capabilities config sync policy: preserve existing live values, normalize legacy keys/shapes, and fill missing keys from template.'
+$initReportLines += '- Review capabilities config merge status: ' + $reviewCapabilitiesConfigMergeStatus
+$initReportLines += '- Paths config sync policy: preserve existing live values, normalize legacy keys/shapes, and fill missing keys from template.'
+$initReportLines += '- Paths config merge status: ' + $pathsConfigMergeStatus
+$initReportLines += '- Token economy config sync policy: preserve existing live values, normalize legacy keys/shapes, and fill missing keys from template.'
 $initReportLines += '- Token economy config merge status: ' + $tokenEconomyConfigMergeStatus
-$initReportLines += '- Output filters config sync policy: preserve existing live values and fill missing keys from template.'
+$initReportLines += '- Output filters config sync policy: preserve existing live values, normalize legacy keys/shapes, and fill missing keys from template.'
 $initReportLines += '- Output filters config merge status: ' + $outputFiltersConfigMergeStatus
 $initReportLines += '- Assistant response language: ' + $AssistantLanguage
 $initReportLines += '- Assistant response brevity: ' + $AssistantBrevity
@@ -994,6 +881,8 @@ Write-Output "EnforceNoAutoCommit: $EnforceNoAutoCommit"
 Write-Output "TokenEconomyEnabled: $TokenEconomyEnabled"
 Write-Output "RuleFilesMaterialized: $($ruleFiles.Count)"
 Write-Output "SupportDirectoriesSynced: $copiedSupportDirs"
+Write-Output "ReviewCapabilitiesConfigMergeStatus: $reviewCapabilitiesConfigMergeStatus"
+Write-Output "PathsConfigMergeStatus: $pathsConfigMergeStatus"
 Write-Output "TokenEconomyConfigMergeStatus: $tokenEconomyConfigMergeStatus"
 Write-Output "OutputFiltersConfigMergeStatus: $outputFiltersConfigMergeStatus"
 Write-Output "RuleContractMigrationCount: $ruleContractMigrationCount"
@@ -1006,5 +895,4 @@ Write-Output "InitReportPath: $initReportPath"
 Write-Output "ProjectDiscoveryPath: $projectDiscoveryPath"
 Write-Output "UsagePath: $usagePath"
 Write-Output 'Init: PASS'
-
 
