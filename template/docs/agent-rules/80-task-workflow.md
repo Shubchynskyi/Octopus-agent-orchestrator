@@ -28,7 +28,6 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Supported depth values: `1`, `2`, `3`.
 - Default depth: `2`.
 - Depth never bypasses mandatory gates.
-- When token economy mode is enabled, use `depth=1` only for small, well-localized tasks; prefer `depth=2` when broader context may affect correctness.
 - Depth escalation applies when:
   - preflight returns `FULL_PATH`;
   - preflight requires specialized review (`db`, `security`, `refactor`, or enabled optional specialist review).
@@ -59,9 +58,11 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
   `Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1`.
 - Completion gate script must pass before `DONE`:
   `Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1`.
-- Completion gate validates compile evidence, review-gate evidence, doc-impact evidence, timeline integrity (`COMPILE_GATE_PASSED`, review pass evidence, `REWORK_STARTED` after latest `REVIEW_GATE_FAILED`), and required review artifacts.
+- Completion gate validates compile evidence, review-gate evidence, doc-impact evidence, timeline integrity (`COMPILE_GATE_PASSED`, review pass evidence, `REWORK_STARTED` after latest `REVIEW_GATE_FAILED`), best-effort task-event hash-chain integrity, and required review artifacts.
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
   `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
+- Task-event writers must use best-effort append locking for both per-task log and aggregate `all-tasks.jsonl`; do not rely on unsynchronized raw append for concurrent runs.
+- Task-event integrity is procedural hardening only: local hash-chain and replay detection help detect tampering after the fact, but they are not a security-grade trust anchor.
 - Orchestrator control-plane files (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and internal docs such as `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are local workflow artifacts; in deployed workspaces their ignored status is normal.
 - Terminal statuses (`DONE`, `BLOCKED`) require full cleanup of temporary reviewer/specialist logs after required artifacts are persisted.
 - Documentation impact updates are required when behavior/contracts/ops docs changed.

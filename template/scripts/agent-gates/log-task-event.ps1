@@ -211,13 +211,9 @@ $event = [ordered]@{
     message = $Message
     details = $eventDetails
 }
-
-$line = $event | ConvertTo-Json -Depth 12 -Compress
 $taskFilePath = Join-Path $EventsRoot "$TaskId.jsonl"
 $allTasksPath = Join-Path $EventsRoot 'all-tasks.jsonl'
-
-Add-Content -Path $taskFilePath -Value $line
-Add-Content -Path $allTasksPath -Value $line
+$appendResult = Add-GateTaskEvent -RepoRootPath $RepoRoot -TaskId $TaskId -EventType $EventType -Outcome $Outcome -Message $Message -Details $eventDetails -Actor $Actor -PassThru
 
 $result = [ordered]@{
     status = 'TASK_EVENT_LOGGED'
@@ -227,6 +223,14 @@ $result = [ordered]@{
     actor = $Actor
     task_event_log_path = Normalize-Path $taskFilePath
     all_tasks_log_path = Normalize-Path $allTasksPath
+}
+if ($null -ne $appendResult) {
+    if ($appendResult.Contains('integrity')) {
+        $result['integrity'] = $appendResult.integrity
+    }
+    if ($appendResult.Contains('warnings') -and @($appendResult.warnings).Count -gt 0) {
+        $result['warnings'] = @($appendResult.warnings)
+    }
 }
 if ($isTerminalEvent) {
     $result['terminal_log_cleanup'] = $terminalCleanup

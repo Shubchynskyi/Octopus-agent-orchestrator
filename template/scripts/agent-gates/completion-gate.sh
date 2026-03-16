@@ -33,6 +33,7 @@ from gate_utils import (  # noqa: E402
     append_task_event,
     assert_valid_task_id,
     file_sha256,
+    inspect_task_event_file,
     normalize_path,
     parse_bool,
     resolve_project_root,
@@ -137,6 +138,7 @@ def get_timeline_evidence(repo_root: Path, task_id: str, timeline_path_arg: str)
         "last_review_gate_failed_index": None,
         "last_review_gate_passed_index": None,
         "skip_reviews": [],
+        "integrity": None,
         "violations": [],
     }
 
@@ -157,6 +159,10 @@ def get_timeline_evidence(repo_root: Path, task_id: str, timeline_path_arg: str)
         result["status"] = "TIMELINE_MISSING"
         result["violations"].append(f"Task timeline not found: {result['timeline_path']}")
         return result
+
+    integrity_evidence = inspect_task_event_file(timeline_path, task_id)
+    result["integrity"] = integrity_evidence
+    result["violations"].extend(integrity_evidence["violations"])
 
     last_failed_index = None
     last_passed_index = None

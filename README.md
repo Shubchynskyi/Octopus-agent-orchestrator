@@ -262,13 +262,13 @@ add CSV export endpoint with async email delivery hooks
 - Compile gate enforces preflight scope freshness; scope drift requires re-preflight before compile.
 - Review gate (`required-reviews-check`) validates compile evidence plus post-compile drift and writes review evidence (`<task-id>-review-gate.json`).
 - Doc impact gate (`doc-impact-gate`) writes machine-checkable documentation impact evidence (`<task-id>-doc-impact.json`) before completion.
-- Completion gate (`completion-gate`) is required before `DONE`; it validates compile/review/doc-impact evidence, review-loop timeline integrity, and required review artifacts.
+- Completion gate (`completion-gate`) is required before `DONE`; it validates compile/review/doc-impact evidence, review-loop timeline integrity, best-effort task-event hash-chain integrity, and required review artifacts.
 - Command placeholders in `live/docs/agent-rules/40-commands.md` must be replaced with real project commands; verify fails on unresolved placeholders.
 - Gate scripts under `live/scripts/agent-gates/` support both `pwsh` (`*.ps1`) and `bash` (`*.sh`); agent should auto-detect environment there.
 - Bash gate scripts require a Python runtime in PATH (`python3`, `python`, or `py -3`).
 - Specialist skills added after init are project-specific and should be created only in `Octopus-agent-orchestrator/live/skills/**`.
 - Copilot bridge profiles re-read `live/docs/agent-rules/90-skill-catalog.md` and `live/config/review-capabilities.json`, so post-init specialist skills are included in routing.
-- Task timeline logs are written per task id to `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl` (plus aggregate `all-tasks.jsonl`).
+- Task timeline logs are written per task id to `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl` (plus aggregate `all-tasks.jsonl`) with best-effort append locking and per-task integrity metadata.
 - Commit message text is a recommended output only; it is not a mandatory gate for task completion.
 
 ## License

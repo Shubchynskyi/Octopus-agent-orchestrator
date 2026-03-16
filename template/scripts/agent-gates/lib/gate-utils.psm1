@@ -585,7 +585,7 @@ function Invoke-GateCompileFailureParser {
     $maxMatches = Resolve-GateFilterIntegerSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'max_matches') -ContextData $ContextData -FieldName 'parser.max_matches' -Minimum 1
     $tailCount = Resolve-GateFilterIntegerSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'tail_count') -ContextData $ContextData -FieldName 'parser.tail_count' -Minimum 0
 
-    $fullMatches = @(Select-GateMatchingLines -Lines $Lines -Patterns $config.full_patterns -Limit $maxMatches)
+    $fullMatches = Select-GateMatchingLines -Lines $Lines -Patterns $config.full_patterns -Limit $maxMatches
     if ($fullMatches.Count -gt 0) {
         $summaryLines = New-Object 'System.Collections.Generic.List[string]'
         $seenLines = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
@@ -604,7 +604,7 @@ function Invoke-GateCompileFailureParser {
         }
     }
 
-    $degradedMatches = @(Select-GateMatchingLines -Lines $Lines -Patterns $config.degraded_patterns -Limit ([Math]::Max($maxMatches, 8)))
+    $degradedMatches = Select-GateMatchingLines -Lines $Lines -Patterns $config.degraded_patterns -Limit ([Math]::Max($maxMatches, 8))
     if ($degradedMatches.Count -gt 0) {
         $summaryLines = New-Object 'System.Collections.Generic.List[string]'
         $seenLines = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
@@ -654,7 +654,7 @@ function Invoke-GateTestFailureParser {
         '[✕×]'
     )
 
-    $matches = @(Select-GateMatchingLines -Lines $Lines -Patterns $patterns -Limit $maxMatches)
+    $matches = Select-GateMatchingLines -Lines $Lines -Patterns $patterns -Limit $maxMatches
     if ($matches.Count -gt 0) {
         $summaryLines = New-Object 'System.Collections.Generic.List[string]'
         $seenLines = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
@@ -700,7 +700,7 @@ function Invoke-GateLintFailureParser {
         'problems?'
     )
 
-    $matches = @(Select-GateMatchingLines -Lines $Lines -Patterns $patterns -Limit $maxMatches)
+    $matches = Select-GateMatchingLines -Lines $Lines -Patterns $patterns -Limit $maxMatches
     if ($matches.Count -gt 0) {
         $summaryLines = New-Object 'System.Collections.Generic.List[string]'
         $seenLines = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
@@ -1078,7 +1078,9 @@ function Add-GateTaskEvent {
         [string]$EventType,
         [string]$Outcome = 'INFO',
         [string]$Message = '',
-        [object]$Details = $null
+        [object]$Details = $null,
+        [string]$Actor = 'gate',
+        [switch]$PassThru
     )
 
     if ([string]::IsNullOrWhiteSpace($TaskId)) {
@@ -1093,24 +1095,505 @@ function Add-GateTaskEvent {
             New-Item -Path $eventsDir -ItemType Directory -Force | Out-Null
         }
 
-        $event = [ordered]@{
-            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
-            task_id = $TaskId
-            event_type = $EventType
-            outcome = $Outcome
-            message = $Message
-            details = $Details
-        }
-
-        $line = $event | ConvertTo-Json -Depth 12 -Compress
         $taskFilePath = Join-Path $eventsDir "$TaskId.jsonl"
         $allTasksPath = Join-Path $eventsDir 'all-tasks.jsonl'
+        $taskLockPath = "$taskFilePath.lock"
+        $allTasksLockPath = "$allTasksPath.lock"
+        $result = [ordered]@{
+            task_event_log_path = (Convert-GatePathToUnix -PathValue $taskFilePath)
+            all_tasks_log_path = (Convert-GatePathToUnix -PathValue $allTasksPath)
+            integrity = $null
+            warnings = @()
+        }
 
-        Add-Content -LiteralPath $taskFilePath -Value $line
-        Add-Content -LiteralPath $allTasksPath -Value $line
+        $line = $null
+        Acquire-GateAppendLock -LockPath $taskLockPath
+        try {
+            $appendState = Get-GateTaskEventAppendState -TaskFilePath $taskFilePath -TaskId $TaskId
+            $nextSequence = if ($null -ne $appendState.last_integrity_sequence) {
+                [int]$appendState.last_integrity_sequence + 1
+            } else {
+                [int]$appendState.matching_events + 1
+            }
+
+            $event = [ordered]@{
+                timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+                task_id = $TaskId
+                event_type = $EventType
+                outcome = $Outcome
+                actor = $Actor
+                message = $Message
+                details = $Details
+                integrity = [ordered]@{
+                    schema_version = 1
+                    task_sequence = $nextSequence
+                    prev_event_sha256 = $appendState.last_event_sha256
+                }
+            }
+            $event.integrity.event_sha256 = Get-GateEventIntegrityHash -EventRecord $event
+            $line = $event | ConvertTo-Json -Depth 16 -Compress
+            Add-Content -LiteralPath $taskFilePath -Value $line
+            $result.integrity = $event.integrity
+        } finally {
+            Release-GateAppendLock -LockPath $taskLockPath
+        }
+
+        try {
+            Acquire-GateAppendLock -LockPath $allTasksLockPath
+            try {
+                Add-Content -LiteralPath $allTasksPath -Value $line
+            } finally {
+                Release-GateAppendLock -LockPath $allTasksLockPath
+            }
+        } catch {
+            $warningMessage = "Task-event aggregate append failed: $($_.Exception.Message)"
+            $result.warnings += $warningMessage
+            Write-Warning $warningMessage
+        }
+
+        if ($PassThru) {
+            return $result
+        }
     } catch {
-        Write-Warning "Task-event append failed: $($_.Exception.Message)"
+        $warningMessage = "Task-event append failed: $($_.Exception.Message)"
+        Write-Warning $warningMessage
+        if ($PassThru) {
+            return [ordered]@{
+                task_event_log_path = (Convert-GatePathToUnix -PathValue (Join-Path (Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/task-events') "$TaskId.jsonl"))
+                all_tasks_log_path = (Convert-GatePathToUnix -PathValue (Join-Path (Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/task-events') 'all-tasks.jsonl'))
+                integrity = $null
+                warnings = @($warningMessage)
+            }
+        }
     }
+}
+
+function Convert-GateToPlainObject {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [datetime]) {
+        return $Value.ToUniversalTime().ToString('o')
+    }
+
+    if ($Value -is [System.Enum]) {
+        return [string]$Value
+    }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $copy = [ordered]@{}
+        foreach ($key in ($Value.Keys | ForEach-Object { [string]$_ } | Sort-Object)) {
+            $copy[$key] = Convert-GateToPlainObject -Value $Value[$key]
+        }
+        return $copy
+    }
+
+    if ($Value -is [PSCustomObject]) {
+        $copy = [ordered]@{}
+        foreach ($propertyName in ($Value.PSObject.Properties.Name | Sort-Object)) {
+            $copy[$propertyName] = Convert-GateToPlainObject -Value $Value.$propertyName
+        }
+        return $copy
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
+        $items = @()
+        foreach ($item in $Value) {
+            $items += ,(Convert-GateToPlainObject -Value $item)
+        }
+        return ,$items
+    }
+
+    return $Value
+}
+
+function Convert-GateToCanonicalJson {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return 'null'
+    }
+
+    if ($Value -is [bool]) {
+        return $(if ($Value) { 'true' } else { 'false' })
+    }
+
+    if ($Value -is [string]) {
+        return ($Value | ConvertTo-Json -Compress)
+    }
+
+    if ($Value -is [datetime]) {
+        return ($Value.ToUniversalTime().ToString('o') | ConvertTo-Json -Compress)
+    }
+
+    if (
+        $Value -is [byte] -or
+        $Value -is [sbyte] -or
+        $Value -is [short] -or
+        $Value -is [ushort] -or
+        $Value -is [int] -or
+        $Value -is [uint] -or
+        $Value -is [long] -or
+        $Value -is [ulong] -or
+        $Value -is [single] -or
+        $Value -is [double] -or
+        $Value -is [decimal]
+    ) {
+        return ($Value | ConvertTo-Json -Compress)
+    }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $pairs = @()
+        foreach ($key in ($Value.Keys | ForEach-Object { [string]$_ } | Sort-Object)) {
+            $pairs += (($key | ConvertTo-Json -Compress) + ':' + (Convert-GateToCanonicalJson -Value $Value[$key]))
+        }
+        return '{' + ($pairs -join ',') + '}'
+    }
+
+    if ($Value -is [PSCustomObject]) {
+        $copy = [ordered]@{}
+        foreach ($propertyName in ($Value.PSObject.Properties.Name | Sort-Object)) {
+            $copy[$propertyName] = $Value.$propertyName
+        }
+        return Convert-GateToCanonicalJson -Value $copy
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
+        $items = @()
+        foreach ($item in $Value) {
+            $items += (Convert-GateToCanonicalJson -Value $item)
+        }
+        return '[' + ($items -join ',') + ']'
+    }
+
+    return ($Value | ConvertTo-Json -Compress)
+}
+
+function Get-GateSha256Hex {
+    param([string]$Text)
+
+    $utf8 = [System.Text.Encoding]::UTF8
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $utf8.GetBytes($Text)
+        $hashBytes = $sha256.ComputeHash($bytes)
+        return ([System.BitConverter]::ToString($hashBytes)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-GateEventIntegrityHash {
+    param([Parameter(Mandatory = $true)][object]$EventRecord)
+
+    $plainEvent = Convert-GateToPlainObject -Value $EventRecord
+    if ($plainEvent -is [System.Collections.IDictionary] -and $plainEvent.Contains('integrity')) {
+        $integrityMap = Convert-GateToPlainObject -Value $plainEvent['integrity']
+        if ($integrityMap -is [System.Collections.IDictionary]) {
+            $sanitizedIntegrity = [ordered]@{}
+            foreach ($key in ($integrityMap.Keys | ForEach-Object { [string]$_ } | Sort-Object)) {
+                if ([string]::Equals($key, 'event_sha256', [System.StringComparison]::Ordinal)) {
+                    continue
+                }
+                $sanitizedIntegrity[$key] = $integrityMap[$key]
+            }
+            $plainEvent['integrity'] = $sanitizedIntegrity
+        }
+    }
+
+    $canonicalJson = Convert-GateToCanonicalJson -Value $plainEvent
+    return Get-GateSha256Hex -Text $canonicalJson
+}
+
+function Acquire-GateAppendLock {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LockPath,
+        [int]$TimeoutMilliseconds = 10000,
+        [int]$PollMilliseconds = 50,
+        [int]$StaleMilliseconds = 120000
+    )
+
+    $parentPath = Split-Path -Parent $LockPath
+    if (-not [string]::IsNullOrWhiteSpace($parentPath) -and -not (Test-Path -LiteralPath $parentPath)) {
+        New-Item -Path $parentPath -ItemType Directory -Force | Out-Null
+    }
+
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        try {
+            $stream = [System.IO.File]::Open($LockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+            try {
+                $payload = [ordered]@{
+                    pid = $PID
+                    acquired_utc = (Get-Date).ToUniversalTime().ToString('o')
+                } | ConvertTo-Json -Compress
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+                $stream.Write($bytes, 0, $bytes.Length)
+                $stream.Flush()
+            } finally {
+                $stream.Dispose()
+            }
+            return
+        } catch [System.IO.IOException] {
+            if (Test-Path -LiteralPath $LockPath -PathType Leaf) {
+                try {
+                    $lockAge = (Get-Date).ToUniversalTime() - (Get-Item -LiteralPath $LockPath).LastWriteTimeUtc
+                    if ($lockAge.TotalMilliseconds -ge $StaleMilliseconds) {
+                        Remove-Item -LiteralPath $LockPath -Force -ErrorAction SilentlyContinue
+                        continue
+                    }
+                } catch {
+                }
+            }
+
+            if ($stopwatch.ElapsedMilliseconds -ge $TimeoutMilliseconds) {
+                throw "Timed out acquiring append lock: $LockPath"
+            }
+            Start-Sleep -Milliseconds $PollMilliseconds
+        }
+    }
+}
+
+function Release-GateAppendLock {
+    param([string]$LockPath)
+
+    try {
+        if (-not [string]::IsNullOrWhiteSpace($LockPath) -and (Test-Path -LiteralPath $LockPath -PathType Leaf)) {
+            Remove-Item -LiteralPath $LockPath -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+    }
+}
+
+function Get-GateTaskEventAppendState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TaskFilePath,
+        [Parameter(Mandatory = $true)]
+        [string]$TaskId
+    )
+
+    $state = [ordered]@{
+        matching_events = 0
+        parse_errors = 0
+        last_integrity_sequence = $null
+        last_event_sha256 = $null
+    }
+
+    if (-not (Test-Path -LiteralPath $TaskFilePath -PathType Leaf)) {
+        return $state
+    }
+
+    foreach ($rawLine in (Get-Content -LiteralPath $TaskFilePath)) {
+        if ([string]::IsNullOrWhiteSpace($rawLine)) {
+            continue
+        }
+
+        $eventObject = $null
+        try {
+            $eventObject = $rawLine | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            $state.parse_errors++
+            continue
+        }
+
+        $eventTaskId = ''
+        if ($null -ne $eventObject.PSObject.Properties['task_id']) {
+            $eventTaskId = [string]$eventObject.task_id
+        }
+        if (-not [string]::IsNullOrWhiteSpace($eventTaskId) -and -not [string]::Equals($eventTaskId.Trim(), $TaskId, [System.StringComparison]::Ordinal)) {
+            continue
+        }
+
+        $state.matching_events++
+        $integrity = $null
+        if ($null -ne $eventObject.PSObject.Properties['integrity']) {
+            $integrity = $eventObject.integrity
+        }
+        if ($null -eq $integrity) {
+            continue
+        }
+
+        $sequence = $null
+        if ($null -ne $integrity.PSObject.Properties['task_sequence']) {
+            $sequence = $integrity.task_sequence
+        }
+        $eventSha256 = ''
+        if ($null -ne $integrity.PSObject.Properties['event_sha256']) {
+            $eventSha256 = [string]$integrity.event_sha256
+        }
+
+        if (($sequence -is [int] -or $sequence -is [long]) -and [int]$sequence -gt 0 -and -not [string]::IsNullOrWhiteSpace($eventSha256)) {
+            $state.last_integrity_sequence = [int]$sequence
+            $state.last_event_sha256 = $eventSha256.Trim().ToLowerInvariant()
+        }
+    }
+
+    return $state
+}
+
+function Get-GateTaskTimelineIntegrity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TaskEventFilePath,
+        [Parameter(Mandatory = $true)]
+        [string]$TaskId
+    )
+
+    $result = [ordered]@{
+        source_path = (Convert-GatePathToUnix -PathValue $TaskEventFilePath)
+        status = 'UNKNOWN'
+        events_scanned = 0
+        matching_events = 0
+        parse_errors = 0
+        task_id_mismatches = 0
+        legacy_event_count = 0
+        integrity_event_count = 0
+        first_integrity_sequence = $null
+        last_integrity_sequence = $null
+        duplicate_event_hashes = @()
+        violations = @()
+    }
+
+    if (-not (Test-Path -LiteralPath $TaskEventFilePath -PathType Leaf)) {
+        $result.status = 'MISSING'
+        $result.violations += "Task events file not found: $($result.source_path)"
+        return $result
+    }
+
+    $lastEventHash = $null
+    $expectedSequence = $null
+    $integrityStarted = $false
+    $seenHashes = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $lineNumber = 0
+
+    foreach ($rawLine in (Get-Content -LiteralPath $TaskEventFilePath)) {
+        if ([string]::IsNullOrWhiteSpace($rawLine)) {
+            continue
+        }
+
+        $lineNumber++
+        $result.events_scanned = $lineNumber
+        $eventObject = $null
+        try {
+            $eventObject = $rawLine | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            $result.parse_errors++
+            $result.violations += "Task timeline contains invalid JSON at line $lineNumber."
+            continue
+        }
+
+        $eventTaskId = ''
+        if ($null -ne $eventObject.PSObject.Properties['task_id']) {
+            $eventTaskId = [string]$eventObject.task_id
+        }
+        if (-not [string]::IsNullOrWhiteSpace($eventTaskId) -and -not [string]::Equals($eventTaskId.Trim(), $TaskId, [System.StringComparison]::Ordinal)) {
+            $result.task_id_mismatches++
+            $result.violations += "Task timeline contains foreign task_id '$eventTaskId' at line $lineNumber."
+            continue
+        }
+
+        $result.matching_events++
+        $integrity = $null
+        if ($null -ne $eventObject.PSObject.Properties['integrity']) {
+            $integrity = $eventObject.integrity
+        }
+        if ($null -eq $integrity) {
+            if ($integrityStarted) {
+                $result.violations += "Task timeline contains legacy/unverified event after integrity chain start at line $lineNumber."
+            } else {
+                $result.legacy_event_count++
+            }
+            continue
+        }
+
+        $schemaVersion = $null
+        if ($null -ne $integrity.PSObject.Properties['schema_version']) {
+            $schemaVersion = $integrity.schema_version
+        }
+        $taskSequence = $null
+        if ($null -ne $integrity.PSObject.Properties['task_sequence']) {
+            $taskSequence = $integrity.task_sequence
+        }
+        $prevEventSha256 = $null
+        if ($null -ne $integrity.PSObject.Properties['prev_event_sha256']) {
+            $prevEventSha256 = $integrity.prev_event_sha256
+        }
+        $eventSha256 = ''
+        if ($null -ne $integrity.PSObject.Properties['event_sha256']) {
+            $eventSha256 = [string]$integrity.event_sha256
+        }
+        $eventSha256 = $eventSha256.Trim().ToLowerInvariant()
+
+        if ($schemaVersion -ne 1) {
+            $result.violations += "Task timeline integrity schema mismatch at line ${lineNumber}: expected 1, got '$schemaVersion'."
+            continue
+        }
+        if (-not (($taskSequence -is [int]) -or ($taskSequence -is [long])) -or [int]$taskSequence -le 0) {
+            $result.violations += "Task timeline has invalid task_sequence at line $lineNumber."
+            continue
+        }
+        if ($null -ne $prevEventSha256 -and [string]::IsNullOrWhiteSpace([string]$prevEventSha256)) {
+            $prevEventSha256 = $null
+        }
+        if ([string]::IsNullOrWhiteSpace($eventSha256)) {
+            $result.violations += "Task timeline missing event_sha256 at line $lineNumber."
+            continue
+        }
+
+        if (-not $integrityStarted) {
+            $integrityStarted = $true
+            $expectedSequence = [int]$result.legacy_event_count + 1
+            if ($null -ne $prevEventSha256) {
+                $result.violations += "Task timeline first integrity event must have null prev_event_sha256 (line $lineNumber)."
+            }
+        }
+
+        if ([int]$taskSequence -ne [int]$expectedSequence) {
+            $result.violations += "Task timeline sequence mismatch at line ${lineNumber}: expected $expectedSequence, got $taskSequence."
+        }
+
+        $normalizedPrevHash = if ($null -eq $prevEventSha256) { $null } else { ([string]$prevEventSha256).Trim().ToLowerInvariant() }
+        if ($normalizedPrevHash -ne $lastEventHash) {
+            $result.violations += "Task timeline prev_event_sha256 mismatch at line $lineNumber."
+        }
+
+        $recalculatedHash = Get-GateEventIntegrityHash -EventRecord $eventObject
+        if ($recalculatedHash -ne $eventSha256) {
+            $result.violations += "Task timeline event_sha256 mismatch at line $lineNumber."
+        }
+
+        if (-not $seenHashes.Add($eventSha256)) {
+            $result.duplicate_event_hashes += $eventSha256
+            $result.violations += "Task timeline duplicate/replayed event detected at line $lineNumber."
+        }
+
+        $result.integrity_event_count++
+        if ($null -eq $result.first_integrity_sequence) {
+            $result.first_integrity_sequence = [int]$taskSequence
+        }
+        $result.last_integrity_sequence = [int]$taskSequence
+        $lastEventHash = $eventSha256
+        $expectedSequence = [int]$taskSequence + 1
+    }
+
+    if ($result.violations.Count -gt 0) {
+        $result.status = 'FAILED'
+    } elseif ($result.matching_events -eq 0) {
+        $result.status = 'EMPTY'
+    } elseif ($result.integrity_event_count -eq 0) {
+        $result.status = 'LEGACY_ONLY'
+    } elseif ($result.legacy_event_count -gt 0) {
+        $result.status = 'PASS_WITH_LEGACY_PREFIX'
+    } else {
+        $result.status = 'PASS'
+    }
+
+    return $result
 }
 
 Export-ModuleMember -Function @(
@@ -1123,5 +1606,6 @@ Export-ModuleMember -Function @(
     'Add-GateMetricsEvent',
     'Get-GateOutputTelemetry',
     'Invoke-GateOutputFilter',
-    'Add-GateTaskEvent'
+    'Add-GateTaskEvent',
+    'Get-GateTaskTimelineIntegrity'
 )

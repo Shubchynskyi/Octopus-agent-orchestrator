@@ -97,6 +97,7 @@ if (-not (Test-Path $taskEventFile)) {
 $lines = @(Get-Content -Path $taskEventFile | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 $events = @()
 $parseErrors = 0
+$integrityReport = Get-GateTaskTimelineIntegrity -TaskEventFilePath $taskEventFile -TaskId $TaskId
 
 foreach ($line in $lines) {
     try {
@@ -117,6 +118,7 @@ $summary = [ordered]@{
     source_path = Normalize-Path $taskEventFile
     events_count = $events.Count
     parse_errors = $parseErrors
+    integrity = $integrityReport
     first_event_utc = $(if ($events.Count -gt 0) { Format-TimestampValue -Value $events[0].timestamp_utc } else { $null })
     last_event_utc = $(if ($events.Count -gt 0) { Format-TimestampValue -Value $events[$events.Count - 1].timestamp_utc } else { $null })
     timeline = @()
@@ -142,8 +144,18 @@ if ($AsJson) {
     $outputLines += "Task: $TaskId"
     $outputLines += "Source: $($summary.source_path)"
     $outputLines += "Events: $($summary.events_count)"
+    $outputLines += "IntegrityStatus: $($integrityReport.status)"
     if ($parseErrors -gt 0) {
         $outputLines += "ParseErrors: $parseErrors"
+    }
+    if ($integrityReport.integrity_event_count -gt 0) {
+        $outputLines += "IntegrityEvents: $($integrityReport.integrity_event_count)"
+    }
+    if ($integrityReport.legacy_event_count -gt 0) {
+        $outputLines += "LegacyEvents: $($integrityReport.legacy_event_count)"
+    }
+    if (@($integrityReport.violations).Count -gt 0) {
+        $outputLines += "IntegrityViolations: $(@($integrityReport.violations).Count)"
     }
     if ($summary.first_event_utc) {
         $outputLines += "FirstEventUTC: $($summary.first_event_utc)"
@@ -167,6 +179,14 @@ if ($AsJson) {
         if ($IncludeDetails -and $null -ne $item.details) {
             $detailsJson = $item.details | ConvertTo-Json -Depth 12 -Compress
             $outputLines += "       details=$detailsJson"
+        }
+    }
+
+    if (@($integrityReport.violations).Count -gt 0) {
+        $outputLines += ''
+        $outputLines += 'IntegrityViolations:'
+        foreach ($violation in @($integrityReport.violations)) {
+            $outputLines += "- $violation"
         }
     }
 

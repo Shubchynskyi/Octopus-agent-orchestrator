@@ -200,6 +200,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Task event logs:
   - `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`
   - `Octopus-agent-orchestrator/runtime/task-events/all-tasks.jsonl`
+- New task-event writes add best-effort append locking and per-task integrity metadata (`integrity.task_sequence`, `prev_event_sha256`, `event_sha256`).
 - Terminal events `TASK_DONE` and `TASK_BLOCKED` trigger full log cleanup for temporary reviewer/specialist logs after required artifacts are persisted.
 - Human-readable summary:
   - `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1 -TaskId "<task-id>"`
@@ -258,7 +259,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Required review verdict missing:
   - Re-run missing reviewer and then `required-reviews-check.ps1`.
 - Completion gate failed:
-  - Resolve listed timeline/artifact violations, then rerun `completion-gate.ps1` / `.sh`.
+  - Resolve listed timeline/artifact/integrity violations, then rerun `completion-gate.ps1` / `.sh`.
 - Compile gate failed:
   - Fix compile errors and rerun `compile-gate.ps1` / `.sh` until `COMPILE_GATE_PASSED`.
 - Compile gate failed with preflight scope drift:

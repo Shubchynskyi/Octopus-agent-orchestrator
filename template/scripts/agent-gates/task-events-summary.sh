@@ -21,23 +21,34 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
 sys.path.insert(0, str(script_dir / "lib"))
 
-from gate_utils import assert_valid_task_id, resolve_path_inside_repo, resolve_project_root, to_posix
+from gate_utils import assert_valid_task_id, inspect_task_event_file, resolve_path_inside_repo, resolve_project_root, to_posix
 
 
 def parse_timestamp(value):
-    parsed = normalize_timestamp(value)
-    if parsed is None:
+    if value is None:
         return datetime.min.replace(tzinfo=timezone.utc)
-    return parsed
+
+    text = str(value).strip()
+    if not text:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+    candidate = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(candidate)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 
-def normalize_timestamp(value):
+def format_timestamp(value):
     if value is None:
         return None
 
@@ -55,25 +66,7 @@ def normalize_timestamp(value):
 
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
-
-    offset = parsed.utcoffset()
-    if offset is None:
-        offset = timedelta(0)
-
-    return (parsed - offset).replace(tzinfo=timezone.utc)
-
-
-def format_timestamp(value, mode="json"):
-    parsed = normalize_timestamp(value)
-    if parsed is None or isinstance(parsed, str):
-        return parsed
-
-    if mode == "text":
-        return parsed.strftime("%Y-%m-%dT%H:%M:%S.") + f"{parsed.microsecond:06d}0Z"
-
-    if parsed.microsecond == 0:
-        return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
-    return parsed.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 parser = argparse.ArgumentParser()
@@ -106,6 +99,7 @@ if not task_event_file.exists() or not task_event_file.is_file():
 lines = [line for line in task_event_file.read_text(encoding="utf-8").splitlines() if line.strip()]
 events = []
 parse_errors = 0
+integrity_report = inspect_task_event_file(task_event_file, task_id)
 
 for line in lines:
     try:
@@ -124,8 +118,9 @@ summary = {
     "source_path": to_posix(task_event_file),
     "events_count": len(events),
     "parse_errors": parse_errors,
-    "first_event_utc": format_timestamp(events[0].get("timestamp_utc"), mode="json") if events else None,
-    "last_event_utc": format_timestamp(events[-1].get("timestamp_utc"), mode="json") if events else None,
+    "integrity": integrity_report,
+    "first_event_utc": format_timestamp(events[0].get("timestamp_utc")) if events else None,
+    "last_event_utc": format_timestamp(events[-1].get("timestamp_utc")) if events else None,
     "timeline": [],
 }
 
@@ -133,7 +128,7 @@ for index, event in enumerate(events, start=1):
     summary["timeline"].append(
         {
             "index": index,
-            "timestamp_utc": format_timestamp(event.get("timestamp_utc"), mode="json"),
+            "timestamp_utc": format_timestamp(event.get("timestamp_utc")),
             "event_type": str(event.get("event_type") or "UNKNOWN"),
             "outcome": str(event.get("outcome") or "UNKNOWN"),
             "actor": str(event.get("actor")) if event.get("actor") is not None else None,
@@ -149,18 +144,25 @@ else:
         f"Task: {task_id}",
         f"Source: {summary['source_path']}",
         f"Events: {summary['events_count']}",
+        f"IntegrityStatus: {integrity_report['status']}",
     ]
     if parse_errors > 0:
         output_lines.append(f"ParseErrors: {parse_errors}")
+    if integrity_report["integrity_event_count"] > 0:
+        output_lines.append(f"IntegrityEvents: {integrity_report['integrity_event_count']}")
+    if integrity_report["legacy_event_count"] > 0:
+        output_lines.append(f"LegacyEvents: {integrity_report['legacy_event_count']}")
+    if integrity_report["violations"]:
+        output_lines.append(f"IntegrityViolations: {len(integrity_report['violations'])}")
     if summary["first_event_utc"]:
-        output_lines.append(f"FirstEventUTC: {format_timestamp(summary['first_event_utc'], mode='text')}")
+        output_lines.append(f"FirstEventUTC: {summary['first_event_utc']}")
     if summary["last_event_utc"]:
-        output_lines.append(f"LastEventUTC: {format_timestamp(summary['last_event_utc'], mode='text')}")
+        output_lines.append(f"LastEventUTC: {summary['last_event_utc']}")
 
     output_lines.extend(["", "Timeline:"])
 
     for item in summary["timeline"]:
-        timestamp = format_timestamp(item["timestamp_utc"], mode="text") or ""
+        timestamp = item["timestamp_utc"] or ""
         line = f"[{item['index']:02d}] {timestamp} | {item['event_type']} | {item['outcome']}"
         actor = item.get("actor")
         if actor and actor.strip():
@@ -173,6 +175,11 @@ else:
         if args.include_details and item.get("details") is not None:
             details_json = json.dumps(item["details"], ensure_ascii=False, separators=(",", ":"))
             output_lines.append(f"       details={details_json}")
+
+    if integrity_report["violations"]:
+        output_lines.extend(["", "IntegrityViolations:"])
+        for violation in integrity_report["violations"]:
+            output_lines.append(f"- {violation}")
 
     output_text = "\n".join(output_lines)
 

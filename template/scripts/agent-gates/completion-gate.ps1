@@ -226,6 +226,7 @@ function Get-TimelineEvidence {
         last_review_gate_failed_index = $null
         last_review_gate_passed_index = $null
         skip_reviews = @()
+        integrity = $null
         violations = @()
     }
 
@@ -252,6 +253,10 @@ function Get-TimelineEvidence {
         $result.violations += "Task timeline not found: $($result.timeline_path)"
         return $result
     }
+
+    $integrityEvidence = Get-GateTaskTimelineIntegrity -TaskEventFilePath $resolvedTimelinePath -TaskId $ResolvedTaskId
+    $result.integrity = $integrityEvidence
+    $result.violations += @($integrityEvidence.violations)
 
     $eventIndex = 0
     $lastFailedIndex = $null

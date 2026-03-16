@@ -13,6 +13,13 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Docs Updated: <list of updated doc files>
 ```
 
+## 2026-03-16 - Task-event integrity chain and append locking
+- Task: T-006
+- Type: architecture-change
+- Scope: task-event logging / completion gate / docs
+- Summary: Hardened task timeline handling with best-effort append locking for per-task and aggregate JSONL writers, added per-task integrity metadata (`schema_version`, `task_sequence`, `prev_event_sha256`, `event_sha256`) on new events, and taught timeline summary plus completion gate to detect local tampering, replay, out-of-order inserts, foreign task ids, and malformed event lines. Documented the threat model explicitly as procedural hardening rather than a real external trust anchor.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/live/docs/review-trust-model.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/40-commands.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md`; `Octopus-agent-orchestrator/template/skills/orchestration/SKILL.md`
+
 ## 2026-03-14 - Bundle version bumped to 1.0.7
 - Task: ad-hoc
 - Type: behavior-change

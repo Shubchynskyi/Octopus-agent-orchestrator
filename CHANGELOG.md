@@ -4,6 +4,13 @@ All notable changes to this bundle are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Task-event logging now uses best-effort append locking for both per-task timelines and aggregate `all-tasks.jsonl`, reducing concurrent append corruption during local orchestrator runs.
+- New task-event writes include per-task integrity metadata (`task_sequence`, `prev_event_sha256`, `event_sha256`), and timeline summary/completion checks now validate that hash chain to detect local replay, reordering, or post-hoc edits.
+
+### Documentation
+- Clarified the local trust model for task timelines: the new integrity chain is procedural hardening inside a writable workspace, not a security-grade trust anchor.
+
 ## [1.0.7] - 2026-03-14
 
 ### Added

@@ -38,7 +38,7 @@ After successful setup:
 - Root entry points exist and route correctly (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.qwen/settings.json`, `.github/agents/orchestrator.md`, `TASK.md`, platform files; plus optional `.claude/settings.local.json` when `ClaudeOrchestratorFullAccess=true`).
 - Provider-native bridge profiles exist and route to canonical skills (`.github/agents/*.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`).
 - Copilot bridge profiles account for specialist skills added after init by reading `live/docs/agent-rules/90-skill-catalog.md` and `live/config/review-capabilities.json`.
-- Task timeline logs are stored per task id in `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
+- Task timeline logs are stored per task id in `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`; new writes use best-effort append locking and per-task integrity metadata.
 - Selected source-of-truth entrypoint contains canonical routing index.
 - All non-selected entrypoint files redirect to the selected source-of-truth entrypoint.
 - Canonical rules are available under `Octopus-agent-orchestrator/live/docs/agent-rules/`.
@@ -109,7 +109,7 @@ Compile gate command source is `Octopus-agent-orchestrator/live/docs/agent-rules
 Compile gate validates preflight scope freshness and writes compile evidence (`<task-id>-compile-gate.json`).
 Review gate validates compile evidence and post-compile drift; it writes review evidence (`<task-id>-review-gate.json`).
 Doc impact gate writes machine-checkable documentation assessment (`<task-id>-doc-impact.json`) before completion.
-Completion gate validates compile/review/doc-impact evidence, review-loop timeline consistency, and required review artifacts before `DONE`.
+Completion gate validates compile/review/doc-impact evidence, review-loop timeline consistency, best-effort task-event integrity, and required review artifacts before `DONE`.
 
 ## 7. Update Existing Deployment
 Preferred flow (check + optional apply from git):

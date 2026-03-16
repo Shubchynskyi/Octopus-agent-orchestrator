@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
@@ -59,6 +61,256 @@ def file_sha256(path: Optional[Path]) -> Optional[str]:
     if not path or not path.exists() or not path.is_file():
         return None
     return hashlib.sha256(path.read_bytes()).hexdigest().lower()
+
+
+def _normalize_integrity_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _normalize_integrity_value(val) for key, val in sorted(value.items(), key=lambda item: str(item[0]))}
+    if isinstance(value, (list, tuple, set)):
+        return [_normalize_integrity_value(item) for item in value]
+    if isinstance(value, Path):
+        return to_posix(value)
+    if isinstance(value, datetime):
+        normalized = value
+        if normalized.tzinfo is None:
+            normalized = normalized.replace(tzinfo=timezone.utc)
+        return normalized.astimezone(timezone.utc).isoformat()
+    return value
+
+
+def build_event_integrity_hash(event_obj: dict) -> str:
+    normalized_event = dict(event_obj)
+    integrity = normalized_event.get("integrity")
+    if isinstance(integrity, dict):
+        normalized_integrity = dict(integrity)
+        normalized_integrity.pop("event_sha256", None)
+        normalized_event["integrity"] = normalized_integrity
+
+    canonical_payload = json.dumps(
+        _normalize_integrity_value(normalized_event),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest().lower()
+
+
+def _acquire_append_lock(
+    lock_path: Path,
+    *,
+    timeout_seconds: float = 10.0,
+    stale_seconds: float = 120.0,
+    poll_seconds: float = 0.05,
+) -> None:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.time() + max(timeout_seconds, 0.1)
+
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(
+                    json.dumps(
+                        {
+                            "pid": os.getpid(),
+                            "acquired_utc": datetime.now(timezone.utc).isoformat(),
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+            return
+        except FileExistsError:
+            try:
+                if lock_path.exists():
+                    age_seconds = time.time() - lock_path.stat().st_mtime
+                    if age_seconds >= stale_seconds:
+                        lock_path.unlink(missing_ok=True)
+                        continue
+            except FileNotFoundError:
+                continue
+            except Exception:
+                pass
+
+            if time.time() >= deadline:
+                raise RuntimeError(f"Timed out acquiring append lock: {to_posix(lock_path)}")
+            time.sleep(poll_seconds)
+
+
+def _release_append_lock(lock_path: Path) -> None:
+    try:
+        lock_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _read_task_event_append_state(task_file_path: Path, task_id: str) -> dict:
+    state = {
+        "matching_events": 0,
+        "parse_errors": 0,
+        "last_integrity_sequence": None,
+        "last_event_sha256": None,
+    }
+
+    if not task_file_path.exists() or not task_file_path.is_file():
+        return state
+
+    for raw_line in task_file_path.read_text(encoding="utf-8").splitlines():
+        if not raw_line.strip():
+            continue
+
+        try:
+            event = json.loads(raw_line)
+        except Exception:
+            state["parse_errors"] += 1
+            continue
+
+        event_task_id = str(event.get("task_id", "")).strip()
+        if event_task_id and event_task_id != task_id:
+            continue
+
+        state["matching_events"] += 1
+        integrity = event.get("integrity")
+        if not isinstance(integrity, dict):
+            continue
+
+        sequence = integrity.get("task_sequence")
+        event_sha256 = str(integrity.get("event_sha256", "")).strip().lower()
+        if isinstance(sequence, int) and sequence > 0 and event_sha256:
+            state["last_integrity_sequence"] = sequence
+            state["last_event_sha256"] = event_sha256
+
+    return state
+
+
+def inspect_task_event_file(task_event_file: Path, task_id: str) -> dict:
+    result = {
+        "source_path": to_posix(task_event_file),
+        "status": "UNKNOWN",
+        "events_scanned": 0,
+        "matching_events": 0,
+        "parse_errors": 0,
+        "task_id_mismatches": 0,
+        "legacy_event_count": 0,
+        "integrity_event_count": 0,
+        "first_integrity_sequence": None,
+        "last_integrity_sequence": None,
+        "duplicate_event_hashes": [],
+        "violations": [],
+    }
+
+    if not task_event_file.exists() or not task_event_file.is_file():
+        result["status"] = "MISSING"
+        result["violations"].append(f"Task events file not found: {to_posix(task_event_file)}")
+        return result
+
+    last_event_hash = None
+    expected_sequence = None
+    integrity_started = False
+    seen_hashes = set()
+
+    for line_number, raw_line in enumerate(task_event_file.read_text(encoding="utf-8").splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+
+        result["events_scanned"] += 1
+        try:
+            event = json.loads(raw_line)
+        except Exception:
+            result["parse_errors"] += 1
+            result["violations"].append(f"Task timeline contains invalid JSON at line {line_number}.")
+            continue
+
+        event_task_id = str(event.get("task_id", "")).strip()
+        if event_task_id and event_task_id != task_id:
+            result["task_id_mismatches"] += 1
+            result["violations"].append(
+                f"Task timeline contains foreign task_id '{event_task_id}' at line {line_number}."
+            )
+            continue
+
+        result["matching_events"] += 1
+        integrity = event.get("integrity")
+        if not isinstance(integrity, dict):
+            if integrity_started:
+                result["violations"].append(
+                    f"Task timeline contains legacy/unverified event after integrity chain start at line {line_number}."
+                )
+            else:
+                result["legacy_event_count"] += 1
+            continue
+
+        schema_version = integrity.get("schema_version")
+        task_sequence = integrity.get("task_sequence")
+        prev_event_sha256 = integrity.get("prev_event_sha256")
+        event_sha256 = str(integrity.get("event_sha256", "")).strip().lower()
+
+        if schema_version != 1:
+            result["violations"].append(
+                f"Task timeline integrity schema mismatch at line {line_number}: expected 1, got '{schema_version}'."
+            )
+            continue
+        if not isinstance(task_sequence, int) or task_sequence <= 0:
+            result["violations"].append(f"Task timeline has invalid task_sequence at line {line_number}.")
+            continue
+        if prev_event_sha256 is not None and not str(prev_event_sha256).strip():
+            prev_event_sha256 = None
+        if not event_sha256:
+            result["violations"].append(f"Task timeline missing event_sha256 at line {line_number}.")
+            continue
+
+        if not integrity_started:
+            integrity_started = True
+            expected_sequence = result["legacy_event_count"] + 1
+            if prev_event_sha256 is not None:
+                result["violations"].append(
+                    f"Task timeline first integrity event must have null prev_event_sha256 (line {line_number})."
+                )
+
+        if task_sequence != expected_sequence:
+            result["violations"].append(
+                f"Task timeline sequence mismatch at line {line_number}: expected {expected_sequence}, got {task_sequence}."
+            )
+
+        expected_prev_hash = last_event_hash
+        normalized_prev_hash = str(prev_event_sha256).strip().lower() if prev_event_sha256 is not None else None
+        if normalized_prev_hash != expected_prev_hash:
+            result["violations"].append(
+                f"Task timeline prev_event_sha256 mismatch at line {line_number}."
+            )
+
+        recalculated_hash = build_event_integrity_hash(event)
+        if recalculated_hash != event_sha256:
+            result["violations"].append(
+                f"Task timeline event_sha256 mismatch at line {line_number}."
+            )
+
+        if event_sha256 in seen_hashes:
+            result["duplicate_event_hashes"].append(event_sha256)
+            result["violations"].append(
+                f"Task timeline duplicate/replayed event detected at line {line_number}."
+            )
+        seen_hashes.add(event_sha256)
+
+        result["integrity_event_count"] += 1
+        if result["first_integrity_sequence"] is None:
+            result["first_integrity_sequence"] = task_sequence
+        result["last_integrity_sequence"] = task_sequence
+        last_event_hash = event_sha256
+        expected_sequence = task_sequence + 1
+
+    if result["violations"]:
+        result["status"] = "FAILED"
+    elif result["matching_events"] == 0:
+        result["status"] = "EMPTY"
+    elif result["integrity_event_count"] == 0:
+        result["status"] = "LEGACY_ONLY"
+    elif result["legacy_event_count"] > 0:
+        result["status"] = "PASS_WITH_LEGACY_PREFIX"
+    else:
+        result["status"] = "PASS"
+
+    return result
 
 
 def resolve_project_root(script_dir: Path) -> Path:
@@ -721,29 +973,78 @@ def append_task_event(
     event_type: str,
     outcome: str,
     message: str,
-    details: dict,
-) -> None:
+    details: Any,
+    *,
+    actor: str = "gate",
+    pass_thru: bool = False,
+) -> Optional[dict]:
     if not task_id:
-        return
+        return None
 
     safe_task_id = assert_valid_task_id(task_id)
     events_dir = (repo_root / "Octopus-agent-orchestrator/runtime/task-events").resolve()
+    task_file_path = (events_dir / f"{safe_task_id}.jsonl").resolve()
+    all_tasks_path = (events_dir / "all-tasks.jsonl").resolve()
+    task_lock_path = (events_dir / f"{safe_task_id}.jsonl.lock").resolve()
+    all_tasks_lock_path = (events_dir / "all-tasks.jsonl.lock").resolve()
 
     event = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "task_id": safe_task_id,
         "event_type": event_type,
         "outcome": outcome,
+        "actor": actor,
         "message": message,
         "details": details,
     }
-    line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
 
+    result = {
+        "task_event_log_path": to_posix(task_file_path),
+        "all_tasks_log_path": to_posix(all_tasks_path),
+        "integrity": None,
+        "warnings": [],
+    }
+
+    line = None
     try:
         events_dir.mkdir(parents=True, exist_ok=True)
-        with (events_dir / f"{safe_task_id}.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-        with (events_dir / "all-tasks.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        _acquire_append_lock(task_lock_path)
+        try:
+            append_state = _read_task_event_append_state(task_file_path, safe_task_id)
+            previous_sequence = append_state["last_integrity_sequence"]
+            previous_hash = append_state["last_event_sha256"]
+            next_sequence = (previous_sequence + 1) if isinstance(previous_sequence, int) else (append_state["matching_events"] + 1)
+
+            event["integrity"] = {
+                "schema_version": 1,
+                "task_sequence": next_sequence,
+                "prev_event_sha256": previous_hash,
+            }
+            event["integrity"]["event_sha256"] = build_event_integrity_hash(event)
+            line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+
+            with task_file_path.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+
+            result["integrity"] = dict(event["integrity"])
+        finally:
+            _release_append_lock(task_lock_path)
     except Exception as exc:
-        print(f"WARNING: task-event append failed: {exc}", file=sys.stderr)
+        warning = f"task-event append failed: {exc}"
+        result["warnings"].append(warning)
+        print(f"WARNING: {warning}", file=sys.stderr)
+        return result if pass_thru else None
+
+    try:
+        _acquire_append_lock(all_tasks_lock_path)
+        try:
+            with all_tasks_path.open("a", encoding="utf-8") as fh:
+                fh.write((line or "") + "\n")
+        finally:
+            _release_append_lock(all_tasks_lock_path)
+    except Exception as exc:
+        warning = f"task-event aggregate append failed: {exc}"
+        result["warnings"].append(warning)
+        print(f"WARNING: {warning}", file=sys.stderr)
+
+    return result if pass_thru else None

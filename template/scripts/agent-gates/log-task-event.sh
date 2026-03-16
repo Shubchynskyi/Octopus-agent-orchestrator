@@ -31,6 +31,7 @@ sys.path.insert(0, str(script_dir / "lib"))
 
 from gate_utils import (
     assert_valid_task_id,
+    append_task_event,
     resolve_path_inside_repo,
     resolve_project_root,
     to_posix,
@@ -158,27 +159,18 @@ if is_terminal_event:
     event_details = as_details_map(details)
     event_details["terminal_log_cleanup"] = terminal_log_cleanup
 
-event = {
-    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-    "task_id": task_id,
-    "event_type": event_type,
-    "outcome": args.outcome,
-    "actor": args.actor,
-    "message": args.message,
-    "details": event_details,
-}
-line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-
 task_file_path = (events_root / f"{task_id}.jsonl").resolve()
 all_tasks_path = (events_root / "all-tasks.jsonl").resolve()
-
-try:
-    with task_file_path.open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
-    with all_tasks_path.open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
-except Exception as exc:
-    print(f"WARNING: task-event append failed: {exc}", file=sys.stderr)
+append_result = append_task_event(
+    repo_root=repo_root,
+    task_id=task_id,
+    event_type=event_type,
+    outcome=args.outcome,
+    message=args.message,
+    details=event_details,
+    actor=args.actor,
+    pass_thru=True,
+)
 
 result = {
     "status": "TASK_EVENT_LOGGED",
@@ -189,6 +181,12 @@ result = {
     "task_event_log_path": to_posix(task_file_path),
     "all_tasks_log_path": to_posix(all_tasks_path),
 }
+if isinstance(append_result, dict):
+    if append_result.get("integrity") is not None:
+        result["integrity"] = append_result["integrity"]
+    warnings = append_result.get("warnings") or []
+    if warnings:
+        result["warnings"] = warnings
 if is_terminal_event:
     result["terminal_log_cleanup"] = terminal_log_cleanup
 if cleanup_failed:
