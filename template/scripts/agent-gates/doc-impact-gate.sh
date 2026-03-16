@@ -32,8 +32,10 @@ from gate_utils import (  # noqa: E402
     append_task_event,
     assert_valid_task_id,
     file_sha256,
+    join_orchestrator_path,
     normalize_path,
     parse_bool,
+    resolve_path_inside_repo,
     resolve_project_root,
     to_string_array,
 )
@@ -94,9 +96,7 @@ parser.add_argument("--emit-metrics", default="true")
 args = parser.parse_args()
 
 repo_root = resolve_project_root(script_dir)
-preflight_path = Path(args.preflight_path)
-if not preflight_path.is_absolute():
-    preflight_path = preflight_path.resolve()
+preflight_path = resolve_path_inside_repo(args.preflight_path, repo_root)
 if not preflight_path.exists():
     print(f"Preflight artifact not found: {preflight_path}", file=sys.stderr)
     sys.exit(1)
@@ -118,19 +118,17 @@ for trigger_name in ("api", "security", "infra", "dependency", "db"):
         sensitive_triggers_fired.append(trigger_name)
 
 if args.artifact_path.strip():
-    artifact_path = Path(args.artifact_path.strip())
-    if not artifact_path.is_absolute():
-        artifact_path = (repo_root / artifact_path).resolve()
+    artifact_path = resolve_path_inside_repo(args.artifact_path, repo_root, allow_missing=True)
 else:
-    artifact_path = (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{resolved_task_id}-doc-impact.json").resolve()
+    artifact_path = join_orchestrator_path(repo_root, f"runtime/reviews/{resolved_task_id}-doc-impact.json")
 
 metrics_path_raw = args.metrics_path.strip() if args.metrics_path else ""
 if not metrics_path_raw:
-    metrics_path = (repo_root / "Octopus-agent-orchestrator/runtime/metrics.jsonl").resolve()
+    metrics_path = join_orchestrator_path(repo_root, "runtime/metrics.jsonl")
 else:
     metrics_path = Path(metrics_path_raw)
     if not metrics_path.is_absolute():
-        metrics_path = (repo_root / metrics_path).resolve()
+        metrics_path = resolve_path_inside_repo(metrics_path_raw, repo_root, allow_missing=True)
 emit_metrics = parse_bool(args.emit_metrics)
 
 errors = list(validated_preflight["errors"])

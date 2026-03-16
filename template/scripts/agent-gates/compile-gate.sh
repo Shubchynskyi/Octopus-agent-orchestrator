@@ -43,6 +43,7 @@ from gate_utils import (
     assert_valid_task_id,
     build_output_telemetry,
     file_sha256,
+    join_orchestrator_path,
     normalize_path,
     resolve_path_inside_repo,
     resolve_project_root,
@@ -178,7 +179,7 @@ def resolve_preflight_path(explicit_preflight_path: str, repo_root: Path, task_i
         return resolve_path_inside_repo(explicit_preflight_path, repo_root)
     if not task_id:
         return None
-    return (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-preflight.json").resolve()
+    return join_orchestrator_path(repo_root, f"runtime/reviews/{task_id}-preflight.json")
 
 
 def resolve_compile_evidence_path(explicit_path: str, repo_root: Path, task_id: str):
@@ -186,7 +187,7 @@ def resolve_compile_evidence_path(explicit_path: str, repo_root: Path, task_id: 
         return None
     if explicit_path and explicit_path.strip():
         return resolve_path_inside_repo(explicit_path, repo_root)
-    return (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-compile-gate.json").resolve()
+    return join_orchestrator_path(repo_root, f"runtime/reviews/{task_id}-compile-gate.json")
 
 
 def resolve_compile_output_path(explicit_path: str, repo_root: Path, task_id: str):
@@ -194,7 +195,7 @@ def resolve_compile_output_path(explicit_path: str, repo_root: Path, task_id: st
         return None
     if explicit_path and explicit_path.strip():
         return resolve_path_inside_repo(explicit_path, repo_root)
-    return (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-compile-output.log").resolve()
+    return join_orchestrator_path(repo_root, f"runtime/reviews/{task_id}-compile-output.log")
 
 
 def string_sha256(text: str) -> str:
@@ -462,7 +463,11 @@ except Exception as exc:
 if fail_tail_lines <= 0:
     raise RuntimeError("fail-tail-lines must be a positive integer")
 
-metrics_path = Path(args.metrics_path).resolve() if args.metrics_path.strip() else (repo_root / "Octopus-agent-orchestrator/runtime/metrics.jsonl").resolve()
+metrics_path = (
+    resolve_path_inside_repo(args.metrics_path, repo_root, allow_missing=True)
+    if args.metrics_path.strip()
+    else join_orchestrator_path(repo_root, "runtime/metrics.jsonl")
+)
 emit_metrics = args.emit_metrics.strip().lower() in {"1", "true", "yes", "y"}
 
 resolved_commands_path = None

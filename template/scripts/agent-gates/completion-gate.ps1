@@ -25,7 +25,7 @@ function Resolve-ProjectRoot {
 }
 
 if ([string]::IsNullOrWhiteSpace($MetricsPath)) {
-    $MetricsPath = Join-Path (Resolve-ProjectRoot) 'Octopus-agent-orchestrator/runtime/metrics.jsonl'
+    $MetricsPath = Join-GateOrchestratorPath -RepoRootPath (Resolve-ProjectRoot) -RelativePath 'runtime/metrics.jsonl'
 }
 
 function Append-MetricsEvent {
@@ -60,6 +60,15 @@ function Assert-ValidTaskId {
     param([string]$Value)
 
     Assert-GateTaskId -Value $Value
+}
+
+function Resolve-PathInsideRepo {
+    param(
+        [string]$PathValue,
+        [string]$RepoRootPath
+    )
+
+    return Resolve-GatePathInsideRepo -PathValue $PathValue -RepoRootPath $RepoRootPath -AllowMissing -AllowEmpty
 }
 
 function Get-FileSha256 {
@@ -241,10 +250,10 @@ function Get-TimelineEvidence {
         if ([System.IO.Path]::IsPathRooted($TimelinePathValue)) {
             $resolvedTimelinePath = $TimelinePathValue
         } else {
-            $resolvedTimelinePath = Join-Path $RepoRootPath $TimelinePathValue
+            $resolvedTimelinePath = Resolve-PathInsideRepo -PathValue $TimelinePathValue -RepoRootPath $RepoRootPath
         }
     } else {
-        $resolvedTimelinePath = Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/task-events/$ResolvedTaskId.jsonl"
+        $resolvedTimelinePath = Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath "runtime/task-events/$ResolvedTaskId.jsonl"
     }
     $result.timeline_path = Normalize-Path $resolvedTimelinePath
 
@@ -394,10 +403,10 @@ function Get-ReviewArtifactEvidence {
         if ([System.IO.Path]::IsPathRooted($ReviewsRootValue)) {
             $resolvedReviewsRoot = $ReviewsRootValue
         } else {
-            $resolvedReviewsRoot = Join-Path $RepoRootPath $ReviewsRootValue
+            $resolvedReviewsRoot = Resolve-PathInsideRepo -PathValue $ReviewsRootValue -RepoRootPath $RepoRootPath
         }
     } else {
-        $resolvedReviewsRoot = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/reviews'
+        $resolvedReviewsRoot = Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath 'runtime/reviews'
     }
     $result.reviews_root = Normalize-Path $resolvedReviewsRoot
 
@@ -482,11 +491,11 @@ function Get-CompileGateEvidence {
     }
 
     $resolvedEvidencePath = if ([string]::IsNullOrWhiteSpace($CompileEvidencePathValue)) {
-        Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-compile-gate.json"
+        Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath "runtime/reviews/$ResolvedTaskId-compile-gate.json"
     } elseif ([System.IO.Path]::IsPathRooted($CompileEvidencePathValue)) {
         $CompileEvidencePathValue
     } else {
-        Join-Path $RepoRootPath $CompileEvidencePathValue
+        Resolve-PathInsideRepo -PathValue $CompileEvidencePathValue -RepoRootPath $RepoRootPath
     }
 
     $result.evidence_path = Normalize-Path $resolvedEvidencePath
@@ -566,11 +575,11 @@ function Get-ReviewGateEvidence {
     }
 
     $resolvedEvidencePath = if ([string]::IsNullOrWhiteSpace($ReviewEvidencePathValue)) {
-        Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-review-gate.json"
+        Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath "runtime/reviews/$ResolvedTaskId-review-gate.json"
     } elseif ([System.IO.Path]::IsPathRooted($ReviewEvidencePathValue)) {
         $ReviewEvidencePathValue
     } else {
-        Join-Path $RepoRootPath $ReviewEvidencePathValue
+        Resolve-PathInsideRepo -PathValue $ReviewEvidencePathValue -RepoRootPath $RepoRootPath
     }
 
     $result.evidence_path = Normalize-Path $resolvedEvidencePath
@@ -658,11 +667,11 @@ function Get-DocImpactEvidence {
     }
 
     $resolvedEvidencePath = if ([string]::IsNullOrWhiteSpace($DocImpactPathValue)) {
-        Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-doc-impact.json"
+        Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath "runtime/reviews/$ResolvedTaskId-doc-impact.json"
     } elseif ([System.IO.Path]::IsPathRooted($DocImpactPathValue)) {
         $DocImpactPathValue
     } else {
-        Join-Path $RepoRootPath $DocImpactPathValue
+        Resolve-PathInsideRepo -PathValue $DocImpactPathValue -RepoRootPath $RepoRootPath
     }
 
     $result.evidence_path = Normalize-Path $resolvedEvidencePath

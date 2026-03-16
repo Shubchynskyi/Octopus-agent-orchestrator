@@ -28,7 +28,7 @@ function Resolve-ProjectRoot {
 }
 
 if ([string]::IsNullOrWhiteSpace($MetricsPath)) {
-    $MetricsPath = Join-Path (Resolve-ProjectRoot) 'Octopus-agent-orchestrator/runtime/metrics.jsonl'
+    $MetricsPath = Join-GateOrchestratorPath -RepoRootPath (Resolve-ProjectRoot) -RelativePath 'runtime/metrics.jsonl'
 }
 
 function Normalize-Path {
@@ -41,6 +41,15 @@ function Assert-ValidTaskId {
     param([string]$Value)
 
     Assert-GateTaskId -Value $Value
+}
+
+function Resolve-PathInsideRepo {
+    param(
+        [string]$PathValue,
+        [string]$RepoRootPath
+    )
+
+    return Resolve-GatePathInsideRepo -PathValue $PathValue -RepoRootPath $RepoRootPath -AllowMissing -AllowEmpty
 }
 
 function Get-FileSha256 {
@@ -160,10 +169,10 @@ function Resolve-ArtifactPath {
         if ([System.IO.Path]::IsPathRooted($ExplicitArtifactPath)) {
             return $ExplicitArtifactPath
         }
-        return Join-Path $RepoRootPath $ExplicitArtifactPath
+        return Resolve-PathInsideRepo -PathValue $ExplicitArtifactPath -RepoRootPath $RepoRootPath
     }
 
-    return Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-doc-impact.json"
+    return Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath "runtime/reviews/$ResolvedTaskId-doc-impact.json"
 }
 
 $repoRoot = Resolve-ProjectRoot

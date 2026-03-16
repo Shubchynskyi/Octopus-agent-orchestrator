@@ -27,6 +27,13 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Summary: Removed duplicated top-level review-context payload aliases for selected rule files, token-economy flags, and omission counters. `build-review-context.ps1` and `.sh` now emit canonical nested `rule_pack` and `token_economy` blocks with `schema_version=2`, plus explicit compatibility metadata that maps removed legacy fields to their canonical nested paths.
 - Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`
 
+## 2026-03-16 - Gate root resolution supports source and deployed layouts
+- Task: T-007
+- Type: behavior-change
+- Scope: gate path resolution / runtime evidence / shell parity
+- Summary: Shared gate path helpers now distinguish workspace root from orchestrator root so the same scripts work both in the bootstrap source repository (`<repo>/live/...`) and in deployed workspaces (`<workspace>/Octopus-agent-orchestrator/live/...`). Runtime/config paths now resolve against the orchestrator root, relative-path inputs accept both bare and legacy-prefixed aliases, and PowerShell plus shell gates stay aligned on the same evidence locations.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`
+
 ## 2026-03-14 - Bundle version bumped to 1.0.7
 - Task: ad-hoc
 - Type: behavior-change

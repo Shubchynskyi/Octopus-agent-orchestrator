@@ -188,7 +188,7 @@ function Get-ClassificationConfig {
     )
 
     $defaults = [ordered]@{
-        metrics_path = 'Octopus-agent-orchestrator/runtime/metrics.jsonl'
+        metrics_path = Get-GateOrchestratorRelativePath -RepoRootPath $RepoRootPath -PathValue 'runtime/metrics.jsonl'
         runtime_roots = @(
             'src/',
             'app/',
@@ -272,7 +272,7 @@ function Get-ClassificationConfig {
         )
     }
 
-    $configPath = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/live/config/paths.json'
+    $configPath = Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath 'live/config/paths.json'
     $source = 'defaults'
     if (Test-Path $configPath) {
         try {
@@ -353,7 +353,7 @@ function Get-ReviewCapabilities {
         dependency = $false
     }
 
-    $configPath = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/live/config/review-capabilities.json'
+    $configPath = Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath 'live/config/review-capabilities.json'
     if (-not (Test-Path $configPath)) {
         return $capabilities
     }

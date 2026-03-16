@@ -36,7 +36,7 @@ function Resolve-ProjectRoot {
 }
 
 if ([string]::IsNullOrWhiteSpace($MetricsPath)) {
-    $MetricsPath = Join-Path (Resolve-ProjectRoot) 'Octopus-agent-orchestrator/runtime/metrics.jsonl'
+    $MetricsPath = Join-GateOrchestratorPath -RepoRootPath (Resolve-ProjectRoot) -RelativePath 'runtime/metrics.jsonl'
 }
 
 function Append-MetricsEvent {
@@ -508,10 +508,10 @@ function Resolve-ReviewEvidencePath {
         if ([System.IO.Path]::IsPathRooted($ReviewEvidencePathValue)) {
             return $ReviewEvidencePathValue
         }
-        return Join-Path $RepoRootPath $ReviewEvidencePathValue
+        return Resolve-PathInsideRepo -PathValue $ReviewEvidencePathValue -RepoRootPath $RepoRootPath
     }
 
-    return Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-review-gate.json"
+    return Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath "runtime/reviews/$ResolvedTaskId-review-gate.json"
 }
 
 function Write-ReviewEvidence {
@@ -617,10 +617,10 @@ function Test-ReviewArtifacts {
         if ([System.IO.Path]::IsPathRooted($ReviewsRootValue)) {
             $reviewsRoot = $ReviewsRootValue
         } else {
-            $reviewsRoot = Join-Path $RepoRootPath $ReviewsRootValue
+            $reviewsRoot = Resolve-PathInsideRepo -PathValue $ReviewsRootValue -RepoRootPath $RepoRootPath
         }
     } else {
-        $reviewsRoot = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/reviews'
+        $reviewsRoot = Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath 'runtime/reviews'
     }
 
     $result = [ordered]@{
@@ -719,10 +719,10 @@ function Get-CompileGateEvidence {
         if ([System.IO.Path]::IsPathRooted($CompileEvidencePathValue)) {
             $resolvedEvidencePath = $CompileEvidencePathValue
         } else {
-            $resolvedEvidencePath = Join-Path $RepoRootPath $CompileEvidencePathValue
+            $resolvedEvidencePath = Resolve-PathInsideRepo -PathValue $CompileEvidencePathValue -RepoRootPath $RepoRootPath
         }
     } else {
-        $resolvedEvidencePath = Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-compile-gate.json"
+        $resolvedEvidencePath = Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath "runtime/reviews/$ResolvedTaskId-compile-gate.json"
     }
     $result.evidence_path = Normalize-Path $resolvedEvidencePath
 

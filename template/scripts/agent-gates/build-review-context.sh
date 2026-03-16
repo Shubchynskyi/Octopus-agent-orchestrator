@@ -28,7 +28,7 @@ import sys
 
 sys.path.insert(0, str(script_dir / "lib"))
 
-from gate_utils import normalize_path, parse_bool, resolve_path_inside_repo, resolve_project_root, to_string_array
+from gate_utils import normalize_path, orchestrator_relative_path, parse_bool, resolve_path_inside_repo, resolve_project_root, to_string_array
 
 
 def get_rule_pack(review_type: str) -> dict:
@@ -119,9 +119,10 @@ else:
     selected_rule_files = list(rule_pack["depth2"])
 
 omitted_rule_files = [item for item in full_rule_files if item not in selected_rule_files]
-selected_rule_paths = [f"Octopus-agent-orchestrator/live/docs/agent-rules/{item}" for item in selected_rule_files]
-full_rule_paths = [f"Octopus-agent-orchestrator/live/docs/agent-rules/{item}" for item in full_rule_files]
-omitted_rule_paths = [f"Octopus-agent-orchestrator/live/docs/agent-rules/{item}" for item in omitted_rule_files]
+rule_files_base_path = orchestrator_relative_path(repo_root, "live/docs/agent-rules")
+selected_rule_paths = [f"{rule_files_base_path}/{item}" for item in selected_rule_files]
+full_rule_paths = [f"{rule_files_base_path}/{item}" for item in full_rule_files]
+omitted_rule_paths = [f"{rule_files_base_path}/{item}" for item in omitted_rule_files]
 rule_pack_omission_reason = "deferred_by_depth" if omitted_rule_paths else "none"
 
 required_reviews = preflight.get("required_reviews") or {}

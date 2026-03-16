@@ -34,8 +34,10 @@ from gate_utils import (  # noqa: E402
     assert_valid_task_id,
     file_sha256,
     inspect_task_event_file,
+    join_orchestrator_path,
     normalize_path,
     parse_bool,
+    resolve_path_inside_repo,
     resolve_project_root,
 )
 
@@ -148,11 +150,9 @@ def get_timeline_evidence(repo_root: Path, task_id: str, timeline_path_arg: str)
         return result
 
     if timeline_path_arg and timeline_path_arg.strip():
-        timeline_path = Path(timeline_path_arg.strip())
-        if not timeline_path.is_absolute():
-            timeline_path = (repo_root / timeline_path).resolve()
+        timeline_path = resolve_path_inside_repo(timeline_path_arg, repo_root, allow_missing=True)
     else:
-        timeline_path = (repo_root / f"Octopus-agent-orchestrator/runtime/task-events/{task_id}.jsonl").resolve()
+        timeline_path = join_orchestrator_path(repo_root, f"runtime/task-events/{task_id}.jsonl")
     result["timeline_path"] = normalize_path(timeline_path)
 
     if not timeline_path.exists() or not timeline_path.is_file():
@@ -247,11 +247,9 @@ def get_review_artifact_evidence(repo_root: Path, task_id: str, required_reviews
         return result
 
     if reviews_root_arg and reviews_root_arg.strip():
-        reviews_root = Path(reviews_root_arg.strip())
-        if not reviews_root.is_absolute():
-            reviews_root = (repo_root / reviews_root).resolve()
+        reviews_root = resolve_path_inside_repo(reviews_root_arg, repo_root, allow_missing=True)
     else:
-        reviews_root = (repo_root / "Octopus-agent-orchestrator/runtime/reviews").resolve()
+        reviews_root = join_orchestrator_path(repo_root, "runtime/reviews")
     result["reviews_root"] = normalize_path(reviews_root)
 
     skip_set = {value.lower() for value in skip_reviews}
@@ -313,11 +311,9 @@ def get_compile_gate_evidence(
         return result
 
     if compile_evidence_path_arg and compile_evidence_path_arg.strip():
-        evidence_path = Path(compile_evidence_path_arg.strip())
-        if not evidence_path.is_absolute():
-            evidence_path = (repo_root / evidence_path).resolve()
+        evidence_path = resolve_path_inside_repo(compile_evidence_path_arg, repo_root, allow_missing=True)
     else:
-        evidence_path = (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-compile-gate.json").resolve()
+        evidence_path = join_orchestrator_path(repo_root, f"runtime/reviews/{task_id}-compile-gate.json")
 
     result["evidence_path"] = normalize_path(evidence_path)
     if not evidence_path.exists() or not evidence_path.is_file():
@@ -377,11 +373,9 @@ def get_review_gate_evidence(
         return result
 
     if review_evidence_path_arg and review_evidence_path_arg.strip():
-        evidence_path = Path(review_evidence_path_arg.strip())
-        if not evidence_path.is_absolute():
-            evidence_path = (repo_root / evidence_path).resolve()
+        evidence_path = resolve_path_inside_repo(review_evidence_path_arg, repo_root, allow_missing=True)
     else:
-        evidence_path = (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-review-gate.json").resolve()
+        evidence_path = join_orchestrator_path(repo_root, f"runtime/reviews/{task_id}-review-gate.json")
 
     result["evidence_path"] = normalize_path(evidence_path)
     if not evidence_path.exists() or not evidence_path.is_file():
@@ -451,11 +445,9 @@ def get_doc_impact_evidence(
         return result
 
     if doc_impact_path_arg and doc_impact_path_arg.strip():
-        evidence_path = Path(doc_impact_path_arg.strip())
-        if not evidence_path.is_absolute():
-            evidence_path = (repo_root / evidence_path).resolve()
+        evidence_path = resolve_path_inside_repo(doc_impact_path_arg, repo_root, allow_missing=True)
     else:
-        evidence_path = (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-doc-impact.json").resolve()
+        evidence_path = join_orchestrator_path(repo_root, f"runtime/reviews/{task_id}-doc-impact.json")
 
     result["evidence_path"] = normalize_path(evidence_path)
     if not evidence_path.exists() or not evidence_path.is_file():
@@ -530,9 +522,7 @@ parser.add_argument("--emit-metrics", default="true")
 args = parser.parse_args()
 
 repo_root = resolve_project_root(script_dir)
-preflight_path = Path(args.preflight_path)
-if not preflight_path.is_absolute():
-    preflight_path = preflight_path.resolve()
+preflight_path = resolve_path_inside_repo(args.preflight_path, repo_root)
 if not preflight_path.exists():
     print(f"Preflight artifact not found: {preflight_path}", file=sys.stderr)
     sys.exit(1)
@@ -542,11 +532,11 @@ resolved_task_id = validated_preflight["resolved_task_id"]
 
 metrics_path_raw = args.metrics_path.strip() if args.metrics_path else ""
 if not metrics_path_raw:
-    metrics_path = (repo_root / "Octopus-agent-orchestrator/runtime/metrics.jsonl").resolve()
+    metrics_path = join_orchestrator_path(repo_root, "runtime/metrics.jsonl")
 else:
     metrics_path = Path(metrics_path_raw)
     if not metrics_path.is_absolute():
-        metrics_path = (repo_root / metrics_path).resolve()
+        metrics_path = resolve_path_inside_repo(metrics_path_raw, repo_root, allow_missing=True)
 emit_metrics = parse_bool(args.emit_metrics)
 
 compile_evidence = get_compile_gate_evidence(

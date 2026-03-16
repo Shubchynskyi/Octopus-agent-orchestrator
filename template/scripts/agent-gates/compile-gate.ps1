@@ -101,7 +101,7 @@ function Resolve-PreflightPath {
         return $null
     }
 
-    return Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-preflight.json"
+    return Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath "runtime/reviews/$ResolvedTaskId-preflight.json"
 }
 
 function Resolve-CompileEvidencePath {
@@ -119,7 +119,7 @@ function Resolve-CompileEvidencePath {
         return Resolve-PathInsideRepo -PathValue $ExplicitEvidencePath -RepoRootPath $RepoRootPath
     }
 
-    return Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-compile-gate.json"
+    return Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath "runtime/reviews/$ResolvedTaskId-compile-gate.json"
 }
 
 function Resolve-CompileOutputPath {
@@ -137,7 +137,7 @@ function Resolve-CompileOutputPath {
         return Resolve-PathInsideRepo -PathValue $ExplicitOutputPath -RepoRootPath $RepoRootPath
     }
 
-    return Join-Path $RepoRootPath "Octopus-agent-orchestrator/runtime/reviews/$ResolvedTaskId-compile-output.log"
+    return Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath "runtime/reviews/$ResolvedTaskId-compile-output.log"
 }
 
 function Get-FileSha256 {
@@ -690,7 +690,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($MetricsPath)) {
-    $MetricsPath = Join-Path $RepoRoot 'Octopus-agent-orchestrator/runtime/metrics.jsonl'
+    $MetricsPath = Join-GateOrchestratorPath -RepoRootPath $RepoRoot -RelativePath 'runtime/metrics.jsonl'
 }
 
 if ($FailTailLines -le 0) {

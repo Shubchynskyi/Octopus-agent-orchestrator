@@ -27,7 +27,7 @@ from pathlib import Path
 script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
 sys.path.insert(0, str(script_dir / "lib"))
 
-from gate_utils import assert_valid_task_id, inspect_task_event_file, resolve_path_inside_repo, resolve_project_root, to_posix
+from gate_utils import assert_valid_task_id, inspect_task_event_file, join_orchestrator_path, resolve_path_inside_repo, resolve_project_root, to_posix
 
 
 def parse_timestamp(value):
@@ -89,7 +89,7 @@ except Exception as exc:
 if args.events_root.strip():
     events_root = resolve_path_inside_repo(args.events_root, repo_root, allow_missing=True)
 else:
-    events_root = (repo_root / "Octopus-agent-orchestrator/runtime/task-events").resolve()
+    events_root = join_orchestrator_path(repo_root, "runtime/task-events")
 
 task_event_file = (events_root / f"{task_id}.jsonl").resolve()
 if not task_event_file.exists() or not task_event_file.is_file():

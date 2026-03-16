@@ -8,6 +8,7 @@ All notable changes to this bundle are documented in this file.
 - Task-event logging now uses best-effort append locking for both per-task timelines and aggregate `all-tasks.jsonl`, reducing concurrent append corruption during local orchestrator runs.
 - New task-event writes include per-task integrity metadata (`task_sequence`, `prev_event_sha256`, `event_sha256`), and timeline summary/completion checks now validate that hash chain to detect local replay, reordering, or post-hoc edits.
 - `build-review-context.ps1` / `.sh` now emit canonical `rule_pack` and `token_economy` blocks without mirroring the same arrays and counters at the top level; artifacts declare `schema_version=2` and include an explicit legacy-field mapping for removed aliases.
+- Gate root resolution now supports both source-repo and deployed-workspace layouts. Shared PowerShell/Python helpers detect workspace root vs orchestrator root, runtime/config paths resolve against the orchestrator root, and relative-path handling accepts both bare (`runtime/...`, `live/...`) and legacy prefixed (`Octopus-agent-orchestrator/...`) aliases.
 
 ### Documentation
 - Clarified the local trust model for task timelines: the new integrity chain is procedural hardening inside a writable workspace, not a security-grade trust anchor.

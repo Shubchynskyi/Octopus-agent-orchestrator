@@ -37,6 +37,7 @@ from gate_utils import (
     assert_valid_task_id,
     build_output_telemetry,
     file_sha256,
+    join_orchestrator_path,
     normalize_path,
     parse_bool,
     resolve_path_inside_repo,
@@ -330,11 +331,9 @@ def get_compile_gate_evidence(repo_root: Path, task_id: str, preflight_path: Pat
         return result
 
     if compile_evidence_path_arg and compile_evidence_path_arg.strip():
-        evidence_path = Path(compile_evidence_path_arg.strip())
-        if not evidence_path.is_absolute():
-            evidence_path = (repo_root / evidence_path).resolve()
+        evidence_path = resolve_path_inside_repo(compile_evidence_path_arg, repo_root, allow_missing=True)
     else:
-        evidence_path = (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-compile-gate.json").resolve()
+        evidence_path = join_orchestrator_path(repo_root, f"runtime/reviews/{task_id}-compile-gate.json")
 
     result["evidence_path"] = normalize_path(evidence_path)
     if not evidence_path.exists():
@@ -455,11 +454,8 @@ def resolve_review_evidence_path(repo_root: Path, task_id: str, review_evidence_
     if not task_id:
         return None
     if review_evidence_path_arg and review_evidence_path_arg.strip():
-        evidence_path = Path(review_evidence_path_arg.strip())
-        if not evidence_path.is_absolute():
-            evidence_path = (repo_root / evidence_path).resolve()
-        return evidence_path
-    return (repo_root / f"Octopus-agent-orchestrator/runtime/reviews/{task_id}-review-gate.json").resolve()
+        return resolve_path_inside_repo(review_evidence_path_arg, repo_root, allow_missing=True)
+    return join_orchestrator_path(repo_root, f"runtime/reviews/{task_id}-review-gate.json")
 
 
 def write_review_evidence(
@@ -501,11 +497,9 @@ REVIEW_CONTRACTS = (
 def verify_review_artifacts(repo_root, task_id, required_reviews, verdicts, skip_reviews, reviews_root_arg):
     """For each required review where a passing verdict is claimed, verify the artifact exists and contains the pass token."""
     if reviews_root_arg and reviews_root_arg.strip():
-        reviews_root = Path(reviews_root_arg.strip())
-        if not reviews_root.is_absolute():
-            reviews_root = (repo_root / reviews_root).resolve()
+        reviews_root = resolve_path_inside_repo(reviews_root_arg, repo_root, allow_missing=True)
     else:
-        reviews_root = (repo_root / "Octopus-agent-orchestrator/runtime/reviews").resolve()
+        reviews_root = join_orchestrator_path(repo_root, "runtime/reviews")
 
     result = {
         "reviews_root": normalize_path(reviews_root),
@@ -581,9 +575,7 @@ args = parser.parse_args()
 repo_root = resolve_project_root(script_dir)
 output_filters_path = resolve_path_inside_repo(args.output_filters_path, repo_root, allow_missing=True)
 
-preflight_path = Path(args.preflight_path)
-if not preflight_path.is_absolute():
-    preflight_path = preflight_path.resolve()
+preflight_path = resolve_path_inside_repo(args.preflight_path, repo_root)
 if not preflight_path.exists():
     print(f"Preflight artifact not found: {preflight_path}", file=sys.stderr)
     sys.exit(1)
@@ -604,14 +596,11 @@ if compile_gate_evidence.get("status") == "PASS":
 
 metrics_path_raw = args.metrics_path.strip() if args.metrics_path else ""
 if not metrics_path_raw:
-    metrics_path_raw = "Octopus-agent-orchestrator/runtime/metrics.jsonl"
-    metrics_path = Path(metrics_path_raw)
-    if not metrics_path.is_absolute():
-        metrics_path = (repo_root / metrics_path).resolve()
+    metrics_path = join_orchestrator_path(repo_root, "runtime/metrics.jsonl")
 else:
     metrics_path = Path(metrics_path_raw)
     if not metrics_path.is_absolute():
-        metrics_path = metrics_path.resolve()
+        metrics_path = resolve_path_inside_repo(metrics_path_raw, repo_root, allow_missing=True)
 emit_metrics = parse_bool(args.emit_metrics)
 
 errors = list(validated_preflight["errors"])

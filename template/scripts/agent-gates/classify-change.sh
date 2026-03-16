@@ -33,9 +33,12 @@ from gate_utils import (
     append_metrics_event,
     append_task_event,
     assert_valid_task_id,
+    join_orchestrator_path,
     match_any_regex as gate_match_any_regex,
     normalize_path as gate_normalize_path,
+    orchestrator_relative_path,
     parse_bool,
+    resolve_path_inside_repo,
     resolve_project_root,
     to_posix,
 )
@@ -106,9 +109,9 @@ def normalize_roots(prefixes):
     return sorted(set(normalized))
 
 
-def get_default_classification_config():
+def get_default_classification_config(repo_root: Path):
     return {
-        "metrics_path": "Octopus-agent-orchestrator/runtime/metrics.jsonl",
+        "metrics_path": orchestrator_relative_path(repo_root, "runtime/metrics.jsonl"),
         "runtime_roots": [
             "src/",
             "app/",
@@ -194,8 +197,8 @@ def get_default_classification_config():
 
 
 def get_classification_config(repo_root: Path):
-    defaults = get_default_classification_config()
-    config_path = repo_root / "Octopus-agent-orchestrator/live/config/paths.json"
+    defaults = get_default_classification_config(repo_root)
+    config_path = join_orchestrator_path(repo_root, "live/config/paths.json")
     source = "defaults"
     if config_path.exists():
         try:
@@ -260,7 +263,7 @@ def get_review_capabilities(repo_root: Path):
         "infra": False,
         "dependency": False,
     }
-    config_path = repo_root / "Octopus-agent-orchestrator/live/config/review-capabilities.json"
+    config_path = join_orchestrator_path(repo_root, "live/config/review-capabilities.json")
     if not config_path.exists():
         return capabilities
     try:
@@ -295,13 +298,11 @@ classification_config = get_classification_config(repo_root)
 metrics_path_raw = args.metrics_path.strip() if args.metrics_path else ""
 if not metrics_path_raw:
     metrics_path_raw = classification_config["metrics_path"]
-    metrics_path = Path(metrics_path_raw)
-    if not metrics_path.is_absolute():
-        metrics_path = (repo_root / metrics_path_raw).resolve()
+    metrics_path = resolve_path_inside_repo(metrics_path_raw, repo_root, allow_missing=True)
 else:
     metrics_path = Path(metrics_path_raw)
     if not metrics_path.is_absolute():
-        metrics_path = metrics_path.resolve()
+        metrics_path = resolve_path_inside_repo(metrics_path_raw, repo_root, allow_missing=True)
 
 include_untracked = parse_bool(args.include_untracked)
 emit_metrics = parse_bool(args.emit_metrics)

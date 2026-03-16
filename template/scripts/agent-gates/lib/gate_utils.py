@@ -314,9 +314,79 @@ def inspect_task_event_file(task_event_file: Path, task_id: str) -> dict:
 
 
 def resolve_project_root(script_dir: Path) -> Path:
+    current_path = script_dir.resolve()
+
+    while True:
+        if is_workspace_root(current_path):
+            return current_path
+
+        parent_path = current_path.parent
+        if parent_path == current_path:
+            break
+        current_path = parent_path
+
     project_root_candidate = (script_dir / "../../../../").resolve()
     fallback_root = (script_dir / "../../").resolve()
     return project_root_candidate if project_root_candidate.exists() else fallback_root
+
+
+def is_orchestrator_root(candidate: Path) -> bool:
+    if not candidate.exists() or not candidate.is_dir():
+        return False
+    return (candidate / "live/scripts/agent-gates").is_dir() and (candidate / "live/config").is_dir()
+
+
+def is_workspace_root(candidate: Path) -> bool:
+    if not candidate.exists() or not candidate.is_dir():
+        return False
+
+    if is_orchestrator_root(candidate) and (candidate / "template").is_dir() and (candidate / "scripts").is_dir():
+        return True
+
+    return is_orchestrator_root(candidate / "Octopus-agent-orchestrator")
+
+
+def resolve_orchestrator_root(repo_root: Path) -> Path:
+    workspace_root = repo_root.resolve()
+    deployed_root = (workspace_root / "Octopus-agent-orchestrator").resolve()
+    if is_orchestrator_root(deployed_root):
+        return deployed_root
+    if is_orchestrator_root(workspace_root):
+        return workspace_root
+    return deployed_root if deployed_root.exists() else workspace_root
+
+
+def orchestrator_relative_path(repo_root: Path, path_value: str = "") -> Optional[str]:
+    normalized = normalize_path(path_value, trim=True, strip_dot_slash=True, strip_leading_slash=True)
+    prefix = "Octopus-agent-orchestrator/"
+    if normalized and normalized.lower().startswith(prefix.lower()):
+        normalized = normalized[len(prefix) :]
+
+    workspace_root = repo_root.resolve()
+    orchestrator_root = resolve_orchestrator_root(workspace_root)
+    if orchestrator_root == workspace_root:
+        return normalized
+    if not normalized:
+        return "Octopus-agent-orchestrator"
+    return f"Octopus-agent-orchestrator/{normalized}"
+
+
+def join_orchestrator_path(repo_root: Path, relative_path: str = "") -> Path:
+    workspace_root = repo_root.resolve()
+    orchestrator_root = resolve_orchestrator_root(workspace_root)
+    normalized = normalize_path(relative_path, trim=True, strip_dot_slash=True, strip_leading_slash=True)
+    prefix = "Octopus-agent-orchestrator/"
+    if normalized and normalized.lower().startswith(prefix.lower()):
+        normalized = normalized[len(prefix) :]
+
+    candidate = orchestrator_root if not normalized else (orchestrator_root / normalized).resolve()
+    try:
+        candidate.relative_to(workspace_root)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Path '{relative_path}' must resolve inside repository root '{workspace_root}'."
+        ) from exc
+    return candidate
 
 
 def resolve_path_inside_repo(
@@ -331,12 +401,29 @@ def resolve_path_inside_repo(
             return None
         raise RuntimeError("Path value must not be empty.")
 
-    candidate = Path(path_value.strip())
-    if not candidate.is_absolute():
-        candidate = repo_root / candidate
-
-    candidate = candidate.resolve()
     repo_root_resolved = repo_root.resolve()
+    orchestrator_root = resolve_orchestrator_root(repo_root_resolved)
+    candidate_paths = []
+
+    candidate = Path(path_value.strip())
+    if candidate.is_absolute():
+        candidate_paths.append(candidate.resolve())
+    else:
+        normalized = normalize_path(path_value, trim=True, strip_dot_slash=True, strip_leading_slash=True) or ""
+        candidate_paths.append((repo_root_resolved / normalized).resolve())
+
+        prefix = "Octopus-agent-orchestrator/"
+        if normalized.lower().startswith(prefix.lower()):
+            trimmed = normalized[len(prefix) :]
+            orchestrator_candidate = join_orchestrator_path(repo_root_resolved, trimmed)
+            if orchestrator_candidate not in candidate_paths:
+                candidate_paths.append(orchestrator_candidate)
+        elif orchestrator_root != repo_root_resolved:
+            orchestrator_candidate = join_orchestrator_path(repo_root_resolved, normalized)
+            if orchestrator_candidate not in candidate_paths:
+                candidate_paths.append(orchestrator_candidate)
+
+    candidate = next((path for path in candidate_paths if path.exists()), candidate_paths[0])
 
     try:
         candidate.relative_to(repo_root_resolved)
@@ -982,7 +1069,7 @@ def append_task_event(
         return None
 
     safe_task_id = assert_valid_task_id(task_id)
-    events_dir = (repo_root / "Octopus-agent-orchestrator/runtime/task-events").resolve()
+    events_dir = join_orchestrator_path(repo_root, "runtime/task-events")
     task_file_path = (events_dir / f"{safe_task_id}.jsonl").resolve()
     all_tasks_path = (events_dir / "all-tasks.jsonl").resolve()
     task_lock_path = (events_dir / f"{safe_task_id}.jsonl.lock").resolve()

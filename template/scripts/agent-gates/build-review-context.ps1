@@ -235,6 +235,7 @@ $resolvedPreflightPath = Resolve-PathInsideRepo -PathValue $PreflightPath -RepoR
 $resolvedTokenEconomyConfigPath = Resolve-PathInsideRepo -PathValue $TokenEconomyConfigPath -RepoRootPath $RepoRoot -AllowMissing
 $resolvedScopedDiffMetadataPath = Resolve-ScopedDiffMetadataPath -ExplicitMetadataPath $ScopedDiffMetadataPath -ResolvedPreflightPath $resolvedPreflightPath -ReviewTypeValue $ReviewType -RepoRootPath $RepoRoot
 $resolvedOutputPath = Resolve-OutputPath -ExplicitOutputPath $OutputPath -ResolvedPreflightPath $resolvedPreflightPath -ReviewTypeValue $ReviewType -RepoRootPath $RepoRoot
+$ruleFilesBasePath = Get-GateOrchestratorRelativePath -RepoRootPath $RepoRoot -PathValue 'live/docs/agent-rules'
 
 $preflight = Get-Content -LiteralPath $resolvedPreflightPath -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
 $tokenEconomyConfig = $null
@@ -257,9 +258,9 @@ $selectedRuleFiles = if (-not $tokenEconomyActive -or $Depth -ge 3) {
 }
 
 $omittedRuleFiles = @($fullRuleFiles | Where-Object { $selectedRuleFiles -notcontains $_ })
-$fullRulePaths = @($fullRuleFiles | ForEach-Object { "Octopus-agent-orchestrator/live/docs/agent-rules/$_" })
-$selectedRulePaths = @($selectedRuleFiles | ForEach-Object { "Octopus-agent-orchestrator/live/docs/agent-rules/$_" })
-$omittedRulePaths = @($omittedRuleFiles | ForEach-Object { "Octopus-agent-orchestrator/live/docs/agent-rules/$_" })
+$fullRulePaths = @($fullRuleFiles | ForEach-Object { "$ruleFilesBasePath/$_" })
+$selectedRulePaths = @($selectedRuleFiles | ForEach-Object { "$ruleFilesBasePath/$_" })
+$omittedRulePaths = @($omittedRuleFiles | ForEach-Object { "$ruleFilesBasePath/$_" })
 $rulePackOmissionReason = if ($omittedRulePaths.Count -gt 0) { 'deferred_by_depth' } else { 'none' }
 
 $requiredReviews = Get-ObjectPropertyValue -Object $preflight -PropertyName 'required_reviews'

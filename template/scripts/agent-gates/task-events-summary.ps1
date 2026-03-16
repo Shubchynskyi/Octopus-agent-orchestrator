@@ -86,7 +86,7 @@ $TaskId = $TaskId.Trim()
 Assert-ValidTaskId -Value $TaskId
 
 if ([string]::IsNullOrWhiteSpace($EventsRoot)) {
-    $EventsRoot = Join-Path $RepoRoot 'Octopus-agent-orchestrator/runtime/task-events'
+    $EventsRoot = Join-GateOrchestratorPath -RepoRootPath $RepoRoot -RelativePath 'runtime/task-events'
 }
 
 $taskEventFile = Join-Path $EventsRoot "$TaskId.jsonl"

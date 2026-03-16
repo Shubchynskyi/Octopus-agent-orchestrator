@@ -1,10 +1,64 @@
 Set-StrictMode -Version Latest
 
+function Test-GateOrchestratorRootCandidate {
+    param([string]$CandidatePath)
+
+    if ([string]::IsNullOrWhiteSpace($CandidatePath)) {
+        return $false
+    }
+
+    if (-not (Test-Path -LiteralPath $CandidatePath -PathType Container)) {
+        return $false
+    }
+
+    $liveScriptsPath = Join-Path $CandidatePath 'live/scripts/agent-gates'
+    $liveConfigPath = Join-Path $CandidatePath 'live/config'
+    return (Test-Path -LiteralPath $liveScriptsPath -PathType Container) -and (Test-Path -LiteralPath $liveConfigPath -PathType Container)
+}
+
+function Test-GateWorkspaceRootCandidate {
+    param([string]$CandidatePath)
+
+    if ([string]::IsNullOrWhiteSpace($CandidatePath)) {
+        return $false
+    }
+
+    if (-not (Test-Path -LiteralPath $CandidatePath -PathType Container)) {
+        return $false
+    }
+
+    $sourceRepoIndicators = @(
+        (Join-Path $CandidatePath 'template'),
+        (Join-Path $CandidatePath 'scripts')
+    )
+    $isSourceRepoRoot = (Test-GateOrchestratorRootCandidate -CandidatePath $CandidatePath) -and (@($sourceRepoIndicators | Where-Object {
+        Test-Path -LiteralPath $_ -PathType Container
+    }).Count -eq $sourceRepoIndicators.Count)
+    if ($isSourceRepoRoot) {
+        return $true
+    }
+
+    return Test-GateOrchestratorRootCandidate -CandidatePath (Join-Path $CandidatePath 'Octopus-agent-orchestrator')
+}
+
 function Get-GateProjectRoot {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ScriptRoot
     )
+
+    $currentPath = [System.IO.Path]::GetFullPath($ScriptRoot)
+    while (-not [string]::IsNullOrWhiteSpace($currentPath)) {
+        if (Test-GateWorkspaceRootCandidate -CandidatePath $currentPath) {
+            return (Resolve-Path -LiteralPath $currentPath).Path
+        }
+
+        $parentPath = Split-Path -Parent $currentPath
+        if ([string]::IsNullOrWhiteSpace($parentPath) -or [string]::Equals($parentPath, $currentPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+        $currentPath = $parentPath
+    }
 
     $projectRootCandidate = Join-Path $ScriptRoot '..\..\..\..'
     if (Test-Path -LiteralPath $projectRootCandidate) {
@@ -12,6 +66,89 @@ function Get-GateProjectRoot {
     }
 
     return (Resolve-Path -LiteralPath (Join-Path $ScriptRoot '..\..')).Path
+}
+
+function Get-GateOrchestratorRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRootPath
+    )
+
+    $workspaceRoot = [System.IO.Path]::GetFullPath($RepoRootPath)
+    $deployedRoot = Join-Path $workspaceRoot 'Octopus-agent-orchestrator'
+    if (Test-GateOrchestratorRootCandidate -CandidatePath $deployedRoot) {
+        return (Resolve-Path -LiteralPath $deployedRoot).Path
+    }
+
+    if (Test-GateOrchestratorRootCandidate -CandidatePath $workspaceRoot) {
+        return (Resolve-Path -LiteralPath $workspaceRoot).Path
+    }
+
+    if (Test-Path -LiteralPath $deployedRoot) {
+        return [System.IO.Path]::GetFullPath($deployedRoot)
+    }
+
+    return $workspaceRoot
+}
+
+function Get-GateOrchestratorRelativePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRootPath,
+        [string]$PathValue = ''
+    )
+
+    $normalized = Convert-GatePathToUnix -PathValue $PathValue -TrimValue -StripLeadingRelative
+    $prefix = 'Octopus-agent-orchestrator/'
+    if (-not [string]::IsNullOrWhiteSpace($normalized) -and $normalized.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $normalized = $normalized.Substring($prefix.Length)
+    }
+
+    $workspaceRoot = [System.IO.Path]::GetFullPath($RepoRootPath)
+    $orchestratorRoot = Get-GateOrchestratorRoot -RepoRootPath $workspaceRoot
+    if ([string]::Equals($workspaceRoot.TrimEnd('\', '/'), $orchestratorRoot.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $normalized
+    }
+
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        return 'Octopus-agent-orchestrator'
+    }
+
+    return "Octopus-agent-orchestrator/$normalized"
+}
+
+function Join-GateOrchestratorPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRootPath,
+        [string]$RelativePath = ''
+    )
+
+    $workspaceRoot = [System.IO.Path]::GetFullPath($RepoRootPath)
+    $orchestratorRoot = Get-GateOrchestratorRoot -RepoRootPath $workspaceRoot
+    $normalized = Convert-GatePathToUnix -PathValue $RelativePath -TrimValue -StripLeadingRelative
+    $prefix = 'Octopus-agent-orchestrator/'
+    if (-not [string]::IsNullOrWhiteSpace($normalized) -and $normalized.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $normalized = $normalized.Substring($prefix.Length)
+    }
+
+    $candidate = if ([string]::IsNullOrWhiteSpace($normalized)) {
+        $orchestratorRoot
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path $orchestratorRoot ($normalized.Replace('/', [System.IO.Path]::DirectorySeparatorChar))))
+    }
+
+    $workspaceNormalized = $workspaceRoot.TrimEnd('\', '/')
+    $candidateNormalized = $candidate.TrimEnd('\', '/')
+    $workspaceBoundary = $workspaceNormalized + [System.IO.Path]::DirectorySeparatorChar
+    if (-not (
+            [string]::Equals($candidateNormalized, $workspaceNormalized, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $candidate.StartsWith($workspaceBoundary, [System.StringComparison]::OrdinalIgnoreCase)
+        )) {
+        throw "Path '$RelativePath' must resolve inside repository root '$RepoRootPath'."
+    }
+
+    return $candidate
 }
 
 function Convert-GatePathToUnix {
@@ -75,10 +212,41 @@ function Resolve-GatePathInsideRepo {
         throw 'Path value must not be empty.'
     }
 
-    $candidate = if ([System.IO.Path]::IsPathRooted($PathValue)) { $PathValue } else { Join-Path $RepoRootPath $PathValue }
-    $fullPath = [System.IO.Path]::GetFullPath($candidate)
+    $workspaceRoot = [System.IO.Path]::GetFullPath($RepoRootPath)
+    $orchestratorRoot = Get-GateOrchestratorRoot -RepoRootPath $workspaceRoot
+    $candidatePaths = New-Object 'System.Collections.Generic.List[string]'
+
+    if ([System.IO.Path]::IsPathRooted($PathValue)) {
+        [void]$candidatePaths.Add([System.IO.Path]::GetFullPath($PathValue))
+    } else {
+        $normalized = Convert-GatePathToUnix -PathValue $PathValue -TrimValue -StripLeadingRelative
+        $directCandidate = [System.IO.Path]::GetFullPath((Join-Path $workspaceRoot ($normalized.Replace('/', [System.IO.Path]::DirectorySeparatorChar))))
+        [void]$candidatePaths.Add($directCandidate)
+
+        $prefix = 'Octopus-agent-orchestrator/'
+        if (-not [string]::IsNullOrWhiteSpace($normalized) -and $normalized.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $trimmed = $normalized.Substring($prefix.Length)
+            $orchestratorCandidate = Join-GateOrchestratorPath -RepoRootPath $workspaceRoot -RelativePath $trimmed
+            if ($candidatePaths -notcontains $orchestratorCandidate) {
+                [void]$candidatePaths.Add($orchestratorCandidate)
+            }
+        } elseif (-not [string]::Equals($workspaceRoot.TrimEnd('\', '/'), $orchestratorRoot.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)) {
+            $orchestratorCandidate = Join-GateOrchestratorPath -RepoRootPath $workspaceRoot -RelativePath $normalized
+            if ($candidatePaths -notcontains $orchestratorCandidate) {
+                [void]$candidatePaths.Add($orchestratorCandidate)
+            }
+        }
+    }
+
+    $fullPath = $candidatePaths[0]
+    foreach ($candidatePath in $candidatePaths) {
+        if (Test-Path -LiteralPath $candidatePath) {
+            $fullPath = $candidatePath
+            break
+        }
+    }
     $fullPathTrimmed = $fullPath.TrimEnd('\', '/')
-    $repoNormalized = ([System.IO.Path]::GetFullPath($RepoRootPath)).TrimEnd('\', '/')
+    $repoNormalized = $workspaceRoot.TrimEnd('\', '/')
     $repoBoundary = $repoNormalized + [System.IO.Path]::DirectorySeparatorChar
     if (-not (
             [string]::Equals($fullPathTrimmed, $repoNormalized, [System.StringComparison]::OrdinalIgnoreCase) -or
@@ -1090,7 +1258,7 @@ function Add-GateTaskEvent {
     Assert-GateTaskId -Value $TaskId
 
     try {
-        $eventsDir = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/task-events'
+        $eventsDir = Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath 'runtime/task-events'
         if (-not (Test-Path -LiteralPath $eventsDir)) {
             New-Item -Path $eventsDir -ItemType Directory -Force | Out-Null
         }
@@ -1130,7 +1298,9 @@ function Add-GateTaskEvent {
                     prev_event_sha256 = $appendState.last_event_sha256
                 }
             }
-            $event.integrity.event_sha256 = Get-GateEventIntegrityHash -EventRecord $event
+            # Hash the same JSON-shaped payload that later validators read back from disk.
+            $hashSource = ($event | ConvertTo-Json -Depth 16 -Compress) | ConvertFrom-Json -ErrorAction Stop
+            $event.integrity.event_sha256 = Get-GateEventIntegrityHash -EventRecord $hashSource
             $line = $event | ConvertTo-Json -Depth 16 -Compress
             Add-Content -LiteralPath $taskFilePath -Value $line
             $result.integrity = $event.integrity
@@ -1159,8 +1329,8 @@ function Add-GateTaskEvent {
         Write-Warning $warningMessage
         if ($PassThru) {
             return [ordered]@{
-                task_event_log_path = (Convert-GatePathToUnix -PathValue (Join-Path (Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/task-events') "$TaskId.jsonl"))
-                all_tasks_log_path = (Convert-GatePathToUnix -PathValue (Join-Path (Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/task-events') 'all-tasks.jsonl'))
+                task_event_log_path = (Convert-GatePathToUnix -PathValue (Join-Path (Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath 'runtime/task-events') "$TaskId.jsonl"))
+                all_tasks_log_path = (Convert-GatePathToUnix -PathValue (Join-Path (Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath 'runtime/task-events') 'all-tasks.jsonl'))
                 integrity = $null
                 warnings = @($warningMessage)
             }
@@ -1598,6 +1768,9 @@ function Get-GateTaskTimelineIntegrity {
 
 Export-ModuleMember -Function @(
     'Get-GateProjectRoot',
+    'Get-GateOrchestratorRoot',
+    'Get-GateOrchestratorRelativePath',
+    'Join-GateOrchestratorPath',
     'Convert-GatePathToUnix',
     'Assert-GateTaskId',
     'Resolve-GatePathInsideRepo',

@@ -96,7 +96,7 @@ function Invoke-TerminalLogCleanup {
     }
 
     $candidatePaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
-    $reviewsRoot = Join-Path $RepoRootPath 'Octopus-agent-orchestrator/runtime/reviews'
+    $reviewsRoot = Join-GateOrchestratorPath -RepoRootPath $RepoRootPath -RelativePath 'runtime/reviews'
 
     if (Test-Path -LiteralPath $reviewsRoot -PathType Container) {
         $pattern = "$ResolvedTaskId-compile-output*.log"
@@ -166,7 +166,7 @@ if ($EventType -match '^(COMPILE_GATE_|REVIEW_GATE_|PREFLIGHT_)') {
 }
 
 if ([string]::IsNullOrWhiteSpace($EventsRoot)) {
-    $EventsRoot = Join-Path $RepoRoot 'Octopus-agent-orchestrator/runtime/task-events'
+    $EventsRoot = Join-GateOrchestratorPath -RepoRootPath $RepoRoot -RelativePath 'runtime/task-events'
 }
 
 $details = $null

@@ -32,6 +32,7 @@ sys.path.insert(0, str(script_dir / "lib"))
 from gate_utils import (
     assert_valid_task_id,
     append_task_event,
+    join_orchestrator_path,
     resolve_path_inside_repo,
     resolve_project_root,
     to_posix,
@@ -68,7 +69,7 @@ if re.match(r"^(COMPILE_GATE_|REVIEW_GATE_|PREFLIGHT_)", event_type):
 if args.events_root.strip():
     events_root = resolve_path_inside_repo(args.events_root, repo_root, allow_missing=True)
 else:
-    events_root = (repo_root / "Octopus-agent-orchestrator/runtime/task-events").resolve()
+    events_root = join_orchestrator_path(repo_root, "runtime/task-events")
 events_root.mkdir(parents=True, exist_ok=True)
 
 details = None
@@ -98,7 +99,7 @@ def cleanup_terminal_compile_logs(repo_root_path: Path, task_identifier: str):
         "errors": [],
     }
 
-    reviews_root = (repo_root_path / "Octopus-agent-orchestrator/runtime/reviews").resolve()
+    reviews_root = join_orchestrator_path(repo_root_path, "runtime/reviews")
     candidates = set()
 
     for path_str in glob.glob(str(reviews_root / f"{task_identifier}-compile-output*.log")):
