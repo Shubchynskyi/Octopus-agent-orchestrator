@@ -46,11 +46,11 @@ Escalate back to the full orchestration skill immediately if:
 6. Run objective validation for the touched area.
 7. Run the mandatory compile gate.
 8. Run only the required independent reviews from preflight.
-9. Resolve findings, run completion gate, and only then mark the task `DONE`.
+9. Resolve findings, ensure the final PASS artifact has no active findings or residual risks unless accepted non-blocking items are moved to `Deferred Findings` with `Justification:`, run completion gate, and only then mark the task `DONE`.
 
 ## Hard Rules
 - Depth changes context budget, never gate obligations.
 - Do not skip compile, review, or completion gates.
 - Re-run preflight after meaningful scope changes.
-- Do not mark a task `DONE` while review findings remain unresolved or unjustified.
+- Do not mark a task `DONE` while any PASS review artifact still has active findings, residual risks, or deferred items without `Justification:`.
 - Prefer concise evidence and scoped artifacts over pasting large raw outputs.

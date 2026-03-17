@@ -41,7 +41,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Activate reviewer-context compaction only when `enabled=true` and effective depth is in `enabled_depths`.
 - Shared gate output filters from `Octopus-agent-orchestrator/live/config/output-filters.json` stay active regardless of reviewer-context token-economy state.
 - Conservative default: keep `enabled=false` with `enabled_depths=[1,2]` unless the project explicitly wants compact reviewer context.
-- Recommendation when reviewer-context token economy is enabled: use `depth=1` only for small, well-localized tasks; prefer `depth=2` or `depth=3` when correctness depends on broader context.
+- Recommendation when reviewer-context token economy is enabled: use `enabled=true` with `depth=1` only for small, well-localized tasks; prefer `depth=2` or `depth=3` when correctness depends on broader context.
 - Short-form `depth=1` guidance is available at `Octopus-agent-orchestrator/live/skills/orchestration-depth1/SKILL.md`. If your client supports targeted skill loading, prefer that short form over the full orchestration skill when effective depth stays at `1` and no escalation trigger fires.
 - Depth-aware reviewer context loading when active:
   - `depth=1`: load task goal, changed files, required review flags, and minimal diff context only.
@@ -129,7 +129,9 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - `required-reviews-check` writes task-scoped event `REVIEW_GATE_PASSED` or `REVIEW_GATE_FAILED` automatically.
    - `required-reviews-check` fails if compile evidence is missing in `runtime/task-events/<task-id>.jsonl` (missing `COMPILE_GATE_PASSED`).
    - `required-reviews-check` fails if workspace changed after compile evidence; rerun compile gate after post-compile edits.
-12. Fix blocking findings and repeat required reviews + gate check until pass.
+12. Resolve every review finding before `DONE` and repeat required reviews + gate check until the final PASS artifacts are clean.
+   - blocking findings must be fixed before rerun.
+   - non-blocking findings may be deferred only in `Deferred Findings` with `Justification:` after the active `Findings by Severity` and `Residual Risks` sections are cleared to `none`.
    - On failed gate and return to coding, log event: `REWORK_STARTED`.
 13. Run doc impact gate before completion:
    - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>" -Decision "<NO_DOC_UPDATES|DOCS_UPDATED>" -BehaviorChanged "<true|false>" -ChangelogUpdated "<true|false>" -Rationale "<why>"`
@@ -139,6 +141,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"`
    - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"`
    - Completion gate writes task-scoped event `COMPLETION_GATE_PASSED` or `COMPLETION_GATE_FAILED` automatically.
+   - Completion gate fails if a PASS review artifact still contains active findings or residual risks, or if any deferred entry omits `Justification:`.
 15. Update required docs and changelog when behavior changed.
    - Internal orchestration artifacts (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) may remain gitignored in deployed workspaces; update them on disk but do not `git add -f` them unless the user explicitly asks to version orchestrator internals.
 16. Record artifacts and evidence in `TASK.md`.
@@ -172,12 +175,13 @@ Rule files provide policy context, but lifecycle steps and gate order are define
      - review-context artifact path (`Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json`) and nested markdown snapshot from `rule_context.artifact_path` when token economy mode is active;
      - token economy flags when active (`depth`, `compact_reviewer_output`, `strip_examples`, `strip_code_blocks`);
       - for `db` / `security` / `refactor` required reviews when scoped diffs are enabled: scoped artifact produced by `build-scoped-diff.ps1/.sh`, with scoped metadata artifact and full-diff fallback when helper reports empty scope;
-     - required output contract:
-       - verdict token (`... PASSED` or `... FAILED`);
-       - findings list with file evidence;
-       - review artifact write path: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.
-  3. Parse verdict token from reviewer output.
-  4. If verdict is failed, fix findings and rerun the same reviewer until pass.
+      - required output contract:
+        - verdict token (`... PASSED` or `... FAILED`);
+        - findings list with file evidence;
+        - when verdict is pass, keep active `Findings by Severity` and `Residual Risks` empty (`none`); move any accepted non-blocking follow-up to `Deferred Findings` and include `Justification:` in each deferred entry;
+        - review artifact write path: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.
+   3. Parse verdict token from reviewer output.
+   4. If verdict is failed, or a PASS artifact still leaves active findings/residual risks without justified deferral, fix or explicitly defer the finding and rerun the same reviewer until the final artifact is clean.
 - Reviewer mapping contract:
   - `required_reviews.code=true` => skill `Octopus-agent-orchestrator/live/skills/code-review/SKILL.md` => pass token `REVIEW PASSED` => gate parameter `-CodeReviewVerdict`
   - `required_reviews.db=true` => skill `Octopus-agent-orchestrator/live/skills/db-review/SKILL.md` => pass token `DB REVIEW PASSED` => gate parameter `-DbReviewVerdict`

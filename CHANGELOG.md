@@ -7,6 +7,7 @@ All notable changes to this bundle are documented in this file.
 ### Changed
 - Added `scripts/uninstall.ps1` / `.sh` to remove deployed orchestrator files with explicit keep/delete choices for the primary entrypoint, `TASK.md`, and runtime backup preservation. Uninstall now strips Octopus-managed bridge blocks from mixed files, cleans merged Qwen/Claude settings plus commit-guard/gitignore additions, and removes the bundle directory without deleting unrelated user content.
 - Added `scripts/reinit.ps1` / `.sh` so already installed workspaces can re-ask init answers and reapply only answer-dependent files (`runtime/init-answers.json`, `00-core.md`, entrypoint routing, guards, token-economy enabled flag, and `live/version.json`) without a full reinstall or runtime backup churn.
+- Completion gate now blocks `DONE` when PASS review artifacts still contain active `Findings by Severity` or `Residual Risks`. Non-blocking follow-up may remain only in `Deferred Findings`, and each deferred item must include `Justification:`.
 - Task-event logging now uses best-effort append locking for both per-task timelines and aggregate `all-tasks.jsonl`, reducing concurrent append corruption during local orchestrator runs.
 - New task-event writes include per-task integrity metadata (`task_sequence`, `prev_event_sha256`, `event_sha256`), and timeline summary/completion checks now validate that hash chain to detect local replay, reordering, or post-hoc edits.
 - `build-review-context.ps1` / `.sh` now emit canonical `rule_pack` and `token_economy` blocks without mirroring the same arrays and counters at the top level; artifacts declare `schema_version=2` and include an explicit legacy-field mapping for removed aliases.
@@ -19,6 +20,7 @@ All notable changes to this bundle are documented in this file.
 - Clarified the local trust model for task timelines: the new integrity chain is procedural hardening inside a writable workspace, not a security-grade trust anchor.
 - Documented the new `reinit` workflow for changing init answers without reinstalling the orchestrator.
 - Documented the new uninstall workflow and backup semantics for removing an existing deployment.
+- Documented the fix-or-defer-before-done review rule in workflow, task-contract, and review-template guidance.
 
 ## [1.0.7] - 2026-03-14
 

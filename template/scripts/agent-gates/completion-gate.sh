@@ -55,6 +55,17 @@ REVIEW_CONTRACTS = (
     ("dependency", "DEPENDENCY REVIEW PASSED"),
 )
 
+EMPTY_REVIEW_MARKERS = {
+    "none",
+    "n/a",
+    "na",
+    "no findings",
+    "no residual risks",
+    "no deferred findings",
+    "no open findings",
+    "no outstanding findings",
+}
+
 
 def parse_skip_reviews(value):
     if value is None:
@@ -68,6 +79,186 @@ def parse_skip_reviews(value):
             continue
         parts.extend([segment.strip().lower() for segment in re.split(r"[,; ]+", text) if segment and segment.strip()])
     return sorted(set(parts))
+
+
+def extract_markdown_section_lines(lines: list[str], heading: str) -> list[str]:
+    section_lines: list[str] = []
+    capture = False
+    for raw_line in lines:
+        trimmed = raw_line.strip()
+        heading_match = re.match(r"^(#{2,6})\s+(.+?)\s*$", trimmed)
+        if heading_match:
+            if capture:
+                break
+            capture = heading_match.group(2).strip().lower() == heading.strip().lower()
+            continue
+        if capture:
+            section_lines.append(raw_line)
+    return section_lines
+
+
+def normalize_review_list_text(value) -> str:
+    if value is None:
+        return ""
+
+    text = str(value).strip()
+    text = re.sub(r"^(?:[-*+]\s+|\d+\.\s+)+", "", text).strip()
+    while len(text) >= 2 and text.startswith("`") and text.endswith("`"):
+        text = text[1:-1].strip()
+    return text
+
+
+def is_meaningful_review_entry(value) -> bool:
+    text = normalize_review_list_text(value)
+    if not text:
+        return False
+    normalized = text.strip().strip(".").strip().strip("`").strip().lower()
+    return normalized not in EMPTY_REVIEW_MARKERS
+
+
+def get_markdown_meaningful_entries(section_lines: list[str]) -> list[str]:
+    entries: list[str] = []
+    current_entry: str | None = None
+
+    for raw_line in section_lines:
+        trimmed = raw_line.strip()
+        if not trimmed:
+            continue
+
+        bullet_match = re.match(r"^(?:[-*+]\s+|\d+\.\s+)(.*)$", trimmed)
+        if bullet_match:
+            if is_meaningful_review_entry(current_entry):
+                entries.append(normalize_review_list_text(current_entry))
+            candidate = normalize_review_list_text(bullet_match.group(1))
+            current_entry = candidate if is_meaningful_review_entry(candidate) else None
+            continue
+
+        candidate = normalize_review_list_text(trimmed)
+        if not is_meaningful_review_entry(candidate):
+            continue
+        current_entry = candidate if not current_entry else f"{current_entry} {candidate}".strip()
+
+    if is_meaningful_review_entry(current_entry):
+        entries.append(normalize_review_list_text(current_entry))
+
+    return entries
+
+
+def get_findings_by_severity(section_lines: list[str]) -> dict:
+    findings = {
+        "critical": [],
+        "high": [],
+        "medium": [],
+        "low": [],
+    }
+    current_severity: str | None = None
+
+    for raw_line in section_lines:
+        trimmed = raw_line.strip()
+        if not trimmed:
+            continue
+
+        severity_match = re.match(r"^(?:[-*+]\s*)?(Critical|High|Medium|Low)\s*:\s*(.*)$", trimmed, flags=re.IGNORECASE)
+        if severity_match:
+            current_severity = severity_match.group(1).strip().lower()
+            remainder = normalize_review_list_text(severity_match.group(2))
+            if is_meaningful_review_entry(remainder):
+                findings[current_severity].append(remainder)
+            continue
+
+        if not current_severity:
+            continue
+
+        bullet_match = re.match(r"^(?:[-*+]\s+|\d+\.\s+)(.*)$", trimmed)
+        if bullet_match:
+            entry = normalize_review_list_text(bullet_match.group(1))
+            if is_meaningful_review_entry(entry):
+                findings[current_severity].append(entry)
+            continue
+
+        entry = normalize_review_list_text(trimmed)
+        if not is_meaningful_review_entry(entry):
+            continue
+        if findings[current_severity]:
+            findings[current_severity][-1] = f"{findings[current_severity][-1]} {entry}".strip()
+        else:
+            findings[current_severity].append(entry)
+
+    return findings
+
+
+def get_review_artifact_findings_evidence(artifact_path: Path, content: str) -> dict:
+    artifact_path_normalized = normalize_path(artifact_path)
+    result = {
+        "status": "UNKNOWN",
+        "findings_section_present": False,
+        "residual_risks_section_present": False,
+        "deferred_findings_section_present": False,
+        "findings_by_severity": {
+            "critical": [],
+            "high": [],
+            "medium": [],
+            "low": [],
+        },
+        "residual_risks": [],
+        "deferred_findings": [],
+        "missing_sections": [],
+        "invalid_deferred_findings": [],
+        "violations": [],
+    }
+
+    lines = (content or "").splitlines()
+
+    findings_lines = extract_markdown_section_lines(lines, "Findings by Severity")
+    if not findings_lines:
+        result["missing_sections"].append("Findings by Severity")
+        result["violations"].append(
+            f"Review artifact '{artifact_path_normalized}' is missing required section '## Findings by Severity' for completion audit."
+        )
+    else:
+        result["findings_section_present"] = True
+        findings_by_severity = get_findings_by_severity(findings_lines)
+        result["findings_by_severity"] = findings_by_severity
+        for severity in ("critical", "high", "medium", "low"):
+            if findings_by_severity[severity]:
+                severity_label = severity.capitalize()
+                result["violations"].append(
+                    f"Review artifact '{artifact_path_normalized}' still contains active {severity_label} findings. "
+                    "Resolve them or move accepted non-blocking follow-up to 'Deferred Findings' with 'Justification:'."
+                )
+
+    residual_lines = extract_markdown_section_lines(lines, "Residual Risks")
+    if not residual_lines:
+        result["missing_sections"].append("Residual Risks")
+        result["violations"].append(
+            f"Review artifact '{artifact_path_normalized}' is missing required section '## Residual Risks' for completion audit."
+        )
+    else:
+        result["residual_risks_section_present"] = True
+        residual_risks = get_markdown_meaningful_entries(residual_lines)
+        result["residual_risks"] = residual_risks
+        if residual_risks:
+            result["violations"].append(
+                f"Review artifact '{artifact_path_normalized}' still contains active residual risks. "
+                "Move accepted non-blocking follow-up to 'Deferred Findings' with 'Justification:' before DONE."
+            )
+
+    deferred_lines = extract_markdown_section_lines(lines, "Deferred Findings")
+    if deferred_lines:
+        result["deferred_findings_section_present"] = True
+        deferred_findings = get_markdown_meaningful_entries(deferred_lines)
+        result["deferred_findings"] = deferred_findings
+        for entry in deferred_findings:
+            justification_match = re.search(r"\bJustification\s*:\s*(.+)$", entry, flags=re.IGNORECASE)
+            justification = justification_match.group(1).strip() if justification_match else ""
+            if not justification or len(justification) < 12:
+                result["invalid_deferred_findings"].append(entry)
+                result["violations"].append(
+                    f"Review artifact '{artifact_path_normalized}' has deferred finding without usable 'Justification:': {entry}"
+                )
+
+    result["status"] = "FAILED" if result["violations"] else "PASS"
+    return result
 
 
 def validate_preflight(preflight_path: Path, explicit_task_id: str):
@@ -272,6 +463,7 @@ def get_review_artifact_evidence(repo_root: Path, task_id: str, required_reviews
             "pass_token": pass_token,
             "present": False,
             "token_found": False,
+            "findings_resolution": None,
             "review_context_path": None,
             "review_context_present": False,
             "review_context_valid": False,
@@ -291,6 +483,11 @@ def get_review_artifact_evidence(repo_root: Path, task_id: str, required_reviews
         else:
             result["token_missing"].append(review_key)
             result["violations"].append(f"Review artifact '{entry['path']}' does not contain pass token '{pass_token}'.")
+
+        if entry["token_found"]:
+            findings_resolution = get_review_artifact_findings_evidence(artifact_path, content)
+            entry["findings_resolution"] = findings_resolution
+            result["violations"].extend(findings_resolution["violations"])
 
         review_context_path = (reviews_root / f"{task_id}-{review_key}-context.json").resolve()
         entry["review_context_path"] = normalize_path(review_context_path)

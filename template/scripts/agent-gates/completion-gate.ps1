@@ -214,6 +214,252 @@ function Get-ReviewContracts {
     )
 }
 
+function Get-MarkdownSectionLines {
+    param(
+        [string[]]$Lines,
+        [string]$Heading
+    )
+
+    $sectionLines = @()
+    $capture = $false
+    foreach ($line in @($Lines)) {
+        $trimmed = if ($null -eq $line) { '' } else { $line.Trim() }
+        if ($trimmed -match '^(#{2,6})\s+(.+?)\s*$') {
+            if ($capture) {
+                break
+            }
+
+            $capture = [string]::Equals($Matches[2].Trim(), $Heading, [System.StringComparison]::OrdinalIgnoreCase)
+            continue
+        }
+
+        if ($capture) {
+            $sectionLines += $line
+        }
+    }
+
+    return @($sectionLines)
+}
+
+function Normalize-ReviewListText {
+    param([string]$Value)
+
+    if ($null -eq $Value) {
+        return ''
+    }
+
+    $text = [string]$Value
+    $text = $text.Trim()
+    $text = $text -replace '^(?:[-*+]\s+|\d+\.\s+)+', ''
+    $text = $text.Trim()
+    while ($text.Length -ge 2 -and $text.StartsWith('`', [System.StringComparison]::Ordinal) -and $text.EndsWith('`', [System.StringComparison]::Ordinal)) {
+        $text = $text.Substring(1, $text.Length - 2).Trim()
+    }
+
+    return $text
+}
+
+function Test-IsMeaningfulReviewEntry {
+    param([string]$Value)
+
+    $text = Normalize-ReviewListText -Value $Value
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $false
+    }
+
+    $normalized = $text.Trim().Trim('.').Trim()
+    $normalized = $normalized.Trim('`').Trim().ToLowerInvariant()
+    return @(
+        'none',
+        'n/a',
+        'na',
+        'no findings',
+        'no residual risks',
+        'no deferred findings',
+        'no open findings',
+        'no outstanding findings'
+    ) -notcontains $normalized
+}
+
+function Get-MarkdownMeaningfulEntries {
+    param([string[]]$SectionLines)
+
+    $entries = @()
+    $currentEntry = $null
+    foreach ($rawLine in @($SectionLines)) {
+        $trimmed = if ($null -eq $rawLine) { '' } else { $rawLine.Trim() }
+        if ([string]::IsNullOrWhiteSpace($trimmed)) {
+            continue
+        }
+
+        if ($trimmed -match '^(?:[-*+]\s+|\d+\.\s+)(.*)$') {
+            if (Test-IsMeaningfulReviewEntry -Value $currentEntry) {
+                $entries += (Normalize-ReviewListText -Value $currentEntry)
+            }
+
+            $candidate = Normalize-ReviewListText -Value $Matches[1]
+            $currentEntry = if (Test-IsMeaningfulReviewEntry -Value $candidate) { $candidate } else { $null }
+            continue
+        }
+
+        $candidate = Normalize-ReviewListText -Value $trimmed
+        if (-not (Test-IsMeaningfulReviewEntry -Value $candidate)) {
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($currentEntry)) {
+            $currentEntry = $candidate
+        } else {
+            $currentEntry = "$currentEntry $candidate".Trim()
+        }
+    }
+
+    if (Test-IsMeaningfulReviewEntry -Value $currentEntry) {
+        $entries += (Normalize-ReviewListText -Value $currentEntry)
+    }
+
+    return @($entries)
+}
+
+function Get-FindingsBySeverity {
+    param([string[]]$SectionLines)
+
+    $findings = [ordered]@{
+        critical = @()
+        high = @()
+        medium = @()
+        low = @()
+    }
+
+    $currentSeverity = $null
+    foreach ($rawLine in @($SectionLines)) {
+        $trimmed = if ($null -eq $rawLine) { '' } else { $rawLine.Trim() }
+        if ([string]::IsNullOrWhiteSpace($trimmed)) {
+            continue
+        }
+
+        $severityMatch = [regex]::Match($trimmed, '^(?:[-*+]\s*)?(Critical|High|Medium|Low)\s*:\s*(.*)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($severityMatch.Success) {
+            $currentSeverity = $severityMatch.Groups[1].Value.ToLowerInvariant()
+            $remainder = Normalize-ReviewListText -Value $severityMatch.Groups[2].Value
+            if (Test-IsMeaningfulReviewEntry -Value $remainder) {
+                $findings[$currentSeverity] += $remainder
+            }
+            continue
+        }
+
+        if ($null -eq $currentSeverity) {
+            continue
+        }
+
+        if ($trimmed -match '^(?:[-*+]\s+|\d+\.\s+)(.*)$') {
+            $entry = Normalize-ReviewListText -Value $Matches[1]
+            if (Test-IsMeaningfulReviewEntry -Value $entry) {
+                $findings[$currentSeverity] += $entry
+            }
+            continue
+        }
+
+        $entry = Normalize-ReviewListText -Value $trimmed
+        if (-not (Test-IsMeaningfulReviewEntry -Value $entry)) {
+            continue
+        }
+
+        $bucket = @($findings[$currentSeverity])
+        if ($bucket.Count -gt 0) {
+            $lastIndex = $bucket.Count - 1
+            $bucket[$lastIndex] = "$($bucket[$lastIndex]) $entry".Trim()
+            $findings[$currentSeverity] = $bucket
+        } else {
+            $findings[$currentSeverity] += $entry
+        }
+    }
+
+    return $findings
+}
+
+function Get-ReviewArtifactFindingsEvidence {
+    param(
+        [string]$ArtifactPath,
+        [string]$Content
+    )
+
+    $result = [ordered]@{
+        status = 'UNKNOWN'
+        findings_section_present = $false
+        residual_risks_section_present = $false
+        deferred_findings_section_present = $false
+        findings_by_severity = [ordered]@{
+            critical = @()
+            high = @()
+            medium = @()
+            low = @()
+        }
+        residual_risks = @()
+        deferred_findings = @()
+        missing_sections = @()
+        invalid_deferred_findings = @()
+        violations = @()
+    }
+
+    $rawContent = if ($null -eq $Content) { '' } else { $Content }
+    $lines = [regex]::Split($rawContent, "`r?`n")
+
+    $findingsLines = Get-MarkdownSectionLines -Lines $lines -Heading 'Findings by Severity'
+    if (@($findingsLines).Count -eq 0) {
+        $result.missing_sections += 'Findings by Severity'
+        $result.violations += "Review artifact '$ArtifactPath' is missing required section '## Findings by Severity' for completion audit."
+    } else {
+        $result.findings_section_present = $true
+        $findingsBySeverity = Get-FindingsBySeverity -SectionLines $findingsLines
+        $result.findings_by_severity = $findingsBySeverity
+
+        foreach ($severity in @('critical', 'high', 'medium', 'low')) {
+            $activeFindings = @($findingsBySeverity[$severity])
+            if ($activeFindings.Count -gt 0) {
+                $label = (Get-Culture).TextInfo.ToTitleCase($severity)
+                $result.violations += "Review artifact '$ArtifactPath' still contains active $label findings. Resolve them or move accepted non-blocking follow-up to 'Deferred Findings' with 'Justification:'."
+            }
+        }
+    }
+
+    $residualLines = Get-MarkdownSectionLines -Lines $lines -Heading 'Residual Risks'
+    if (@($residualLines).Count -eq 0) {
+        $result.missing_sections += 'Residual Risks'
+        $result.violations += "Review artifact '$ArtifactPath' is missing required section '## Residual Risks' for completion audit."
+    } else {
+        $result.residual_risks_section_present = $true
+        $residualRisks = Get-MarkdownMeaningfulEntries -SectionLines $residualLines
+        $result.residual_risks = $residualRisks
+        if (@($residualRisks).Count -gt 0) {
+            $result.violations += "Review artifact '$ArtifactPath' still contains active residual risks. Move accepted non-blocking follow-up to 'Deferred Findings' with 'Justification:' before DONE."
+        }
+    }
+
+    $deferredLines = Get-MarkdownSectionLines -Lines $lines -Heading 'Deferred Findings'
+    if (@($deferredLines).Count -gt 0) {
+        $result.deferred_findings_section_present = $true
+        $deferredFindings = Get-MarkdownMeaningfulEntries -SectionLines $deferredLines
+        $result.deferred_findings = $deferredFindings
+        foreach ($entry in @($deferredFindings)) {
+            $justificationMatch = [regex]::Match($entry, '(?i)\bJustification\s*:\s*(.+)$')
+            $justification = if ($justificationMatch.Success) { $justificationMatch.Groups[1].Value.Trim() } else { '' }
+            if ([string]::IsNullOrWhiteSpace($justification) -or $justification.Length -lt 12) {
+                $result.invalid_deferred_findings += $entry
+                $result.violations += "Review artifact '$ArtifactPath' has deferred finding without usable 'Justification:': $entry"
+            }
+        }
+    }
+
+    if ($result.violations.Count -gt 0) {
+        $result.status = 'FAILED'
+        return [PSCustomObject]$result
+    }
+
+    $result.status = 'PASS'
+    return [PSCustomObject]$result
+}
+
 function Get-TimelineEvidence {
     param(
         [string]$RepoRootPath,
@@ -440,6 +686,7 @@ function Get-ReviewArtifactEvidence {
             pass_token = [string]$contract.pass_token
             present = $false
             token_found = $false
+            findings_resolution = $null
             review_context_path = $null
             review_context_present = $false
             review_context_valid = $false
@@ -460,6 +707,12 @@ function Get-ReviewArtifactEvidence {
         } else {
             $result.token_missing += $reviewKey
             $result.violations += "Review artifact '$($artifactEntry.path)' does not contain pass token '$([string]$contract.pass_token)'."
+        }
+
+        if ($artifactEntry.token_found) {
+            $findingsResolution = Get-ReviewArtifactFindingsEvidence -ArtifactPath $artifactEntry.path -Content $content
+            $artifactEntry.findings_resolution = $findingsResolution
+            $result.violations += @($findingsResolution.violations)
         }
 
         $reviewContextPath = Join-Path $resolvedReviewsRoot "$ResolvedTaskId-$reviewKey-context.json"

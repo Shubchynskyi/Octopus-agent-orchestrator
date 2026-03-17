@@ -30,6 +30,7 @@ Completion constraints:
 - If `db_review_verdict` is not `NOT_REQUIRED`, `db_review_artifact` must be a concrete path, not `n/a`.
 - If `security_review_verdict` is not `NOT_REQUIRED`, `security_review_artifact` must be a concrete path, not `n/a`.
 - If `refactor_review_verdict` is not `NOT_REQUIRED`, `refactor_review_artifact` must be a concrete path, not `n/a`.
+- `DONE` requires each PASS review artifact to keep active `Findings by Severity` and `Residual Risks` empty (`none`). Non-blocking follow-ups may remain only in `Deferred Findings`, and every deferred entry must include `Justification:`.
 - If optional specialist reviews are enabled and required by preflight, append the same field pair pattern and enforce pass verdicts:
   - `api_review_verdict` / `api_review_artifact` (`API REVIEW PASSED`)
   - `test_review_verdict` / `test_review_artifact` (`TEST REVIEW PASSED`)

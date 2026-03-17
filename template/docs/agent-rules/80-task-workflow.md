@@ -59,7 +59,8 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
   `Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1`.
 - Completion gate script must pass before `DONE`:
   `Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1`.
-- Completion gate validates compile evidence, review-gate evidence, doc-impact evidence, timeline integrity (`COMPILE_GATE_PASSED`, review pass evidence, `REWORK_STARTED` after latest `REVIEW_GATE_FAILED`), best-effort task-event hash-chain integrity, and required review artifacts.
+- Completion gate validates compile evidence, review-gate evidence, doc-impact evidence, timeline integrity (`COMPILE_GATE_PASSED`, review pass evidence, `REWORK_STARTED` after latest `REVIEW_GATE_FAILED`), best-effort task-event hash-chain integrity, required review artifacts, and final findings-resolution state in PASS review artifacts.
+- Final PASS review artifacts must keep active `Findings by Severity` and `Residual Risks` empty (`none`). Non-blocking follow-ups may remain only in `Deferred Findings`, and every deferred entry must include `Justification:`.
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
   `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
 - Task-event writers must use best-effort append locking for both per-task log and aggregate `all-tasks.jsonl`; do not rely on unsynchronized raw append for concurrent runs.
@@ -72,6 +73,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Reviewer and specialist agents must be closed after verdict capture.
 - HARD STOP: do not force-stage ignored orchestration control-plane files just because gates, changelog, or reviews reference them.
 - HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order.
+- HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED`, every review finding is either resolved or explicitly deferred with `Justification:`, and the final user report is delivered in mandatory order.
 - If compile command or workflow infra files are hotfixed inside current task, scope is expanded and full re-run is mandatory: preflight -> compile gate -> required reviews gate -> doc impact gate -> completion gate.
 
 ## Escape Hatch Contract

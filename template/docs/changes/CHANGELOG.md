@@ -13,6 +13,13 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Docs Updated: <list of updated doc files>
 ```
 
+## 2026-03-17 - Findings must be resolved or explicitly deferred before DONE
+- Task: T-015
+- Type: behavior-change
+- Scope: task workflow / review artifacts / completion gate
+- Summary: Hardened the final review cycle so tasks cannot move to `DONE` while PASS review artifacts still contain active non-blocking findings or residual risks. The completion gate now audits final review artifacts for empty active findings sections and accepts intentional non-blocking deferrals only when they are moved to `Deferred Findings` with an explicit `Justification:` entry; workflow and task-contract docs now describe the same fix-or-defer-before-done rule.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md`; `Octopus-agent-orchestrator/template/docs/reviews/TEMPLATE.md`; `Octopus-agent-orchestrator/template/docs/tasks/TASKS.md`; `Octopus-agent-orchestrator/template/skills/orchestration/SKILL.md`; `Octopus-agent-orchestrator/template/skills/orchestration-depth1/SKILL.md`; `Octopus-agent-orchestrator/template/skills/orchestration/references/stage-gates.md`; `Octopus-agent-orchestrator/template/scripts/agent-gates/completion-gate.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/completion-gate.sh`; `Octopus-agent-orchestrator/template/scripts/agent-gates/tests/completion-gate-findings.Tests.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/tests/test_completion_gate_findings.py`
+
 ## 2026-03-17 - Uninstall workflow for deployed orchestrators
 - Task: T-014
 - Type: feature

@@ -21,10 +21,18 @@ Use one file per review:
 - Date:
 
 ## Findings by Severity
-- Critical:
-- High:
-- Medium:
-- Low:
+- Critical: `none`
+- High: `none`
+- Medium: `none`
+- Low: `none`
+
+Use this section only for still-open findings in the current artifact. A final `... PASSED` artifact must leave every active severity bucket as `none`.
+
+## Deferred Findings
+- `none`
+
+Use this section only when a non-blocking finding is intentionally deferred instead of fixed before `DONE`. Each deferred entry must be a bullet in this exact shape:
+- `[<severity>] <summary with file evidence> | Justification: <why deferral is acceptable now>`
 
 ## Rule Checklist
 | rule_id | status | evidence |
@@ -36,7 +44,9 @@ Use one file per review:
 - skipped_rule_reasons:
 
 ## Residual Risks
-- 
+- `none`
+
+For final `... PASSED` artifacts, keep this section `none`. Accepted follow-up risk belongs in `Deferred Findings`, not in active residual risk entries.
 
 ## Verdict
 - `REVIEW PASSED | REVIEW FAILED | DB REVIEW PASSED | DB REVIEW FAILED | SECURITY REVIEW PASSED | SECURITY REVIEW FAILED | REFACTOR REVIEW PASSED | REFACTOR REVIEW FAILED | API REVIEW PASSED | API REVIEW FAILED | TEST REVIEW PASSED | TEST REVIEW FAILED | PERFORMANCE REVIEW PASSED | PERFORMANCE REVIEW FAILED | INFRA REVIEW PASSED | INFRA REVIEW FAILED | DEPENDENCY REVIEW PASSED | DEPENDENCY REVIEW FAILED`
