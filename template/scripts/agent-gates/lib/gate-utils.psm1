@@ -911,6 +911,80 @@ function Get-GateFilterConfigValue {
     return $property.Value
 }
 
+function Get-GateTelemetryIntValue {
+    param(
+        [AllowNull()]
+        [object]$Telemetry,
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    $value = Get-GateFilterConfigValue -Object $Telemetry -Key $Key
+    if ($null -eq $value -or $value -is [bool]) {
+        return $null
+    }
+
+    if ($value -is [int] -or $value -is [long] -or $value -is [short]) {
+        return [int][long]$value
+    }
+
+    if ($value -is [double] -or $value -is [decimal] -or $value -is [single]) {
+        $doubleValue = [double]$value
+        if ($doubleValue -ne [Math]::Floor($doubleValue)) {
+            return $null
+        }
+        return [int]$doubleValue
+    }
+
+    $stringValue = [string]$value
+    if ($stringValue -match '^\s*-?\d+\s*$') {
+        return [int]$stringValue.Trim()
+    }
+
+    return $null
+}
+
+function Get-GateVisibleSavingsLine {
+    param(
+        [AllowNull()]
+        [object]$Telemetry,
+        [string]$Label = 'token-economy',
+        [int]$MinimumSavedTokens = 10
+    )
+
+    if ($null -eq $Telemetry) {
+        return $null
+    }
+
+    $savedTokens = Get-GateTelemetryIntValue -Telemetry $Telemetry -Key 'estimated_saved_tokens'
+    $rawLineCount = Get-GateTelemetryIntValue -Telemetry $Telemetry -Key 'raw_line_count'
+    $filteredLineCount = Get-GateTelemetryIntValue -Telemetry $Telemetry -Key 'filtered_line_count'
+    $rawCharCount = Get-GateTelemetryIntValue -Telemetry $Telemetry -Key 'raw_char_count'
+    $filteredCharCount = Get-GateTelemetryIntValue -Telemetry $Telemetry -Key 'filtered_char_count'
+
+    $requiredValues = @($savedTokens, $rawLineCount, $filteredLineCount, $rawCharCount, $filteredCharCount)
+    if ($requiredValues -contains $null -or $savedTokens -le 0) {
+        return $null
+    }
+
+    $lineSavings = $rawLineCount - $filteredLineCount
+    $charSavings = $rawCharCount - $filteredCharCount
+    if ($lineSavings -le 0 -and $charSavings -le 0) {
+        return $null
+    }
+
+    $resolvedLabel = if ([string]::IsNullOrWhiteSpace($Label)) { 'token-economy' } else { $Label.Trim() }
+    if ($lineSavings -gt 0) {
+        return "[{0}] saved ~{1} tokens ({2} lines -> {3} lines)" -f $resolvedLabel, $savedTokens, $rawLineCount, $filteredLineCount
+    }
+
+    if ($savedTokens -lt [Math]::Max(0, $MinimumSavedTokens)) {
+        return $null
+    }
+
+    return "[{0}] saved ~{1} tokens ({2} chars -> {3} chars)" -f $resolvedLabel, $savedTokens, $rawCharCount, $filteredCharCount
+}
+
 function Resolve-GateFilterIntegerSpec {
     param(
         [AllowNull()]
@@ -2240,6 +2314,7 @@ Export-ModuleMember -Function @(
     'Test-GateReviewArtifactCompaction',
     'Add-GateMetricsEvent',
     'Get-GateOutputTelemetry',
+    'Get-GateVisibleSavingsLine',
     'Invoke-GateOutputFilter',
     'Add-GateTaskEvent',
     'Get-GateTaskTimelineIntegrity'

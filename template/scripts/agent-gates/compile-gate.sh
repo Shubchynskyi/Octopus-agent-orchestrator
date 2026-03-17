@@ -43,6 +43,7 @@ from gate_utils import (
     assert_valid_task_id,
     build_output_telemetry,
     file_sha256,
+    format_visible_savings_line,
     join_orchestrator_path,
     normalize_path,
     resolve_path_inside_repo,
@@ -651,6 +652,7 @@ compile_output_telemetry = build_output_telemetry(
     parser_name=filtered_output_result["parser_name"],
     parser_strategy=filtered_output_result["parser_strategy"],
 )
+compile_visible_savings_line = format_visible_savings_line(compile_output_telemetry)
 gate_context.update(compile_output_telemetry)
 
 if error_message:
@@ -693,6 +695,8 @@ if error_message:
             print("CompileOutputFilteredLines:")
         for line in filtered_output_lines:
             print(line)
+    if compile_visible_savings_line:
+        print(compile_visible_savings_line)
     print(f"Reason: {error_message}")
     sys.exit(1)
 
@@ -718,4 +722,6 @@ print("COMPILE_GATE_PASSED")
 print(f"CompileSummary: PASSED | duration_ms={duration_ms} | exit_code=0 | errors={error_count} | warnings={warning_count}")
 if compile_output_path:
     print(f"CompileOutputPath: {normalize_path(compile_output_path)}")
+if compile_visible_savings_line:
+    print(compile_visible_savings_line)
 PY

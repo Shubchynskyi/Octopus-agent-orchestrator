@@ -38,6 +38,7 @@ from gate_utils import (
     assert_valid_task_id,
     build_output_telemetry,
     file_sha256,
+    format_visible_savings_line,
     join_orchestrator_path,
     normalize_path,
     parse_bool,
@@ -790,6 +791,7 @@ if errors:
         parser_name=failure_output_result["parser_name"],
         parser_strategy=failure_output_result["parser_strategy"],
     )
+    failure_visible_savings_line = format_visible_savings_line(failure_output_telemetry)
     review_evidence_context["output_telemetry"] = failure_output_telemetry
     write_review_evidence(
         review_evidence_path=review_evidence_path,
@@ -836,6 +838,8 @@ if errors:
 
     for line in filtered_failure_output_lines:
         print(line)
+    if failure_visible_savings_line:
+        print(failure_visible_savings_line)
     sys.exit(1)
 
 override_artifact_path = args.override_artifact_path.strip()
@@ -901,6 +905,7 @@ success_output_telemetry = build_output_telemetry(
     parser_name=success_output_result["parser_name"],
     parser_strategy=success_output_result["parser_strategy"],
 )
+success_visible_savings_line = format_visible_savings_line(success_output_telemetry)
 review_evidence_context["override_artifact"] = normalize_path(override_artifact_path) if override_artifact_path else None
 review_evidence_context["output_telemetry"] = success_output_telemetry
 write_review_evidence(
@@ -950,6 +955,8 @@ if skip_code:
     )
     for line in filtered_success_output_lines:
         print(line)
+    if success_visible_savings_line:
+        print(success_visible_savings_line)
 else:
     append_task_event(
         repo_root=repo_root,
@@ -970,4 +977,6 @@ else:
     )
     for line in filtered_success_output_lines:
         print(line)
+    if success_visible_savings_line:
+        print(success_visible_savings_line)
 PY

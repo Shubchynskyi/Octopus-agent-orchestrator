@@ -838,6 +838,7 @@ $filteredCompileOutput = if ($null -ne $exceptionMessage) {
 }
 $filteredCompileOutputLines = @($filteredCompileOutput.lines)
 $compileOutputTelemetry = Get-GateOutputTelemetry -RawLines $compileOutputArray -FilteredLines $filteredCompileOutputLines -FilterMode $filteredCompileOutput.filter_mode -FallbackMode $filteredCompileOutput.fallback_mode -ParserMode $filteredCompileOutput.parser_mode -ParserName $filteredCompileOutput.parser_name -ParserStrategy $filteredCompileOutput.parser_strategy
+$compileVisibleSavingsLine = Get-GateVisibleSavingsLine -Telemetry $compileOutputTelemetry
 
 $gateContext = [ordered]@{
     commands_path = Normalize-Path $resolvedCommandsPath
@@ -909,6 +910,9 @@ if ($null -ne $exceptionMessage) {
             Write-Output $line
         }
     }
+    if (-not [string]::IsNullOrWhiteSpace($compileVisibleSavingsLine)) {
+        Write-Output $compileVisibleSavingsLine
+    }
     Write-Output "Reason: $exceptionMessage"
     exit 1
 }
@@ -931,4 +935,7 @@ Write-Output 'COMPILE_GATE_PASSED'
 Write-Output ("CompileSummary: PASSED | duration_ms={0} | exit_code=0 | errors={1} | warnings={2}" -f $durationMs, $errorCount, $warningCount)
 if ($resolvedCompileOutputPath) {
     Write-Output ("CompileOutputPath: {0}" -f (Normalize-Path $resolvedCompileOutputPath))
+}
+if (-not [string]::IsNullOrWhiteSpace($compileVisibleSavingsLine)) {
+    Write-Output $compileVisibleSavingsLine
 }

@@ -58,4 +58,30 @@ Describe 'Gate token telemetry' {
         $artifact.summary.estimated_saved_tokens | Should -BeGreaterOrEqual 0
         $artifact.summary.Keys | Should -Contain 'estimated_saved_tokens_chars_per_4'
     }
+
+    It 'formats a visible savings line when filtering removes lines' {
+        $rawLines = 1..12 | ForEach-Object { "line $_" }
+        $filteredLines = @('line 1', 'line 12')
+
+        $telemetry = Get-GateOutputTelemetry -RawLines $rawLines -FilteredLines $filteredLines
+        $line = Get-GateVisibleSavingsLine -Telemetry $telemetry
+
+        $line | Should -Be ("[token-economy] saved ~{0} tokens ({1} lines -> {2} lines)" -f $telemetry.estimated_saved_tokens, $telemetry.raw_line_count, $telemetry.filtered_line_count)
+    }
+
+    It 'formats char-based visible savings when line counts stay the same' {
+        $rawLines = @(('alpha beta gamma ' * 40).Trim())
+        $filteredLines = @('alpha beta gamma')
+
+        $telemetry = Get-GateOutputTelemetry -RawLines $rawLines -FilteredLines $filteredLines
+        $line = Get-GateVisibleSavingsLine -Telemetry $telemetry
+
+        $line | Should -Be ("[token-economy] saved ~{0} tokens ({1} chars -> {2} chars)" -f $telemetry.estimated_saved_tokens, $telemetry.raw_char_count, $telemetry.filtered_char_count)
+    }
+
+    It 'suppresses the visible savings line when output is unchanged' {
+        $telemetry = Get-GateOutputTelemetry -RawLines @('same output') -FilteredLines @('same output')
+
+        Get-GateVisibleSavingsLine -Telemetry $telemetry | Should -Be $null
+    }
 }

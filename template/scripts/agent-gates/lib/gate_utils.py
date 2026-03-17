@@ -596,6 +596,53 @@ def build_output_telemetry(
     }
 
 
+def _coerce_int_like(value: Any) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and re.fullmatch(r"\s*-?\d+\s*", value):
+        return int(value.strip())
+    return None
+
+
+def format_visible_savings_line(
+    telemetry: Any,
+    *,
+    label: str = "token-economy",
+    minimum_saved_tokens: int = 10,
+) -> Optional[str]:
+    if not isinstance(telemetry, dict):
+        return None
+
+    saved_tokens = _coerce_int_like(telemetry.get("estimated_saved_tokens"))
+    raw_line_count = _coerce_int_like(telemetry.get("raw_line_count"))
+    filtered_line_count = _coerce_int_like(telemetry.get("filtered_line_count"))
+    raw_char_count = _coerce_int_like(telemetry.get("raw_char_count"))
+    filtered_char_count = _coerce_int_like(telemetry.get("filtered_char_count"))
+
+    if None in {saved_tokens, raw_line_count, filtered_line_count, raw_char_count, filtered_char_count}:
+        return None
+    if saved_tokens <= 0:
+        return None
+
+    line_savings = raw_line_count - filtered_line_count
+    char_savings = raw_char_count - filtered_char_count
+    if line_savings <= 0 and char_savings <= 0:
+        return None
+
+    resolved_label = (label or "").strip() or "token-economy"
+    if line_savings > 0:
+        return f"[{resolved_label}] saved ~{saved_tokens} tokens ({raw_line_count} lines -> {filtered_line_count} lines)"
+
+    if saved_tokens < max(minimum_saved_tokens, 0):
+        return None
+
+    return f"[{resolved_label}] saved ~{saved_tokens} tokens ({raw_char_count} chars -> {filtered_char_count} chars)"
+
+
 def _resolve_filter_int(value: Any, context: Optional[dict], field_name: str, minimum: int = 0) -> int:
     resolved_value = value
     if isinstance(value, dict) and isinstance(value.get("context_key"), str) and value.get("context_key").strip():

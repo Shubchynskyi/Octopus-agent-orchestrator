@@ -1049,6 +1049,7 @@ if ($errors.Count -gt 0) {
     $filteredFailureOutput = Invoke-GateOutputFilter -Lines $failureOutputLines -ConfigPath $resolvedOutputFiltersPath -ProfileName 'review_gate_failure_console'
     $filteredFailureOutputLines = @($filteredFailureOutput.lines)
     $failureOutputTelemetry = Get-GateOutputTelemetry -RawLines $failureOutputLines -FilteredLines $filteredFailureOutputLines -FilterMode $filteredFailureOutput.filter_mode -FallbackMode $filteredFailureOutput.fallback_mode -ParserMode $filteredFailureOutput.parser_mode -ParserName $filteredFailureOutput.parser_name -ParserStrategy $filteredFailureOutput.parser_strategy
+    $failureVisibleSavingsLine = Get-GateVisibleSavingsLine -Telemetry $failureOutputTelemetry
     $reviewEvidenceContext['output_telemetry'] = $failureOutputTelemetry
 
     Write-ReviewEvidence -EvidencePath $resolvedReviewEvidencePath -ResolvedTaskId $resolvedTaskId -Context $reviewEvidenceContext -Status 'FAILED' -Outcome 'FAIL' -Violations @($errors)
@@ -1087,6 +1088,9 @@ if ($errors.Count -gt 0) {
 
     foreach ($line in $filteredFailureOutputLines) {
         Write-Output $line
+    }
+    if (-not [string]::IsNullOrWhiteSpace($failureVisibleSavingsLine)) {
+        Write-Output $failureVisibleSavingsLine
     }
     exit 1
 }
@@ -1145,6 +1149,7 @@ if ($artifactEvidence.compaction_warning_count -gt 0) {
 $filteredSuccessOutput = Invoke-GateOutputFilter -Lines $successOutputLines -ConfigPath $resolvedOutputFiltersPath -ProfileName 'review_gate_success_console'
 $filteredSuccessOutputLines = @($filteredSuccessOutput.lines)
 $successOutputTelemetry = Get-GateOutputTelemetry -RawLines $successOutputLines -FilteredLines $filteredSuccessOutputLines -FilterMode $filteredSuccessOutput.filter_mode -FallbackMode $filteredSuccessOutput.fallback_mode -ParserMode $filteredSuccessOutput.parser_mode -ParserName $filteredSuccessOutput.parser_name -ParserStrategy $filteredSuccessOutput.parser_strategy
+$successVisibleSavingsLine = Get-GateVisibleSavingsLine -Telemetry $successOutputTelemetry
 $reviewEvidenceContext['override_artifact'] = $(if ([string]::IsNullOrWhiteSpace($OverrideArtifactPath)) { $null } else { Normalize-Path $OverrideArtifactPath })
 $reviewEvidenceContext['output_telemetry'] = $successOutputTelemetry
 Write-ReviewEvidence -EvidencePath $resolvedReviewEvidencePath -ResolvedTaskId $resolvedTaskId -Context $reviewEvidenceContext -Status 'PASSED' -Outcome 'PASS' -Violations @()
@@ -1185,10 +1190,16 @@ if ($skipCode) {
     foreach ($line in $filteredSuccessOutputLines) {
         Write-Output $line
     }
+    if (-not [string]::IsNullOrWhiteSpace($successVisibleSavingsLine)) {
+        Write-Output $successVisibleSavingsLine
+    }
     exit 0
 }
 
 Append-TaskEvent -RepoRootPath $repoRoot -TaskId $resolvedTaskId -EventType 'REVIEW_GATE_PASSED' -Outcome 'PASS' -Message 'Required reviews gate passed.' -Details $taskSuccessDetails
 foreach ($line in $filteredSuccessOutputLines) {
     Write-Output $line
+}
+if (-not [string]::IsNullOrWhiteSpace($successVisibleSavingsLine)) {
+    Write-Output $successVisibleSavingsLine
 }
