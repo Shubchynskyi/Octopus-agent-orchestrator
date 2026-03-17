@@ -961,6 +961,7 @@ function Get-GateVisibleSavingsLine {
     $filteredLineCount = Get-GateTelemetryIntValue -Telemetry $Telemetry -Key 'filtered_line_count'
     $rawCharCount = Get-GateTelemetryIntValue -Telemetry $Telemetry -Key 'raw_char_count'
     $filteredCharCount = Get-GateTelemetryIntValue -Telemetry $Telemetry -Key 'filtered_char_count'
+    $rawTokenCountEstimate = Get-GateTelemetryIntValue -Telemetry $Telemetry -Key 'raw_token_count_estimate'
 
     $requiredValues = @($savedTokens, $rawLineCount, $filteredLineCount, $rawCharCount, $filteredCharCount)
     if ($requiredValues -contains $null -or $savedTokens -le 0) {
@@ -974,15 +975,16 @@ function Get-GateVisibleSavingsLine {
     }
 
     $resolvedLabel = if ([string]::IsNullOrWhiteSpace($Label)) { 'token-economy' } else { $Label.Trim() }
-    if ($lineSavings -gt 0) {
-        return "[{0}] saved ~{1} tokens ({2} lines -> {3} lines)" -f $resolvedLabel, $savedTokens, $rawLineCount, $filteredLineCount
-    }
-
-    if ($savedTokens -lt [Math]::Max(0, $MinimumSavedTokens)) {
+    if ($lineSavings -le 0 -and $savedTokens -lt [Math]::Max(0, $MinimumSavedTokens)) {
         return $null
     }
 
-    return "[{0}] saved ~{1} tokens ({2} chars -> {3} chars)" -f $resolvedLabel, $savedTokens, $rawCharCount, $filteredCharCount
+    if ($rawTokenCountEstimate -gt 0) {
+        $savedPercent = [int][Math]::Round(($savedTokens * 100.0) / $rawTokenCountEstimate, 0, [System.MidpointRounding]::AwayFromZero)
+        return "[{0}] saved ~{1} tokens (~{2}%)" -f $resolvedLabel, $savedTokens, $savedPercent
+    }
+
+    return "[{0}] saved ~{1} tokens" -f $resolvedLabel, $savedTokens
 }
 
 function Resolve-GateFilterIntegerSpec {

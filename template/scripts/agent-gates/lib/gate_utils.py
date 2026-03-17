@@ -622,6 +622,7 @@ def format_visible_savings_line(
     filtered_line_count = _coerce_int_like(telemetry.get("filtered_line_count"))
     raw_char_count = _coerce_int_like(telemetry.get("raw_char_count"))
     filtered_char_count = _coerce_int_like(telemetry.get("filtered_char_count"))
+    raw_token_count_estimate = _coerce_int_like(telemetry.get("raw_token_count_estimate"))
 
     if None in {saved_tokens, raw_line_count, filtered_line_count, raw_char_count, filtered_char_count}:
         return None
@@ -634,13 +635,14 @@ def format_visible_savings_line(
         return None
 
     resolved_label = (label or "").strip() or "token-economy"
-    if line_savings > 0:
-        return f"[{resolved_label}] saved ~{saved_tokens} tokens ({raw_line_count} lines -> {filtered_line_count} lines)"
-
-    if saved_tokens < max(minimum_saved_tokens, 0):
+    if line_savings <= 0 and saved_tokens < max(minimum_saved_tokens, 0):
         return None
 
-    return f"[{resolved_label}] saved ~{saved_tokens} tokens ({raw_char_count} chars -> {filtered_char_count} chars)"
+    if raw_token_count_estimate is not None and raw_token_count_estimate > 0:
+        saved_percent = int(math.floor(((saved_tokens * 100.0) / raw_token_count_estimate) + 0.5))
+        return f"[{resolved_label}] saved ~{saved_tokens} tokens (~{saved_percent}%)"
+
+    return f"[{resolved_label}] saved ~{saved_tokens} tokens"
 
 
 def _resolve_filter_int(value: Any, context: Optional[dict], field_name: str, minimum: int = 0) -> int:

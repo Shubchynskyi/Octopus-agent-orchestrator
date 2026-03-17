@@ -8,6 +8,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 from gate_utils import build_output_telemetry, build_rule_context_artifact, format_visible_savings_line  # noqa: E402
 
 
+def _expected_saved_percent(saved_tokens: int, raw_token_count_estimate: int) -> int:
+    return int(((saved_tokens * 100.0) / raw_token_count_estimate) + 0.5)
+
+
 def test_output_telemetry_uses_hybrid_estimator_and_keeps_legacy_baseline() -> None:
     raw_lines = [
         "if (value == null) {",
@@ -59,7 +63,7 @@ def test_rule_context_artifact_summary_records_token_estimator_metadata(tmp_path
     assert "estimated_saved_tokens_chars_per_4" in summary
 
 
-def test_visible_savings_line_prefers_line_compaction_summary() -> None:
+def test_visible_savings_line_formats_approximate_token_percent_for_line_compaction() -> None:
     telemetry = build_output_telemetry(
         [f"line {index}" for index in range(1, 13)],
         ["line 1", "line 12"],
@@ -67,11 +71,11 @@ def test_visible_savings_line_prefers_line_compaction_summary() -> None:
 
     assert format_visible_savings_line(telemetry) == (
         f"[token-economy] saved ~{telemetry['estimated_saved_tokens']} tokens "
-        f"({telemetry['raw_line_count']} lines -> {telemetry['filtered_line_count']} lines)"
+        f"(~{_expected_saved_percent(telemetry['estimated_saved_tokens'], telemetry['raw_token_count_estimate'])}%)"
     )
 
 
-def test_visible_savings_line_falls_back_to_char_summary_for_same_line_count() -> None:
+def test_visible_savings_line_formats_approximate_token_percent_for_char_only_compaction() -> None:
     telemetry = build_output_telemetry(
         [("alpha beta gamma " * 40).strip()],
         ["alpha beta gamma"],
@@ -79,8 +83,21 @@ def test_visible_savings_line_falls_back_to_char_summary_for_same_line_count() -
 
     assert format_visible_savings_line(telemetry) == (
         f"[token-economy] saved ~{telemetry['estimated_saved_tokens']} tokens "
-        f"({telemetry['raw_char_count']} chars -> {telemetry['filtered_char_count']} chars)"
+        f"(~{_expected_saved_percent(telemetry['estimated_saved_tokens'], telemetry['raw_token_count_estimate'])}%)"
     )
+
+
+def test_visible_savings_line_falls_back_to_absolute_saved_tokens_when_baseline_is_unavailable() -> None:
+    telemetry = {
+        "estimated_saved_tokens": 42,
+        "raw_line_count": 12,
+        "filtered_line_count": 2,
+        "raw_char_count": 120,
+        "filtered_char_count": 20,
+        "raw_token_count_estimate": 0,
+    }
+
+    assert format_visible_savings_line(telemetry) == "[token-economy] saved ~42 tokens"
 
 
 def test_visible_savings_line_is_suppressed_when_output_is_unchanged() -> None:
