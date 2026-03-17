@@ -42,6 +42,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Shared gate output filters from `Octopus-agent-orchestrator/live/config/output-filters.json` stay active regardless of reviewer-context token-economy state.
 - Conservative default: keep `enabled=false` with `enabled_depths=[1,2]` unless the project explicitly wants compact reviewer context.
 - Recommendation when reviewer-context token economy is enabled: use `depth=1` only for small, well-localized tasks; prefer `depth=2` or `depth=3` when correctness depends on broader context.
+- Short-form `depth=1` guidance is available at `Octopus-agent-orchestrator/live/skills/orchestration-depth1/SKILL.md`. If your client supports targeted skill loading, prefer that short form over the full orchestration skill when effective depth stays at `1` and no escalation trigger fires.
 - Depth-aware reviewer context loading when active:
   - `depth=1`: load task goal, changed files, required review flags, and minimal diff context only.
   - `depth=2`: load `depth=1` context plus required checklists and only relevant rule sections.

@@ -223,6 +223,57 @@ function Get-GateCompactReviewBudget {
     }
 }
 
+function Estimate-GateCharTokenCount {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$CharCount,
+        [string]$Estimator = 'chars_per_4'
+    )
+
+    if ($CharCount -le 0) {
+        return 0
+    }
+
+    switch ($Estimator) {
+        'chars_per_3_5' {
+            return [int][Math]::Ceiling($CharCount / 3.5)
+        }
+        'chars_per_4_5' {
+            return [int][Math]::Ceiling($CharCount / 4.5)
+        }
+        default {
+            return [int][Math]::Ceiling($CharCount / 4.0)
+        }
+    }
+}
+
+function Estimate-GateTokenCount {
+    param(
+        [object]$Lines,
+        [string]$Estimator = 'hybrid_text_v1'
+    )
+
+    $normalizedLines = @(Convert-GateToStringArray -Value $Lines)
+    $charCount = Get-GateTextCharCount -Lines $normalizedLines
+    if ($charCount -le 0) {
+        return 0
+    }
+
+    if ($Estimator -in @('chars_per_4', 'chars_per_3_5', 'chars_per_4_5')) {
+        return Estimate-GateCharTokenCount -CharCount $charCount -Estimator $Estimator
+    }
+
+    $text = @($normalizedLines) -join "`n"
+    $baseEstimate = Estimate-GateCharTokenCount -CharCount $charCount -Estimator 'chars_per_4'
+    $tokenishUnitCount = [regex]::Matches($text, "[A-Za-z]+(?:'[A-Za-z]+)?|[0-9]+|[^\w\s]").Count
+    if ($tokenishUnitCount -le 0) {
+        return $baseEstimate
+    }
+
+    $hybridEstimate = [int][Math]::Ceiling(($baseEstimate + $tokenishUnitCount) / 2.0)
+    return [int][Math]::Max($baseEstimate, $hybridEstimate)
+}
+
 function Invoke-GateMarkdownCompaction {
     param(
         [AllowNull()][string]$Content,
@@ -382,6 +433,10 @@ function New-GateRuleContextArtifact {
     $outputLineTotal = 0
     $originalCharTotal = 0
     $outputCharTotal = 0
+    $originalTokenTotal = 0
+    $outputTokenTotal = 0
+    $legacyOriginalTokenTotal = 0
+    $legacyOutputTokenTotal = 0
 
     foreach ($selectedRulePath in @($SelectedRulePaths)) {
         $resolvedRulePath = Resolve-GatePathInsideRepo -PathValue $selectedRulePath -RepoRootPath $RepoRootPath
@@ -407,6 +462,10 @@ function New-GateRuleContextArtifact {
         $outputLineTotal += [int]$compacted.output_line_count
         $originalCharTotal += [int]$compacted.original_char_count
         $outputCharTotal += [int]$compacted.output_char_count
+        $originalTokenTotal += Estimate-GateTokenCount -Lines $rawContent
+        $outputTokenTotal += Estimate-GateTokenCount -Lines $compacted.content
+        $legacyOriginalTokenTotal += Estimate-GateTokenCount -Lines $rawContent -Estimator 'chars_per_4'
+        $legacyOutputTokenTotal += Estimate-GateTokenCount -Lines $compacted.content -Estimator 'chars_per_4'
 
         $fileEntries += [ordered]@{
             path = $selectedRulePath
@@ -440,8 +499,13 @@ function New-GateRuleContextArtifact {
             output_line_count = $outputLineTotal
             original_char_count = $originalCharTotal
             output_char_count = $outputCharTotal
+            original_token_count_estimate = $originalTokenTotal
+            output_token_count_estimate = $outputTokenTotal
             estimated_saved_chars = [Math]::Max($originalCharTotal - $outputCharTotal, 0)
-            estimated_saved_tokens = [Math]::Max([int](($originalCharTotal - $outputCharTotal) / 4), 0)
+            estimated_saved_tokens = [Math]::Max($originalTokenTotal - $outputTokenTotal, 0)
+            estimated_saved_tokens_chars_per_4 = [Math]::Max($legacyOriginalTokenTotal - $legacyOutputTokenTotal, 0)
+            token_estimator = 'hybrid_text_v1'
+            legacy_token_estimator = 'chars_per_4'
         }
     }
 }
@@ -784,7 +848,8 @@ function Get-GateOutputTelemetry {
         [string]$FallbackMode = 'none',
         [string]$ParserMode = 'NONE',
         [string]$ParserName = '',
-        [string]$ParserStrategy = ''
+        [string]$ParserStrategy = '',
+        [string]$TokenEstimator = 'hybrid_text_v1'
     )
 
     $rawLineArray = @(Convert-GateToStringArray -Value $RawLines)
@@ -792,15 +857,25 @@ function Get-GateOutputTelemetry {
     $rawCharCount = Get-GateTextCharCount -Lines $rawLineArray
     $filteredCharCount = Get-GateTextCharCount -Lines $filteredLineArray
     $estimatedSavedChars = [Math]::Max(0, $rawCharCount - $filteredCharCount)
-    $estimatedSavedTokens = if ($estimatedSavedChars -le 0) { 0 } else { [int][Math]::Ceiling($estimatedSavedChars / 4.0) }
+    $rawTokenCountEstimate = Estimate-GateTokenCount -Lines $rawLineArray -Estimator $TokenEstimator
+    $filteredTokenCountEstimate = Estimate-GateTokenCount -Lines $filteredLineArray -Estimator $TokenEstimator
+    $estimatedSavedTokens = [Math]::Max($rawTokenCountEstimate - $filteredTokenCountEstimate, 0)
+    $legacyRawTokenCountEstimate = Estimate-GateTokenCount -Lines $rawLineArray -Estimator 'chars_per_4'
+    $legacyFilteredTokenCountEstimate = Estimate-GateTokenCount -Lines $filteredLineArray -Estimator 'chars_per_4'
+    $legacyEstimatedSavedTokens = [Math]::Max($legacyRawTokenCountEstimate - $legacyFilteredTokenCountEstimate, 0)
 
     return [ordered]@{
         raw_line_count = [int]$rawLineArray.Count
         raw_char_count = [int]$rawCharCount
+        raw_token_count_estimate = [int]$rawTokenCountEstimate
         filtered_line_count = [int]$filteredLineArray.Count
         filtered_char_count = [int]$filteredCharCount
+        filtered_token_count_estimate = [int]$filteredTokenCountEstimate
         estimated_saved_chars = [int]$estimatedSavedChars
         estimated_saved_tokens = [int]$estimatedSavedTokens
+        estimated_saved_tokens_chars_per_4 = [int]$legacyEstimatedSavedTokens
+        token_estimator = $TokenEstimator
+        legacy_token_estimator = 'chars_per_4'
         filter_mode = $(if ([string]::IsNullOrWhiteSpace($FilterMode)) { 'passthrough' } else { $FilterMode })
         fallback_mode = $(if ([string]::IsNullOrWhiteSpace($FallbackMode)) { 'none' } else { $FallbackMode })
         parser_mode = $(if ([string]::IsNullOrWhiteSpace($ParserMode)) { 'NONE' } else { $ParserMode.Trim().ToUpperInvariant() })
@@ -2159,6 +2234,7 @@ Export-ModuleMember -Function @(
     'Test-GateMatchAnyRegex',
     'Get-GateStringSha256',
     'Get-GateCompactReviewBudget',
+    'Estimate-GateTokenCount',
     'Invoke-GateMarkdownCompaction',
     'New-GateRuleContextArtifact',
     'Test-GateReviewArtifactCompaction',

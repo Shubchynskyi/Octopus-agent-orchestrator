@@ -22,6 +22,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
    - `depth=1`: read `00-core.md`, `80-task-workflow.md`, and directly touched module context only.
    - `depth=2`: read `00/10/20/40/50/60/80/90` plus touched module context.
    - `depth=3`: read `depth=2` set plus `30/35/70` and perform cross-module edge-case checks.
+   - when token economy is active and the task stays safely at `depth=1`, prefer the short-form guidance in `Octopus-agent-orchestrator/live/skills/orchestration-depth1/SKILL.md` instead of loading the full orchestration skill.
 5. Record selected depth and any escalation in `TASK.md` notes.
 
 ## Stack-Specific Rules

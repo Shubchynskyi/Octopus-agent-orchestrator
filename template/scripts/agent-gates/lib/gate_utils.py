@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -9,6 +10,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
+
+
+DEFAULT_TOKEN_ESTIMATOR = "hybrid_text_v1"
+LEGACY_TOKEN_ESTIMATOR = "chars_per_4"
+TOKENISH_UNIT_PATTERN = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?|[0-9]+|[^\w\s]", re.UNICODE)
 
 
 def normalize_path(
@@ -510,6 +516,43 @@ def count_text_chars(lines: Any) -> int:
     return sum(len(line) for line in normalized_lines) + max(len(normalized_lines) - 1, 0)
 
 
+def estimate_token_count_from_chars(char_count: int, *, estimator: str = LEGACY_TOKEN_ESTIMATOR) -> int:
+    if char_count <= 0:
+        return 0
+
+    if estimator == "chars_per_3_5":
+        return math.ceil(char_count / 3.5)
+    if estimator == "chars_per_4_5":
+        return math.ceil(char_count / 4.5)
+    return math.ceil(char_count / 4.0)
+
+
+def estimate_token_count(lines: Any, *, estimator: str = DEFAULT_TOKEN_ESTIMATOR) -> int:
+    """
+    Estimate token count for structured gate text.
+
+    `chars_per_4` remains available as the legacy baseline, but the default
+    `hybrid_text_v1` supplements it with a token-ish unit count so code/log
+    heavy text does not look artificially cheap.
+    """
+    normalized_lines = to_string_array(lines)
+    char_count = count_text_chars(normalized_lines)
+    if char_count <= 0:
+        return 0
+
+    if estimator in {"chars_per_4", "chars_per_3_5", "chars_per_4_5"}:
+        return estimate_token_count_from_chars(char_count, estimator=estimator)
+
+    text = "\n".join(normalized_lines)
+    base_estimate = estimate_token_count_from_chars(char_count, estimator=LEGACY_TOKEN_ESTIMATOR)
+    tokenish_unit_count = len(TOKENISH_UNIT_PATTERN.findall(text))
+    if tokenish_unit_count <= 0:
+        return base_estimate
+
+    hybrid_estimate = math.ceil((base_estimate + tokenish_unit_count) / 2.0)
+    return max(base_estimate, hybrid_estimate)
+
+
 def build_output_telemetry(
     raw_lines: Any,
     filtered_lines: Any,
@@ -519,21 +562,32 @@ def build_output_telemetry(
     parser_mode: str = "NONE",
     parser_name: str = "",
     parser_strategy: str = "",
+    token_estimator: str = DEFAULT_TOKEN_ESTIMATOR,
 ) -> dict:
     raw_line_list = to_string_array(raw_lines)
     filtered_line_list = to_string_array(filtered_lines)
     raw_char_count = count_text_chars(raw_line_list)
     filtered_char_count = count_text_chars(filtered_line_list)
     estimated_saved_chars = max(raw_char_count - filtered_char_count, 0)
-    estimated_saved_tokens = 0 if estimated_saved_chars <= 0 else (estimated_saved_chars + 3) // 4
+    raw_token_count_estimate = estimate_token_count(raw_line_list, estimator=token_estimator)
+    filtered_token_count_estimate = estimate_token_count(filtered_line_list, estimator=token_estimator)
+    estimated_saved_tokens = max(raw_token_count_estimate - filtered_token_count_estimate, 0)
+    legacy_raw_token_count_estimate = estimate_token_count(raw_line_list, estimator=LEGACY_TOKEN_ESTIMATOR)
+    legacy_filtered_token_count_estimate = estimate_token_count(filtered_line_list, estimator=LEGACY_TOKEN_ESTIMATOR)
+    legacy_estimated_saved_tokens = max(legacy_raw_token_count_estimate - legacy_filtered_token_count_estimate, 0)
 
     return {
         "raw_line_count": len(raw_line_list),
         "raw_char_count": raw_char_count,
+        "raw_token_count_estimate": raw_token_count_estimate,
         "filtered_line_count": len(filtered_line_list),
         "filtered_char_count": filtered_char_count,
+        "filtered_token_count_estimate": filtered_token_count_estimate,
         "estimated_saved_chars": estimated_saved_chars,
         "estimated_saved_tokens": estimated_saved_tokens,
+        "estimated_saved_tokens_chars_per_4": legacy_estimated_saved_tokens,
+        "token_estimator": token_estimator,
+        "legacy_token_estimator": LEGACY_TOKEN_ESTIMATOR,
         "filter_mode": filter_mode.strip() if str(filter_mode).strip() else "passthrough",
         "fallback_mode": str(fallback_mode).strip() if str(fallback_mode).strip() else "none",
         "parser_mode": str(parser_mode).strip().upper() if str(parser_mode).strip() else "NONE",
@@ -734,6 +788,10 @@ def build_rule_context_artifact(
     output_line_total = 0
     original_char_total = 0
     output_char_total = 0
+    original_token_total = 0
+    output_token_total = 0
+    legacy_original_token_total = 0
+    legacy_output_token_total = 0
 
     for selected_rule_path in selected_rule_paths:
         resolved_rule_path = resolve_path_inside_repo(selected_rule_path, repo_root)
@@ -762,6 +820,10 @@ def build_rule_context_artifact(
         output_line_total += compacted["output_line_count"]
         original_char_total += compacted["original_char_count"]
         output_char_total += compacted["output_char_count"]
+        original_token_total += estimate_token_count(raw_content, estimator=DEFAULT_TOKEN_ESTIMATOR)
+        output_token_total += estimate_token_count(compacted["content"], estimator=DEFAULT_TOKEN_ESTIMATOR)
+        legacy_original_token_total += estimate_token_count(raw_content, estimator=LEGACY_TOKEN_ESTIMATOR)
+        legacy_output_token_total += estimate_token_count(compacted["content"], estimator=LEGACY_TOKEN_ESTIMATOR)
 
         file_entries.append(
             {
@@ -793,8 +855,13 @@ def build_rule_context_artifact(
             "output_line_count": output_line_total,
             "original_char_count": original_char_total,
             "output_char_count": output_char_total,
+            "original_token_count_estimate": original_token_total,
+            "output_token_count_estimate": output_token_total,
             "estimated_saved_chars": max(original_char_total - output_char_total, 0),
-            "estimated_saved_tokens": max((original_char_total - output_char_total) // 4, 0),
+            "estimated_saved_tokens": max(original_token_total - output_token_total, 0),
+            "estimated_saved_tokens_chars_per_4": max(legacy_original_token_total - legacy_output_token_total, 0),
+            "token_estimator": DEFAULT_TOKEN_ESTIMATOR,
+            "legacy_token_estimator": LEGACY_TOKEN_ESTIMATOR,
         },
     }
 
