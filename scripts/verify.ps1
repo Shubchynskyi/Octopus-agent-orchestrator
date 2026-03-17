@@ -177,7 +177,7 @@ $artifactAssistantBrevity = $null
 $artifactSourceOfTruth = $null
 $artifactEnforceNoAutoCommit = $false
 $artifactClaudeOrchestratorFullAccess = $false
-$artifactTokenEconomyEnabled = $false
+$artifactTokenEconomyEnabled = $true
 
 if ($null -eq $initAnswersCandidatePath) {
     # Path resolution violation already captured above.
@@ -259,7 +259,7 @@ if ($null -eq $initAnswersCandidatePath) {
 
                 $artifactTokenEconomyEnabledRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'TokenEconomyEnabled'
                 try {
-                    $artifactTokenEconomyEnabled = Convert-ToBooleanAnswer -Value $artifactTokenEconomyEnabledRaw -FieldName 'TokenEconomyEnabled' -DefaultValue $false
+                    $artifactTokenEconomyEnabled = Convert-ToBooleanAnswer -Value $artifactTokenEconomyEnabledRaw -FieldName 'TokenEconomyEnabled' -DefaultValue $true
                 }
                 catch {
                     $initAnswersContractViolations += $_.Exception.Message
@@ -1307,7 +1307,7 @@ if (Test-Path -LiteralPath $liveVersionPath -PathType Leaf) {
 
         $liveTokenEconomyEnabledRaw = Get-ObjectPropertyString -Object $liveVersionObject -PropertyName 'TokenEconomyEnabled'
         try {
-            $liveTokenEconomyEnabled = Convert-ToBooleanAnswer -Value $liveTokenEconomyEnabledRaw -FieldName 'TokenEconomyEnabled' -DefaultValue $false
+            $liveTokenEconomyEnabled = Convert-ToBooleanAnswer -Value $liveTokenEconomyEnabledRaw -FieldName 'TokenEconomyEnabled' -DefaultValue $true
             if ($liveTokenEconomyEnabled -ne $artifactTokenEconomyEnabled) {
                 $versionContractViolations += "$liveVersionRelativePath TokenEconomyEnabled '$liveTokenEconomyEnabled' must match init answers value '$artifactTokenEconomyEnabled'."
             }

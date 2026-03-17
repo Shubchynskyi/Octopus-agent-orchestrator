@@ -97,7 +97,7 @@ Notes:
 ## Token Economy
 - Reviewer-context token economy is controlled via `Octopus-agent-orchestrator/live/config/token-economy.json`.
 - Shared gate output filter profiles live in `Octopus-agent-orchestrator/live/config/output-filters.json` and stay active regardless of the reviewer-context token-economy toggle.
-- Conservative default: keep `token-economy.enabled=false` with `enabled_depths=[1,2]` unless the project explicitly wants compact reviewer context.
+- Default: keep `token-economy.enabled=true` with `enabled_depths=[1,2]`; at these depths reviewer context is compacted and token-economy savings are reported in the implementation summary.
 - When reviewer-context token economy is enabled, use `depth=1` only for small, well-localized tasks; prefer `depth=2` or `depth=3` when review correctness depends on broader context.
 - `depth=3` keeps full reviewer rule packs by default; only shared gate output filtering and fail-tail compaction remain active.
 - Gate metrics now record raw-vs-filtered payload size, parser mode, parser strategy, and estimated saved tokens for compile/review gates.

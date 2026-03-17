@@ -239,8 +239,8 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-
         IntroLine = '- Added by migration to satisfy token-savings summary formatting contract during upgrade.'
         Entries = @(
             @{
-                Match = 'If the implementation summary mentions token-economy savings, include approximate percentage when baseline is known and keep spaced breakdown formatting: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`'
-                Insert = 'If the implementation summary mentions token-economy savings, include approximate percentage when baseline is known and keep spaced breakdown formatting: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`'
+                Match = 'At `depth=1` and `depth=2`, the implementation summary must include a token-economy savings line; at `depth=3` it is optional. Include approximate percentage when baseline is known and keep spaced breakdown formatting: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`'
+                Insert = 'At `depth=1` and `depth=2`, the implementation summary must include a token-economy savings line; at `depth=3` it is optional. Include approximate percentage when baseline is known and keep spaced breakdown formatting: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`'
                 InsertMode = 'line'
             }
         )

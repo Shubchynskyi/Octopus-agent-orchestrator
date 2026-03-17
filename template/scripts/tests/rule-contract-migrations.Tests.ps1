@@ -24,7 +24,7 @@ Describe 'rule-contract-migrations.ps1' {
         $result = Invoke-RuleContractMigrationsForContent `
             -Content $legacyContent `
             -RelativePath 'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md'
-        $tokenSavingsLine = [regex]::Escape('If the implementation summary mentions token-economy savings, include approximate percentage when baseline is known and keep spaced breakdown formatting: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`')
+        $tokenSavingsLine = [regex]::Escape('At `depth=1` and `depth=2`, the implementation summary must include a token-economy savings line; at `depth=3` it is optional. Include approximate percentage when baseline is known and keep spaced breakdown formatting: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`')
         $commitPromptLine = [regex]::Escape('Do you want me to commit now? (yes/no)')
 
         $result.AppliedCount | Should -BeGreaterThan 0

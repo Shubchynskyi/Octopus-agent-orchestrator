@@ -59,7 +59,7 @@ BeforeAll {
             [string]$SourceOfTruth,
             [bool]$EnforceNoAutoCommit = $false,
             [bool]$ClaudeOrchestratorFullAccess = $false,
-            [bool]$TokenEconomyEnabled = $false
+            [bool]$TokenEconomyEnabled = $true
         )
 
         $parent = Split-Path -Parent $Path

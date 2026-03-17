@@ -40,7 +40,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Config source: `Octopus-agent-orchestrator/live/config/token-economy.json`.
 - Activate reviewer-context compaction only when `enabled=true` and effective depth is in `enabled_depths`.
 - Shared gate output filters from `Octopus-agent-orchestrator/live/config/output-filters.json` stay active regardless of reviewer-context token-economy state.
-- Conservative default: keep `enabled=false` with `enabled_depths=[1,2]` unless the project explicitly wants compact reviewer context.
+- Default: keep `enabled=true` with `enabled_depths=[1,2]`; at these depths reviewer context is compacted and token-economy savings are reported in the implementation summary.
 - Recommendation when reviewer-context token economy is enabled: use `enabled=true` with `depth=1` only for small, well-localized tasks; prefer `depth=2` or `depth=3` when correctness depends on broader context.
 - Short-form `depth=1` guidance is available at `Octopus-agent-orchestrator/live/skills/orchestration-depth1/SKILL.md`. If your client supports targeted skill loading, prefer that short form over the full orchestration skill when effective depth stays at `1` and no escalation trigger fires.
 - Depth-aware reviewer context loading when active:
@@ -151,7 +151,8 @@ Rule files provide policy context, but lifecycle steps and gate order are define
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
 18. Report to user in exact order:
     1. implementation summary (include depth, path mode, review verdicts, docs updated)
-       - if token-economy savings are mentioned, report them as `Saved tokens: ~<total> (~<percent>%) (<part> <label> + <part> <label> + ...)` when the baseline is known;
+       - at `depth=1` and `depth=2`, include a token-economy savings line; at `depth=3` it is optional;
+       - format savings as `Saved tokens: ~<total> (~<percent>%) (<part> <label> + <part> <label> + ...)` when the baseline is known;
        - keep spaces between numeric values and labels and around `+`; do not emit compressed fragments like `824code review context` or `+25DB review context`;
        - localized summaries may translate the wording, but must preserve the numeric structure; example: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`
     2. commit suggestion as exact command form: `git commit -m "<message>"`

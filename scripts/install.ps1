@@ -216,7 +216,7 @@ if ([string]::IsNullOrWhiteSpace($artifactClaudeOrchestratorFullAccessRaw)) {
 $enableClaudeOrchestratorFullAccess = Convert-ToBooleanAnswer -Value $artifactClaudeOrchestratorFullAccessRaw -FieldName 'ClaudeOrchestratorFullAccess' -DefaultValue $false
 
 $artifactTokenEconomyEnabledRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'TokenEconomyEnabled'
-$tokenEconomyEnabled = Convert-ToBooleanAnswer -Value $artifactTokenEconomyEnabledRaw -FieldName 'TokenEconomyEnabled' -DefaultValue $false
+$tokenEconomyEnabled = Convert-ToBooleanAnswer -Value $artifactTokenEconomyEnabledRaw -FieldName 'TokenEconomyEnabled' -DefaultValue $true
 
 $artifactCollectedVia = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'CollectedVia'
 if ([string]::IsNullOrWhiteSpace($artifactCollectedVia)) {

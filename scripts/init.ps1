@@ -6,7 +6,7 @@ param(
     [ValidateSet('Claude', 'Codex', 'Gemini', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')]
     [string]$SourceOfTruth = 'Claude',
     [bool]$EnforceNoAutoCommit = $false,
-    [bool]$TokenEconomyEnabled = $false
+    [bool]$TokenEconomyEnabled = $true
 )
 
 $ErrorActionPreference = 'Stop'
