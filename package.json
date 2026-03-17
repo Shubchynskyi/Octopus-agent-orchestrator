@@ -1,0 +1,38 @@
+{
+  "name": "octopus-agent-orchestrator",
+  "version": "1.0.8",
+  "description": "Bootstrap package for deploying the Octopus Agent Orchestrator bundle into a workspace.",
+  "license": "MIT",
+  "bin": {
+    "octopus": "bin/octopus.js",
+    "oao": "bin/octopus.js",
+    "octopus-agent-orchestrator": "bin/octopus.js"
+  },
+  "files": [
+    ".gitattributes",
+    "bin",
+    "scripts",
+    "template",
+    "AGENT_INIT_PROMPT.md",
+    "CHANGELOG.md",
+    "HOW_TO.md",
+    "LICENSE",
+    "MANIFEST.md",
+    "README.md",
+    "VERSION",
+    "!**/__pycache__",
+    "!**/.pytest_cache",
+    "!**/*.pyc",
+    "!**/*.pyo",
+    "!**/*.pyd"
+  ],
+  "engines": {
+    "node": ">=16.14.0"
+  },
+  "keywords": [
+    "agents",
+    "bootstrap",
+    "copilot",
+    "orchestrator"
+  ]
+}

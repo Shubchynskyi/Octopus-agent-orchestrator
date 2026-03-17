@@ -2,8 +2,31 @@
 
 This guide is for project owners who want to bootstrap the orchestrator with one agent prompt.
 
-## 1. Copy Bundle
-Copy the full `Octopus-agent-orchestrator/` directory into your target project root.
+## 1. Deploy Bundle
+Recommended when the package CLI is installed from an npm tarball or registry:
+
+```powershell
+octopus
+```
+
+Equivalent aliases:
+- `oao`
+- `octopus-agent-orchestrator`
+
+Behavior:
+- deploys `./Octopus-agent-orchestrator` by default;
+- prints `InitPromptPath` and `InitAnswersPath` for the next setup step;
+- does **not** run install automatically;
+- does **not** ask the human user init questions.
+
+For branch testing:
+
+```powershell
+octopus bootstrap --repo-url "<git-url>" --branch "<branch>"
+```
+
+Alternative for source-bundle/manual setups:
+- copy the full `Octopus-agent-orchestrator/` directory into your target project root.
 
 ## Runtime Model
 - Top-level control-plane scripts in `Octopus-agent-orchestrator/scripts/*.ps1` are canonical for install/init/reinit/uninstall/verify/update/check-update.
@@ -32,6 +55,32 @@ After verification, before asking `Do you want to add additional specialist skil
 - available skills that can be enabled/created now (`api-review`, `test-review`, `performance-review`, `infra-review`, `dependency-review`, or custom via skill-builder);
 - recommended specialist set for this specific project.
 Then the agent asks the yes/no question and proceeds with skill creation only on approval.
+
+### Finish Install Through npm CLI
+After the agent has written `Octopus-agent-orchestrator/runtime/init-answers.json`, the preferred lifecycle wrapper is:
+
+```powershell
+octopus install --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+Behavior:
+- reuses the already prepared answers artifact instead of asking the human user setup questions again;
+- deploys or refreshes the canonical `Octopus-agent-orchestrator/` bundle under the selected `--target-root`;
+- delegates to the existing `scripts/install.ps1` implementation;
+- keeps the agent responsible for setup correctness because `AGENT_INIT_PROMPT.md` still owns answer collection.
+
+If you are testing directly from this source tree instead of an installed package, use:
+
+```powershell
+node .\bin\octopus.js install --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+### Re-Materialize `live/` From Existing Answers
+Use this when the bundle already exists and you only need to rebuild `live/` from the existing answers artifact:
+
+```powershell
+octopus init --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
 
 ## 3. Expected Result
 After successful setup:
@@ -116,6 +165,10 @@ Completion gate validates compile/review/doc-impact evidence, review-loop timeli
 Use reinit when you need to change already collected init answers without re-running the full installer.
 
 ```powershell
+octopus reinit --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+```powershell
 pwsh -File Octopus-agent-orchestrator/scripts/reinit.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
@@ -132,6 +185,10 @@ Behavior:
 
 ## 7. Update Existing Deployment
 Preferred flow (check + optional apply from git):
+
+```powershell
+octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
 
 ```powershell
 pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
@@ -166,6 +223,15 @@ By default, `check-update.ps1` uses:
 `https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git`
 
 To use your fork or mirror, provide repository URL:
+
+```powershell
+octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --repo-url "<git-url>" --branch "<branch>" --apply
+```
+
+The npm CLI `update` command delegates to `check-update.ps1`, so `--repo-url`, `--branch`, `--apply`, `--no-prompt`, `--dry-run`, `--skip-verify`, and `--skip-manifest-validation` map through to the existing PowerShell workflow.
+
+Direct script form:
+
 ```powershell
 pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -RepoUrl "<git-url>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
@@ -203,6 +269,10 @@ Use uninstall when you want to remove the deployed orchestrator while choosing w
 Interactive:
 
 ```powershell
+octopus uninstall --target-root "."
+```
+
+```powershell
 pwsh -File Octopus-agent-orchestrator/scripts/uninstall.ps1
 ```
 
@@ -211,6 +281,10 @@ bash Octopus-agent-orchestrator/scripts/uninstall.sh
 ```
 
 Non-interactive:
+
+```powershell
+octopus uninstall --target-root "." --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts yes
+```
 
 ```powershell
 pwsh -File Octopus-agent-orchestrator/scripts/uninstall.ps1 -NoPrompt -KeepPrimaryEntrypoint no -KeepTaskFile no -KeepRuntimeArtifacts yes

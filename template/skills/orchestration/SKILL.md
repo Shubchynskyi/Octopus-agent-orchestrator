@@ -146,11 +146,14 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - Internal orchestration artifacts (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) may remain gitignored in deployed workspaces; update them on disk but do not `git add -f` them unless the user explicitly asks to version orchestrator internals.
 16. Record artifacts and evidence in `TASK.md`.
 17. Set final status:
-   - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed.
-   - `BLOCKED` when any mandatory gate failed or cannot run.
-   - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
+    - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed.
+    - `BLOCKED` when any mandatory gate failed or cannot run.
+    - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
 18. Report to user in exact order:
     1. implementation summary (include depth, path mode, review verdicts, docs updated)
+       - if token-economy savings are mentioned, report them as `Saved tokens: ~<total> (~<percent>%) (<part> <label> + <part> <label> + ...)` when the baseline is known;
+       - keep spaces between numeric values and labels and around `+`; do not emit compressed fragments like `824code review context` or `+25DB review context`;
+       - localized summaries may translate the wording, but must preserve the numeric structure; example: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`
     2. commit suggestion as exact command form: `git commit -m "<message>"`
     3. explicit follow-up question: `Do you want me to commit now? (yes/no)`
 19. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.

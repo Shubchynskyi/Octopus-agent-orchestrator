@@ -54,3 +54,4 @@ Escalate back to the full orchestration skill immediately if:
 - Re-run preflight after meaningful scope changes.
 - Do not mark a task `DONE` while any PASS review artifact still has active findings, residual risks, or deferred items without `Justification:`.
 - Prefer concise evidence and scoped artifacts over pasting large raw outputs.
+- If reporting token-economy savings in the final summary, keep the same spaced `~N (~P%)` structure as the full orchestration contract, including readable ` + ` separators between breakdown segments.

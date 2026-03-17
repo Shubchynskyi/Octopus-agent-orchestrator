@@ -70,6 +70,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Documentation impact updates are required when behavior/contracts/ops docs changed.
 - Required changelog or evidence updates to ignored orchestrator paths must stay local on disk; do not use `git add -f` unless the user explicitly requests versioning orchestrator internals.
 - Final user report order is mandatory: implementation summary -> `git commit -m "<message>"` suggestion -> `Do you want me to commit now? (yes/no)`.
+- If the implementation summary mentions token-economy savings, include approximate percentage when baseline is known and keep spaced breakdown formatting: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`
 - Reviewer and specialist agents must be closed after verdict capture.
 - HARD STOP: do not force-stage ignored orchestration control-plane files just because gates, changelog, or reviews reference them.
 - HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order.

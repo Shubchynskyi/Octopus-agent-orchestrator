@@ -230,6 +230,22 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-
         )
     },
     @{
+        Id = 'task-workflow-token-savings-summary-snippets'
+        FilePattern = '(^|/)80-task-workflow\.md$'
+        TargetRelativePaths = @(
+            'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md'
+        )
+        SectionTitle = '## Contract Compatibility Snippets (Auto-added by init/update)'
+        IntroLine = '- Added by migration to satisfy token-savings summary formatting contract during upgrade.'
+        Entries = @(
+            @{
+                Match = 'If the implementation summary mentions token-economy savings, include approximate percentage when baseline is known and keep spaced breakdown formatting: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`'
+                Insert = 'If the implementation summary mentions token-economy savings, include approximate percentage when baseline is known and keep spaced breakdown formatting: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`'
+                InsertMode = 'line'
+            }
+        )
+    },
+    @{
         Id = 'core-finalization-reminder-snippets'
         FilePattern = '(^|/)00-core\.md$'
         TargetRelativePaths = @(

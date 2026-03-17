@@ -7,9 +7,12 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 ## Quick Start
 - User guide: `HOW_TO.md`
 - Agent setup prompt: `AGENT_INIT_PROMPT.md`
+- Package CLI aliases (when installed from an npm tarball or registry): `octopus`, `oao`, `octopus-agent-orchestrator`
+- Package bootstrap command: `octopus`
 - Full changelog: `CHANGELOG.md`
 
 ## Version
+- Package name: `octopus-agent-orchestrator`
 - Current bundle version: `1.0.8` (source: `VERSION`)
 - Update command: `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1`
 - Optional shell wrapper: `bash Octopus-agent-orchestrator/scripts/check-update.sh` (still requires `pwsh`; wrapper only)
@@ -18,10 +21,54 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 - Last documentation update: `2026-03-17`
 
 ## Runtime Model
+- `bin/octopus.js` is the npm-distributed bootstrap/lifecycle router; it wraps the same canonical PowerShell control-plane scripts described below.
 - Top-level bundle maintenance scripts under `Octopus-agent-orchestrator/scripts/*.ps1` are the canonical control-plane implementations for install/init/reinit/uninstall/verify/update/check-update.
 - Sibling top-level `Octopus-agent-orchestrator/scripts/*.sh` files are thin compatibility wrappers that call the corresponding `.ps1` script through `pwsh`; they are not standalone Bash implementations.
 - Task-execution gate scripts under `Octopus-agent-orchestrator/live/scripts/agent-gates/*.ps1` and `*.sh` are real dual-runtime implementations.
 - Shell gate scripts require `bash` plus a Python runtime in PATH (`python3`, `python`, or `py -3`).
+
+## npm CLI Workflow (Agent-Driven)
+When this bundle is installed as an npm package (for example from an internal registry or an `npm pack` tarball), it exposes three equivalent executables:
+- `octopus`
+- `oao`
+- `octopus-agent-orchestrator`
+
+Recommended lifecycle:
+1. Bootstrap only:
+
+```powershell
+octopus
+```
+
+2. Give the setup agent `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md`.
+3. The agent asks the 6 mandatory setup questions and writes `Octopus-agent-orchestrator/runtime/init-answers.json`.
+4. The agent then runs lifecycle commands against the project root:
+
+```powershell
+octopus install --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+octopus init --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+octopus reinit --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --apply
+octopus uninstall --target-root "." --no-prompt --keep-primary-entrypoint yes --keep-task-file yes --keep-runtime-artifacts yes
+```
+
+Branch testing uses the same wrapper:
+
+```powershell
+octopus bootstrap --repo-url "<git-url>" --branch "<branch>"
+octopus install --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --repo-url "<git-url>" --branch "<branch>"
+octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --repo-url "<git-url>" --branch "<branch>" --apply
+```
+
+Notes:
+- `bootstrap` is the default when no command is provided.
+- The npm CLI never interviews the human user; the setup agent still owns `AGENT_INIT_PROMPT.md` and `runtime/init-answers.json`.
+- `install` refreshes or deploys the canonical `Octopus-agent-orchestrator/` bundle before delegating to `scripts/install.ps1`.
+- `init` rematerializes `live/` from an existing deployed bundle plus existing init answers; it does not replace bootstrap.
+- `update` delegates to `scripts/check-update.ps1`; `--apply`, `--no-prompt`, `--dry-run`, and repo/branch overrides pass through to the underlying script.
+- `uninstall` delegates to `scripts/uninstall.ps1`.
+- Custom bootstrap destinations are supported for raw bundle deployment, but npm lifecycle wrappers expect the canonical `TargetRoot\Octopus-agent-orchestrator` layout.
+- If you are testing from this source tree instead of an installed package, use `node .\bin\octopus.js <command>` to exercise the same router.
 
 ## Recent Changes (Short)
 - Added update workflow with version check and optional auto-apply from git (`scripts/check-update.ps1`, `scripts/update.ps1`).
@@ -99,7 +146,9 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 - `Octopus-agent-orchestrator/live/version.json`
 
 ## Single-Agent Flow (Recommended)
-1. Copy `Octopus-agent-orchestrator/` into target project root.
+1. Deploy `Octopus-agent-orchestrator/` into target project root:
+   - copy the bundle manually; or
+   - bootstrap it through the installed npm CLI with `octopus` / `oao`.
 2. Give the setup agent this file:
    - `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md`
 3. Agent asks the user for:
@@ -110,7 +159,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
    - whether to grant Claude full access to orchestrator files/commands (`yes` or `no`) so gate scripts and task-event logs run without extra permission prompts.
    - whether reviewer-context token economy should be enabled by default (`yes` or `no`); shared gate output filtering remains active either way.
 4. Agent must hard-stop setup unless all 6 answers are collected, then writes `Octopus-agent-orchestrator/runtime/init-answers.json`.
-5. Agent executes install and init with `-InitAnswersPath`, then reads `live/project-discovery.md`.
+5. Agent executes install and init with the same `-InitAnswersPath` (prefer `octopus install --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"` when package aliases are available), then reads `live/project-discovery.md`.
 6. Agent updates context rules (`10/20/30/40/60`) and `live/config/paths.json` to match the real repository.
 7. Agent runs verify and manifest validation with the same `-InitAnswersPath`.
 8. Agent returns `Usage Instructions` in the selected assistant language.
@@ -290,6 +339,8 @@ add CSV export endpoint with async email delivery hooks
 
 ## Important
 - Run initialization only through `AGENT_INIT_PROMPT.md`; do not run `scripts/install.ps1` directly.
+- npm CLI bootstrap/lifecycle commands are wrappers around the same canonical PowerShell scripts; they do not replace the agent-owned init questionnaire.
+- `octopus install` and `octopus init` require agent-produced `Octopus-agent-orchestrator/runtime/init-answers.json`; they never ask the human user setup questions directly.
 - To change previously collected init answers without reinstalling, use `scripts/reinit.ps1`.
 - `scripts/install.ps1` and `scripts/verify.ps1` require `Octopus-agent-orchestrator/runtime/init-answers.json` with collected init answers.
 - Top-level `scripts/*.ps1` are canonical; top-level `scripts/*.sh` are `pwsh` wrappers for the same control-plane entrypoints.

@@ -155,7 +155,10 @@ function Get-UpdateRollbackItems {
         '.antigravity/agents',
         '.gitignore',
         '.git/hooks/pre-commit',
+        'Octopus-agent-orchestrator/.gitattributes',
+        'Octopus-agent-orchestrator/bin',
         'Octopus-agent-orchestrator/live',
+        'Octopus-agent-orchestrator/package.json',
         'Octopus-agent-orchestrator/template',
         'Octopus-agent-orchestrator/scripts',
         'Octopus-agent-orchestrator/README.md',
@@ -434,6 +437,9 @@ $verifyScriptPath = Join-Path $scriptDir 'verify.ps1'
 $manifestScriptPath = Join-Path $bundleRoot 'live/scripts/agent-gates/validate-manifest.ps1'
 $manifestPath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/MANIFEST.md'
 $bundleSyncItems = @(
+    '.gitattributes',
+    'bin',
+    'package.json',
     'template',
     'scripts',
     'README.md',

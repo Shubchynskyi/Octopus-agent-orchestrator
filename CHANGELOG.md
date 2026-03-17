@@ -4,6 +4,17 @@ All notable changes to this bundle are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Added npm package metadata plus `octopus`, `oao`, and `octopus-agent-orchestrator` bin aliases through root `package.json` and `bin/octopus.js`.
+
+### Changed
+- The npm bootstrap CLI now deploys a clean bundle copy into `./Octopus-agent-orchestrator` (or an explicit destination path) and prints the next-step installer commands instead of auto-running install.
+- The npm CLI now exposes lifecycle commands `install`, `init`, `reinit`, `update`, and `uninstall`; `install`/`init` require agent-produced `init-answers.json` instead of prompting the human user, and `update` supports repo/branch overrides through the existing update flow.
+- README/HOW_TO now document the npm CLI bootstrap/lifecycle workflow, branch-testing examples, canonical-path expectations, and the rule that `AGENT_INIT_PROMPT.md` still owns init-answer collection.
+- Update/init rule migrations now backfill the percent-aware token-savings summary guidance into existing `live/docs/agent-rules/80-task-workflow.md` files, so older deployments pick up the `Saved tokens: ~<total> (~<percent>%) (...)` format during upgrade.
+- Bundle sync/update surfaces now include npm package assets so `package.json` and the bootstrap CLI stay present in deployed workspaces after refresh.
+- Orchestration reporting guidance now requires token-savings summaries to include approximate percentages when available and to keep readable spacing in breakdowns such as `824 code review context + 25 DB review context + 33 compile gate output`.
+
 ## [1.0.8] - 2026-03-17
 
 ### Changed

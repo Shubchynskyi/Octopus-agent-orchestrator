@@ -13,6 +13,13 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Docs Updated: <list of updated doc files>
 ```
 
+## 2026-03-17 - npm CLI docs and lifecycle usage sync
+- Task: T-020
+- Type: behavior-change
+- Scope: npm CLI / user docs / manifest
+- Summary: Documented the npm CLI bootstrap and lifecycle wrapper flow across `README.md` and `HOW_TO.md`, clarified that the setup agent still owns `AGENT_INIT_PROMPT.md` plus `runtime/init-answers.json`, added branch-testing examples for repo/branch overrides, and synced manifest wording for the shipped npm package metadata plus CLI router assets.
+- Docs Updated: `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/MANIFEST.md`; `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/TASK.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`
+
 ## 2026-03-17 - Reviewer checklists hardened for unused code and IDE warnings
 - Task: ad-hoc reviewer hygiene hardening
 - Type: behavior-change
@@ -34,11 +41,26 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Summary: Hardened the final review cycle so tasks cannot move to `DONE` while PASS review artifacts still contain active non-blocking findings or residual risks. The completion gate now audits final review artifacts for empty active findings sections and accepts intentional non-blocking deferrals only when they are moved to `Deferred Findings` with an explicit `Justification:` entry; workflow and task-contract docs now describe the same fix-or-defer-before-done rule.
 - Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md`; `Octopus-agent-orchestrator/template/docs/reviews/TEMPLATE.md`; `Octopus-agent-orchestrator/template/docs/tasks/TASKS.md`; `Octopus-agent-orchestrator/template/skills/orchestration/SKILL.md`; `Octopus-agent-orchestrator/template/skills/orchestration-depth1/SKILL.md`; `Octopus-agent-orchestrator/template/skills/orchestration/references/stage-gates.md`; `Octopus-agent-orchestrator/template/scripts/agent-gates/completion-gate.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/completion-gate.sh`; `Octopus-agent-orchestrator/template/scripts/agent-gates/tests/completion-gate-findings.Tests.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/tests/test_completion_gate_findings.py`
 
+## 2026-03-17 - npm CLI lifecycle command wrappers
+- Task: T-019
+- Type: feature
+- Scope: npm CLI / install lifecycle / update workflow
+- Summary: Extended `bin/octopus.js` from bootstrap-only behavior into a lifecycle router for `install`, `init`, `reinit`, `update`, and `uninstall`. The CLI now wraps the existing PowerShell scripts instead of duplicating lifecycle logic, keeps repo/branch override support in update flows, and requires agent-produced `init-answers.json` for install/init rather than prompting the human user.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/TASK.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/bin/octopus.js`; `Octopus-agent-orchestrator/template/scripts/tests/npm-cli-bootstrap.Tests.ps1`
+
+## 2026-03-17 - npm CLI docs and lifecycle usage sync
+- Task: T-020
+- Type: behavior-change
+- Scope: npm CLI / user docs / manifest
+- Summary: Documented the npm CLI bootstrap and lifecycle wrapper flow across `README.md` and `HOW_TO.md`, clarified that the setup agent still owns `AGENT_INIT_PROMPT.md` and `runtime/init-answers.json`, added branch-testing examples for repo/branch overrides, and synced manifest wording for the shipped npm package metadata plus CLI router assets.
+- Docs Updated: `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/MANIFEST.md`; `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/TASK.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`
+
 ## 2026-03-17 - Visible token-savings lines for compacted gate output
 - Task: T-016
 - Type: behavior-change
 - Scope: compile gate / review gate / token telemetry
 - Summary: Shared gate telemetry now formats compact visible `[token-economy] saved ~N tokens ...` lines from the existing `hybrid_text_v1` estimator, and compile plus review gates print that line in stdout whenever compaction materially reduces output. The formatter prefers line-based summaries, falls back to char-based summaries only for meaningful same-line reductions, and stays silent for passthrough/no-op cases to avoid reintroducing console noise.
+- Follow-up reporting contract: human-facing orchestration summaries that mention aggregated token savings must preserve readable spacing and include approximate percentages when the baseline is known, for example `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`
 - Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/template/scripts/agent-gates/lib/gate-utils.psm1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/lib/gate_utils.py`; `Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.sh`; `Octopus-agent-orchestrator/template/scripts/agent-gates/required-reviews-check.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/required-reviews-check.sh`; `Octopus-agent-orchestrator/template/scripts/agent-gates/tests/token-telemetry.Tests.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/tests/test_token_telemetry.py`
 
 ## 2026-03-17 - Uninstall workflow for deployed orchestrators

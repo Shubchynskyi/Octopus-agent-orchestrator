@@ -296,6 +296,9 @@ try {
 
     if ($updateAvailable -and $applyNow) {
         $syncItems = @(
+            '.gitattributes',
+            'bin',
+            'package.json',
             'template',
             'scripts',
             'README.md',
