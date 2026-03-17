@@ -67,6 +67,8 @@ Kept inside bundle:
 - scripts/install.sh
 - scripts/init.ps1
 - scripts/init.sh
+- scripts/reinit.ps1
+- scripts/reinit.sh
 - scripts/verify.ps1
 - scripts/verify.sh
 - scripts/update.ps1

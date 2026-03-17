@@ -4,6 +4,8 @@ param(
     [bool]$PreserveExisting = $true,
     [bool]$AlignExisting = $true,
     [bool]$RunInit = $true,
+    [switch]$AnswerDependentOnly,
+    [switch]$SkipBackups,
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [string]$AssistantLanguage,
@@ -1066,6 +1068,10 @@ function Backup-DestinationFile {
         [string]$RelativePath
     )
 
+    if ($SkipBackups) {
+        return
+    }
+
     if (-not (Test-Path $DestinationPath)) {
         return
     }
@@ -1183,61 +1189,87 @@ foreach ($relativeDirectory in $directoryPrefixes) {
 
 $files = $files | Sort-Object FullName -Unique
 
-foreach ($file in $files) {
-    $relative = $file.FullName.Substring($sourceRoot.Length).TrimStart('\','/')
-    $relativeNormalized = $relative.Replace('\', '/')
-    $destination = Join-Path $TargetRoot $relative
-    $destinationDir = Split-Path -Parent $destination
+if (-not $AnswerDependentOnly) {
+    foreach ($file in $files) {
+        $relative = $file.FullName.Substring($sourceRoot.Length).TrimStart('\','/')
+        $relativeNormalized = $relative.Replace('\', '/')
+        $destination = Join-Path $TargetRoot $relative
+        $destinationDir = Split-Path -Parent $destination
 
-    if (-not (Test-Path $destinationDir)) {
-        if (-not $DryRun) {
-            New-Item -ItemType Directory -Path $destinationDir -Force | Out-Null
-        }
-    }
-
-    $isForceOverwrite = $forceOverwriteFiles -contains $relativeNormalized
-
-    if (Test-Path $destination) {
-        if ($isForceOverwrite) {
-            Backup-DestinationFile -DestinationPath $destination -RelativePath $relative
-            Copy-TemplateFileToDestination -SourcePath $file.FullName -RelativePath $relativeNormalized -DestinationPath $destination
-            $deployed++
-            $forcedOverwrites++
-            continue
+        if (-not (Test-Path $destinationDir)) {
+            if (-not $DryRun) {
+                New-Item -ItemType Directory -Path $destinationDir -Force | Out-Null
+            }
         }
 
-        if ($PreserveExisting) {
-            $skippedExisting++
+        $isForceOverwrite = $forceOverwriteFiles -contains $relativeNormalized
 
-            if ($relativeNormalized -eq 'TASK.md') {
-                $taskManagedBlock = Build-TaskManagedBlockWithExistingQueue -SourcePath $file.FullName -RelativePath $relativeNormalized -DestinationPath $destination
-                if (-not [string]::IsNullOrWhiteSpace($taskManagedBlock)) {
-                    $wasAligned = Sync-ManagedBlock -DestinationPath $destination -RelativePath $relative -ManagedBlock $taskManagedBlock
-                    if ($wasAligned) {
-                        $aligned++
-                    }
-                }
+        if (Test-Path $destination) {
+            if ($isForceOverwrite) {
+                Backup-DestinationFile -DestinationPath $destination -RelativePath $relative
+                Copy-TemplateFileToDestination -SourcePath $file.FullName -RelativePath $relativeNormalized -DestinationPath $destination
+                $deployed++
+                $forcedOverwrites++
                 continue
             }
 
-            if ($AlignExisting -and ($managedEntryFiles -contains $relativeNormalized)) {
-                $managedBlock = Get-ManagedBlockFromTemplate -SourcePath $file.FullName -RelativePath $relativeNormalized
-                if (-not [string]::IsNullOrWhiteSpace($managedBlock)) {
-                    $wasAligned = Sync-ManagedBlock -DestinationPath $destination -RelativePath $relative -ManagedBlock $managedBlock
-                    if ($wasAligned) {
-                        $aligned++
+            if ($PreserveExisting) {
+                $skippedExisting++
+
+                if ($relativeNormalized -eq 'TASK.md') {
+                    $taskManagedBlock = Build-TaskManagedBlockWithExistingQueue -SourcePath $file.FullName -RelativePath $relativeNormalized -DestinationPath $destination
+                    if (-not [string]::IsNullOrWhiteSpace($taskManagedBlock)) {
+                        $wasAligned = Sync-ManagedBlock -DestinationPath $destination -RelativePath $relative -ManagedBlock $taskManagedBlock
+                        if ($wasAligned) {
+                            $aligned++
+                        }
+                    }
+                    continue
+                }
+
+                if ($AlignExisting -and ($managedEntryFiles -contains $relativeNormalized)) {
+                    $managedBlock = Get-ManagedBlockFromTemplate -SourcePath $file.FullName -RelativePath $relativeNormalized
+                    if (-not [string]::IsNullOrWhiteSpace($managedBlock)) {
+                        $wasAligned = Sync-ManagedBlock -DestinationPath $destination -RelativePath $relative -ManagedBlock $managedBlock
+                        if ($wasAligned) {
+                            $aligned++
+                        }
                     }
                 }
+
+                continue
             }
 
-            continue
+            Backup-DestinationFile -DestinationPath $destination -RelativePath $relative
         }
 
-        Backup-DestinationFile -DestinationPath $destination -RelativePath $relative
+        Copy-TemplateFileToDestination -SourcePath $file.FullName -RelativePath $relativeNormalized -DestinationPath $destination
+        $deployed++
     }
+} else {
+    $taskSourcePath = Join-Path $sourceRoot 'TASK.md'
+    $taskRelativePath = 'TASK.md'
+    $taskDestinationPath = Join-Path $TargetRoot $taskRelativePath
 
-    Copy-TemplateFileToDestination -SourcePath $file.FullName -RelativePath $relativeNormalized -DestinationPath $destination
-    $deployed++
+    if (Test-Path -LiteralPath $taskSourcePath -PathType Leaf) {
+        if (Test-Path -LiteralPath $taskDestinationPath -PathType Leaf) {
+            $taskManagedBlock = Build-TaskManagedBlockWithExistingQueue -SourcePath $taskSourcePath -RelativePath $taskRelativePath -DestinationPath $taskDestinationPath
+            if (-not [string]::IsNullOrWhiteSpace($taskManagedBlock)) {
+                $wasAligned = Sync-ManagedBlock -DestinationPath $taskDestinationPath -RelativePath $taskRelativePath -ManagedBlock $taskManagedBlock
+                if ($wasAligned) {
+                    $aligned++
+                }
+            }
+        } else {
+            $taskDestinationDir = Split-Path -Parent $taskDestinationPath
+            if ($taskDestinationDir -and -not (Test-Path -LiteralPath $taskDestinationDir) -and -not $DryRun) {
+                New-Item -ItemType Directory -Path $taskDestinationDir -Force | Out-Null
+            }
+
+            Copy-TemplateFileToDestination -SourcePath $taskSourcePath -RelativePath $taskRelativePath -DestinationPath $taskDestinationPath
+            $deployed++
+        }
+    }
 }
 
 $canonicalManagedBlock = Build-CanonicalManagedBlock -CanonicalFile $canonicalEntryFile
@@ -1517,6 +1549,8 @@ Write-Output "TemplateRoot: $sourceRoot"
 Write-Output "PreserveExisting: $PreserveExisting"
 Write-Output "AlignExisting: $AlignExisting"
 Write-Output "RunInit: $RunInit"
+Write-Output "AnswerDependentOnly: $AnswerDependentOnly"
+Write-Output "SkipBackups: $SkipBackups"
 Write-Output "InitAnswersPath: $initAnswersResolvedPath"
 Write-Output "DeploymentDate: $deploymentDate"
 Write-Output "BundleVersion: $bundleVersion"

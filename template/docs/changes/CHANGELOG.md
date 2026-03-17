@@ -97,6 +97,13 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Summary: Added shared raw-vs-filtered output telemetry helpers for PowerShell and shell gate implementations. Compile gate now records current savings produced by tail/suppress-on-pass behavior, while required-review gate records passthrough baseline telemetry so future output compression can be measured without changing current gate verdict logic.
 - Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/template/scripts/agent-gates/lib/gate-utils.psm1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/lib/gate_utils.py`; `Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/compile-gate.sh`; `Octopus-agent-orchestrator/template/scripts/agent-gates/required-reviews-check.ps1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/required-reviews-check.sh`
 
+## 2026-03-17 - Reinit workflow for answer-only refresh
+- Task: T-013
+- Type: behavior-change
+- Scope: init workflow / installer routing / verification
+- Summary: Added `scripts/reinit.ps1` / `.sh` so existing deployments can re-ask init answers without a full reinstall. Reinit reuses init-answer prompting and explicit override support, rewrites `runtime/init-answers.json`, reapplies answer-dependent entrypoint/guard/version metadata, updates `live/docs/agent-rules/00-core.md` and `live/config/token-economy.json`, and avoids install/update backup churn in `runtime/`.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/AGENTS.md`; `Octopus-agent-orchestrator/MANIFEST.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/scripts/install.ps1`; `Octopus-agent-orchestrator/scripts/reinit.ps1`; `Octopus-agent-orchestrator/scripts/reinit.sh`; `Octopus-agent-orchestrator/scripts/verify.ps1`; `Octopus-agent-orchestrator/scripts/lib/init-answer-migrations.ps1`
+
 ## 2026-03-13 - Shared output-filter engine for gate console payloads
 - Task: T-011
 - Type: architecture-change

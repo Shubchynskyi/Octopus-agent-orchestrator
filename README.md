@@ -13,16 +13,17 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 - Current bundle version: `1.0.7` (source: `VERSION`)
 - Update command: `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1`
 - Optional shell wrapper: `bash Octopus-agent-orchestrator/scripts/check-update.sh` (still requires `pwsh`; wrapper only)
-- Last documentation update: `2026-03-14`
+- Last documentation update: `2026-03-17`
 
 ## Runtime Model
-- Top-level bundle maintenance scripts under `Octopus-agent-orchestrator/scripts/*.ps1` are the canonical control-plane implementations for install/init/verify/update/check-update.
+- Top-level bundle maintenance scripts under `Octopus-agent-orchestrator/scripts/*.ps1` are the canonical control-plane implementations for install/init/reinit/verify/update/check-update.
 - Sibling top-level `Octopus-agent-orchestrator/scripts/*.sh` files are thin compatibility wrappers that call the corresponding `.ps1` script through `pwsh`; they are not standalone Bash implementations.
 - Task-execution gate scripts under `Octopus-agent-orchestrator/live/scripts/agent-gates/*.ps1` and `*.sh` are real dual-runtime implementations.
 - Shell gate scripts require `bash` plus a Python runtime in PATH (`python3`, `python`, or `py -3`).
 
 ## Recent Changes (Short)
 - Added update workflow with version check and optional auto-apply from git (`scripts/check-update.ps1`, `scripts/update.ps1`).
+- Added `scripts/reinit.ps1` / `.sh` to re-ask init answers and reapply answer-dependent settings without full reinstall.
 - Added deployment version metadata (`live/version.json`) and verification contract for version consistency.
 - Added optional hard no-auto-commit guard (`.git/hooks/pre-commit`) controlled by init answer `EnforceNoAutoCommit`.
 - Added manual commit helpers (`live/scripts/agent-gates/human-commit.ps1` and `.sh`) when guard is enabled.
@@ -135,6 +136,24 @@ bash Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh 
 bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "Octopus-agent-orchestrator/MANIFEST.md"
 ```
 
+## Re-Ask Init Answers Without Reinstall
+Use reinit when you want to change init answers such as assistant language, brevity, source-of-truth entrypoint, commit guard, Claude full-access flag, or token-economy default without rerunning full install.
+
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/reinit.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+```bash
+bash Octopus-agent-orchestrator/scripts/reinit.sh -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+The reinit flow:
+- re-asks the init questionnaire (or accepts explicit overrides in non-interactive runs);
+- rewrites `runtime/init-answers.json`;
+- reapplies answer-dependent routing, guard, and metadata files;
+- updates `live/docs/agent-rules/00-core.md`, `live/config/token-economy.json`, and `live/version.json`;
+- avoids full `live/` resync and does not create install/update backup trees in `runtime/`.
+
 ## Updating Existing Deployment
 Use this in normal cases:
 
@@ -245,6 +264,7 @@ add CSV export endpoint with async email delivery hooks
 
 ## Important
 - Run initialization only through `AGENT_INIT_PROMPT.md`; do not run `scripts/install.ps1` directly.
+- To change previously collected init answers without reinstalling, use `scripts/reinit.ps1`.
 - `scripts/install.ps1` and `scripts/verify.ps1` require `Octopus-agent-orchestrator/runtime/init-answers.json` with collected init answers.
 - Top-level `scripts/*.ps1` are canonical; top-level `scripts/*.sh` are `pwsh` wrappers for the same control-plane entrypoints.
 - For upgrades, use `scripts/check-update.ps1` (or `scripts/update.ps1` if bundle already replaced).

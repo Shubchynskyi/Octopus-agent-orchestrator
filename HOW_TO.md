@@ -6,7 +6,7 @@ This guide is for project owners who want to bootstrap the orchestrator with one
 Copy the full `Octopus-agent-orchestrator/` directory into your target project root.
 
 ## Runtime Model
-- Top-level control-plane scripts in `Octopus-agent-orchestrator/scripts/*.ps1` are canonical for install/init/verify/update/check-update.
+- Top-level control-plane scripts in `Octopus-agent-orchestrator/scripts/*.ps1` are canonical for install/init/reinit/verify/update/check-update.
 - Top-level `Octopus-agent-orchestrator/scripts/*.sh` files are only compatibility wrappers that invoke the matching `.ps1` script via `pwsh`.
 - Real dual-runtime shell implementations exist for task gate scripts in `Octopus-agent-orchestrator/live/scripts/agent-gates/*.sh`.
 - Shell gate scripts require `bash` and a Python runtime in PATH (`python3`, `python`, or `py -3`).
@@ -112,6 +112,24 @@ Review gate validates compile evidence and post-compile drift; it writes review 
 Doc impact gate writes machine-checkable documentation assessment (`<task-id>-doc-impact.json`) before completion.
 Completion gate validates compile/review/doc-impact evidence, review-loop timeline consistency, best-effort task-event integrity, and required review artifacts before `DONE`.
 
+## 6.5 Re-Ask Init Answers Without Reinstall
+Use reinit when you need to change already collected init answers without re-running the full installer.
+
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/reinit.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+```bash
+bash Octopus-agent-orchestrator/scripts/reinit.sh -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+Behavior:
+- re-asks the init questionnaire unless you explicitly pass overrides and/or `-NoPrompt`;
+- rewrites `runtime/init-answers.json`;
+- reapplies answer-dependent routing, guard, and version metadata surfaces;
+- updates `live/docs/agent-rules/00-core.md` and `live/config/token-economy.json`;
+- avoids full `live/` resync and does not create install/update backup trees in `runtime/`.
+
 ## 7. Update Existing Deployment
 Preferred flow (check + optional apply from git):
 
@@ -166,6 +184,7 @@ What update pipeline does:
 
 Note:
 - top-level `scripts/update.sh` / `scripts/check-update.sh` are wrapper entrypoints for environments that prefer `bash`, but they still execute the PowerShell implementation underneath.
+- top-level `scripts/reinit.sh` is the same kind of wrapper and still requires `pwsh`.
 - `live/scripts/agent-gates/*.sh` are different: those are real shell implementations and do not require `pwsh`.
 
 Manual direct update can suppress migration prompts too:

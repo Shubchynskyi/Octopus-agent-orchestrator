@@ -453,3 +453,163 @@ function Invoke-UpdateInitAnswerMigration {
         Changes  = @($changes)
     }
 }
+
+function Invoke-RecollectInitAnswers {
+    param(
+        [AllowNull()]
+        [object]$Answers,
+        [AllowNull()]
+        [object]$LiveVersion,
+        [AllowNull()]
+        [hashtable]$TokenEconomyConfig,
+        [bool]$InteractivePrompting = $false,
+        [AllowNull()]
+        [object]$Overrides
+    )
+
+    $workingAnswers = Copy-InitAnswersForMigration -Answers $Answers
+    $changes = @()
+
+    foreach ($definition in Get-InitAnswerMigrationSchema) {
+        $existingValue = Get-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key
+        $normalizedExistingValue = $null
+        try {
+            $normalizedExistingValue = Convert-InitAnswerMigrationValue -Definition $definition -Value $existingValue
+        }
+        catch {
+            $normalizedExistingValue = $null
+        }
+
+        if ($definition.Type -eq 'literal' -or -not $definition.PromptOnUpdate -or [string]::IsNullOrWhiteSpace([string]$definition.Prompt)) {
+            $literalValue = Convert-InitAnswerMigrationValue -Definition $definition -Value $definition.DefaultValue
+            Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $literalValue
+            $existingLiteralText = if ($null -eq $existingValue) { '' } else { ([string]$existingValue).Trim() }
+            if (-not [string]::Equals($existingLiteralText, [string]$literalValue, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $changes += [PSCustomObject]@{
+                    Key    = $definition.Key
+                    Action = 'normalized'
+                    Value  = [string]$literalValue
+                    Source = 'definition_literal'
+                    Note   = "Reset to literal contract value '$literalValue'."
+                }
+            }
+            continue
+        }
+
+        $overrideValue = $null
+        $overrideProvided = $false
+        if ($null -ne $Overrides) {
+            $overrideRaw = Get-InitAnswerMigrationValue -Answers $Overrides -LogicalName $definition.Key
+            if ($null -ne $overrideRaw) {
+                try {
+                    $overrideValue = Convert-InitAnswerMigrationValue -Definition $definition -Value $overrideRaw
+                    $overrideProvided = $true
+                }
+                catch {
+                    throw "Invalid reinit override for $($definition.Key): $($_.Exception.Message)"
+                }
+            }
+        }
+
+        if ($overrideProvided) {
+            Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $overrideValue
+            $changes += [PSCustomObject]@{
+                Key    = $definition.Key
+                Action = 'overridden'
+                Value  = [string]$overrideValue
+                Source = 'explicit_override'
+                Note   = 'Applied from explicit reinit parameter override.'
+            }
+            continue
+        }
+
+        $preferredValue = $null
+        $preferredSource = $null
+        if (-not [string]::IsNullOrWhiteSpace([string]$normalizedExistingValue)) {
+            $preferredValue = [string]$normalizedExistingValue
+            $preferredSource = 'runtime/init-answers.json'
+        } else {
+            $inference = Get-InitAnswerMigrationInference -Definition $definition -LiveVersion $LiveVersion -TokenEconomyConfig $TokenEconomyConfig
+            if ($null -ne $inference -and -not [string]::IsNullOrWhiteSpace([string]$inference.Value)) {
+                $preferredValue = [string]$inference.Value
+                $preferredSource = [string]$inference.Source
+            } else {
+                $preferredValue = [string](Convert-InitAnswerMigrationValue -Definition $definition -Value $definition.DefaultValue)
+                $preferredSource = 'default'
+            }
+        }
+
+        if ($InteractivePrompting) {
+            $recommendationSource = if ($preferredSource -eq 'default') { $null } else { [string]$preferredSource }
+            $promptResult = Read-InitAnswerMigrationPrompt `
+                -Definition $definition `
+                -PromptDefaultValue $preferredValue `
+                -RecommendationSource $recommendationSource
+            Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $promptResult.Value
+
+            $changeAction = if ($promptResult.UsedDefault) {
+                if ([string]::IsNullOrWhiteSpace($recommendationSource)) { 'defaulted' } else { 'recommended_default' }
+            } else {
+                'prompted'
+            }
+            $changeSource = if ($promptResult.UsedDefault) {
+                if ([string]::IsNullOrWhiteSpace($recommendationSource)) {
+                    'default'
+                } else {
+                    "interactive_prompt_default:$recommendationSource"
+                }
+            } else {
+                'interactive_prompt'
+            }
+            $changeNote = if ($promptResult.UsedDefault) {
+                if ([string]::IsNullOrWhiteSpace($recommendationSource)) {
+                    [string]$definition.ChangeHint
+                } elseif ($recommendationSource -eq 'runtime/init-answers.json') {
+                    'Current init answer was shown as the recommended default during interactive reinit and accepted.'
+                } else {
+                    "Recommended value from $recommendationSource was shown during interactive reinit and accepted."
+                }
+            } else {
+                if ([string]::IsNullOrWhiteSpace($recommendationSource)) {
+                    'Collected during interactive reinit.'
+                } else {
+                    "Collected during interactive reinit. Recommended default from $recommendationSource was offered."
+                }
+            }
+
+            $changes += [PSCustomObject]@{
+                Key    = $definition.Key
+                Action = $changeAction
+                Value  = [string]$promptResult.Value
+                Source = $changeSource
+                Note   = $changeNote
+            }
+            continue
+        }
+
+        Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $preferredValue
+        $changeAction = switch ($preferredSource) {
+            'runtime/init-answers.json' { 'preserved'; break }
+            'default' { 'defaulted'; break }
+            default { 'inferred'; break }
+        }
+        $changeNote = switch ($preferredSource) {
+            'runtime/init-answers.json' { 'Preserved existing init answer without prompting.'; break }
+            'default' { [string]$definition.ChangeHint; break }
+            default { "Backfilled from $preferredSource without prompting."; break }
+        }
+
+        $changes += [PSCustomObject]@{
+            Key    = $definition.Key
+            Action = $changeAction
+            Value  = [string]$preferredValue
+            Source = [string]$preferredSource
+            Note   = $changeNote
+        }
+    }
+
+    return [PSCustomObject]@{
+        Answers  = $workingAnswers
+        Changes  = @($changes)
+    }
+}
