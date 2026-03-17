@@ -13,6 +13,13 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Docs Updated: <list of updated doc files>
 ```
 
+## 2026-03-17 - Uninstall workflow for deployed orchestrators
+- Task: T-014
+- Type: feature
+- Scope: install lifecycle / cleanup / docs
+- Summary: Added `scripts/uninstall.ps1` / `.sh` to cleanly remove deployed orchestrator surfaces with explicit keep/delete choices for the primary entrypoint, `TASK.md`, and runtime preservation. Uninstall removes managed bridge files, provider agent profiles, Qwen/Claude orchestrator settings, the managed commit-guard block, and `.gitignore` additions without deleting unrelated user content; when runtime artifacts must be kept, they are copied into an uninstall-backup snapshot before the bundle directory is removed.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/MANIFEST.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/scripts/uninstall.ps1`; `Octopus-agent-orchestrator/scripts/uninstall.sh`; `Octopus-agent-orchestrator/scripts/verify.ps1`; `Octopus-agent-orchestrator/template/scripts/tests/uninstall-flow.Tests.ps1`
+
 ## 2026-03-16 - Conservative token-economy defaults and depth=3 policy clarified
 - Task: T-011
 - Type: behavior-change

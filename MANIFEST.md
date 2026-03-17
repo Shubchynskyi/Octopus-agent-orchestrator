@@ -54,6 +54,14 @@ Generated during updates:
 - runtime/update-reports/**
 - runtime/bundle-backups/**
 
+Removed by `scripts/uninstall.ps1`:
+- the deployed `Octopus-agent-orchestrator/` bundle directory
+- all redirect entrypoints and provider bridge agent files created by install
+- the selected primary entrypoint only when the user chooses delete during uninstall
+- `TASK.md` only when the user chooses delete during uninstall
+- orchestrator-only entries from `.qwen/settings.json`, `.claude/settings.local.json`, `.git/hooks/pre-commit`, and `.gitignore`, while preserving unrelated user content outside managed blocks
+- when runtime artifacts are kept, `Octopus-agent-orchestrator/runtime/**` is copied into `Octopus-agent-orchestrator-uninstall-backups/<timestamp>/Octopus-agent-orchestrator/runtime/` before bundle removal
+
 Configured when `EnforceNoAutoCommit=true`:
 - .git/hooks/pre-commit (managed guard block)
 
@@ -69,6 +77,8 @@ Kept inside bundle:
 - scripts/init.sh
 - scripts/reinit.ps1
 - scripts/reinit.sh
+- scripts/uninstall.ps1
+- scripts/uninstall.sh
 - scripts/verify.ps1
 - scripts/verify.sh
 - scripts/update.ps1

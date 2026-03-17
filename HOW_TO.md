@@ -6,7 +6,7 @@ This guide is for project owners who want to bootstrap the orchestrator with one
 Copy the full `Octopus-agent-orchestrator/` directory into your target project root.
 
 ## Runtime Model
-- Top-level control-plane scripts in `Octopus-agent-orchestrator/scripts/*.ps1` are canonical for install/init/reinit/verify/update/check-update.
+- Top-level control-plane scripts in `Octopus-agent-orchestrator/scripts/*.ps1` are canonical for install/init/reinit/uninstall/verify/update/check-update.
 - Top-level `Octopus-agent-orchestrator/scripts/*.sh` files are only compatibility wrappers that invoke the matching `.ps1` script via `pwsh`.
 - Real dual-runtime shell implementations exist for task gate scripts in `Octopus-agent-orchestrator/live/scripts/agent-gates/*.sh`.
 - Shell gate scripts require `bash` and a Python runtime in PATH (`python3`, `python`, or `py -3`).
@@ -184,7 +184,7 @@ What update pipeline does:
 
 Note:
 - top-level `scripts/update.sh` / `scripts/check-update.sh` are wrapper entrypoints for environments that prefer `bash`, but they still execute the PowerShell implementation underneath.
-- top-level `scripts/reinit.sh` is the same kind of wrapper and still requires `pwsh`.
+- top-level `scripts/reinit.sh` / `scripts/uninstall.sh` are the same kind of wrappers and still require `pwsh`.
 - `live/scripts/agent-gates/*.sh` are different: those are real shell implementations and do not require `pwsh`.
 
 Manual direct update can suppress migration prompts too:
@@ -197,7 +197,40 @@ Dry-run preview:
 pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -DryRun -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
-## 8. Adding Specialist Skills After Init
+## 8. Uninstall Existing Deployment
+Use uninstall when you want to remove the deployed orchestrator while choosing whether to keep the primary entrypoint file, `TASK.md`, and runtime artifacts.
+
+Interactive:
+
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/uninstall.ps1
+```
+
+```bash
+bash Octopus-agent-orchestrator/scripts/uninstall.sh
+```
+
+Non-interactive:
+
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/uninstall.ps1 -NoPrompt -KeepPrimaryEntrypoint no -KeepTaskFile no -KeepRuntimeArtifacts yes
+```
+
+Behavior:
+- asks whether to keep or delete the current primary instructions file (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.windsurf/rules/rules.md`, `.junie/guidelines.md`, or `.antigravity/rules.md`);
+- asks whether to keep or delete `TASK.md`;
+- if you choose to keep runtime artifacts, preserves `Octopus-agent-orchestrator/runtime/` inside `Octopus-agent-orchestrator-uninstall-backups/<timestamp>/` before deleting the bundle directory;
+- removes managed provider bridge files, `.github/agents/*.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`, orchestrator-only Qwen/Claude settings entries, and the managed commit-guard block from `.git/hooks/pre-commit`;
+- removes only Octopus-managed blocks from mixed files and leaves unrelated user content in place;
+- writes uninstall backups to `Octopus-agent-orchestrator-uninstall-backups/<timestamp>/` unless `-SkipBackups` is passed.
+
+Dry-run preview:
+
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/uninstall.ps1 -DryRun -NoPrompt -KeepPrimaryEntrypoint no -KeepTaskFile no -KeepRuntimeArtifacts no
+```
+
+## 9. Adding Specialist Skills After Init
 To add specialist skills later, ask your agent for example:
 - `Add api-review skill`
 - `Create a test-review agent`

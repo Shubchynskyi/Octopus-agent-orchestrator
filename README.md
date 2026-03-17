@@ -13,10 +13,12 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 - Current bundle version: `1.0.7` (source: `VERSION`)
 - Update command: `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1`
 - Optional shell wrapper: `bash Octopus-agent-orchestrator/scripts/check-update.sh` (still requires `pwsh`; wrapper only)
+- Uninstall command: `pwsh -File Octopus-agent-orchestrator/scripts/uninstall.ps1`
+- Optional uninstall wrapper: `bash Octopus-agent-orchestrator/scripts/uninstall.sh` (still requires `pwsh`; wrapper only)
 - Last documentation update: `2026-03-17`
 
 ## Runtime Model
-- Top-level bundle maintenance scripts under `Octopus-agent-orchestrator/scripts/*.ps1` are the canonical control-plane implementations for install/init/reinit/verify/update/check-update.
+- Top-level bundle maintenance scripts under `Octopus-agent-orchestrator/scripts/*.ps1` are the canonical control-plane implementations for install/init/reinit/uninstall/verify/update/check-update.
 - Sibling top-level `Octopus-agent-orchestrator/scripts/*.sh` files are thin compatibility wrappers that call the corresponding `.ps1` script through `pwsh`; they are not standalone Bash implementations.
 - Task-execution gate scripts under `Octopus-agent-orchestrator/live/scripts/agent-gates/*.ps1` and `*.sh` are real dual-runtime implementations.
 - Shell gate scripts require `bash` plus a Python runtime in PATH (`python3`, `python`, or `py -3`).
@@ -24,6 +26,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 ## Recent Changes (Short)
 - Added update workflow with version check and optional auto-apply from git (`scripts/check-update.ps1`, `scripts/update.ps1`).
 - Added `scripts/reinit.ps1` / `.sh` to re-ask init answers and reapply answer-dependent settings without full reinstall.
+- Added `scripts/uninstall.ps1` / `.sh` to remove deployed orchestrator surfaces with explicit keep/delete choices for the primary entrypoint, `TASK.md`, and runtime backup preservation.
 - Added deployment version metadata (`live/version.json`) and verification contract for version consistency.
 - Added optional hard no-auto-commit guard (`.git/hooks/pre-commit`) controlled by init answer `EnforceNoAutoCommit`.
 - Added manual commit helpers (`live/scripts/agent-gates/human-commit.ps1` and `.sh`) when guard is enabled.
@@ -204,6 +207,29 @@ Optional manual silent mode:
 pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -NoInitAnswerPrompt
 ```
 
+## Uninstall Existing Deployment
+Use uninstall when you want to remove the orchestrator from a project while deciding whether to keep the primary entrypoint file, `TASK.md`, and runtime artifacts.
+
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/uninstall.ps1
+```
+
+```bash
+bash Octopus-agent-orchestrator/scripts/uninstall.sh
+```
+
+For non-interactive runs, pass explicit keep/delete answers:
+
+```powershell
+pwsh -File Octopus-agent-orchestrator/scripts/uninstall.ps1 -NoPrompt -KeepPrimaryEntrypoint no -KeepTaskFile no -KeepRuntimeArtifacts yes
+```
+
+Behavior:
+- removes managed entrypoints, provider bridge agent files, `.qwen/settings.json` orchestrator context entries, `.claude/settings.local.json` orchestrator allowlist entries, the managed `.git/hooks/pre-commit` guard block, and the deployed `Octopus-agent-orchestrator/` bundle;
+- deletes bridge/settings directories only when they become empty after cleanup;
+- preserves requested runtime artifacts by copying `Octopus-agent-orchestrator/runtime/` into `Octopus-agent-orchestrator-uninstall-backups/<timestamp>/` before bundle deletion;
+- writes uninstall backups to `Octopus-agent-orchestrator-uninstall-backups/<timestamp>/` unless `-SkipBackups` is used.
+
 ## Work Example
 Example feature request:
 - User asks: `Create a task in TASK.md for feature "Invoice CSV export with email delivery".`
@@ -267,6 +293,7 @@ add CSV export endpoint with async email delivery hooks
 - To change previously collected init answers without reinstalling, use `scripts/reinit.ps1`.
 - `scripts/install.ps1` and `scripts/verify.ps1` require `Octopus-agent-orchestrator/runtime/init-answers.json` with collected init answers.
 - Top-level `scripts/*.ps1` are canonical; top-level `scripts/*.sh` are `pwsh` wrappers for the same control-plane entrypoints.
+- To remove a deployment while optionally preserving the primary entrypoint, `TASK.md`, or runtime backup, use `scripts/uninstall.ps1`.
 - For upgrades, use `scripts/check-update.ps1` (or `scripts/update.ps1` if bundle already replaced).
 - Installer defaults to non-destructive mode for non-canonical entry files.
 - During upgrades, `TASK.md` uses latest template and migrates existing queue rows (tasks are preserved).

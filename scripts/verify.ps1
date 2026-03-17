@@ -340,6 +340,8 @@ $requiredPaths = @(
     'Octopus-agent-orchestrator/HOW_TO.md',
     'Octopus-agent-orchestrator/scripts/reinit.ps1',
     'Octopus-agent-orchestrator/scripts/reinit.sh',
+    'Octopus-agent-orchestrator/scripts/uninstall.ps1',
+    'Octopus-agent-orchestrator/scripts/uninstall.sh',
     'Octopus-agent-orchestrator/scripts/check-update.ps1',
     'Octopus-agent-orchestrator/scripts/check-update.sh',
     'Octopus-agent-orchestrator/scripts/update.ps1',
