@@ -22,6 +22,7 @@ Review for defects and risks first. Keep summary secondary.
 - Task goal and expected behavior.
 - Changed files list.
 - Diff summary or patch.
+- Inspection output for changed files when available (for example IntelliJ IDEA / JetBrains inspections, Qodana, compiler warnings, or linter warnings).
 - Optional review-context artifact from orchestration: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json`.
 - Rule context package selected by orchestration and explicitly passed to reviewer:
   - token economy active + `depth=1`: only `00-core.md`, `80-task-workflow.md`, and rule ids/snippets directly triggered by changed scope.
@@ -50,11 +51,12 @@ Review for defects and risks first. Keep summary secondary.
 1. Build scope from changed files and diff.
 2. Load checklist from `references/code-review-checklist.md`.
 3. Validate correctness, regressions, edge cases, and security impact.
-4. Validate test coverage adequacy for changed behavior.
-5. Validate documentation impact handling and required doc updates.
-6. Validate rule compliance using rule ids and evidence.
-7. Use artifact structure from `Octopus-agent-orchestrator/live/docs/reviews/TEMPLATE.md`.
-8. Produce final verdict.
+4. Validate static hygiene for changed scope: unused imports, unused variables, and unresolved changed-scope inspection warnings when tooling output is available.
+5. Validate test coverage adequacy for changed behavior.
+6. Validate documentation impact handling and required doc updates.
+7. Validate rule compliance using rule ids and evidence.
+8. Use artifact structure from `Octopus-agent-orchestrator/live/docs/reviews/TEMPLATE.md`.
+9. Produce final verdict.
 
 ## Mandatory Output Format
 1. Findings by severity with file references.
@@ -74,6 +76,7 @@ Return `REVIEW FAILED` when any item is true:
 ## Evidence Rules
 - Use file references with line numbers when possible.
 - If referencing command checks, include exact command and key output snippet.
+- When available, prefer IntelliJ IDEA / JetBrains inspection, compiler, or linter evidence for changed files; unresolved changed-scope warnings require either a FAIL or explicit justification.
 - If exception is used, include the exception artifact location and rule id.
 
 ## Escalation

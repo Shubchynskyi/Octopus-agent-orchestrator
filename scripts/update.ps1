@@ -34,6 +34,9 @@ $normalizedBundleRoot = $bundleRoot.TrimEnd('\', '/')
 if ([string]::Equals($normalizedTargetRoot, $normalizedBundleRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "TargetRoot points to orchestrator bundle directory '$bundleRoot'. Use the project root parent directory instead."
 }
+$targetBundleRoot = Join-Path $TargetRoot 'Octopus-agent-orchestrator'
+$normalizedTargetBundleRoot = $targetBundleRoot.TrimEnd('\', '/')
+$useDelegatedTargetBundleUpdate = -not [string]::Equals($normalizedBundleRoot, $normalizedTargetBundleRoot, [System.StringComparison]::OrdinalIgnoreCase)
 
 function Get-NormalizedPath {
     param(
@@ -152,7 +155,16 @@ function Get-UpdateRollbackItems {
         '.antigravity/agents',
         '.gitignore',
         '.git/hooks/pre-commit',
-        'Octopus-agent-orchestrator/live'
+        'Octopus-agent-orchestrator/live',
+        'Octopus-agent-orchestrator/template',
+        'Octopus-agent-orchestrator/scripts',
+        'Octopus-agent-orchestrator/README.md',
+        'Octopus-agent-orchestrator/HOW_TO.md',
+        'Octopus-agent-orchestrator/MANIFEST.md',
+        'Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md',
+        'Octopus-agent-orchestrator/CHANGELOG.md',
+        'Octopus-agent-orchestrator/LICENSE',
+        'Octopus-agent-orchestrator/VERSION'
     )
 
     $items += Get-RelativePathInsideRoot -RootPath $RootPath -PathValue $InitAnswersResolvedPath
@@ -236,6 +248,40 @@ function Restore-RollbackSnapshot {
 
         if (Test-Path -LiteralPath $targetPath) {
             Remove-Item -LiteralPath $targetPath -Recurse -Force
+        }
+    }
+}
+
+function Sync-WorkingTreeBundleItems {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceBundleRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$TargetBundleRoot,
+        [Parameter(Mandatory = $true)]
+        [string[]]$RelativeItems
+    )
+
+    foreach ($item in ($RelativeItems | Sort-Object -Unique)) {
+        $sourcePath = Join-Path $SourceBundleRoot $item
+        if (-not (Test-Path -LiteralPath $sourcePath)) {
+            continue
+        }
+
+        $destinationPath = Join-Path $TargetBundleRoot $item
+        if (Test-Path -LiteralPath $destinationPath) {
+            Remove-Item -LiteralPath $destinationPath -Recurse -Force
+        }
+
+        $destinationParent = Split-Path -Parent $destinationPath
+        if ($destinationParent -and -not (Test-Path -LiteralPath $destinationParent)) {
+            New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+        }
+
+        if (Test-Path -LiteralPath $sourcePath -PathType Container) {
+            Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Recurse -Force
+        } else {
+            Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
         }
     }
 }
@@ -387,6 +433,17 @@ $installScriptPath = Join-Path $scriptDir 'install.ps1'
 $verifyScriptPath = Join-Path $scriptDir 'verify.ps1'
 $manifestScriptPath = Join-Path $bundleRoot 'live/scripts/agent-gates/validate-manifest.ps1'
 $manifestPath = Join-Path $TargetRoot 'Octopus-agent-orchestrator/MANIFEST.md'
+$bundleSyncItems = @(
+    'template',
+    'scripts',
+    'README.md',
+    'HOW_TO.md',
+    'MANIFEST.md',
+    'AGENT_INIT_PROMPT.md',
+    'CHANGELOG.md',
+    'LICENSE',
+    'VERSION'
+)
 
 if (-not (Test-Path -LiteralPath $installScriptPath -PathType Leaf)) {
     throw "Install script not found: $installScriptPath"
@@ -451,6 +508,34 @@ try {
         $initAnswerMigrationStatus = 'NOT_NEEDED'
     }
 
+    if (-not $DryRun -and $useDelegatedTargetBundleUpdate) {
+        $currentStage = 'BUNDLE_SYNC'
+        Sync-WorkingTreeBundleItems -SourceBundleRoot $bundleRoot -TargetBundleRoot $targetBundleRoot -RelativeItems $bundleSyncItems
+
+        $currentStage = 'DELEGATED_UPDATE'
+        $delegatedUpdateScriptPath = Join-Path $targetBundleRoot 'scripts/update.ps1'
+        if (-not (Test-Path -LiteralPath $delegatedUpdateScriptPath -PathType Leaf)) {
+            throw "Delegated update script not found after bundle sync: $delegatedUpdateScriptPath"
+        }
+
+        $delegatedParams = @{
+            TargetRoot      = $TargetRoot
+            InitAnswersPath = $initAnswersResolvedPath
+        }
+        if ($NoInitAnswerPrompt) {
+            $delegatedParams.NoInitAnswerPrompt = $true
+        }
+        if ($SkipVerify) {
+            $delegatedParams.SkipVerify = $true
+        }
+        if ($SkipManifestValidation) {
+            $delegatedParams.SkipManifestValidation = $true
+        }
+
+        & $delegatedUpdateScriptPath @delegatedParams
+        return
+    }
+
     $currentStage = 'INSTALL'
     & $installScriptPath @installParams
     $installStatus = 'PASS'
@@ -511,6 +596,8 @@ catch {
     switch ($currentStage) {
         'INIT_ANSWER_MIGRATION' { $initAnswerMigrationStatus = 'FAIL' }
         'INSTALL' { $installStatus = 'FAIL' }
+        'BUNDLE_SYNC' { $installStatus = 'FAIL' }
+        'DELEGATED_UPDATE' { $installStatus = 'FAIL' }
         'CONTRACT_MIGRATIONS' { $contractMigrationStatus = 'FAIL' }
         'VERIFY' { $verifyStatus = 'FAIL' }
         'MANIFEST_VALIDATION' { $manifestStatus = 'FAIL' }

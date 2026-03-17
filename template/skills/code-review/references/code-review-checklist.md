@@ -14,6 +14,11 @@
 - Check side effects in adjacent modules.
 - Check concurrency or transactional side effects.
 
+## Static Hygiene
+- Confirm changed files do not keep unused imports.
+- Confirm changed scope does not leave unused variables, parameters, fields, helpers, or dead assignments.
+- If IntelliJ IDEA / JetBrains inspections, Qodana, compiler, or linter warnings are available for changed files, treat unresolved warnings as findings unless explicitly justified.
+
 ## Security
 - Validate input validation at boundaries.
 - Validate authorization checks at service level.
@@ -43,6 +48,9 @@
 - `QG-COMPLEXITY`
 - `QG-TRANSACTIONS`
 - `QG-INPUT-VALIDATION`
+- `QG-NO-UNUSED-IMPORTS`
+- `QG-NO-UNUSED-VARIABLES`
+- `QG-INSPECTION-WARNINGS`
 - `TEST-TEST-FIRST`
 - `TEST-REGRESSION`
 - `TEST-PASS-GATE`

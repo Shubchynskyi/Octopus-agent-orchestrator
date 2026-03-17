@@ -10,7 +10,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 - Full changelog: `CHANGELOG.md`
 
 ## Version
-- Current bundle version: `1.0.7` (source: `VERSION`)
+- Current bundle version: `1.0.8` (source: `VERSION`)
 - Update command: `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1`
 - Optional shell wrapper: `bash Octopus-agent-orchestrator/scripts/check-update.sh` (still requires `pwsh`; wrapper only)
 - Uninstall command: `pwsh -File Octopus-agent-orchestrator/scripts/uninstall.ps1`

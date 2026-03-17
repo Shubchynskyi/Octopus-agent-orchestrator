@@ -4,7 +4,10 @@ All notable changes to this bundle are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-03-17
+
 ### Changed
+- Reviewer checklists now explicitly require checks for unused imports, unused variables, and unresolved changed-scope IntelliJ IDEA / static-analysis warnings when such inspection output is available. Code-review and refactor-review skills now treat those warnings as auditable evidence instead of informal cleanup suggestions.
 - Added `scripts/uninstall.ps1` / `.sh` to remove deployed orchestrator files with explicit keep/delete choices for the primary entrypoint, `TASK.md`, and runtime backup preservation. Uninstall now strips Octopus-managed bridge blocks from mixed files, cleans merged Qwen/Claude settings plus commit-guard/gitignore additions, and removes the bundle directory without deleting unrelated user content.
 - Added `scripts/reinit.ps1` / `.sh` so already installed workspaces can re-ask init answers and reapply only answer-dependent files (`runtime/init-answers.json`, `00-core.md`, entrypoint routing, guards, token-economy enabled flag, and `live/version.json`) without a full reinstall or runtime backup churn.
 - Completion gate now blocks `DONE` when PASS review artifacts still contain active `Findings by Severity` or `Residual Risks`. Non-blocking follow-up may remain only in `Deferred Findings`, and each deferred item must include `Justification:`.
@@ -16,6 +19,9 @@ All notable changes to this bundle are documented in this file.
 - Managed live JSON configs now share explicit normalization contracts. `init.ps1` rewrites supported legacy shapes for `review-capabilities`, `paths`, `token-economy`, and `output-filters`, update inherits the same behavior via install, and `verify.ps1` now rejects incompatible shapes across all four configs with migration diagnostics.
 - Clarified conservative reviewer-context token-economy defaults by aligning the checked-in live config and version metadata with the template/init defaults (`enabled=false`, `enabled_depths=[1,2]`), documenting that shared gate output filtering remains active at any depth, and regression-testing the optional `enabled_depths=[1,2,3]` case so `depth=3` keeps full reviewer scope while allowing only non-scope-reducing compaction.
 - Token-economy telemetry is now text-aware instead of relying only on `chars/4`: shared helpers emit a `hybrid_text_v1` estimate plus the legacy `chars_per_4` baseline in metrics/review-context artifacts, and a dedicated short-form `depth=1` orchestration skill is available so localized tasks can avoid loading the full orchestration guidance.
+- PowerShell output-filter parity is now restored for compile/test/lint degraded and parser-passthrough paths by normalizing parser match results to arrays before `.Count` checks, so valid profiles no longer fall back to `invalid_profile_passthrough`.
+- `scripts/update.ps1` now syncs the full working-tree bundle surface (`scripts/`, `template/`, `VERSION`, `CHANGELOG.md`, and root docs) into deployed workspaces before `verify`, so local branch updates no longer fail on missing lifecycle scripts or stale bundle metadata.
+- Bundle version bumped to `1.0.8` for distribution and update detection via `scripts/check-update.ps1`.
 
 ### Documentation
 - Clarified the local trust model for task timelines: the new integrity chain is procedural hardening inside a writable workspace, not a security-grade trust anchor.

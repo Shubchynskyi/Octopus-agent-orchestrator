@@ -302,6 +302,7 @@ try {
             'HOW_TO.md',
             'MANIFEST.md',
             'AGENT_INIT_PROMPT.md',
+            'CHANGELOG.md',
             'LICENSE',
             'VERSION'
         )

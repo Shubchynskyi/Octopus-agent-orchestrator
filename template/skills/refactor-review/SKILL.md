@@ -22,6 +22,7 @@ Primary goal is behavior preservation with lower maintenance risk.
 - Task goal and explicit statement that behavior should remain unchanged.
 - Changed files list and diff.
 - Relevant tests and verification scope.
+- Inspection output for changed files when available (for example IntelliJ IDEA / JetBrains inspections, Qodana, compiler warnings, or linter warnings).
 - Optional review-context artifact from orchestration: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json`.
 - Rule context package selected by orchestration and explicitly passed to reviewer:
   - token economy active + `depth=1`: only `00-core.md`, `80-task-workflow.md`, and refactor-triggered rule ids/snippets for changed scope.
@@ -52,9 +53,10 @@ Primary goal is behavior preservation with lower maintenance risk.
 2. Load checklist from `references/refactor-review-checklist.md`.
 3. Validate behavior preservation for public contracts and user-visible flows.
 4. Validate that refactor reduced complexity or coupling without hidden regressions.
-5. Validate test adequacy for refactored paths.
-6. Use artifact structure from `Octopus-agent-orchestrator/live/docs/reviews/TEMPLATE.md`.
-7. Produce final refactor verdict.
+5. Validate static hygiene for changed scope: unused imports, unused variables, stale helpers, and unresolved changed-scope inspection warnings when tooling output is available.
+6. Validate test adequacy for refactored paths.
+7. Use artifact structure from `Octopus-agent-orchestrator/live/docs/reviews/TEMPLATE.md`.
+8. Produce final refactor verdict.
 
 ## Mandatory Output Format
 1. Findings by severity with file references.
@@ -72,4 +74,5 @@ Return `REFACTOR REVIEW FAILED` when any item is true:
 ## Evidence Rules
 - Use file references with line numbers for findings.
 - Link each FAIL to specific behavior or contract risk.
+- When available, prefer IntelliJ IDEA / JetBrains inspection, compiler, or linter evidence for changed files; unresolved changed-scope warnings require either a FAIL or explicit justification.
 - Include remediation suggestions per blocking finding.

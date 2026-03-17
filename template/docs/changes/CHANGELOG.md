@@ -13,6 +13,20 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Docs Updated: <list of updated doc files>
 ```
 
+## 2026-03-17 - Reviewer checklists hardened for unused code and IDE warnings
+- Task: ad-hoc reviewer hygiene hardening
+- Type: behavior-change
+- Scope: code review / refactor review / reviewer evidence
+- Summary: Hardened the code-review and refactor-review contracts so reviewers must explicitly check for unused imports, unused variables, and unresolved changed-scope IntelliJ IDEA or equivalent static-analysis warnings when such inspection output is available. The corresponding skill guidance now treats inspection results as auditable evidence and requires either a FAIL finding or an explicit justification instead of silently ignoring those warnings.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/live/skills/code-review/SKILL.md`; `Octopus-agent-orchestrator/live/skills/code-review/references/code-review-checklist.md`; `Octopus-agent-orchestrator/live/skills/refactor-review/SKILL.md`; `Octopus-agent-orchestrator/live/skills/refactor-review/references/refactor-review-checklist.md`; `Octopus-agent-orchestrator/template/skills/code-review/SKILL.md`; `Octopus-agent-orchestrator/template/skills/code-review/references/code-review-checklist.md`; `Octopus-agent-orchestrator/template/skills/refactor-review/SKILL.md`; `Octopus-agent-orchestrator/template/skills/refactor-review/references/refactor-review-checklist.md`
+
+## 2026-03-17 - PowerShell output-filter parity fixed and bundle bumped to 1.0.8
+- Task: T-017
+- Type: behavior-change
+- Scope: output filters / token economy / versioning
+- Summary: Fixed the remaining PowerShell output-filter parity gap by normalizing parser match results to arrays before `.Count` checks in compile/test/lint parsers, which restores correct `FULL`, `DEGRADED`, and parser-level `PASSTHROUGH` behavior without breaking the legacy single-object operations tolerance. The bundle version was then bumped to `1.0.8` so branch-based update checks can detect and apply this release.
+- Docs Updated: `Octopus-agent-orchestrator/VERSION`; `Octopus-agent-orchestrator/live/version.json`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/live/docs/tasks/TOKEN_ECONOMY_NEXT_PHASE_PLAN.md`; `Octopus-agent-orchestrator/live/scripts/agent-gates/lib/gate-utils.psm1`; `Octopus-agent-orchestrator/template/scripts/agent-gates/lib/gate-utils.psm1`
+
 ## 2026-03-17 - Findings must be resolved or explicitly deferred before DONE
 - Task: T-015
 - Type: behavior-change

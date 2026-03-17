@@ -1283,7 +1283,7 @@ function Invoke-GateCompileFailureParser {
     $maxMatches = Resolve-GateFilterIntegerSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'max_matches') -ContextData $ContextData -FieldName 'parser.max_matches' -Minimum 1
     $tailCount = Resolve-GateFilterIntegerSpec -Value (Get-GateFilterConfigValue -Object $Parser -Key 'tail_count') -ContextData $ContextData -FieldName 'parser.tail_count' -Minimum 0
 
-    $fullMatches = Select-GateMatchingLines -Lines $Lines -Patterns $config.full_patterns -Limit $maxMatches
+    $fullMatches = @(Select-GateMatchingLines -Lines $Lines -Patterns $config.full_patterns -Limit $maxMatches)
     if ($fullMatches.Count -gt 0) {
         $summaryLines = New-Object 'System.Collections.Generic.List[string]'
         $seenLines = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
@@ -1302,7 +1302,7 @@ function Invoke-GateCompileFailureParser {
         }
     }
 
-    $degradedMatches = Select-GateMatchingLines -Lines $Lines -Patterns $config.degraded_patterns -Limit ([Math]::Max($maxMatches, 8))
+    $degradedMatches = @(Select-GateMatchingLines -Lines $Lines -Patterns $config.degraded_patterns -Limit ([Math]::Max($maxMatches, 8)))
     if ($degradedMatches.Count -gt 0) {
         $summaryLines = New-Object 'System.Collections.Generic.List[string]'
         $seenLines = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
@@ -1352,7 +1352,7 @@ function Invoke-GateTestFailureParser {
         '[✕×]'
     )
 
-    $matches = Select-GateMatchingLines -Lines $Lines -Patterns $patterns -Limit $maxMatches
+    $matches = @(Select-GateMatchingLines -Lines $Lines -Patterns $patterns -Limit $maxMatches)
     if ($matches.Count -gt 0) {
         $summaryLines = New-Object 'System.Collections.Generic.List[string]'
         $seenLines = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
@@ -1398,7 +1398,7 @@ function Invoke-GateLintFailureParser {
         'problems?'
     )
 
-    $matches = Select-GateMatchingLines -Lines $Lines -Patterns $patterns -Limit $maxMatches
+    $matches = @(Select-GateMatchingLines -Lines $Lines -Patterns $patterns -Limit $maxMatches)
     if ($matches.Count -gt 0) {
         $summaryLines = New-Object 'System.Collections.Generic.List[string]'
         $seenLines = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
