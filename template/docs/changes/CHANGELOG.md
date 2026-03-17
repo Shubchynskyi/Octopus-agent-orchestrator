@@ -13,6 +13,13 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Docs Updated: <list of updated doc files>
 ```
 
+## 2026-03-16 - Conservative token-economy defaults and depth=3 policy clarified
+- Task: T-011
+- Type: behavior-change
+- Scope: token economy / reviewer context / docs
+- Summary: Kept the conservative reviewer-context token-economy default by aligning checked-in live metadata with the template/init defaults (`enabled=false`, `enabled_depths=[1,2]`), documented that shared gate output filtering still applies at any depth, and clarified that default `depth=3` keeps full reviewer scope while explicit `enabled_depths=[1,2,3]` only enables non-scope-reducing compaction.
+- Docs Updated: `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md`; `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`; `Octopus-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md`; `Octopus-agent-orchestrator/template/skills/orchestration/SKILL.md`; `Octopus-agent-orchestrator/template/skills/code-review/SKILL.md`; `Octopus-agent-orchestrator/template/skills/db-review/SKILL.md`; `Octopus-agent-orchestrator/template/skills/security-review/SKILL.md`; `Octopus-agent-orchestrator/template/skills/refactor-review/SKILL.md`; `Octopus-agent-orchestrator/scripts/init.ps1`
+
 ## 2026-03-16 - Task-event integrity chain and append locking
 - Task: T-006
 - Type: architecture-change

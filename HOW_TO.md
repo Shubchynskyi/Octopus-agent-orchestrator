@@ -73,8 +73,9 @@ Use task commands in this shape:
 Depth behavior:
 - `depth=2` is default.
 - `depth=1` is quick mode for narrow low-risk tasks.
-- `depth=3` is deep mode for high-risk or cross-module work.
-- If token economy is enabled, use `depth=1` only for small, well-localized tasks; prefer `depth=2` otherwise.
+- `depth=3` is deep mode for high-risk or cross-module work and keeps full reviewer context by default.
+- If reviewer-context token economy is enabled, use `depth=1` only for small, well-localized tasks; prefer `depth=2` otherwise.
+- Shared compile/review output filters still apply at any depth, even when reviewer-context token economy is disabled.
 - Required gates still apply at any depth.
 
 ## 5. Existing Project With Existing Docs

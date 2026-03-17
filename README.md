@@ -44,12 +44,13 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
 - No automatic moving or deleting of legacy files.
 
 ## Token Economy
-- Token cost optimization is built in via `Octopus-agent-orchestrator/live/config/token-economy.json`.
-- Controls include compact reviewer output, scoped diffs for heavy reviews, and compile fail-tail limit (`fail_tail_lines`).
-- Gate output filter profiles live in `Octopus-agent-orchestrator/live/config/output-filters.json` and drive shared compile/test/lint/review output compaction behavior.
+- Reviewer-context token economy is controlled via `Octopus-agent-orchestrator/live/config/token-economy.json`.
+- Shared gate output filter profiles live in `Octopus-agent-orchestrator/live/config/output-filters.json` and stay active regardless of the reviewer-context token-economy toggle.
+- Conservative default: keep `token-economy.enabled=false` with `enabled_depths=[1,2]` unless the project explicitly wants compact reviewer context.
+- When reviewer-context token economy is enabled, use `depth=1` only for small, well-localized tasks; prefer `depth=2` or `depth=3` when review correctness depends on broader context.
+- `depth=3` keeps full reviewer rule packs by default; only shared gate output filtering and fail-tail compaction remain active.
 - Gate metrics now record raw-vs-filtered payload size, parser mode, parser strategy, and estimated saved tokens for compile/review gates.
 - Scoped-diff helpers can also persist metadata artifacts (`*-scoped.json`), and reviewer-context helpers can persist `*-review-context.json` with selected rule pack, omitted sections, and fallback evidence.
-- Recommended default: use `enabled=true` with `depth=1` only for small, well-localized tasks; prefer `depth=2` when review correctness depends on broader context.
 
 ## What Is Deployed To Project Root
 - `CLAUDE.md` (always refreshed from template)
@@ -103,7 +104,7 @@ This bundle deploys Octopus Agent Orchestrator entrypoints into project root, ma
    - preferred source-of-truth entrypoint: `Claude (CLAUDE.md) | Codex (AGENTS.md) | Gemini (GEMINI.md) | GitHubCopilot (.github/copilot-instructions.md) | Windsurf (.windsurf/rules/rules.md) | Junie (.junie/guidelines.md) | Antigravity (.antigravity/rules.md)`; all non-selected entrypoint files will redirect to the selected file.
    - whether to enforce hard no-auto-commit guard (`yes` or `no`).
    - whether to grant Claude full access to orchestrator files/commands (`yes` or `no`) so gate scripts and task-event logs run without extra permission prompts.
-   - whether token economy should be enabled by default (`yes` or `no`).
+   - whether reviewer-context token economy should be enabled by default (`yes` or `no`); shared gate output filtering remains active either way.
 4. Agent must hard-stop setup unless all 6 answers are collected, then writes `Octopus-agent-orchestrator/runtime/init-answers.json`.
 5. Agent executes install and init with `-InitAnswersPath`, then reads `live/project-discovery.md`.
 6. Agent updates context rules (`10/20/30/40/60`) and `live/config/paths.json` to match the real repository.

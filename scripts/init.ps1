@@ -848,7 +848,7 @@ if (-not $DryRun) {
             '- `depth=1`: simple or low-risk change.',
             '- `depth=2`: default for most tasks.',
             '- `depth=3`: high-risk or cross-cutting work.',
-            '- If token economy mode is enabled, use `depth=1` only for small, well-localized tasks; otherwise prefer `depth=2`.',
+            '- If token economy mode is enabled, use `depth=1` only for small, well-localized tasks; default `depth=3` keeps full reviewer context while shared gate-output compaction still applies.',
             '',
             '## Update Workspace',
             '- Check/update (recommended): `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`',

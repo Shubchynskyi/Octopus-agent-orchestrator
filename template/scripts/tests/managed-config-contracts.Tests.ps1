@@ -20,6 +20,13 @@ BeforeAll {
 }
 
 Describe 'Merge-ManagedConfigWithTemplate' {
+    It 'keeps conservative token-economy template defaults' {
+        $script:TokenEconomyTemplate['enabled'] | Should -BeFalse
+        ($script:TokenEconomyTemplate['enabled_depths'] -join ',') | Should -Be '1,2'
+        $script:TokenEconomyTemplate['strip_examples'] | Should -BeTrue
+        $script:TokenEconomyTemplate['strip_code_blocks'] | Should -BeTrue
+    }
+
     It 'normalizes token-economy legacy keys and scalar values' {
         $existingConfig = [ordered]@{
             Enabled               = 'yes'

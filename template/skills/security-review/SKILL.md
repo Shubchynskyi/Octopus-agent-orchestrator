@@ -31,13 +31,15 @@ Prioritize exploitability, authorization integrity, and payment safety.
 ## Token Economy Mode
 - Config source: `Octopus-agent-orchestrator/live/config/token-economy.json`.
 - Apply this section only when `enabled=true` and effective depth is in `enabled_depths`.
+- Default policy keeps `enabled_depths=[1,2]`, so `depth=3` follows full review behavior.
+- If a deployment explicitly includes `3` in `enabled_depths`, keep the full review scope and allow only non-scope-reducing compaction (for example stripped examples/code blocks or compact reviewer artifacts).
 - While active, this section takes precedence over any static rule-file list in `Required Inputs`.
 - If orchestration provides review-context artifact, treat its `rule_pack.selected_rule_files`, `rule_pack.omitted_rule_files`, `token_economy.omitted_sections`, nested `rule_context.*`, and `scoped_diff` fallback metadata as the source of truth for compact security review scope.
 - When `rule_context.artifact_path` is present, use that markdown snapshot as the primary rule text instead of reloading raw rule files.
 - Depth-aware required-rules behavior:
   - `depth=1`: evaluate required security rules directly triggered by changed scope first; avoid unrelated rule expansion and full static rule loading.
   - `depth=2`: evaluate the full required security checklist for changed scope.
-  - other depths: follow full review behavior without token-economy reductions.
+  - other depths: follow full review behavior; if `depth=3` is explicitly enabled, only non-scope-reducing compaction may still apply.
 - Compact mode contract:
   - when `compact_reviewer_output=true`, keep the same mandatory output sections and exact verdict token.
   - keep findings concise (`risk -> evidence -> required action`) and move detail overflow to residual risks.

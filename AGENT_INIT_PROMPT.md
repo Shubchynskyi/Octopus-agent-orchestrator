@@ -20,6 +20,7 @@ Create a fully working agent orchestration workspace where canonical rules live 
    - In `<assistant-language>`, ask (5th mandatory question): a localized equivalent of `Give Claude full access to orchestrator files? (yes/no)`
    - Wait for answer and store as `<claude-orchestrator-full-access>`.
    - In `<assistant-language>`, ask (6th mandatory question): a localized equivalent of `Enable token-economy mode by default? (yes/no)`
+   - Clarify before collecting the answer: this toggle controls reviewer-context compaction for configured depths; shared gate output filtering and fail-tail compaction still apply at any depth.
    - Wait for answer and store as `<token-economy-enabled>`.
    - Hard-stop rule: **if all 6 answers are not collected, do not run installation**.
 3. Save required init answers artifact to `Octopus-agent-orchestrator/runtime/init-answers.json`:
@@ -118,6 +119,7 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
   - using default depth (`Execute task <task-id>`);
   - when to use `depth=1`, `depth=2`, and `depth=3`.
   - if token economy is enabled, use `depth=1` only for small, well-localized tasks.
+  - default `depth=3` keeps full reviewer context while shared gate-output filtering still applies.
   - where tasks are defined: tasks are managed in the root `TASK.md` file.
   - updating orchestrator workspace:
     - `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`
@@ -138,4 +140,3 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 - Do not commit.
 - Do not remove unrelated files.
 - Do not skip verification.
-

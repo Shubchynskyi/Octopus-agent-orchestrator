@@ -131,6 +131,85 @@ def test_build_review_context_shell_writes_sanitized_markdown(tmp_path: Path) ->
     assert "bad example payload" not in markdown
 
 
+@pytest.mark.skipif(BASH_PATH is None, reason="bash is required for build-review-context.sh tests")
+def test_build_review_context_shell_keeps_full_rule_pack_at_depth_3_when_explicitly_enabled(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir(parents=True, exist_ok=True)
+
+    write_text(
+        repo_path / "runtime" / "reviews" / "T-011-preflight.json",
+        json.dumps({"required_reviews": {"code": True}}, indent=2) + "\n",
+    )
+    write_text(
+        repo_path / "config" / "token-economy.json",
+        json.dumps(
+            {
+                "enabled": True,
+                "enabled_depths": [1, 2, 3],
+                "strip_examples": True,
+                "strip_code_blocks": True,
+                "scoped_diffs": True,
+                "compact_reviewer_output": True,
+                "fail_tail_lines": 20,
+            },
+            indent=2,
+        )
+        + "\n",
+    )
+
+    rule_files = {
+        "00-core.md": "# Core Rule\n\nAlways keep these instructions.\n\nExamples:\n```text\nbad example payload\n```\n\nKeep this paragraph.\n",
+        "35-strict-coding-rules.md": "# Strict Rules\n\nKeep strict checks.\n",
+        "50-structure-and-docs.md": "# Structure\n\nKeep structure docs aligned.\n",
+        "70-security.md": "# Security\n\nKeep security review complete.\n",
+        "80-task-workflow.md": "# Workflow\n\nStay deterministic.\n",
+    }
+    for relative_path, content in rule_files.items():
+        write_text(repo_path / "live" / "docs" / "agent-rules" / relative_path, content)
+
+    output_path = repo_path / "runtime" / "reviews" / "T-011-code-review-context.json"
+    script_path = REPO_ROOT / "template" / "scripts" / "agent-gates" / "build-review-context.sh"
+    run_checked(
+        [
+            BASH_PATH,
+            str(script_path),
+            "--review-type",
+            "code",
+            "--depth",
+            "3",
+            "--preflight-path",
+            "runtime/reviews/T-011-preflight.json",
+            "--token-economy-config-path",
+            "config/token-economy.json",
+            "--output-path",
+            str(output_path),
+            "--repo-root",
+            str(repo_path),
+        ],
+        REPO_ROOT,
+    )
+
+    context = json.loads(output_path.read_text(encoding="utf-8"))
+    assert context["token_economy_active"] is True
+    assert context["rule_pack"]["selected_rule_count"] == len(context["rule_pack"]["full_rule_pack_files"])
+    assert context["rule_pack"]["omitted_rule_count"] == 0
+    assert context["rule_pack"]["omission_reason"] == "none"
+    assert context["rule_context"]["source_file_count"] == len(context["rule_pack"]["full_rule_pack_files"])
+    assert context["rule_context"]["strip_examples_applied"] is True
+    assert context["rule_context"]["strip_code_blocks_applied"] is True
+
+    omitted_sections = [entry["section"] for entry in context["token_economy"]["omitted_sections"]]
+    assert "examples" in omitted_sections
+    assert "code_blocks" in omitted_sections
+    assert "rule_pack" not in omitted_sections
+
+    markdown_path = Path(context["rule_context"]["artifact_path"].replace("/", "\\"))
+    markdown = markdown_path.read_text(encoding="utf-8")
+    assert "Keep strict checks." in markdown
+    assert "Keep structure docs aligned." in markdown
+    assert "bad example payload" not in markdown
+
+
 def test_audit_review_artifact_compaction_warns_for_verbose_artifact(tmp_path: Path) -> None:
     artifact_path = tmp_path / "T-009-code.md"
     content = "\n".join([*(f"Line {index}" for index in range(1, 141)), "Examples:", "```text", "payload", "```"])
