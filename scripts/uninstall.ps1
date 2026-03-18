@@ -26,95 +26,7 @@ if ([string]::Equals($normalizedTargetRoot, $normalizedBundleRoot, [System.Strin
     throw "TargetRoot points to orchestrator bundle directory '$bundleRoot'. Use the project root parent directory instead."
 }
 
-function Get-NormalizedPath {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$PathValue
-    )
-
-    $fullPath = [System.IO.Path]::GetFullPath($PathValue)
-    $rootPath = [System.IO.Path]::GetPathRoot($fullPath)
-    if (-not [string]::IsNullOrWhiteSpace($rootPath) -and [string]::Equals($fullPath, $rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $fullPath
-    }
-
-    return $fullPath.TrimEnd('\', '/')
-}
-
-function Test-IsPathInsideRoot {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$RootPath,
-        [Parameter(Mandatory = $true)]
-        [string]$CandidatePath
-    )
-
-    $rootFull = Get-NormalizedPath -PathValue $RootPath
-    $candidateFull = Get-NormalizedPath -PathValue $CandidatePath
-    if ([string]::Equals($rootFull, $candidateFull, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $true
-    }
-
-    $rootWithSeparator = if ($rootFull.EndsWith('\') -or $rootFull.EndsWith('/')) {
-        $rootFull
-    } else {
-        $rootFull + [System.IO.Path]::DirectorySeparatorChar
-    }
-    return $candidateFull.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
-}
-
-function Resolve-PathInsideRoot {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$RootPath,
-        [Parameter(Mandatory = $true)]
-        [string]$PathValue,
-        [Parameter(Mandatory = $true)]
-        [string]$Label
-    )
-
-    $candidatePath = $PathValue
-    if (-not [System.IO.Path]::IsPathRooted($candidatePath)) {
-        $candidatePath = Join-Path $RootPath $candidatePath
-    }
-
-    $candidatePath = [System.IO.Path]::GetFullPath($candidatePath)
-    if (-not (Test-IsPathInsideRoot -RootPath $RootPath -CandidatePath $candidatePath)) {
-        throw "$Label must resolve inside TargetRoot '$RootPath'. Resolved path: $candidatePath"
-    }
-
-    return $candidatePath
-}
-
-function Convert-ToBooleanAnswer {
-    param(
-        [AllowNull()]
-        [string]$Value,
-        [Parameter(Mandatory = $true)]
-        [string]$FieldName
-    )
-
-    if ([string]::IsNullOrWhiteSpace($Value)) {
-        throw "$FieldName must not be empty."
-    }
-
-    $normalized = $Value.Trim().ToLowerInvariant()
-    switch ($normalized) {
-        '1' { return $true }
-        '0' { return $false }
-        'true' { return $true }
-        'false' { return $false }
-        'yes' { return $true }
-        'no' { return $false }
-        'y' { return $true }
-        'n' { return $false }
-        'да' { return $true }
-        'нет' { return $false }
-        default {
-            throw "$FieldName has unsupported value '$Value'. Allowed values: true, false, yes, no, 1, 0."
-        }
-    }
-}
+. (Join-Path $scriptDir 'lib' 'common.ps1')
 
 function Test-InteractivePromptSupport {
     try {
@@ -163,18 +75,6 @@ function Resolve-Decision {
         catch {
             Write-Warning $_.Exception.Message
         }
-    }
-}
-
-function Get-SourceToEntrypointMap {
-    return @{
-        'CLAUDE'        = 'CLAUDE.md'
-        'CODEX'         = 'AGENTS.md'
-        'GEMINI'        = 'GEMINI.md'
-        'GITHUBCOPILOT' = '.github/copilot-instructions.md'
-        'WINDSURF'      = '.windsurf/rules/rules.md'
-        'JUNIE'         = '.junie/guidelines.md'
-        'ANTIGRAVITY'   = '.antigravity/rules.md'
     }
 }
 

@@ -32,6 +32,8 @@ if (-not (Test-Path -LiteralPath $managedConfigContractsModulePath -PathType Lea
 }
 . $managedConfigContractsModulePath
 
+. (Join-Path $scriptDir 'lib' 'common.ps1')
+
 if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) {
     throw "Template directory not found: $sourceRoot"
 }
@@ -45,92 +47,6 @@ $normalizedTargetRoot = $TargetRoot.TrimEnd('\', '/')
 $normalizedBundleRoot = $bundleRoot.TrimEnd('\', '/')
 if ([string]::Equals($normalizedTargetRoot, $normalizedBundleRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "TargetRoot points to orchestrator bundle directory '$bundleRoot'. Use the project root parent directory instead."
-}
-
-function Get-NormalizedPath {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$PathValue
-    )
-
-    $fullPath = [System.IO.Path]::GetFullPath($PathValue)
-    $rootPath = [System.IO.Path]::GetPathRoot($fullPath)
-    if (-not [string]::IsNullOrWhiteSpace($rootPath) -and [string]::Equals($fullPath, $rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $fullPath
-    }
-
-    return $fullPath.TrimEnd('\', '/')
-}
-
-function Test-IsPathInsideRoot {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$RootPath,
-        [Parameter(Mandatory = $true)]
-        [string]$CandidatePath
-    )
-
-    $rootFull = Get-NormalizedPath -PathValue $RootPath
-    $candidateFull = Get-NormalizedPath -PathValue $CandidatePath
-    if ([string]::Equals($rootFull, $candidateFull, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $true
-    }
-
-    $rootWithSeparator = if ($rootFull.EndsWith('\') -or $rootFull.EndsWith('/')) {
-        $rootFull
-    } else {
-        $rootFull + [System.IO.Path]::DirectorySeparatorChar
-    }
-    return $candidateFull.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
-}
-
-function Resolve-PathInsideRoot {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$RootPath,
-        [Parameter(Mandatory = $true)]
-        [string]$PathValue,
-        [Parameter(Mandatory = $true)]
-        [string]$Label,
-        [switch]$RequireFile
-    )
-
-    $candidatePath = $PathValue
-    if (-not [System.IO.Path]::IsPathRooted($candidatePath)) {
-        $candidatePath = Join-Path $RootPath $candidatePath
-    }
-
-    $candidatePath = [System.IO.Path]::GetFullPath($candidatePath)
-    if (-not (Test-IsPathInsideRoot -RootPath $RootPath -CandidatePath $candidatePath)) {
-        throw "$Label must resolve inside TargetRoot '$RootPath'. Resolved path: $candidatePath"
-    }
-
-    if ($RequireFile -and -not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) {
-        throw "$Label file not found: $candidatePath"
-    }
-
-    if ($RequireFile) {
-        $resolvedCandidatePath = (Resolve-Path -LiteralPath $candidatePath).Path
-        if (-not (Test-IsPathInsideRoot -RootPath $RootPath -CandidatePath $resolvedCandidatePath)) {
-            throw "$Label must resolve inside TargetRoot '$RootPath'. Resolved path: $resolvedCandidatePath"
-        }
-
-        return $resolvedCandidatePath
-    }
-
-    return $candidatePath
-}
-
-function Get-SourceToEntrypointMap {
-    return @{
-        'CLAUDE' = 'CLAUDE.md'
-        'CODEX' = 'AGENTS.md'
-        'GEMINI' = 'GEMINI.md'
-        'GITHUBCOPILOT' = '.github/copilot-instructions.md'
-        'WINDSURF' = '.windsurf/rules/rules.md'
-        'JUNIE' = '.junie/guidelines.md'
-        'ANTIGRAVITY' = '.antigravity/rules.md'
-    }
 }
 
 function Get-AnswerDefinition {

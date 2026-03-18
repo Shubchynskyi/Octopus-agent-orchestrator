@@ -16,6 +16,8 @@ $sourceRoot = Join-Path $bundleRoot 'template'
 $ruleContractMigrationModulePath = Join-Path $scriptDir 'lib/rule-contract-migrations.ps1'
 $managedConfigContractsModulePath = Join-Path $scriptDir 'lib/managed-config-contracts.ps1'
 
+. (Join-Path $scriptDir 'lib' 'common.ps1')
+
 if (-not (Test-Path $sourceRoot)) {
     throw "Template directory not found: $sourceRoot"
 }
@@ -36,65 +38,6 @@ if ([string]::IsNullOrWhiteSpace($TargetRoot)) {
 $TargetRoot = (Resolve-Path $TargetRoot).Path
 $SourceOfTruth = $SourceOfTruth.Trim()
 $sourceOfTruthKey = $SourceOfTruth.ToUpperInvariant().Replace(' ', '')
-
-function Get-NormalizedPath {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$PathValue
-    )
-
-    $fullPath = [System.IO.Path]::GetFullPath($PathValue)
-    $rootPath = [System.IO.Path]::GetPathRoot($fullPath)
-    if (-not [string]::IsNullOrWhiteSpace($rootPath) -and [string]::Equals($fullPath, $rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $fullPath
-    }
-
-    return $fullPath.TrimEnd('\', '/')
-}
-
-function Test-IsPathInsideRoot {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$RootPath,
-        [Parameter(Mandatory = $true)]
-        [string]$CandidatePath
-    )
-
-    $rootFull = Get-NormalizedPath -PathValue $RootPath
-    $candidateFull = Get-NormalizedPath -PathValue $CandidatePath
-    if ([string]::Equals($rootFull, $candidateFull, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $true
-    }
-
-    $rootWithSeparator = if ($rootFull.EndsWith('\') -or $rootFull.EndsWith('/')) {
-        $rootFull
-    } else {
-        $rootFull + [System.IO.Path]::DirectorySeparatorChar
-    }
-    return $candidateFull.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
-}
-
-function Get-InitAnswerValue {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object]$Answers,
-        [Parameter(Mandatory = $true)]
-        [string]$LogicalName
-    )
-
-    $targetKey = $LogicalName.ToLowerInvariant().Replace('_', '').Replace('-', '')
-    foreach ($property in $Answers.PSObject.Properties) {
-        $propertyKey = $property.Name.ToLowerInvariant().Replace('_', '').Replace('-', '')
-        if ($propertyKey -eq $targetKey) {
-            if ($null -eq $property.Value) {
-                return $null
-            }
-            return [string]$property.Value
-        }
-    }
-
-    return $null
-}
 
 function Get-ObjectPropertyString {
     param(
@@ -119,37 +62,6 @@ function Get-ObjectPropertyString {
     }
 
     return [string]$property.Value
-}
-
-function Convert-ToBooleanAnswer {
-    param(
-        [AllowNull()]
-        [string]$Value,
-        [Parameter(Mandatory = $true)]
-        [string]$FieldName,
-        [bool]$DefaultValue = $false
-    )
-
-    if ([string]::IsNullOrWhiteSpace($Value)) {
-        return $DefaultValue
-    }
-
-    $normalized = $Value.Trim().ToLowerInvariant()
-    switch ($normalized) {
-        '1' { return $true }
-        '0' { return $false }
-        'true' { return $true }
-        'false' { return $false }
-        'yes' { return $true }
-        'no' { return $false }
-        'y' { return $true }
-        'n' { return $false }
-        'да' { return $true }
-        'нет' { return $false }
-        default {
-            throw "Init answers artifact has unsupported $FieldName '$Value'. Allowed values: true, false, yes, no, 1, 0."
-        }
-    }
 }
 
 $initAnswersContractViolations = @()
@@ -273,15 +185,7 @@ if ([string]::IsNullOrWhiteSpace($initAnswersResolvedPath)) {
     $initAnswersResolvedPath = $initAnswersCandidatePath
 }
 
-$sourceToEntrypoint = @{
-    'CLAUDE' = 'CLAUDE.md'
-    'CODEX' = 'AGENTS.md'
-    'GEMINI' = 'GEMINI.md'
-    'GITHUBCOPILOT' = '.github/copilot-instructions.md'
-    'WINDSURF' = '.windsurf/rules/rules.md'
-    'JUNIE' = '.junie/guidelines.md'
-    'ANTIGRAVITY' = '.antigravity/rules.md'
-}
+$sourceToEntrypoint = Get-SourceToEntrypointMap
 if (-not $sourceToEntrypoint.ContainsKey($sourceOfTruthKey)) {
     throw "Unsupported SourceOfTruth value '$SourceOfTruth'."
 }

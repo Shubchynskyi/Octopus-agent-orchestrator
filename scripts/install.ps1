@@ -26,6 +26,8 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $bundleRoot = Split-Path -Parent $scriptDir
 $sourceRoot = Join-Path $bundleRoot 'template'
 
+. (Join-Path $scriptDir 'lib' 'common.ps1')
+
 if (-not (Test-Path $sourceRoot)) {
     throw "Template directory not found: $sourceRoot"
 }
@@ -41,75 +43,6 @@ if ([string]::Equals($normalizedTargetRoot, $normalizedBundleRoot, [System.Strin
     throw "TargetRoot points to orchestrator bundle directory '$bundleRoot'. Use the project root parent directory instead."
 }
 
-function Get-NormalizedPath {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$PathValue
-    )
-
-    $fullPath = [System.IO.Path]::GetFullPath($PathValue)
-    $rootPath = [System.IO.Path]::GetPathRoot($fullPath)
-    if (-not [string]::IsNullOrWhiteSpace($rootPath) -and [string]::Equals($fullPath, $rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $fullPath
-    }
-
-    return $fullPath.TrimEnd('\', '/')
-}
-
-function Test-IsPathInsideRoot {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$RootPath,
-        [Parameter(Mandatory = $true)]
-        [string]$CandidatePath
-    )
-
-    $rootFull = Get-NormalizedPath -PathValue $RootPath
-    $candidateFull = Get-NormalizedPath -PathValue $CandidatePath
-    if ([string]::Equals($rootFull, $candidateFull, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $true
-    }
-
-    $rootWithSeparator = if ($rootFull.EndsWith('\') -or $rootFull.EndsWith('/')) {
-        $rootFull
-    } else {
-        $rootFull + [System.IO.Path]::DirectorySeparatorChar
-    }
-    return $candidateFull.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
-}
-
-function Resolve-FilePathInsideRoot {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$RootPath,
-        [Parameter(Mandatory = $true)]
-        [string]$PathValue,
-        [Parameter(Mandatory = $true)]
-        [string]$Label
-    )
-
-    $candidatePath = $PathValue
-    if (-not [System.IO.Path]::IsPathRooted($candidatePath)) {
-        $candidatePath = Join-Path $RootPath $candidatePath
-    }
-
-    $candidatePath = [System.IO.Path]::GetFullPath($candidatePath)
-    if (-not (Test-IsPathInsideRoot -RootPath $RootPath -CandidatePath $candidatePath)) {
-        throw "$Label must resolve inside TargetRoot '$RootPath'. Resolved path: $candidatePath"
-    }
-
-    if (-not (Test-Path -LiteralPath $candidatePath -PathType Leaf)) {
-        throw "$Label file not found: $candidatePath"
-    }
-
-    $resolvedPath = (Resolve-Path -LiteralPath $candidatePath).Path
-    if (-not (Test-IsPathInsideRoot -RootPath $RootPath -CandidatePath $resolvedPath)) {
-        throw "$Label must resolve inside TargetRoot '$RootPath'. Resolved path: $resolvedPath"
-    }
-
-    return $resolvedPath
-}
-
 $AssistantLanguage = $AssistantLanguage.Trim()
 if ([string]::IsNullOrWhiteSpace($AssistantLanguage)) {
     throw 'AssistantLanguage must not be empty.'
@@ -118,60 +51,7 @@ if ([string]::IsNullOrWhiteSpace($AssistantLanguage)) {
 $AssistantBrevity = $AssistantBrevity.Trim().ToLowerInvariant()
 $SourceOfTruth = $SourceOfTruth.Trim()
 
-function Get-InitAnswerValue {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object]$Answers,
-        [Parameter(Mandatory = $true)]
-        [string]$LogicalName
-    )
-
-    $targetKey = $LogicalName.ToLowerInvariant().Replace('_', '').Replace('-', '')
-    foreach ($property in $Answers.PSObject.Properties) {
-        $propertyKey = $property.Name.ToLowerInvariant().Replace('_', '').Replace('-', '')
-        if ($propertyKey -eq $targetKey) {
-            if ($null -eq $property.Value) {
-                return $null
-            }
-            return [string]$property.Value
-        }
-    }
-
-    return $null
-}
-
-function Convert-ToBooleanAnswer {
-    param(
-        [AllowNull()]
-        [string]$Value,
-        [Parameter(Mandatory = $true)]
-        [string]$FieldName,
-        [bool]$DefaultValue = $false
-    )
-
-    if ([string]::IsNullOrWhiteSpace($Value)) {
-        return $DefaultValue
-    }
-
-    $normalized = $Value.Trim().ToLowerInvariant()
-    switch ($normalized) {
-        '1' { return $true }
-        '0' { return $false }
-        'true' { return $true }
-        'false' { return $false }
-        'yes' { return $true }
-        'no' { return $false }
-        'y' { return $true }
-        'n' { return $false }
-        'да' { return $true }
-        'нет' { return $false }
-        default {
-            throw "Init answers artifact has unsupported $FieldName '$Value'. Allowed values: true, false, yes, no, 1, 0."
-        }
-    }
-}
-
-$initAnswersResolvedPath = Resolve-FilePathInsideRoot -RootPath $TargetRoot -PathValue $InitAnswersPath -Label 'InitAnswersPath'
+$initAnswersResolvedPath = Resolve-PathInsideRoot -RootPath $TargetRoot -PathValue $InitAnswersPath -Label 'InitAnswersPath' -RequireFile
 $initAnswersRaw = Get-Content -LiteralPath $initAnswersResolvedPath -Raw
 if ([string]::IsNullOrWhiteSpace($initAnswersRaw)) {
     throw "Init answers artifact is empty: $initAnswersResolvedPath"
@@ -240,15 +120,7 @@ if ($AssistantBrevity -ne $artifactAssistantBrevity) {
     throw "AssistantBrevity parameter '$AssistantBrevity' does not match init answers artifact value '$artifactAssistantBrevity'."
 }
 
-$sourceToEntrypoint = @{
-    'CLAUDE' = 'CLAUDE.md'
-    'CODEX' = 'AGENTS.md'
-    'GEMINI' = 'GEMINI.md'
-    'GITHUBCOPILOT' = '.github/copilot-instructions.md'
-    'WINDSURF' = '.windsurf/rules/rules.md'
-    'JUNIE' = '.junie/guidelines.md'
-    'ANTIGRAVITY' = '.antigravity/rules.md'
-}
+$sourceToEntrypoint = Get-SourceToEntrypointMap
 if (-not $sourceToEntrypoint.ContainsKey($sourceOfTruthKey)) {
     throw "Unsupported SourceOfTruth value '$SourceOfTruth'."
 }
@@ -542,7 +414,7 @@ function Set-TaskQueueRowsInManagedBlock {
     }
 
     $mergedLines = @($prefix + $Rows + $suffix)
-    return ($mergedLines -join "`r`n")
+    return ($mergedLines -join "`n")
 }
 
 function Build-TaskManagedBlockWithExistingQueue {
@@ -574,7 +446,7 @@ function Build-TaskManagedBlockWithExistingQueue {
 }
 
 function Get-CommitGuardManagedBlock {
-    $agentEnvMarkersLines = ($commitGuardAgentEnvMarkers | ForEach-Object { '  "' + $_ + '"' }) -join "`r`n"
+    $agentEnvMarkersLines = ($commitGuardAgentEnvMarkers | ForEach-Object { '  "' + $_ + '"' }) -join "`n"
 
     $block = @'
 {START}
@@ -620,6 +492,7 @@ fi
         Replace('{ENV_NAME}', $commitGuardEnvName).
         Replace('{AGENT_ENV_MARKERS}', $agentEnvMarkersLines).
         Replace('{EXTRA_AGENT_MARKERS_ENV_NAME}', $commitGuardExtraAgentMarkersEnvName).
+        Replace("`r`n", "`n").
         Trim()
 }
 
@@ -657,8 +530,8 @@ function Apply-CommitGuardHook {
                 '',
                 $managedBlock,
                 ''
-            ) -join "`r`n"
-            Set-Content -Path $hookPath -Value $hookContent
+            ) -join "`n"
+            [System.IO.File]::WriteAllText($hookPath, $hookContent)
         }
 
         return $true
@@ -668,6 +541,7 @@ function Apply-CommitGuardHook {
     if ($null -eq $content) {
         $content = ''
     }
+    $content = $content.Replace("`r`n", "`n")
 
     $updatedContent = $content
     if ($Enabled) {
@@ -684,15 +558,15 @@ function Apply-CommitGuardHook {
                     '',
                     $managedBlock,
                     ''
-                ) -join "`r`n"
+                ) -join "`n"
             } else {
-                $updatedContent = $content.TrimEnd() + "`r`n`r`n" + $managedBlock + "`r`n"
+                $updatedContent = $content.TrimEnd() + "`n`n" + $managedBlock + "`n"
             }
         }
     } else {
         if ([regex]::IsMatch($content, $pattern)) {
             $updatedContent = [regex]::Replace($content, $pattern, '')
-            $updatedContent = $updatedContent.TrimEnd() + "`r`n"
+            $updatedContent = $updatedContent.TrimEnd() + "`n"
         } else {
             return $false
         }
@@ -704,7 +578,7 @@ function Apply-CommitGuardHook {
 
     Backup-DestinationFile -DestinationPath $hookPath -RelativePath $preCommitHookRelativePath
     if (-not $DryRun) {
-        Set-Content -Path $hookPath -Value $updatedContent
+        [System.IO.File]::WriteAllText($hookPath, $updatedContent)
     }
 
     return $true

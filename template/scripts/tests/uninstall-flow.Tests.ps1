@@ -17,7 +17,8 @@ BeforeAll {
 
         $trackedFiles = @($trackedFiles + @(
             'scripts/uninstall.ps1',
-            'scripts/uninstall.sh'
+            'scripts/uninstall.sh',
+            'scripts/lib/common.ps1'
         )) | Sort-Object -Unique
 
         foreach ($relativePath in @($trackedFiles)) {

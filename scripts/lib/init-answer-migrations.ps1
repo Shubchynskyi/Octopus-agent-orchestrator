@@ -55,12 +55,12 @@ function Get-InitAnswerMigrationSchema {
         [PSCustomObject]@{
             Key                  = 'TokenEconomyEnabled'
             Type                 = 'boolean'
-            DefaultValue         = 'false'
+            DefaultValue         = 'true'
             PromptOnUpdate       = $true
             LiveVersionProperty  = 'TokenEconomyEnabled'
             TokenConfigProperty  = 'enabled'
             Prompt               = 'Missing init answer TokenEconomyEnabled. Enable token-economy mode by default? (yes/no)'
-            ChangeHint           = "Defaulting to 'false'. You can change it later in runtime/init-answers.json and rerun update."
+            ChangeHint           = "Defaulting to 'true'. You can change it later in runtime/init-answers.json and rerun update."
         },
         [PSCustomObject]@{
             Key                  = 'CollectedVia'

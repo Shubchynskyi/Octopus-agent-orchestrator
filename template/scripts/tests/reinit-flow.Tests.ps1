@@ -19,7 +19,8 @@ BeforeAll {
 
         $trackedFiles = @($trackedFiles + @(
             'scripts/reinit.ps1',
-            'scripts/reinit.sh'
+            'scripts/reinit.sh',
+            'scripts/lib/common.ps1'
         )) | Sort-Object -Unique
 
         foreach ($relativePath in @($trackedFiles)) {

@@ -17,6 +17,8 @@ $templateRoot = Join-Path $bundleRoot 'template'
 $liveRoot = Join-Path $bundleRoot 'live'
 $templateRuleRoot = Join-Path $templateRoot 'docs/agent-rules'
 
+. (Join-Path $scriptDir 'lib' 'common.ps1')
+
 if (-not (Test-Path $templateRoot)) {
     throw "Template directory not found: $templateRoot"
 }
@@ -55,15 +57,7 @@ if ($allowedBrevity -notcontains $AssistantBrevity) {
 
 $SourceOfTruth = $SourceOfTruth.Trim()
 $sourceOfTruthKey = $SourceOfTruth.ToUpperInvariant().Replace(' ', '')
-$sourceToEntrypoint = @{
-    'CLAUDE' = 'CLAUDE.md'
-    'CODEX' = 'AGENTS.md'
-    'GEMINI' = 'GEMINI.md'
-    'GITHUBCOPILOT' = '.github/copilot-instructions.md'
-    'WINDSURF' = '.windsurf/rules/rules.md'
-    'JUNIE' = '.junie/guidelines.md'
-    'ANTIGRAVITY' = '.antigravity/rules.md'
-}
+$sourceToEntrypoint = Get-SourceToEntrypointMap
 $canonicalEntrypoint = if ($sourceToEntrypoint.ContainsKey($sourceOfTruthKey)) {
     $sourceToEntrypoint[$sourceOfTruthKey]
 } else {
