@@ -1,318 +1,168 @@
 # Octopus Agent Orchestrator: User How-To
 
-This guide is for project owners who want to bootstrap the orchestrator with one agent prompt.
+Step-by-step guide for project owners. For CLI command details see **[docs/cli-reference.md](docs/cli-reference.md)**.
 
 ## 1. Deploy Bundle
-Recommended when the package CLI is installed from an npm tarball or registry:
 
 ```powershell
 octopus
 ```
 
-Equivalent aliases:
-- `oao`
-- `octopus-agent-orchestrator`
+Equivalent aliases: `oao`, `octopus-agent-orchestrator`.
 
-Behavior:
-- deploys `./Octopus-agent-orchestrator` by default;
-- prints `InitPromptPath` and `InitAnswersPath` for the next setup step;
-- does **not** run install automatically;
-- does **not** ask the human user init questions.
+This deploys `./Octopus-agent-orchestrator/` and prints the paths for next steps.
+Does **not** run install or ask setup questions.
 
-For branch testing:
-
+**Branch testing:**
 ```powershell
 octopus bootstrap --repo-url "<git-url>" --branch "<branch>"
 ```
 
-Alternative for source-bundle/manual setups:
-- copy the full `Octopus-agent-orchestrator/` directory into your target project root.
-
-## Runtime Model
-- Top-level control-plane scripts in `Octopus-agent-orchestrator/scripts/*.ps1` are canonical for install/init/reinit/uninstall/verify/update/check-update.
-- Top-level `Octopus-agent-orchestrator/scripts/*.sh` files are only compatibility wrappers that invoke the matching `.ps1` script via `pwsh`.
-- Real dual-runtime shell implementations exist for task gate scripts in `Octopus-agent-orchestrator/live/scripts/agent-gates/*.sh`.
-- Shell gate scripts require `bash` and a Python runtime in PATH (`python3`, `python`, or `py -3`).
+**Manual setup** (without npm):
+Copy the full `Octopus-agent-orchestrator/` directory into your project root.
 
 ## 2. Run Setup Through Agent
-Give your coding agent this file as instruction input:
-- `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md`
 
-The setup prompt tells the agent to run installation and verification automatically.
-Before installation, the agent must ask you:
-- which language should be used for assistant explanations;
-- which default response brevity should be used (`concise` or `detailed`).
-- which file should be source of truth: `Claude (CLAUDE.md) | Codex (AGENTS.md) | Gemini (GEMINI.md) | GitHubCopilot (.github/copilot-instructions.md) | Windsurf (.windsurf/rules/rules.md) | Junie (.junie/guidelines.md) | Antigravity (.antigravity/rules.md)`; all non-selected entrypoint files will redirect to the selected file.
-- whether hard no-auto-commit guard should be enabled (`yes`/`no`).
-- whether Claude should get full access to orchestrator files/commands (`yes`/`no`) so gate scripts and task-event logs run without extra permission prompts.
-- whether token economy should be enabled by default (`yes`/`no`).
-- hard-stop if any of these 6 answers is missing.
-After collecting all 6 answers, the agent must write `Octopus-agent-orchestrator/runtime/init-answers.json` and pass it to `install.ps1` and `verify.ps1` through `-InitAnswersPath`.
-After install/init, the agent must use `Octopus-agent-orchestrator/live/project-discovery.md` to fill context rules for this repository.
-After successful setup, the agent must provide a short `Usage Instructions` section in the language you selected.
-After verification, before asking `Do you want to add additional specialist skills now? (yes/no)`, the agent must show:
-- already configured specialist skills (enabled capability keys + existing live specialist skill directories);
-- available skills that can be enabled/created now (`api-review`, `test-review`, `performance-review`, `infra-review`, `dependency-review`, or custom via skill-builder);
-- recommended specialist set for this specific project.
-Then the agent asks the yes/no question and proceeds with skill creation only on approval.
+Give your coding agent this file:
+```
+Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md
+```
 
-### Finish Install Through npm CLI
-After the agent has written `Octopus-agent-orchestrator/runtime/init-answers.json`, the preferred lifecycle wrapper is:
+The agent will ask you 6 mandatory questions:
+
+| # | Question | Options |
+|---|---|---|
+| 1 | Assistant response language | Any language (e.g. English, Russian) |
+| 2 | Default response brevity | `concise` or `detailed` |
+| 3 | Source-of-truth entrypoint | Claude, Codex, Gemini, GitHubCopilot, Windsurf, Junie, Antigravity |
+| 4 | Hard no-auto-commit guard | `yes` or `no` |
+| 5 | Claude full access to orchestrator | `yes` or `no` |
+| 6 | Token economy enabled | `yes` or `no` |
+
+After collecting answers, the agent:
+1. Writes `Octopus-agent-orchestrator/runtime/init-answers.json`.
+2. Runs install and verify.
+3. Fills project context from `live/project-discovery.md`.
+4. Returns `Usage Instructions` in your selected language.
+5. Offers to add specialist skills.
+
+### Install via npm CLI
+
+After the agent writes `init-answers.json`:
 
 ```powershell
 octopus install --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
-Behavior:
-- reuses the already prepared answers artifact instead of asking the human user setup questions again;
-- deploys or refreshes the canonical `Octopus-agent-orchestrator/` bundle under the selected `--target-root`;
-- delegates to the existing `scripts/install.ps1` implementation;
-- keeps the agent responsible for setup correctness because `AGENT_INIT_PROMPT.md` still owns answer collection.
-
-If you are testing directly from this source tree instead of an installed package, use:
-
-```powershell
-node .\bin\octopus.js install --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
-```
-
-### Re-Materialize `live/` From Existing Answers
-Use this when the bundle already exists and you only need to rebuild `live/` from the existing answers artifact:
-
-```powershell
-octopus init --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
-```
-
 ## 3. Expected Result
-After successful setup:
-- Root entry points exist and route correctly (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.qwen/settings.json`, `.github/agents/orchestrator.md`, `TASK.md`, platform files; plus optional `.claude/settings.local.json` when `ClaudeOrchestratorFullAccess=true`).
-- Provider-native bridge profiles exist and route to canonical skills (`.github/agents/*.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`).
-- Copilot bridge profiles account for specialist skills added after init by reading `live/docs/agent-rules/90-skill-catalog.md` and `live/config/review-capabilities.json`.
-- Task timeline logs are stored per task id in `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`; new writes use best-effort append locking and per-task integrity metadata.
-- Selected source-of-truth entrypoint contains canonical routing index.
-- All non-selected entrypoint files redirect to the selected source-of-truth entrypoint.
-- Canonical rules are available under `Octopus-agent-orchestrator/live/docs/agent-rules/`.
-- Compile gate scripts are available under `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1` and `.sh`.
-- Validation passes:
-  - `install.ps1`
-  - `verify.ps1`
-  - `validate-manifest.ps1`
-- Live capability config exists: `Octopus-agent-orchestrator/live/config/review-capabilities.json`
-- Preflight path and trigger config exists: `Octopus-agent-orchestrator/live/config/paths.json`
-- Token-economy config exists: `Octopus-agent-orchestrator/live/config/token-economy.json` (compact output and fail-tail controls).
-- Output-filter config exists: `Octopus-agent-orchestrator/live/config/output-filters.json` (shared gate-output filter profiles).
-- Review-context helper artifacts can be generated in `Octopus-agent-orchestrator/runtime/reviews/*-review-context.json` when token economy mode is active.
-- Discovery report exists: `Octopus-agent-orchestrator/live/project-discovery.md`
-- Usage guide exists: `Octopus-agent-orchestrator/live/USAGE.md`
-- Deployment version metadata exists: `Octopus-agent-orchestrator/live/version.json`
-- If enabled in init answers, no-auto-commit guard exists in `.git/hooks/pre-commit` and blocks detected agent sessions while keeping normal human commits available.
-- Builder skill exists: `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md`
 
-Note:
-- Template placeholders like `{{ASSISTANT_RESPONSE_LANGUAGE}}` and `{{ASSISTANT_RESPONSE_BREVITY}}` are expected before install/init.
-- They are resolved during setup into concrete values in `Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md`.
-- Command placeholders in `live/docs/agent-rules/40-commands.md` are not auto-resolved; they must be replaced with real project commands during setup, including `### Compile Gate (Mandatory)`.
+After successful setup:
+
+- ✅ Root entrypoints exist and route correctly (selected source-of-truth has full index, others redirect).
+- ✅ Provider bridge profiles exist (`.github/agents/*.md`, `.windsurf/agents/`, etc.).
+- ✅ Canonical rules at `Octopus-agent-orchestrator/live/docs/agent-rules/`.
+- ✅ Gate scripts at `Octopus-agent-orchestrator/live/scripts/agent-gates/`.
+- ✅ Config files at `Octopus-agent-orchestrator/live/config/`.
+- ✅ `verify.ps1` and `validate-manifest.ps1` pass.
+- ✅ `TASK.md` exists with task queue.
+
+See **[docs/architecture.md](docs/architecture.md)** for full list of deployed files.
 
 ## 4. Start Working On Tasks
-Use task commands in this shape:
-- `Execute task T-001`
-- `Execute task T-001 depth=1`
-- `Execute task T-001 depth=2`
-- `Execute task T-001 depth=3`
 
-Depth behavior:
-- `depth=2` is default.
-- `depth=1` is quick mode for narrow low-risk tasks.
-- `depth=3` is deep mode for high-risk or cross-module work and keeps full reviewer context by default.
-- If reviewer-context token economy is enabled, use `depth=1` only for small, well-localized tasks; prefer `depth=2` otherwise.
-- Shared compile/review output filters still apply at any depth, even when reviewer-context token economy is disabled.
-- Required gates still apply at any depth.
+```
+Execute task T-001
+Execute task T-001 depth=1
+Execute task T-001 depth=2
+Execute task T-001 depth=3
+```
+
+| Depth | When to Use |
+|---|---|
+| `depth=1` | Small, localized, low-risk tasks |
+| `depth=2` | Default for most tasks |
+| `depth=3` | High-risk, cross-module, security-sensitive work |
+
+Required gates apply at any depth.
+See **[docs/work-example.md](docs/work-example.md)** for a full task lifecycle walkthrough.
 
 ## 5. Existing Project With Existing Docs
-- Existing docs are used as context input.
-- The orchestrator does not move or delete existing project documentation.
-- Canonical agent workflow rules remain under `Octopus-agent-orchestrator/live/`.
-- Additional specialist skills are created only in `Octopus-agent-orchestrator/live/skills/**` when explicitly requested.
 
-## 6. Post-Init Validation Commands
-Initialization must be run through `AGENT_INIT_PROMPT.md` (not by direct `install.ps1` call).
+- Existing docs are read as context input — orchestrator does not move or delete them.
+- Canonical rules remain under `Octopus-agent-orchestrator/live/`.
+- Specialist skills are created only in `Octopus-agent-orchestrator/live/skills/**`.
+
+## 6. Post-Init Validation
 
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<Claude|Codex|Gemini|GitHubCopilot|Windsurf|Junie|Antigravity>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<provider>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md
 ```
 
-Gate scripts also have Bash alternatives:
-```bash
-bash Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"
-bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"
-bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
-bash Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --rationale "<why>"
-bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"
-bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.sh --review-type "<db|security|refactor>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" --metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"
-bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.sh --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --depth 2 --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"
-bash Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh --task-id "<task-id>"
-bash Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh "Octopus-agent-orchestrator/MANIFEST.md"
-```
-Agent policy: auto-detect environment and run `.ps1` with `pwsh` when available, otherwise run `.sh` with `bash`.
-Bash gate scripts require a Python runtime in PATH (`python3`, `python`, or `py -3`).
-Compile gate command source is `Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md` section `### Compile Gate (Mandatory)`.
-Compile gate validates preflight scope freshness and writes compile evidence (`<task-id>-compile-gate.json`).
-Review gate validates compile evidence and post-compile drift; it writes review evidence (`<task-id>-review-gate.json`).
-Doc impact gate writes machine-checkable documentation assessment (`<task-id>-doc-impact.json`) before completion.
-Completion gate validates compile/review/doc-impact evidence, review-loop timeline consistency, best-effort task-event integrity, and required review artifacts before `DONE`.
+**Provider values:** `Claude`, `Codex`, `Gemini`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
 
-## 6.5 Re-Ask Init Answers Without Reinstall
-Use reinit when you need to change already collected init answers without re-running the full installer.
+Gate scripts also have Bash alternatives — see **[docs/cli-reference.md](docs/cli-reference.md)** for full reference.
+
+## 7. Change Init Answers (Reinit)
+
+Change language, brevity, source-of-truth, or other init answers without reinstalling:
 
 ```powershell
 octopus reinit --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
-```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/reinit.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
-```
+See **[docs/cli-reference.md](docs/cli-reference.md#octopus-reinit)** for details.
 
-```bash
-bash Octopus-agent-orchestrator/scripts/reinit.sh -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
-```
-
-Behavior:
-- re-asks the init questionnaire unless you explicitly pass overrides and/or `-NoPrompt`;
-- rewrites `runtime/init-answers.json`;
-- reapplies answer-dependent routing, guard, and version metadata surfaces;
-- updates `live/docs/agent-rules/00-core.md` and `live/config/token-economy.json`;
-- avoids full `live/` resync and does not create install/update backup trees in `runtime/`.
-
-## 7. Update Existing Deployment
-Preferred flow (check + optional apply from git):
+## 8. Update Existing Deployment
 
 ```powershell
+# Interactive
 octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+
+# Auto-apply for CI
+octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --apply --no-prompt
+
+# Dry-run preview
+octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --dry-run
 ```
+
+Update checks remote version, syncs bundle, migrates init answers, runs verification.
+See **[docs/cli-reference.md](docs/cli-reference.md#octopus-update)** for full options.
+
+## 9. Uninstall
 
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
-```
-
-```bash
-bash Octopus-agent-orchestrator/scripts/check-update.sh -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
-```
-
-This Bash entrypoint is a wrapper to `check-update.ps1` and still requires `pwsh`.
-
-Behavior:
-- if latest version is already installed: reports `UP_TO_DATE`;
-- if update is available: asks `Apply now? (y/N)`;
-- for CI/non-interactive mode: use `-Apply -NoPrompt`;
-- if `runtime/init-answers.json` is missing newer keys, update migrates them automatically:
-  - in interactive mode, new user-facing settings are asked even when a safe value can be inferred from existing live state;
-  - when such an inferred value exists, update presents it as the recommended default answer instead of applying it silently;
-  - in non-interactive mode, update still infers values from existing `live/version.json` and `live/config/token-economy.json` when possible;
-  - otherwise it applies safe defaults and records the decision in update report.
-- during refresh, `init.ps1` preserves existing `live/config/output-filters.json` values and fills in any newly introduced template keys.
-
-```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -Apply -NoPrompt -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
-```
-
-`-Apply -NoPrompt` also suppresses update-time init migration prompts and uses inference/defaults only.
-
-If you pass `-TargetRoot` manually for `check-update.ps1` or `update.ps1`, use the project root path (parent directory that contains `Octopus-agent-orchestrator/`), not the bundle directory itself.
-
-By default, `check-update.ps1` uses:
-`https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git`
-
-To use your fork or mirror, provide repository URL:
-
-```powershell
-octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --repo-url "<git-url>" --branch "<branch>" --apply
-```
-
-The npm CLI `update` command delegates to `check-update.ps1`, so `--repo-url`, `--branch`, `--apply`, `--no-prompt`, `--dry-run`, `--skip-verify`, and `--skip-manifest-validation` map through to the existing PowerShell workflow.
-
-Direct script form:
-
-```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -RepoUrl "<git-url>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
-```
-
-What update pipeline does:
-- compares local and remote `VERSION`;
-- syncs bundle files with backup to `Octopus-agent-orchestrator/runtime/bundle-backups/<timestamp>/`;
-- reads `AssistantLanguage`, `AssistantBrevity`, `SourceOfTruth`, `EnforceNoAutoCommit`, `ClaudeOrchestratorFullAccess`, and `TokenEconomyEnabled` from `runtime/init-answers.json`;
-- if some init answers are missing, backfills them into `runtime/init-answers.json` before install and includes that file in rollback snapshot;
-- preserves existing `live/config/output-filters.json` values while merging newly introduced template keys;
-- runs install/init sync, verification, and manifest validation;
-- rebuilds `TASK.md` from latest template and migrates existing queue rows from previous `TASK.md`;
-- if queue migration cannot be parsed safely, keeps existing `TASK.md` managed block unchanged;
-- updates `Octopus-agent-orchestrator/live/version.json`;
-- writes `Octopus-agent-orchestrator/runtime/update-reports/update-<timestamp>.md`.
-
-Note:
-- top-level `scripts/update.sh` / `scripts/check-update.sh` are wrapper entrypoints for environments that prefer `bash`, but they still execute the PowerShell implementation underneath.
-- top-level `scripts/reinit.sh` / `scripts/uninstall.sh` are the same kind of wrappers and still require `pwsh`.
-- `live/scripts/agent-gates/*.sh` are different: those are real shell implementations and do not require `pwsh`.
-
-Manual direct update can suppress migration prompts too:
-```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -NoInitAnswerPrompt -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
-```
-
-Dry-run preview:
-```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -DryRun -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
-```
-
-## 8. Uninstall Existing Deployment
-Use uninstall when you want to remove the deployed orchestrator while choosing whether to keep the primary entrypoint file, `TASK.md`, and runtime artifacts.
-
-Interactive:
-
-```powershell
+# Interactive — asks what to keep
 octopus uninstall --target-root "."
-```
 
-```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/uninstall.ps1
-```
-
-```bash
-bash Octopus-agent-orchestrator/scripts/uninstall.sh
-```
-
-Non-interactive:
-
-```powershell
+# Non-interactive
 octopus uninstall --target-root "." --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts yes
 ```
 
-```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/uninstall.ps1 -NoPrompt -KeepPrimaryEntrypoint no -KeepTaskFile no -KeepRuntimeArtifacts yes
-```
+Uninstall removes managed blocks, bridge files, and the bundle directory. User content is preserved.
+See **[docs/cli-reference.md](docs/cli-reference.md#octopus-uninstall)** for full options.
 
-Behavior:
-- asks whether to keep or delete the current primary instructions file (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.windsurf/rules/rules.md`, `.junie/guidelines.md`, or `.antigravity/rules.md`);
-- asks whether to keep or delete `TASK.md`;
-- if you choose to keep runtime artifacts, preserves `Octopus-agent-orchestrator/runtime/` inside `Octopus-agent-orchestrator-uninstall-backups/<timestamp>/` before deleting the bundle directory;
-- removes managed provider bridge files, `.github/agents/*.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`, orchestrator-only Qwen/Claude settings entries, and the managed commit-guard block from `.git/hooks/pre-commit`;
-- removes only Octopus-managed blocks from mixed files and leaves unrelated user content in place;
-- writes uninstall backups to `Octopus-agent-orchestrator-uninstall-backups/<timestamp>/` unless `-SkipBackups` is passed.
+## 10. Adding Specialist Skills After Init
 
-Dry-run preview:
-
-```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/uninstall.ps1 -DryRun -NoPrompt -KeepPrimaryEntrypoint no -KeepTaskFile no -KeepRuntimeArtifacts no
-```
-
-## 9. Adding Specialist Skills After Init
-To add specialist skills later, ask your agent for example:
+Ask your agent:
 - `Add api-review skill`
 - `Create a test-review agent`
 - `Add performance-review as optional`
 
-The agent should use `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md` to:
-- create specialist skill files under `Octopus-agent-orchestrator/live/skills/`;
-- wire triggers in review matrix and skill catalog;
-- enable capability flags in `Octopus-agent-orchestrator/live/config/review-capabilities.json` when needed;
-- align trigger regexes in `Octopus-agent-orchestrator/live/config/paths.json` when new modules or file patterns are introduced;
-- re-run verification and manifest validation.
+The agent uses `live/skills/skill-builder/SKILL.md` to create skills and wire triggers.
+
+## Runtime Requirements
+
+| Component | Requirement |
+|---|---|
+| npm CLI | Node.js 18+ |
+| Control-plane scripts | PowerShell 7+ (`pwsh`) |
+| Gate scripts (`.sh`) | `bash` + Python (`python3`, `python`, or `py -3`) |
+
+## Further Reading
+
+- **[docs/architecture.md](docs/architecture.md)** — Design, runtime model, what gets deployed
+- **[docs/configuration.md](docs/configuration.md)** — Token economy, output filters, review capabilities
+- **[docs/cli-reference.md](docs/cli-reference.md)** — Complete CLI command reference
+- **[docs/work-example.md](docs/work-example.md)** — Task lifecycle walkthrough
+- **[CHANGELOG.md](CHANGELOG.md)** — Full changelog

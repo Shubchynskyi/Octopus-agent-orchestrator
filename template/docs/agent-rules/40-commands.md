@@ -52,6 +52,84 @@ Rules:
 <container or artifact packaging command>
 ```
 
+## Compact Command Hints
+
+Prefer compact output flags for everyday shell commands. This reduces context noise and saves tokens regardless of token-economy settings.
+Switch to full/verbose output only when diagnosing a specific failure.
+
+### Principle
+1. Use summary or structured (`--json`) output by default.
+2. Limit result counts (`--max-count`, `-n`, `--tail`) when scanning, not inspecting.
+3. Scope commands to affected paths instead of entire repository.
+4. Never truncate output of security-relevant, migration, or auth-path commands.
+
+### Version Control (git)
+| Instead of | Prefer | Use case |
+|---|---|---|
+| `git diff` | `git diff --stat` | Scope overview |
+| `git diff` | `git diff -- path/to/file.ts` | Targeted inspection |
+| `git log` | `git log --oneline -n 20` | Recent history |
+| `git log --all` | `git log --oneline --graph -n 30` | Branch topology |
+| `git status` | `git status --short --branch` | Quick state |
+| `git show <sha>` | `git show --stat <sha>` | Commit overview |
+| `git stash list` | `git stash list --oneline` | Stash summary |
+
+### Testing
+| Tool | Compact flags | Notes |
+|---|---|---|
+| pytest | `-q --tb=short --no-header` | Add `--tb=long` only for failing test investigation |
+| jest / vitest | `--silent` or `--verbose=false` | Default reporters are noisy |
+| go test | `-count=1 -short` | Add `-v` only for specific test debug |
+| cargo test | `-- --format=terse` | Terse hides passing tests |
+| dotnet test | `--verbosity quiet` | Use `normal` on failure |
+| phpunit | `--no-progress --compact` | Suppress per-test dots |
+
+### Package Managers
+| Instead of | Prefer | Saves |
+|---|---|---|
+| `npm install` | `npm install --prefer-offline --no-fund --no-audit` | Suppresses advisory noise |
+| `npm ls` | `npm ls --depth=0` | Top-level deps only |
+| `npm ls` (programmatic) | `npm ls --json --depth=0` | Structured, agent-friendly |
+| `pip install -r req.txt` | `pip install -q -r req.txt` | Quiet progress bars |
+| `pip list` | `pip list --format=columns` | Compact table |
+| `yarn install` | `yarn install --silent` | No progress |
+| `composer install` | `composer install --quiet` | No progress |
+
+### Build, Lint & Type-Check
+| Tool | Compact flags |
+|---|---|
+| tsc | `--noEmit --pretty false` |
+| eslint | `--format=compact` |
+| eslint (programmatic) | `--format=json` |
+| dotnet build | `--verbosity quiet` |
+| gradle | `-q` or `--console=plain` |
+| mvn | `-q` (quiet) or `-B` (batch non-interactive) |
+| cargo build | `--message-format=short` |
+
+### Search & File Inspection
+| Instead of | Prefer | Reason |
+|---|---|---|
+| `grep -r <pat> .` | `grep -rl --max-count=5 <pat> src/` | Files only, bounded, scoped |
+| `rg <pat>` | `rg -l --max-count=5 <pat> src/` | Files only, bounded, scoped |
+| `rg <pat>` (with context) | `rg -C2 --max-count=10 <pat> src/` | Limited context, bounded |
+| `cat <large-file>` | `head -n 60 <file>` or `tail -n 60 <file>` | Targeted region |
+| `find . -name "*.ts"` | `find . -name "*.ts" -not -path "*/node_modules/*"` | Exclude noise dirs |
+| `ls -laR` | `ls -la src/` or `tree -L 2 src/` | Scoped, bounded depth |
+
+### Containers & Infrastructure
+| Instead of | Prefer |
+|---|---|
+| `docker logs <c>` | `docker logs --tail 50 <c>` |
+| `kubectl logs <pod>` | `kubectl logs --tail=50 <pod>` |
+| `docker ps` | `docker ps --format "table \{{.Names}}\t\{{.Status}}"` |
+| `kubectl get pods` | `kubectl get pods -o wide` or `-o json` |
+
+### When Full Output Is Required
+- Diagnosing a specific test failure — use verbose mode (`--tb=long`, `-v`) for that test only.
+- Debugging build/compile errors — read full compiler output, then switch back to compact.
+- Security-sensitive commands — never truncate; auth, secrets, CVE, migration outputs must stay complete.
+- First encounter with unfamiliar tool output — read full once, then adopt compact flags.
+
 ## Agent Gates
 ```powershell
 pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1 -ChangedFiles @("src/<example-file>") -TaskIntent "<task summary>" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -MetricsPath "Octopus-agent-orchestrator/runtime/metrics.jsonl"
