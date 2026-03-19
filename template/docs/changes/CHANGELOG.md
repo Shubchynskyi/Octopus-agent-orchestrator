@@ -13,6 +13,13 @@ Process and rule changes may also be logged when they change delivery workflow.
 - Docs Updated: <list of updated doc files>
 ```
 
+## 2026-03-18 - CLI setup onboarding and safe default octopus UX
+- Task: ad-hoc cli onboarding
+- Type: behavior-change
+- Scope: npm CLI / setup flow / init contracts
+- Summary: Added `octopus setup` plus `scripts/setup.ps1` / `.sh` so the 6 init answers can be collected directly in CLI without requiring an agent, changed bare `octopus` into a safe overview/status command, added `status` and `doctor`, allowed CLI-produced `CollectedVia` values in install/verify, and updated the setup-agent prompt so it can reuse existing init answers while normalizing ambiguous language values before continuing.
+- Docs Updated: `Octopus-agent-orchestrator/README.md`; `Octopus-agent-orchestrator/HOW_TO.md`; `Octopus-agent-orchestrator/docs/cli-reference.md`; `Octopus-agent-orchestrator/MANIFEST.md`; `Octopus-agent-orchestrator/CHANGELOG.md`; `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md`; `Octopus-agent-orchestrator/template/docs/changes/CHANGELOG.md`
+
 ## 2026-03-17 - npm CLI docs and lifecycle usage sync
 - Task: T-020
 - Type: behavior-change

@@ -3,6 +3,7 @@
   "version": "1.0.8",
   "description": "Bootstrap package for deploying the Octopus Agent Orchestrator bundle into a workspace.",
   "license": "MIT",
+  "type": "commonjs",
   "bin": {
     "octopus": "bin/octopus.js",
     "oao": "bin/octopus.js",
@@ -26,6 +27,9 @@
     "!**/*.pyo",
     "!**/*.pyd"
   ],
+  "devDependencies": {
+    "@types/node": "^22.14.1"
+  },
   "engines": {
     "node": ">=16.14.0"
   },

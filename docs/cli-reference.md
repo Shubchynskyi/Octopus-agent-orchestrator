@@ -18,16 +18,64 @@ From source tree, use: `node bin/octopus.js <command>`.
 
 ## Commands
 
-### `octopus` (bootstrap)
+### `octopus`
 
-Deploy a fresh orchestrator bundle into the current project.
+Show a safe overview: current project status plus available commands.
 
 ```powershell
 octopus
 ```
 
-This creates `./Octopus-agent-orchestrator/` and prints the paths for the next setup step.
-Does **not** run install or ask setup questions — that is the agent's job via `AGENT_INIT_PROMPT.md`.
+This command is non-destructive. It does not deploy or modify files.
+
+---
+
+### `octopus setup`
+
+First-run CLI onboarding. This is the recommended one-command entrypoint for end users.
+
+```powershell
+octopus setup
+```
+
+**What setup does:**
+- Deploys or refreshes `./Octopus-agent-orchestrator/`.
+- Collects the 6 init answers itself or accepts them from CLI flags.
+- Writes `runtime/init-answers.json`.
+- Runs install.
+- Validates manifest.
+- Leaves full project-specific verify for the setup agent or a later `octopus doctor`.
+
+**Common non-interactive form:**
+```powershell
+octopus setup --target-root "." --no-prompt --assistant-language "English" --assistant-brevity concise --active-agent-files "AGENTS.md, CLAUDE.md" --source-of-truth Codex --enforce-no-auto-commit no --claude-orchestrator-full-access no --token-economy-enabled yes
+```
+
+---
+
+### `octopus status`
+
+Print a short workspace status snapshot.
+
+```powershell
+octopus status --target-root "."
+```
+
+---
+
+### `octopus doctor`
+
+Run `verify.ps1` plus manifest validation from existing init answers.
+
+```powershell
+octopus doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+
+---
+
+### `octopus bootstrap`
+
+Deploy a fresh orchestrator bundle into the current project without running install.
 
 **Branch testing:**
 ```powershell
@@ -38,7 +86,7 @@ octopus bootstrap --repo-url "<git-url>" --branch "<branch>"
 
 ### `octopus install`
 
-Deploy or refresh the orchestrator into a target project. Requires agent-produced `init-answers.json`.
+Deploy or refresh the orchestrator into a target project. Requires a prepared `init-answers.json` from either `octopus setup` or the setup agent.
 
 ```powershell
 octopus install --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
@@ -89,12 +137,12 @@ octopus reinit --target-root "." --init-answers-path "Octopus-agent-orchestrator
 
 **Direct PowerShell equivalent:**
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/reinit.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/reinit.ps1 -TargetRoot "." -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
 **Bash wrapper** (requires `pwsh`):
 ```bash
-bash Octopus-agent-orchestrator/scripts/reinit.sh -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+bash Octopus-agent-orchestrator/scripts/reinit.sh -TargetRoot "." -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
 ---
@@ -129,24 +177,24 @@ octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator
 **Direct PowerShell equivalents:**
 ```powershell
 # Check only
-pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -TargetRoot "." -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 
 # Auto-apply
-pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -Apply -NoPrompt -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -TargetRoot "." -Apply -NoPrompt -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 
 # Dry-run
-pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -DryRun -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -TargetRoot "." -DryRun -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 
 # Manual update (bundle already replaced)
-pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -TargetRoot "." -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 
 # Manual silent
-pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -NoInitAnswerPrompt -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -TargetRoot "." -NoInitAnswerPrompt -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
 **Bash wrapper** (requires `pwsh`):
 ```bash
-bash Octopus-agent-orchestrator/scripts/check-update.sh -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+bash Octopus-agent-orchestrator/scripts/check-update.sh -TargetRoot "." -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
 **Note:** `-TargetRoot` should be the project root (parent of `Octopus-agent-orchestrator/`), not the bundle directory itself.
@@ -198,7 +246,7 @@ bash Octopus-agent-orchestrator/scripts/uninstall.sh
 Validate deployment consistency and rule contracts.
 
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<provider>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -TargetRoot "." -SourceOfTruth "<provider>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
 **Provider values:** `Claude`, `Codex`, `Gemini`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.

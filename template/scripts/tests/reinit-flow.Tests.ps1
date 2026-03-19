@@ -138,7 +138,29 @@ Describe 'Invoke-RecollectInitAnswers' {
         $result.Answers.TokenEconomyEnabled | Should -Be 'true'
         $result.Answers.CollectedVia | Should -Be 'AGENT_INIT_PROMPT.md'
         (($result.Changes | Where-Object { $_.Key -eq 'AssistantLanguage' }).Action | Select-Object -First 1) | Should -Be 'overridden'
-        (($result.Changes | Where-Object { $_.Key -eq 'CollectedVia' }).Action | Select-Object -First 1) | Should -Be 'normalized'
+        (($result.Changes | Where-Object { $_.Key -eq 'CollectedVia' }).Action | Select-Object -First 1) | Should -Be 'defaulted'
+    }
+
+    It 'preserves CLI collected-via metadata when answers are already valid' {
+        $existingAnswers = [PSCustomObject]@{
+            AssistantLanguage            = 'English'
+            AssistantBrevity             = 'concise'
+            SourceOfTruth                = 'Claude'
+            EnforceNoAutoCommit          = 'false'
+            ClaudeOrchestratorFullAccess = 'false'
+            TokenEconomyEnabled          = 'true'
+            CollectedVia                 = 'CLI_NONINTERACTIVE'
+        }
+
+        $result = Invoke-RecollectInitAnswers `
+            -Answers $existingAnswers `
+            -LiveVersion $null `
+            -TokenEconomyConfig $null `
+            -InteractivePrompting:$false `
+            -Overrides $null
+
+        $result.Answers.CollectedVia | Should -Be 'CLI_NONINTERACTIVE'
+        @($result.Changes | Where-Object { $_.Key -eq 'CollectedVia' }).Count | Should -Be 0
     }
 }
 

@@ -53,6 +53,7 @@ BeforeAll {
             [Parameter(Mandatory = $true)]
             [ValidateSet('Claude', 'Codex', 'Gemini', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity')]
             [string]$SourceOfTruth,
+            [string]$ActiveAgentFiles,
             [bool]$EnforceNoAutoCommit = $false,
             [bool]$ClaudeOrchestratorFullAccess = $false,
             [bool]$TokenEconomyEnabled = $true
@@ -71,6 +72,9 @@ BeforeAll {
             ClaudeOrchestratorFullAccess = if ($ClaudeOrchestratorFullAccess) { 'true' } else { 'false' }
             TokenEconomyEnabled          = if ($TokenEconomyEnabled) { 'true' } else { 'false' }
             CollectedVia                 = 'AGENT_INIT_PROMPT.md'
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ActiveAgentFiles)) {
+            $payload['ActiveAgentFiles'] = $ActiveAgentFiles
         }
 
         Set-Content -LiteralPath $Path -Value ($payload | ConvertTo-Json -Depth 10)
@@ -127,16 +131,36 @@ Describe 'bin/octopus.js' {
         $outputText = ($result.Output -join [Environment]::NewLine)
 
         $result.ExitCode | Should -Be 0
+        $outputText | Should -Match 'setup'
+        $outputText | Should -Match 'status'
+        $outputText | Should -Match 'doctor'
         $outputText | Should -Match 'install'
         $outputText | Should -Match 'reinit'
         $outputText | Should -Match 'uninstall'
         $outputText | Should -Match 'update'
-        $outputText | Should -Match 'agent-produced init answers'
+        $outputText | Should -Match 'Running octopus with no arguments is safe'
+    }
+
+    It 'prints overview instead of bootstrapping when no command is provided' {
+        $workspace = New-TempRoot
+        $result = Invoke-Cli -WorkingDirectory $workspace
+        $outputText = ($result.Output -join [Environment]::NewLine)
+        $bundleRoot = Join-Path $workspace 'Octopus-agent-orchestrator'
+
+        $result.ExitCode | Should -Be 0
+        $outputText | Should -Match 'OCTOPUS_OVERVIEW'
+        $outputText | Should -Match 'Workspace Stages'
+        $outputText | Should -Match 'Installed'
+        $outputText | Should -Match 'Primary initialization'
+        $outputText | Should -Match 'Agent initialization'
+        $outputText | Should -Match 'RecommendedNextCommand: npx octopus-agent-orchestrator setup'
+        $outputText | Should -Match 'Available Commands'
+        Test-Path -LiteralPath $bundleRoot | Should -BeFalse
     }
 
     It 'deploys the bundle to the default destination and prints next steps' {
         $workspace = New-TempRoot
-        $result = Invoke-Cli -WorkingDirectory $workspace
+        $result = Invoke-Cli -WorkingDirectory $workspace -Arguments @('bootstrap')
         $outputText = ($result.Output -join [Environment]::NewLine)
         $bundleRoot = Join-Path $workspace 'Octopus-agent-orchestrator'
         $escapedInitPromptPath = [regex]::Escape((Join-Path $bundleRoot 'AGENT_INIT_PROMPT.md'))
@@ -151,6 +175,7 @@ Describe 'bin/octopus.js' {
         Test-Path -LiteralPath (Join-Path $bundleRoot 'package.json') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $bundleRoot 'bin\octopus.js') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $bundleRoot 'scripts\install.ps1') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $bundleRoot 'scripts\setup.ps1') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $bundleRoot 'template\AGENTS.md') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $bundleRoot 'template\scripts\agent-gates\lib\__pycache__') | Should -BeFalse
         Test-Path -LiteralPath (Join-Path $bundleRoot 'runtime') | Should -BeFalse
@@ -174,12 +199,116 @@ Describe 'bin/octopus.js' {
         New-Item -ItemType Directory -Path $destinationPath -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $destinationPath 'marker.txt') -Value 'preexisting'
 
-        $result = Invoke-Cli -WorkingDirectory $workspace
+        $result = Invoke-Cli -WorkingDirectory $workspace -Arguments @('bootstrap')
         $outputText = ($result.Output -join [Environment]::NewLine)
 
         $result.ExitCode | Should -Be 1
         $outputText | Should -Match 'OCTOPUS_BOOTSTRAP_FAILED'
         $outputText | Should -Match 'Destination already exists and is not empty'
+    }
+
+    It 'runs setup end-to-end through the CLI wrapper without an agent when answers are provided as overrides' {
+        $workspace = New-TempRoot
+        New-Item -ItemType Directory -Path (Join-Path $workspace '.git') -Force | Out-Null
+
+        $result = Invoke-Cli -WorkingDirectory $workspace -Arguments @(
+            'setup',
+            '--target-root', $workspace,
+            '--no-prompt',
+            '--assistant-language', 'English',
+            '--assistant-brevity', 'concise',
+            '--active-agent-files', 'AGENTS.md, CLAUDE.md',
+            '--source-of-truth', 'Codex',
+            '--enforce-no-auto-commit', 'false',
+            '--claude-orchestrator-full-access', 'false',
+            '--token-economy-enabled', 'true'
+        )
+        $outputText = ($result.Output -join [Environment]::NewLine)
+        $bundleRoot = Join-Path $workspace 'Octopus-agent-orchestrator'
+        $initAnswers = Read-JsonObject -Path (Join-Path $bundleRoot 'runtime\init-answers.json')
+
+        $result.ExitCode | Should -Be 0
+        $outputText | Should -Match 'OCTOPUS_SETUP'
+        $outputText | Should -Match 'Setup: PASS'
+        $outputText | Should -Match 'Verify: PENDING_AGENT_CONTEXT'
+        $outputText | Should -Match 'ManifestValidation: PASS'
+        $outputText | Should -Match 'OCTOPUS_SETUP_STATUS'
+        $outputText | Should -Match 'ActiveAgentFiles: CLAUDE\.md, AGENTS\.md'
+        $outputText | Should -Match 'Workspace ready'
+        $outputText | Should -Match 'RecommendedNextCommand: Execute task T-001 depth=2'
+        [string]$initAnswers.ActiveAgentFiles | Should -Be 'CLAUDE.md, AGENTS.md'
+        [string]$initAnswers.CollectedVia | Should -Be 'CLI_NONINTERACTIVE'
+        Test-Path -LiteralPath (Join-Path $workspace 'TASK.md') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $workspace 'AGENTS.md') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $bundleRoot 'live\USAGE.md') | Should -BeTrue
+    }
+
+    It 'accepts provider aliases in active agent files overrides' {
+        $workspace = New-TempRoot
+        New-Item -ItemType Directory -Path (Join-Path $workspace '.git') -Force | Out-Null
+
+        $result = Invoke-Cli -WorkingDirectory $workspace -Arguments @(
+            'setup',
+            '--target-root', $workspace,
+            '--no-prompt',
+            '--assistant-language', 'English',
+            '--assistant-brevity', 'concise',
+            '--active-agent-files', 'Claude, Codex, or Antigravity',
+            '--source-of-truth', 'Claude',
+            '--enforce-no-auto-commit', 'false',
+            '--claude-orchestrator-full-access', 'false',
+            '--token-economy-enabled', 'true'
+        )
+        $bundleRoot = Join-Path $workspace 'Octopus-agent-orchestrator'
+        $initAnswers = Read-JsonObject -Path (Join-Path $bundleRoot 'runtime\init-answers.json')
+
+        $result.ExitCode | Should -Be 0
+        [string]$initAnswers.ActiveAgentFiles | Should -Be 'CLAUDE.md, AGENTS.md, .antigravity/rules.md'
+    }
+
+    It 'accepts numbered active agent files selections in non-interactive mode' {
+        $workspace = New-TempRoot
+        New-Item -ItemType Directory -Path (Join-Path $workspace '.git') -Force | Out-Null
+
+        $result = Invoke-Cli -WorkingDirectory $workspace -Arguments @(
+            'setup',
+            '--target-root', $workspace,
+            '--no-prompt',
+            '--assistant-language', 'English',
+            '--assistant-brevity', 'concise',
+            '--active-agent-files', '1, 2, 7',
+            '--source-of-truth', 'Claude',
+            '--enforce-no-auto-commit', 'false',
+            '--claude-orchestrator-full-access', 'false',
+            '--token-economy-enabled', 'true'
+        )
+        $bundleRoot = Join-Path $workspace 'Octopus-agent-orchestrator'
+        $initAnswers = Read-JsonObject -Path (Join-Path $bundleRoot 'runtime\init-answers.json')
+
+        $result.ExitCode | Should -Be 0
+        [string]$initAnswers.ActiveAgentFiles | Should -Be 'CLAUDE.md, AGENTS.md, .antigravity/rules.md'
+    }
+
+    It 'defaults setup active agent files to the canonical entrypoint when no override is provided' {
+        $workspace = New-TempRoot
+        New-Item -ItemType Directory -Path (Join-Path $workspace '.git') -Force | Out-Null
+
+        $result = Invoke-Cli -WorkingDirectory $workspace -Arguments @(
+            'setup',
+            '--target-root', $workspace,
+            '--no-prompt',
+            '--assistant-language', 'English',
+            '--assistant-brevity', 'concise',
+            '--source-of-truth', 'Codex',
+            '--enforce-no-auto-commit', 'false',
+            '--claude-orchestrator-full-access', 'false',
+            '--token-economy-enabled', 'true'
+        )
+        $bundleRoot = Join-Path $workspace 'Octopus-agent-orchestrator'
+        $initAnswers = Read-JsonObject -Path (Join-Path $bundleRoot 'runtime\init-answers.json')
+
+        $result.ExitCode | Should -Be 0
+        [string]$initAnswers.ActiveAgentFiles | Should -Be 'AGENTS.md'
     }
 
     It 'runs install after reading agent-produced init answers from workspace' {
@@ -220,14 +349,14 @@ Describe 'bin/octopus.js' {
         $outputText = ($result.Output -join [Environment]::NewLine)
 
         $result.ExitCode | Should -Be 1
-        $outputText | Should -Match 'only works after an agent has prepared init answers'
-        $outputText | Should -Match 'AGENT_INIT_PROMPT\.md'
+        $outputText | Should -Match 'requires init answers prepared either by ''npx octopus-agent-orchestrator setup'' or by the setup agent'
+        $outputText | Should -Match 'npx octopus-agent-orchestrator setup'
     }
 
     It 'runs init against an existing deployed bundle using agent-produced init answers' {
         $workspace = New-TempRoot
         $bundleRoot = Join-Path $workspace 'Octopus-agent-orchestrator'
-        $bootstrapResult = Invoke-Cli -WorkingDirectory $workspace
+        $bootstrapResult = Invoke-Cli -WorkingDirectory $workspace -Arguments @('bootstrap')
         $bootstrapResult.ExitCode | Should -Be 0
 
         $initAnswersPath = Join-Path $bundleRoot 'runtime\init-answers.json'
@@ -347,6 +476,20 @@ Describe 'bin/octopus.js' {
         }
     }
 
+    It 'shows a status summary for the current workspace' {
+        $workspace = New-TempRoot
+
+        $result = Invoke-Cli -WorkingDirectory $workspace -Arguments @('status', '--target-root', $workspace)
+        $outputText = ($result.Output -join [Environment]::NewLine)
+
+        $result.ExitCode | Should -Be 0
+        $outputText | Should -Match 'Workspace status'
+        $outputText | Should -Match 'OCTOPUS_STATUS'
+        $outputText | Should -Match 'Workspace Stages'
+        $outputText | Should -Match 'Installed'
+        $outputText | Should -Match 'RecommendedNextCommand: npx octopus-agent-orchestrator setup'
+    }
+
     It 'runs uninstall through the CLI wrapper' {
         $workspace = New-TempRoot
         $initAnswersRelativePath = 'answers\init-answers.json'
@@ -380,6 +523,43 @@ Describe 'bin/octopus.js' {
 
         $result.ExitCode | Should -Be 0
         $outputText | Should -Match 'KeepPrimaryEntrypoint: False'
+        Test-Path -LiteralPath (Join-Path $workspace 'Octopus-agent-orchestrator') | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $workspace 'TASK.md') | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $workspace 'AGENTS.md') | Should -BeFalse
+    }
+
+    It 'runs uninstall with default removal behavior when keep flags are omitted' {
+        $workspace = New-TempRoot
+        $initAnswersRelativePath = 'answers\init-answers.json'
+        $initAnswersPath = Join-Path $workspace $initAnswersRelativePath
+        Write-InitAnswers `
+            -Path $initAnswersPath `
+            -AssistantLanguage 'English' `
+            -AssistantBrevity 'concise' `
+            -SourceOfTruth 'Codex' `
+            -EnforceNoAutoCommit:$false `
+            -ClaudeOrchestratorFullAccess:$false `
+            -TokenEconomyEnabled:$false
+
+        $installResult = Invoke-Cli -WorkingDirectory $workspace -Arguments @(
+            'install',
+            '--target-root', $workspace,
+            '--init-answers-path', $initAnswersRelativePath
+        )
+        $installResult.ExitCode | Should -Be 0
+
+        $result = Invoke-Cli -WorkingDirectory $workspace -Arguments @(
+            'uninstall',
+            '--target-root', $workspace,
+            '--init-answers-path', $initAnswersRelativePath,
+            '--no-prompt'
+        )
+        $outputText = ($result.Output -join [Environment]::NewLine)
+
+        $result.ExitCode | Should -Be 0
+        $outputText | Should -Match 'KeepPrimaryEntrypoint: False'
+        $outputText | Should -Match 'KeepTaskFile: False'
+        $outputText | Should -Match 'KeepRuntimeArtifacts: False'
         Test-Path -LiteralPath (Join-Path $workspace 'Octopus-agent-orchestrator') | Should -BeFalse
         Test-Path -LiteralPath (Join-Path $workspace 'TASK.md') | Should -BeFalse
         Test-Path -LiteralPath (Join-Path $workspace 'AGENTS.md') | Should -BeFalse

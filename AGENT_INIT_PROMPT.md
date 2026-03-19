@@ -7,13 +7,30 @@ Create a fully working agent orchestration workspace where canonical rules live 
 
 ## Required Execution Flow
 1. Confirm working directory is the project root containing `Octopus-agent-orchestrator/`.
-2. Ask mandatory first-run questions in this exact sequence:
+2. Open `Octopus-agent-orchestrator/runtime/init-answers.json` and determine whether all 6 mandatory answers are already present.
+   - If the file already contains all 6 mandatory answers, reuse those answers instead of re-asking everything.
+   - If the file already exists and is complete, **reuse all existing answers and do not ask those 6 questions again**.
+   - When reusing a complete file, only validate `AssistantLanguage` before continuing:
+     - normalize it to a clear agent-readable language label that other agents can understand without guesswork (for example `English`, `Russian`, `Ukrainian`, `German`);
+     - if the language answer is ambiguous, typo-heavy, contradictory, or you cannot confidently map it to a single language, ask the user to clarify the language before proceeding;
+     - if the language answer is ambiguous, typo-heavy, contradictory, or you cannot confidently map it to a single language, ask the user for a language clarification and do not ask the other setup questions again;
+     - write the normalized language value back into `Octopus-agent-orchestrator/runtime/init-answers.json`.
+   - If `ActiveAgentFiles` is missing, empty, or contains only the canonical source-of-truth entrypoint after CLI setup, decide yourself whether additional managed entrypoint files are actually needed for this repository.
+     - inspect existing agent files already present in the repo and the tools/workflows actually used here;
+     - choose the smallest practical set of active agent files;
+     - ask the user only if real usage is ambiguous and you cannot infer it confidently.
+   - If the file is missing, invalid, or incomplete, ask only the missing mandatory answers in the exact sequence below while preserving every already valid answer.
+3. When questions are required, ask missing mandatory first-run questions in this exact sequence:
    - Ask: `Which language should be used for assistant explanations and help in this project?`
    - Wait for answer and store as `<assistant-language>`.
+   - Normalize `<assistant-language>` to a clear agent-readable language label before saving it.
+   - If you cannot confidently normalize the answer to one language, ask a clarification question and do not continue until clarified.
    - Immediately switch all subsequent user-facing messages to `<assistant-language>`, starting with the next question.
    - In `<assistant-language>`, ask: `What response brevity should be default: concise or detailed?`
    - Wait for answer and store as `<assistant-brevity>`.
-   - In `<assistant-language>`, ask: `Which source-of-truth file should be canonical for rules: Claude (CLAUDE.md), Codex (AGENTS.md), Gemini (GEMINI.md), GitHubCopilot (.github/copilot-instructions.md), Windsurf (.windsurf/rules/rules.md), Junie (.junie/guidelines.md), or Antigravity (.antigravity/rules.md)? All non-selected entrypoint files will redirect to this selected file.`
+   - In `<assistant-language>`, optionally ask: `Which agent entrypoint files do you actively use in this project? You may select multiple from CLAUDE.md, AGENTS.md, GEMINI.md, .github/copilot-instructions.md, .windsurf/rules/rules.md, .junie/guidelines.md, and .antigravity/rules.md. Recommendation: include the agent files you work with most often.`
+   - If the user provides a value, store it as `<active-agent-files>`.
+   - In `<assistant-language>`, ask: `Which source-of-truth file should be canonical for rules: Claude (CLAUDE.md), Codex (AGENTS.md), Gemini (GEMINI.md), GitHubCopilot (.github/copilot-instructions.md), Windsurf (.windsurf/rules/rules.md), Junie (.junie/guidelines.md), or Antigravity (.antigravity/rules.md)? All non-selected entrypoint files will redirect to this selected file. Recommendation: choose the agent file you work with most often, ideally from the active files you just selected.`
    - Wait for answer and store as `<source-of-truth>`.
    - In `<assistant-language>`, ask (4th mandatory question): a localized equivalent of `Should the no-auto-commit guard be strengthened? (yes/no)`
    - Wait for answer and store as `<enforce-no-auto-commit>`.
@@ -23,7 +40,7 @@ Create a fully working agent orchestration workspace where canonical rules live 
    - Clarify before collecting the answer: this toggle controls reviewer-context compaction for configured depths; shared gate output filtering and fail-tail compaction still apply at any depth.
    - Wait for answer and store as `<token-economy-enabled>`.
    - Hard-stop rule: **if all 6 answers are not collected, do not run installation**.
-3. Save required init answers artifact to `Octopus-agent-orchestrator/runtime/init-answers.json`:
+4. Save required init answers artifact to `Octopus-agent-orchestrator/runtime/init-answers.json`:
 ```json
 {
   "AssistantLanguage": "<assistant-language>",
@@ -35,26 +52,40 @@ Create a fully working agent orchestration workspace where canonical rules live 
   "CollectedVia": "AGENT_INIT_PROMPT.md"
 }
 ```
-4. Run installer (this also runs init automatically):
+If `<active-agent-files>` was collected or inferred, also include:
+```json
+{
+  "ActiveAgentFiles": "<active-agent-files>"
+}
+```
+Additional rules for saving:
+- if you only reused answers created by CLI setup and normalized `AssistantLanguage` and/or inferred `ActiveAgentFiles`, preserve the existing `CollectedVia` value (`CLI_INTERACTIVE` or `CLI_NONINTERACTIVE`);
+- set `CollectedVia` to `AGENT_INIT_PROMPT.md` only if the agent actually had to collect one or more missing mandatory answers.
+5. Decide whether reinstall is actually needed.
+   - If `octopus setup` already completed primary initialization and `Octopus-agent-orchestrator/live/` plus root entrypoints already exist, **do not repeat the 6 questions and do not rerun install just to reapply the same answers**.
+   - Run installer only when primary initialization is incomplete, or when missing answers had to be collected and answer-dependent files still need to be materialized/refreshed.
+   - If you expand `ActiveAgentFiles` beyond the canonical entrypoint, rerun installer so the additional redirect entrypoints and provider bridge files are materialized.
+6. If reinstall is needed, run installer (this also runs init automatically):
 ```powershell
 pwsh -File Octopus-agent-orchestrator/scripts/install.ps1 -AssistantLanguage "<assistant-language>" -AssistantBrevity "<assistant-brevity>" -SourceOfTruth "<source-of-truth>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
-5. Read discovery artifact and update project-context rules for this real project:
+7. Read discovery artifact and update project-context rules for this real project:
    - `Octopus-agent-orchestrator/live/project-discovery.md`
    - update `10-project-context.md`, `20-architecture.md`, `30-code-style.md`, `40-commands.md`, `60-operating-rules.md` with repository-specific facts.
    - tune `Octopus-agent-orchestrator/live/config/paths.json` when default path roots or trigger regexes do not fit this repository.
-6. Run verification:
+8. Run the final doctor check yourself as part of agent initialization:
+```powershell
+npx octopus-agent-orchestrator doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+```
+If `npx octopus-agent-orchestrator` is unavailable in the current environment, run the equivalent canonical checks directly:
 ```powershell
 pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<source-of-truth>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
-```
-7. Validate manifest uniqueness:
-```powershell
 pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md
 ```
-8. Confirm task execution contract supports depth:
+9. Confirm task execution contract supports depth:
    - accepted command shape: `Execute task <task-id> depth=<1|2|3>`
    - default depth when omitted: `2`
-9. Optional post-init specialization:
+10. Optional post-init specialization:
    - before the yes/no question, provide in `<assistant-language>`:
      - `Already configured specialist skills`:
        - read `Octopus-agent-orchestrator/live/config/review-capabilities.json` and list enabled specialist keys (`api`, `test`, `performance`, `infra`, `dependency`);
@@ -100,7 +131,15 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 - Read existing project docs and legacy agent files as input context.
 - Do not migrate files by moving/removing them.
 - Keep changes minimal and deterministic.
+- If `runtime/init-answers.json` already exists and is complete, reuse it instead of forcing the user through all 6 questions again.
+- After `octopus setup`, treat the 6 answers as already collected; the agent must not repeat them unless the file is missing, invalid, incomplete, or `AssistantLanguage` cannot be confidently recognized.
+- Always validate and normalize `AssistantLanguage` into a clear agent-readable label before saving or re-saving init answers.
+- If `AssistantLanguage` cannot be confidently recognized, ask the user for clarification before continuing.
 - Never run `install.ps1` before writing `Octopus-agent-orchestrator/runtime/init-answers.json` with all 6 required answers.
+- Do not overwrite `CollectedVia=CLI_INTERACTIVE` or `CLI_NONINTERACTIVE` when you are only reusing CLI-collected answers and normalizing the language field.
+- Run the final doctor check yourself; do not ask the user to run `doctor`, `verify`, or `validate-manifest` manually.
+- Do not modify `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md` during project onboarding.
+- Update `Octopus-agent-orchestrator/live/USAGE.md` as part of successful onboarding; that file is expected to become project-specific.
 - Never run initialization by directly calling `install.ps1` outside this prompt flow.
 - After `<assistant-language>` is collected, continue all following user-facing questions and reports in `<assistant-language>`.
 - For top-level bundle maintenance entrypoints (`scripts/install|init|verify|update|check-update`), treat `.ps1` as canonical implementation. The sibling `.sh` files are only `pwsh` wrappers.

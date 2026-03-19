@@ -7,38 +7,38 @@ Exception: You may run tests and iterate only when the user explicitly requests 
 PowerShell-based gate scripts require PowerShell 7+ (`pwsh`) unless shell alternatives are provided by the target project.
 
 ## Project Commands (Required)
-Replace placeholders with real commands from this repository.
+Replace these defaults with repository-specific commands when the real project differs.
 
 ### Setup
 ```bash
-<install dependencies command>
-<local environment bootstrap command>
+npm install --prefer-offline --no-fund --no-audit
+npx octopus-agent-orchestrator setup
 ```
 
 ### Run
 ```bash
-<start backend command>
-<start frontend command>
-<start worker or background job command>
+npx octopus-agent-orchestrator status --target-root "."
+npx octopus-agent-orchestrator doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+npx octopus-agent-orchestrator --help
 ```
 
 ### Test
 ```bash
-<unit test command>
-<integration test command>
-<e2e test command>
+npm test
+npm run test:integration
+npm run test:e2e
 ```
 
 ### Quality
 ```bash
-<lint command>
-<type-check command>
-<format check command>
+npm run lint
+npx tsc --noEmit --pretty false
+npm run format:check
 ```
 
 ### Compile Gate (Mandatory)
 ```bash
-<compile command>
+npm run build
 ```
 
 Rules:
@@ -48,8 +48,8 @@ Rules:
 
 ### Build and Package
 ```bash
-<build command>
-<container or artifact packaging command>
+npm run build
+docker build .
 ```
 
 ## Compact Command Hints

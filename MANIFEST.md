@@ -71,8 +71,10 @@ Kept inside bundle:
   - compatibility wrappers: `scripts/*.sh` (invoke `pwsh`, not standalone Bash implementations)
 - Gate scripts under `live/scripts/agent-gates/*.ps1` and `*.sh` are materialized runtime implementations; `.sh` gate files are real shell variants.
 - `package.json` (npm package metadata shipped with the source bundle and synced into deployed workspaces during update)
-- `bin/octopus.js` (npm bootstrap/lifecycle CLI; exposes `octopus`, `oao`, and `octopus-agent-orchestrator`, and is synced during update)
+- `bin/octopus.js` (npm bootstrap/lifecycle CLI; exposes `octopus`, `oao`, and `octopus-agent-orchestrator`; `octopus` now defaults to overview/status while `octopus setup` is the first-run installer entrypoint)
 - template/**
+- scripts/setup.ps1
+- scripts/setup.sh
 - scripts/install.ps1
 - scripts/install.sh
 - scripts/init.ps1

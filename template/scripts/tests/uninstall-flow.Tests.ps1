@@ -291,4 +291,48 @@ Describe 'scripts/uninstall.ps1' {
         Test-Path -LiteralPath (Join-Path $workspaceRoot 'TASK.md') -PathType Leaf | Should -BeTrue
         ($output | Where-Object { $_ -eq 'Result: DRY_RUN' }).Count | Should -Be 1
     }
+
+    It 'restores original invalid settings files from the initialization backup' {
+        $workspace = New-WorkspaceCopy
+        $workspaceRoot = $workspace.WorkspaceRoot
+        $bundleRoot = $workspace.BundleRoot
+        $initAnswersRelativePath = 'Octopus-agent-orchestrator/runtime/init-answers.json'
+        $initAnswersPath = Join-Path $workspaceRoot $initAnswersRelativePath
+
+        New-Item -ItemType Directory -Path (Join-Path $workspaceRoot '.git') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $workspaceRoot '.qwen') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $workspaceRoot '.claude') -Force | Out-Null
+
+        $qwenInvalidJson = "{ invalid-qwen-json `"`n"
+        $claudeInvalidJson = "{ invalid-claude-json `"`n"
+        Set-Content -LiteralPath (Join-Path $workspaceRoot '.qwen\settings.json') -Value $qwenInvalidJson -NoNewline
+        Set-Content -LiteralPath (Join-Path $workspaceRoot '.claude\settings.local.json') -Value $claudeInvalidJson -NoNewline
+
+        Write-InitAnswers `
+            -Path $initAnswersPath `
+            -AssistantLanguage 'English' `
+            -AssistantBrevity 'concise' `
+            -SourceOfTruth 'Claude' `
+            -EnforceNoAutoCommit:$false `
+            -ClaudeOrchestratorFullAccess:$true `
+            -TokenEconomyEnabled:$false
+
+        & (Join-Path $bundleRoot 'scripts\install.ps1') `
+            -TargetRoot $workspaceRoot `
+            -AssistantLanguage 'English' `
+            -AssistantBrevity 'concise' `
+            -SourceOfTruth 'Claude' `
+            -InitAnswersPath $initAnswersRelativePath | Out-Null
+
+        & (Join-Path $bundleRoot 'scripts\uninstall.ps1') `
+            -TargetRoot $workspaceRoot `
+            -NoPrompt `
+            -KeepPrimaryEntrypoint 'false' `
+            -KeepTaskFile 'false' `
+            -KeepRuntimeArtifacts 'false' | Out-Null
+
+        (Get-Content -LiteralPath (Join-Path $workspaceRoot '.qwen\settings.json') -Raw) | Should -Be $qwenInvalidJson
+        (Get-Content -LiteralPath (Join-Path $workspaceRoot '.claude\settings.local.json') -Raw) | Should -Be $claudeInvalidJson
+        Test-Path -LiteralPath (Join-Path $workspaceRoot 'Octopus-agent-orchestrator') -PathType Container | Should -BeFalse
+    }
 }

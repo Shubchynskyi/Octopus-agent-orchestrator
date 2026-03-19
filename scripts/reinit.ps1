@@ -93,6 +93,57 @@ function Get-RequiredAnswerBoolean {
     return [string]::Equals($normalized, 'true', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Get-OptionalAnswerString {
+    param(
+        [AllowNull()]
+        [object]$Answers,
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    if ($null -eq $Answers) {
+        return $null
+    }
+
+    $value = Get-InitAnswerValue -Answers $Answers -LogicalName $Key
+    if ($null -eq $value) {
+        return $null
+    }
+
+    $text = [string]$value
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+
+    return $text.Trim()
+}
+
+function Set-OptionalAnswerString {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Answers,
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+        [AllowNull()]
+        [string]$Value
+    )
+
+    $existingProperty = $Answers.PSObject.Properties[$Key]
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        if ($null -ne $existingProperty) {
+            [void]$Answers.PSObject.Properties.Remove($Key)
+        }
+        return
+    }
+
+    if ($null -ne $existingProperty) {
+        $existingProperty.Value = $Value
+        return
+    }
+
+    Add-Member -InputObject $Answers -MemberType NoteProperty -Name $Key -Value $Value
+}
+
 function Apply-AssistantDefaultsToCoreRule {
     param(
         [Parameter(Mandatory = $true)]
@@ -312,6 +363,27 @@ $resolvedSourceOfTruth = Get-RequiredAnswerString -Answers $initAnswers -Key 'So
 $resolvedEnforceNoAutoCommit = Get-RequiredAnswerBoolean -Answers $initAnswers -Key 'EnforceNoAutoCommit'
 $resolvedClaudeOrchestratorFullAccess = Get-RequiredAnswerBoolean -Answers $initAnswers -Key 'ClaudeOrchestratorFullAccess'
 $resolvedTokenEconomyEnabled = Get-RequiredAnswerBoolean -Answers $initAnswers -Key 'TokenEconomyEnabled'
+$existingActiveAgentFiles = Get-OptionalAnswerString -Answers $existingAnswers -Key 'ActiveAgentFiles'
+if ([string]::IsNullOrWhiteSpace($existingActiveAgentFiles)) {
+    $existingActiveAgentFiles = Get-OptionalAnswerString -Answers $existingLiveVersion -Key 'ActiveAgentFiles'
+}
+if ([string]::IsNullOrWhiteSpace($existingActiveAgentFiles)) {
+    $existingLiveCanonicalEntrypoint = Get-OptionalAnswerString -Answers $existingLiveVersion -Key 'CanonicalEntrypoint'
+    if ([string]::IsNullOrWhiteSpace($existingLiveCanonicalEntrypoint)) {
+        $existingLiveSourceOfTruth = Get-OptionalAnswerString -Answers $existingLiveVersion -Key 'SourceOfTruth'
+        if (-not [string]::IsNullOrWhiteSpace($existingLiveSourceOfTruth)) {
+            $existingLiveCanonicalEntrypoint = Convert-ToCanonicalEntrypointFile -SourceOfTruth $existingLiveSourceOfTruth
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($existingLiveCanonicalEntrypoint)) {
+        $existingActiveAgentFiles = $existingLiveCanonicalEntrypoint
+    }
+}
+$resolvedActiveAgentFiles = Convert-ActiveAgentEntrypointFilesToString -ActiveEntrypointFiles (
+    Get-ActiveAgentEntrypointFiles -Value $existingActiveAgentFiles -SourceOfTruthValue $resolvedSourceOfTruth
+)
+Set-OptionalAnswerString -Answers $initAnswers -Key 'ActiveAgentFiles' -Value $resolvedActiveAgentFiles
 
 $gitDirPath = Join-Path $TargetRoot '.git'
 if ($resolvedEnforceNoAutoCommit -and -not (Test-Path -LiteralPath $gitDirPath -PathType Container)) {
@@ -389,6 +461,7 @@ Write-Output "AssistantLanguage: $resolvedAssistantLanguage"
 Write-Output "AssistantBrevity: $resolvedAssistantBrevity"
 Write-Output "SourceOfTruth: $resolvedSourceOfTruth"
 Write-Output "CanonicalEntrypoint: $canonicalEntrypoint"
+Write-Output "ActiveAgentFiles: $(if ([string]::IsNullOrWhiteSpace($resolvedActiveAgentFiles)) { 'n/a' } else { $resolvedActiveAgentFiles })"
 Write-Output "EnforceNoAutoCommit: $resolvedEnforceNoAutoCommit"
 Write-Output "ClaudeOrchestratorFullAccess: $resolvedClaudeOrchestratorFullAccess"
 Write-Output "TokenEconomyEnabled: $resolvedTokenEconomyEnabled"

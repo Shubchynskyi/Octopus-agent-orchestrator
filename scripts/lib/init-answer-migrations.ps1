@@ -7,7 +7,7 @@ function Get-InitAnswerMigrationSchema {
             PromptOnUpdate       = $true
             LiveVersionProperty  = 'AssistantLanguage'
             TokenConfigProperty  = $null
-            Prompt               = 'Missing init answer AssistantLanguage. Which language should be used for assistant explanations and help in this project?'
+            Prompt               = 'Set communication language'
             ChangeHint           = "Defaulting to 'English'. You can change it later in runtime/init-answers.json and rerun update."
         },
         [PSCustomObject]@{
@@ -18,7 +18,7 @@ function Get-InitAnswerMigrationSchema {
             PromptOnUpdate       = $true
             LiveVersionProperty  = 'AssistantBrevity'
             TokenConfigProperty  = $null
-            Prompt               = 'Missing init answer AssistantBrevity. What response brevity should be default: concise or detailed?'
+            Prompt               = 'Set default response brevity'
             ChangeHint           = "Defaulting to 'concise'. You can change it later in runtime/init-answers.json and rerun update."
         },
         [PSCustomObject]@{
@@ -29,18 +29,18 @@ function Get-InitAnswerMigrationSchema {
             PromptOnUpdate       = $true
             LiveVersionProperty  = 'SourceOfTruth'
             TokenConfigProperty  = $null
-            Prompt               = 'Missing init answer SourceOfTruth. Which source-of-truth entrypoint should be canonical: Claude, Codex, Gemini, GitHubCopilot, Windsurf, Junie, or Antigravity?'
+            Prompt               = 'Set primary source-of-truth entrypoint'
             ChangeHint           = "Defaulting to 'Claude'. You can change it later in runtime/init-answers.json and rerun update."
         },
         [PSCustomObject]@{
             Key                  = 'EnforceNoAutoCommit'
             Type                 = 'boolean'
-            DefaultValue         = 'false'
+            DefaultValue         = 'true'
             PromptOnUpdate       = $true
             LiveVersionProperty  = 'EnforceNoAutoCommit'
             TokenConfigProperty  = $null
-            Prompt               = 'Missing init answer EnforceNoAutoCommit. Strengthen the no-auto-commit guard? (yes/no)'
-            ChangeHint           = "Defaulting to 'false'. You can change it later in runtime/init-answers.json and rerun update."
+            Prompt               = 'Set no-auto-commit guard mode'
+            ChangeHint           = "Defaulting to 'true'. You can change it later in runtime/init-answers.json and rerun update."
         },
         [PSCustomObject]@{
             Key                  = 'ClaudeOrchestratorFullAccess'
@@ -49,7 +49,7 @@ function Get-InitAnswerMigrationSchema {
             PromptOnUpdate       = $true
             LiveVersionProperty  = 'ClaudeOrchestratorFullAccess'
             TokenConfigProperty  = $null
-            Prompt               = 'Missing init answer ClaudeOrchestratorFullAccess. Give Claude full access to orchestrator files? (yes/no)'
+            Prompt               = 'Set Claude access level for orchestrator files'
             ChangeHint           = "Defaulting to 'false'. You can change it later in runtime/init-answers.json and rerun update."
         },
         [PSCustomObject]@{
@@ -59,18 +59,19 @@ function Get-InitAnswerMigrationSchema {
             PromptOnUpdate       = $true
             LiveVersionProperty  = 'TokenEconomyEnabled'
             TokenConfigProperty  = 'enabled'
-            Prompt               = 'Missing init answer TokenEconomyEnabled. Enable token-economy mode by default? (yes/no)'
+            Prompt               = 'Set default token economy mode'
             ChangeHint           = "Defaulting to 'true'. You can change it later in runtime/init-answers.json and rerun update."
         },
         [PSCustomObject]@{
             Key                  = 'CollectedVia'
-            Type                 = 'literal'
+            Type                 = 'enum'
+            AllowedValues        = @('AGENT_INIT_PROMPT.md', 'CLI_INTERACTIVE', 'CLI_NONINTERACTIVE')
             DefaultValue         = 'AGENT_INIT_PROMPT.md'
             PromptOnUpdate       = $false
             LiveVersionProperty  = $null
             TokenConfigProperty  = $null
             Prompt               = $null
-            ChangeHint           = "Backfilling CollectedVia='AGENT_INIT_PROMPT.md' for compatibility with current install/verify contracts."
+            ChangeHint           = "Backfilling CollectedVia='AGENT_INIT_PROMPT.md' when the source of init answers cannot be determined."
         }
     )
 }
@@ -286,6 +287,599 @@ function Get-InitAnswerMigrationInference {
     return $null
 }
 
+function Get-InitAnswerMigrationSelectionOptions {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Definition
+    )
+
+    switch ([string]$Definition.Type) {
+        'boolean' {
+            return @(
+                [PSCustomObject]@{
+                    Label = 'No'
+                    Value = 'false'
+                },
+                [PSCustomObject]@{
+                    Label = 'Yes'
+                    Value = 'true'
+                }
+            )
+        }
+        'enum' {
+            $options = @()
+            foreach ($allowedValue in @($Definition.AllowedValues)) {
+                $options += [PSCustomObject]@{
+                    Label = [string]$allowedValue
+                    Value = [string](Convert-InitAnswerMigrationValue -Definition $Definition -Value $allowedValue)
+                }
+            }
+
+            return @($options)
+        }
+        default {
+            return @()
+        }
+    }
+}
+
+function Get-InitAnswerMigrationSelectionIndex {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Options,
+        [AllowNull()]
+        [string]$DefaultValue
+    )
+
+    if ($Options.Count -eq 0) {
+        return 0
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($DefaultValue)) {
+        for ($index = 0; $index -lt $Options.Count; $index++) {
+            if ([string]::Equals([string]$Options[$index].Value, $DefaultValue, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $index
+            }
+        }
+    }
+
+    return 0
+}
+
+function Get-InitAnswerMigrationChoiceDescriptions {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Definition,
+        [Parameter(Mandatory = $true)]
+        [object[]]$Options
+    )
+
+    $choices = @()
+    switch ([string]$Definition.Key) {
+        'AssistantBrevity' {
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&Concise', 'Shorter default responses.'
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&Detailed', 'More detailed default responses.'
+            return $choices
+        }
+        'SourceOfTruth' {
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&Claude', 'Use CLAUDE.md as canonical.'
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription 'Co&dex', 'Use AGENTS.md as canonical.'
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&Gemini', 'Use GEMINI.md as canonical.'
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription 'GitHub&Copilot', 'Use .github/copilot-instructions.md as canonical.'
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&Windsurf', 'Use .windsurf/rules/rules.md as canonical.'
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&Junie', 'Use .junie/guidelines.md as canonical.'
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&Antigravity', 'Use .antigravity/rules.md as canonical.'
+            return $choices
+        }
+        'EnforceNoAutoCommit' {
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&No', 'Do not enforce the stricter no-auto-commit guard.'
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&Yes', 'Enforce the stricter no-auto-commit guard.'
+            return $choices
+        }
+        'ClaudeOrchestratorFullAccess' {
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&No', 'Keep Claude access restricted.'
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&Yes', 'Grant Claude full access to orchestrator files.'
+            return $choices
+        }
+        'TokenEconomyEnabled' {
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&No', 'Disable token economy by default.'
+            $choices += New-Object System.Management.Automation.Host.ChoiceDescription '&Yes', 'Enable token economy by default.'
+            return $choices
+        }
+        default {
+            foreach ($option in $Options) {
+                $label = [string]$option.Label
+                if ([string]::IsNullOrWhiteSpace($label)) {
+                    continue
+                }
+
+                $hotkeyLabel = if ($label.Length -gt 1) {
+                    '&' + $label.Substring(0, 1) + $label.Substring(1)
+                } else {
+                    '&' + $label
+                }
+                $choices += New-Object System.Management.Automation.Host.ChoiceDescription $hotkeyLabel, $label
+            }
+
+            return $choices
+        }
+    }
+}
+
+function Write-InitAnswerPromptText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text
+    )
+
+    Write-Host $Text -ForegroundColor Yellow
+}
+
+function Write-InitAnswerSelectionState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text
+    )
+
+    Write-Host $Text -ForegroundColor Green
+}
+
+function Read-InitAnswerConsoleLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PromptText
+    )
+
+    try {
+        Write-Host $PromptText -ForegroundColor Yellow -NoNewline
+        Write-Host ' ' -NoNewline
+
+        $originalForegroundColor = [Console]::ForegroundColor
+        try {
+            [Console]::ForegroundColor = [System.ConsoleColor]::Green
+            return [Console]::ReadLine()
+        }
+        finally {
+            [Console]::ForegroundColor = $originalForegroundColor
+        }
+    }
+    catch {
+        return Read-Host $PromptText
+    }
+}
+
+function Read-InitAnswerInteractiveKey {
+    try {
+        if ($null -ne $Host -and $null -ne $Host.UI -and $null -ne $Host.UI.RawUI) {
+            return $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+        }
+    }
+    catch {
+        # Fall back to .NET console key reading below.
+    }
+
+    try {
+        return [Console]::ReadKey($true)
+    }
+    catch {
+        throw 'Interactive key input is unavailable.'
+    }
+}
+
+function Get-InitAnswerInteractiveKeyName {
+    param(
+        [AllowNull()]
+        [object]$KeyInfo
+    )
+
+    if ($null -eq $KeyInfo) {
+        return $null
+    }
+
+    $consoleKeyProperty = $KeyInfo.PSObject.Properties['Key']
+    if ($null -ne $consoleKeyProperty -and $null -ne $consoleKeyProperty.Value) {
+        return [string]$consoleKeyProperty.Value
+    }
+
+    $virtualKeyCodeProperty = $KeyInfo.PSObject.Properties['VirtualKeyCode']
+    if ($null -ne $virtualKeyCodeProperty -and $null -ne $virtualKeyCodeProperty.Value) {
+        switch ([int]$virtualKeyCodeProperty.Value) {
+            13 { return 'Enter' }
+            32 { return 'Spacebar' }
+            37 { return 'LeftArrow' }
+            38 { return 'UpArrow' }
+            39 { return 'RightArrow' }
+            40 { return 'DownArrow' }
+            default { return $null }
+        }
+    }
+
+    return $null
+}
+
+function Get-InitAnswerInteractiveKeyChar {
+    param(
+        [AllowNull()]
+        [object]$KeyInfo
+    )
+
+    if ($null -eq $KeyInfo) {
+        return [char]0
+    }
+
+    $characterProperty = $KeyInfo.PSObject.Properties['Character']
+    if ($null -ne $characterProperty -and $null -ne $characterProperty.Value) {
+        return [char]$characterProperty.Value
+    }
+
+    $keyCharProperty = $KeyInfo.PSObject.Properties['KeyChar']
+    if ($null -ne $keyCharProperty -and $null -ne $keyCharProperty.Value) {
+        return [char]$keyCharProperty.Value
+    }
+
+    return [char]0
+}
+
+function Test-InitAnswerRenderSupport {
+    try {
+        if ([Console]::IsOutputRedirected) {
+            return $false
+        }
+    }
+    catch {
+        # Ignore and continue with RawUI checks.
+    }
+
+    try {
+        if ($null -eq $Host -or $null -eq $Host.UI -or $null -eq $Host.UI.RawUI) {
+            return $false
+        }
+
+        $null = $Host.UI.RawUI.CursorPosition
+        $null = $Host.UI.RawUI.WindowSize
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
+function Get-InitAnswerRenderStateStore {
+    if ($null -eq $script:InitAnswerRenderStates) {
+        $script:InitAnswerRenderStates = @{}
+    }
+
+    return $script:InitAnswerRenderStates
+}
+
+function Reset-InitAnswerRenderState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    $store = Get-InitAnswerRenderStateStore
+    if ($store.ContainsKey($Key)) {
+        [void]$store.Remove($Key)
+    }
+}
+
+function Write-InitAnswerRenderedLines {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+        [Parameter(Mandatory = $true)]
+        [object[]]$Lines
+    )
+
+    if (-not (Test-InitAnswerRenderSupport)) {
+        foreach ($line in $Lines) {
+            $lineText = [string]$line.Text
+            $lineColorProperty = $line.PSObject.Properties['Color']
+            if ($null -ne $lineColorProperty -and $null -ne $lineColorProperty.Value) {
+                Write-Host $lineText -ForegroundColor ([System.ConsoleColor]$lineColorProperty.Value)
+            }
+            else {
+                Write-Host $lineText
+            }
+        }
+        return
+    }
+
+    $rawUi = $Host.UI.RawUI
+    $store = Get-InitAnswerRenderStateStore
+    $windowWidth = [Math]::Max(1, [int]$rawUi.WindowSize.Width)
+
+    if (-not $store.ContainsKey($Key)) {
+        $anchorPosition = $rawUi.CursorPosition
+        $store[$Key] = [PSCustomObject]@{
+            X         = [int]$anchorPosition.X
+            Y         = [int]$anchorPosition.Y
+            LineCount = 0
+        }
+    }
+
+    $state = $store[$Key]
+    $anchor = New-Object System.Management.Automation.Host.Coordinates($state.X, $state.Y)
+    $renderLineCount = [Math]::Max([int]$state.LineCount, [int]$Lines.Count)
+
+    for ($index = 0; $index -lt $renderLineCount; $index++) {
+        $rawUi.CursorPosition = New-Object System.Management.Automation.Host.Coordinates($anchor.X, ($anchor.Y + $index))
+
+        if ($index -lt $Lines.Count) {
+            $lineText = [string]$Lines[$index].Text
+            $lineColorProperty = $Lines[$index].PSObject.Properties['Color']
+            $lineColor = if ($null -ne $lineColorProperty) { $lineColorProperty.Value } else { $null }
+        }
+        else {
+            $lineText = ''
+            $lineColor = $null
+        }
+
+        $paddedLine = if ($windowWidth -le 1) {
+            ''
+        }
+        elseif ($lineText.Length -ge ($windowWidth - 1)) {
+            $lineText.Substring(0, $windowWidth - 1)
+        }
+        else {
+            $lineText.PadRight($windowWidth - 1)
+        }
+
+        if ($null -ne $lineColor) {
+            Write-Host $paddedLine -ForegroundColor ([System.ConsoleColor]$lineColor)
+        }
+        else {
+            Write-Host $paddedLine
+        }
+    }
+
+    $rawUi.CursorPosition = New-Object System.Management.Automation.Host.Coordinates($anchor.X, ($anchor.Y + $Lines.Count))
+    $store[$Key] = [PSCustomObject]@{
+        X         = $anchor.X
+        Y         = $anchor.Y
+        LineCount = $Lines.Count
+    }
+}
+
+function Write-InitAnswerSelectionOptions {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Options,
+        [Parameter(Mandatory = $true)]
+        [int]$SelectedIndex
+    )
+
+    $lines = @()
+    for ($index = 0; $index -lt $Options.Count; $index++) {
+        $pointer = if ($index -eq $SelectedIndex) { '>' } else { ' ' }
+        $line = ("{0} {1}. {2}" -f $pointer, ($index + 1), [string]$Options[$index].Label)
+        $lines += [PSCustomObject]@{
+            Text  = $line
+            Color = if ($index -eq $SelectedIndex) { [System.ConsoleColor]::Green } else { $null }
+        }
+    }
+
+    return ,$lines
+}
+
+function Get-InitAnswerSelectionStateText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Options,
+        [Parameter(Mandatory = $true)]
+        [int]$SelectedIndex
+    )
+
+    if ($SelectedIndex -lt 0 -or $SelectedIndex -ge $Options.Count) {
+        return $null
+    }
+
+    return [string]$Options[$SelectedIndex].Label
+}
+
+function Write-InitAnswerSelectionSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Options,
+        [Parameter(Mandatory = $true)]
+        [int]$SelectedIndex,
+        [string]$RenderKey = 'InitAnswerSelection'
+    )
+
+    $lines = @(
+        @(Write-InitAnswerSelectionOptions -Options $Options -SelectedIndex $SelectedIndex)
+        [PSCustomObject]@{
+            Text  = ("Current selection: {0}" -f (Get-InitAnswerSelectionStateText -Options $Options -SelectedIndex $SelectedIndex))
+            Color = $null
+        }
+    )
+
+    Write-InitAnswerRenderedLines -Key $RenderKey -Lines $lines
+}
+
+function Read-InitAnswerFallbackSelectionPrompt {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Definition,
+        [Parameter(Mandatory = $true)]
+        [object[]]$Options,
+        [Parameter(Mandatory = $true)]
+        [int]$SelectedIndex,
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    Write-InitAnswerPromptText -Text ([string]$Definition.Prompt)
+    Write-InitAnswerPromptText -Text $Message
+    for ($index = 0; $index -lt $Options.Count; $index++) {
+        $suffix = if ($index -eq $SelectedIndex) { ' [default]' } else { '' }
+        Write-Host ("  {0}. {1}{2}" -f ($index + 1), [string]$Options[$index].Label, $suffix) -ForegroundColor Yellow
+    }
+
+    while ($true) {
+        $response = Read-InitAnswerConsoleLine -PromptText 'Select option number:'
+        if ([string]::IsNullOrWhiteSpace($response)) {
+            return $SelectedIndex
+        }
+
+        [int]$numericSelection = 0
+        if ([int]::TryParse($response.Trim(), [ref]$numericSelection)) {
+            $resolvedIndex = $numericSelection - 1
+            if ($resolvedIndex -ge 0 -and $resolvedIndex -lt $Options.Count) {
+                return $resolvedIndex
+            }
+        }
+
+        foreach ($index in 0..($Options.Count - 1)) {
+            if ([string]::Equals($response.Trim(), [string]$Options[$index].Label, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $index
+            }
+        }
+
+        Write-Warning ("Unsupported selection '{0}'. Choose a number from 1 to {1}." -f $response, $Options.Count)
+    }
+}
+
+function Read-InitAnswerConsoleSelectionPrompt {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Definition,
+        [Parameter(Mandatory = $true)]
+        [object[]]$Options,
+        [Parameter(Mandatory = $true)]
+        [int]$SelectedIndex,
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    Write-InitAnswerPromptText -Text ([string]$Definition.Prompt)
+    Write-Host $Message
+    Write-Host 'Use Up/Down to change focus. Press Enter to confirm.'
+    $renderKey = "InitAnswerSelection:$($Definition.Key)"
+    Reset-InitAnswerRenderState -Key $renderKey
+    Write-InitAnswerSelectionSnapshot -Options $Options -SelectedIndex $SelectedIndex -RenderKey $renderKey
+
+    while ($true) {
+        $keyInfo = Read-InitAnswerInteractiveKey
+        $keyName = Get-InitAnswerInteractiveKeyName -KeyInfo $keyInfo
+
+        switch ($keyName) {
+            'LeftArrow' {
+                $SelectedIndex = if ($SelectedIndex -le 0) { $Options.Count - 1 } else { $SelectedIndex - 1 }
+                Write-InitAnswerSelectionSnapshot -Options $Options -SelectedIndex $SelectedIndex -RenderKey $renderKey
+                continue
+            }
+            'RightArrow' {
+                $SelectedIndex = if ($SelectedIndex -ge ($Options.Count - 1)) { 0 } else { $SelectedIndex + 1 }
+                Write-InitAnswerSelectionSnapshot -Options $Options -SelectedIndex $SelectedIndex -RenderKey $renderKey
+                continue
+            }
+            'UpArrow' {
+                $SelectedIndex = if ($SelectedIndex -le 0) { $Options.Count - 1 } else { $SelectedIndex - 1 }
+                Write-InitAnswerSelectionSnapshot -Options $Options -SelectedIndex $SelectedIndex -RenderKey $renderKey
+                continue
+            }
+            'DownArrow' {
+                $SelectedIndex = if ($SelectedIndex -ge ($Options.Count - 1)) { 0 } else { $SelectedIndex + 1 }
+                Write-InitAnswerSelectionSnapshot -Options $Options -SelectedIndex $SelectedIndex -RenderKey $renderKey
+                continue
+            }
+            'Enter' {
+                Reset-InitAnswerRenderState -Key $renderKey
+                Write-InitAnswerSelectionState -Text ("Selected: {0}" -f (Get-InitAnswerSelectionStateText -Options $Options -SelectedIndex $SelectedIndex))
+                return $SelectedIndex
+            }
+            'Spacebar' {
+                Reset-InitAnswerRenderState -Key $renderKey
+                Write-InitAnswerSelectionState -Text ("Selected: {0}" -f (Get-InitAnswerSelectionStateText -Options $Options -SelectedIndex $SelectedIndex))
+                return $SelectedIndex
+            }
+            default {
+                $char = Get-InitAnswerInteractiveKeyChar -KeyInfo $keyInfo
+                if ($char -and [char]::IsDigit($char)) {
+                    $numericIndex = [int]([string]$char) - 1
+                    if ($numericIndex -ge 0 -and $numericIndex -lt $Options.Count) {
+                        $SelectedIndex = $numericIndex
+                        Write-InitAnswerSelectionSnapshot -Options $Options -SelectedIndex $SelectedIndex -RenderKey $renderKey
+                    }
+                    continue
+                }
+
+                if ($char) {
+                    $normalizedChar = [char]::ToUpperInvariant($char)
+                    for ($index = 0; $index -lt $Options.Count; $index++) {
+                        $label = [string]$Options[$index].Label
+                        if (-not [string]::IsNullOrWhiteSpace($label) -and [char]::ToUpperInvariant($label[0]) -eq $normalizedChar) {
+                            $SelectedIndex = $index
+                            Write-InitAnswerSelectionSnapshot -Options $Options -SelectedIndex $SelectedIndex -RenderKey $renderKey
+                            break
+                        }
+                    }
+                }
+                continue
+            }
+        }
+    }
+}
+
+function Read-InitAnswerMigrationSelectionPrompt {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Definition,
+        [AllowNull()]
+        [string]$PromptDefaultValue,
+        [AllowNull()]
+        [string]$RecommendationSource
+    )
+
+    $defaultValue = if ([string]::IsNullOrWhiteSpace($PromptDefaultValue)) {
+        [string](Convert-InitAnswerMigrationValue -Definition $Definition -Value $Definition.DefaultValue)
+    } else {
+        [string](Convert-InitAnswerMigrationValue -Definition $Definition -Value $PromptDefaultValue)
+    }
+    $options = @(Get-InitAnswerMigrationSelectionOptions -Definition $Definition)
+    if ($options.Count -eq 0) {
+        throw "Interactive selector is not available for definition type '$($Definition.Type)'."
+    }
+
+    $selectedIndex = Get-InitAnswerMigrationSelectionIndex -Options $options -DefaultValue $defaultValue
+    $initialIndex = $selectedIndex
+    $selectionChanged = $false
+
+    $caption = [string]$Definition.Prompt
+    $message = if (-not [string]::IsNullOrWhiteSpace($RecommendationSource)) {
+        "Default: $defaultValue (from $RecommendationSource)."
+    } else {
+        "Default: $defaultValue."
+    }
+
+    try {
+        $selectedIndex = Read-InitAnswerConsoleSelectionPrompt `
+            -Definition $Definition `
+            -Options $options `
+            -SelectedIndex $selectedIndex `
+            -Message $message
+    }
+    catch {
+        $selectedIndex = Read-InitAnswerFallbackSelectionPrompt `
+            -Definition $Definition `
+            -Options $options `
+            -SelectedIndex $selectedIndex `
+            -Message $message
+    }
+
+    $selectionChanged = $selectedIndex -ne $initialIndex
+    $selectedValue = [string]$options[$selectedIndex].Value
+    $usedDefault = (-not $selectionChanged) -and [string]::Equals($selectedValue, $defaultValue, [System.StringComparison]::OrdinalIgnoreCase)
+    return [PSCustomObject]@{
+        Value          = $selectedValue
+        UsedDefault    = $usedDefault
+        PromptResponse = [string]$options[$selectedIndex].Label
+        DefaultSource  = if ($usedDefault -and -not [string]::IsNullOrWhiteSpace($RecommendationSource)) { 'recommended_inference' } elseif ($usedDefault) { 'definition_default' } else { $null }
+    }
+}
+
 function Read-InitAnswerMigrationPrompt {
     param(
         [Parameter(Mandatory = $true)]
@@ -302,18 +896,25 @@ function Read-InitAnswerMigrationPrompt {
         [string]$PromptDefaultValue
     }
 
+    if ($Definition.Type -ne 'string') {
+        return Read-InitAnswerMigrationSelectionPrompt `
+            -Definition $Definition `
+            -PromptDefaultValue $defaultValue `
+            -RecommendationSource $RecommendationSource
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($RecommendationSource) -and -not [string]::IsNullOrWhiteSpace($defaultValue)) {
-        Write-Host "Recommended default for $($Definition.Key): $defaultValue (inferred from $RecommendationSource). Press Enter to accept it or enter a different value."
+        Write-InitAnswerPromptText -Text "Suggested: $defaultValue (from $RecommendationSource)"
     }
 
     $promptText = if ([string]::IsNullOrWhiteSpace($defaultValue)) {
         [string]$Definition.Prompt
     } else {
-        "$($Definition.Prompt) [$defaultValue]"
+        "$($Definition.Prompt) [default: $defaultValue]"
     }
 
     while ($true) {
-        $response = Read-Host $promptText
+        $response = Read-InitAnswerConsoleLine -PromptText ($promptText + ':')
         if ([string]::IsNullOrWhiteSpace($response)) {
             return [PSCustomObject]@{
                 Value          = $defaultValue
@@ -425,6 +1026,19 @@ function Invoke-UpdateInitAnswerMigration {
             continue
         }
 
+        if (-not $definition.PromptOnUpdate -or [string]::IsNullOrWhiteSpace([string]$definition.Prompt)) {
+            $defaultValue = Convert-InitAnswerMigrationValue -Definition $definition -Value $definition.DefaultValue
+            Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $defaultValue
+            $changes += [PSCustomObject]@{
+                Key    = $definition.Key
+                Action = 'defaulted'
+                Value  = [string]$defaultValue
+                Source = 'default'
+                Note   = [string]$definition.ChangeHint
+            }
+            continue
+        }
+
         if ($null -ne $inference -and -not [string]::IsNullOrWhiteSpace([string]$inference.Value)) {
             Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $inference.Value
             $changes += [PSCustomObject]@{
@@ -480,22 +1094,6 @@ function Invoke-RecollectInitAnswers {
             $normalizedExistingValue = $null
         }
 
-        if ($definition.Type -eq 'literal' -or -not $definition.PromptOnUpdate -or [string]::IsNullOrWhiteSpace([string]$definition.Prompt)) {
-            $literalValue = Convert-InitAnswerMigrationValue -Definition $definition -Value $definition.DefaultValue
-            Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $literalValue
-            $existingLiteralText = if ($null -eq $existingValue) { '' } else { ([string]$existingValue).Trim() }
-            if (-not [string]::Equals($existingLiteralText, [string]$literalValue, [System.StringComparison]::OrdinalIgnoreCase)) {
-                $changes += [PSCustomObject]@{
-                    Key    = $definition.Key
-                    Action = 'normalized'
-                    Value  = [string]$literalValue
-                    Source = 'definition_literal'
-                    Note   = "Reset to literal contract value '$literalValue'."
-                }
-            }
-            continue
-        }
-
         $overrideValue = $null
         $overrideProvided = $false
         if ($null -ne $Overrides) {
@@ -519,6 +1117,40 @@ function Invoke-RecollectInitAnswers {
                 Value  = [string]$overrideValue
                 Source = 'explicit_override'
                 Note   = 'Applied from explicit reinit parameter override.'
+            }
+            continue
+        }
+
+        if ($definition.Type -eq 'literal') {
+            $literalValue = Convert-InitAnswerMigrationValue -Definition $definition -Value $definition.DefaultValue
+            Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $literalValue
+            $existingLiteralText = if ($null -eq $existingValue) { '' } else { ([string]$existingValue).Trim() }
+            if (-not [string]::Equals($existingLiteralText, [string]$literalValue, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $changes += [PSCustomObject]@{
+                    Key    = $definition.Key
+                    Action = 'normalized'
+                    Value  = [string]$literalValue
+                    Source = 'definition_literal'
+                    Note   = "Reset to literal contract value '$literalValue'."
+                }
+            }
+            continue
+        }
+
+        if (-not $definition.PromptOnUpdate -or [string]::IsNullOrWhiteSpace([string]$definition.Prompt)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$normalizedExistingValue)) {
+                Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $normalizedExistingValue
+                continue
+            }
+
+            $defaultValue = [string](Convert-InitAnswerMigrationValue -Definition $definition -Value $definition.DefaultValue)
+            Set-InitAnswerMigrationValue -Answers $workingAnswers -LogicalName $definition.Key -Value $defaultValue
+            $changes += [PSCustomObject]@{
+                Key    = $definition.Key
+                Action = 'defaulted'
+                Value  = [string]$defaultValue
+                Source = 'default'
+                Note   = [string]$definition.ChangeHint
             }
             continue
         }

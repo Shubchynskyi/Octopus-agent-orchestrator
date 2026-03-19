@@ -6,8 +6,13 @@ All notable changes to this bundle are documented in this file.
 
 ### Added
 - Added npm package metadata plus `octopus`, `oao`, and `octopus-agent-orchestrator` bin aliases through root `package.json` and `bin/octopus.js`.
+- Added `scripts/setup.ps1` / `.sh` and a new `octopus setup` flow so first-run users can answer the 6 init questions directly in the CLI without requiring an agent.
 
 ### Changed
+- `octopus` without arguments is now safe and non-destructive: it prints overview/help instead of bootstrapping the bundle.
+- The npm CLI now exposes `setup`, `status`, and `doctor`; `setup` writes CLI-produced init answers, `status` shows readiness, and `doctor` runs verify plus manifest validation from existing answers.
+- Init-answer contracts now accept both agent-collected and CLI-collected origins through `CollectedVia` values (`AGENT_INIT_PROMPT.md`, `CLI_INTERACTIVE`, `CLI_NONINTERACTIVE`).
+- `AGENT_INIT_PROMPT.md` now supports reusing an existing complete `runtime/init-answers.json`, requires language normalization into a clear agent-readable label, and requires asking the user again when the language cannot be confidently recognized.
 - The npm bootstrap CLI now deploys a clean bundle copy into `./Octopus-agent-orchestrator` (or an explicit destination path) and prints the next-step installer commands instead of auto-running install.
 - The npm CLI now exposes lifecycle commands `install`, `init`, `reinit`, `update`, and `uninstall`; `install`/`init` require agent-produced `init-answers.json` instead of prompting the human user, and `update` supports repo/branch overrides through the existing update flow.
 - README/HOW_TO now document the npm CLI bootstrap/lifecycle workflow, branch-testing examples, canonical-path expectations, and the rule that `AGENT_INIT_PROMPT.md` still owns init-answer collection.

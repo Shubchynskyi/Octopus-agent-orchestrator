@@ -95,40 +95,17 @@ BeforeAll {
         return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
     }
 
-    function script:Resolve-CommandPlaceholders {
-        param(
-            [Parameter(Mandatory = $true)]
-            [string]$BundleRoot
-        )
-
-        $commandsFile = Join-Path $BundleRoot 'live\docs\agent-rules\40-commands.md'
-        if (Test-Path -LiteralPath $commandsFile -PathType Leaf) {
-            $content = Get-Content -LiteralPath $commandsFile -Raw
-            $content = $content -replace '<install dependencies command>', 'npm install'
-            $content = $content -replace '<local environment bootstrap command>', 'npm run setup'
-            $content = $content -replace '<start backend command>', 'npm run start:backend'
-            $content = $content -replace '<start frontend command>', 'npm run start:frontend'
-            $content = $content -replace '<start worker or background job command>', 'npm run worker'
-            $content = $content -replace '<unit test command>', 'npm test'
-            $content = $content -replace '<integration test command>', 'npm run test:integration'
-            $content = $content -replace '<e2e test command>', 'npm run test:e2e'
-            $content = $content -replace '<lint command>', 'npm run lint'
-            $content = $content -replace '<type-check command>', 'npx tsc --noEmit'
-            $content = $content -replace '<format check command>', 'npm run format:check'
-            $content = $content -replace '<compile command>', 'npx tsc'
-            $content = $content -replace '<build command>', 'npm run build'
-            $content = $content -replace '<container or artifact packaging command>', 'docker build .'
-            Set-Content -LiteralPath $commandsFile -Value $content -NoNewline
-        }
-    }
-
     function script:Get-OutputValue {
         param(
-            [Parameter(Mandatory = $true)]
+            [AllowNull()]
             [string[]]$Output,
             [Parameter(Mandatory = $true)]
             [string]$Label
         )
+
+        if ($null -eq $Output) {
+            return $null
+        }
 
         $prefix = "${Label}:"
         $line = $Output | Where-Object { $_ -like "$prefix*" } | Select-Object -First 1
@@ -156,8 +133,6 @@ BeforeAll {
             -SourceOfTruth $SourceOfTruth `
             -InitAnswersPath $InitAnswersRelativePath
 
-        Resolve-CommandPlaceholders -BundleRoot $BundleRoot
-
         return $output
     }
 
@@ -169,18 +144,33 @@ BeforeAll {
             [string]$SourceOfTruth = 'Claude'
         )
 
-        $output = $null
+        $stdoutPath = Join-Path ([System.IO.Path]::GetTempPath()) ("octopus-verify-stdout-" + [Guid]::NewGuid().ToString('N') + '.log')
+        $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) ("octopus-verify-stderr-" + [Guid]::NewGuid().ToString('N') + '.log')
         try {
-            $output = & (Join-Path $BundleRoot 'scripts\verify.ps1') `
-                -TargetRoot $WorkspaceRoot `
-                -SourceOfTruth $SourceOfTruth `
-                -InitAnswersPath $InitAnswersRelativePath 2>&1
+            $process = Start-Process -FilePath 'pwsh' -ArgumentList @(
+                '-NoLogo',
+                '-NoProfile',
+                '-File',
+                (Join-Path $BundleRoot 'scripts\verify.ps1'),
+                '-TargetRoot',
+                $WorkspaceRoot,
+                '-SourceOfTruth',
+                $SourceOfTruth,
+                '-InitAnswersPath',
+                $InitAnswersRelativePath
+            ) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
         }
-        catch {
-            if ($null -eq $output) { $output = @() }
+        finally {
+            $output = @()
+            foreach ($path in @($stdoutPath, $stderrPath)) {
+                if (Test-Path -LiteralPath $path -PathType Leaf) {
+                    $output += @(Get-Content -LiteralPath $path)
+                    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+                }
+            }
         }
 
-        return $output
+        return @($output | ForEach-Object { [string]$_ })
     }
 
     function script:Invoke-Reinit {
@@ -265,7 +255,7 @@ Describe 'E2E Lifecycle: Clean Install' {
         Invoke-Install -BundleRoot $br -WorkspaceRoot $wr -InitAnswersRelativePath $iaRel -SourceOfTruth 'GitHubCopilot' | Out-Null
 
         Test-Path -LiteralPath (Join-Path $wr '.github\copilot-instructions.md') -PathType Leaf | Should -BeTrue
-        Test-Path -LiteralPath (Join-Path $wr 'CLAUDE.md') -PathType Leaf | Should -BeTrue -Because 'bridge files are deployed for all providers'
+        Test-Path -LiteralPath (Join-Path $wr 'CLAUDE.md') -PathType Leaf | Should -BeFalse -Because 'only the canonical entrypoint and explicitly active extras are deployed by default'
 
         $verifyOutput = Invoke-Verify -BundleRoot $br -WorkspaceRoot $wr -InitAnswersRelativePath $iaRel -SourceOfTruth 'GitHubCopilot'
         $verifyResult = Get-OutputValue -Output $verifyOutput -Label 'Verification'

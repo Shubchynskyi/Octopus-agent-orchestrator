@@ -4,12 +4,16 @@ const childProcess = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const readline = require('readline');
 
 const PACKAGE_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_BUNDLE_NAME = 'Octopus-agent-orchestrator';
 const DEFAULT_INIT_ANSWERS_RELATIVE_PATH = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json');
 const DEFAULT_REPO_URL = 'https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git';
 const LIFECYCLE_COMMANDS = new Set([
+    'setup',
+    'status',
+    'doctor',
     'bootstrap',
     'install',
     'init',
@@ -34,6 +38,11 @@ const YES_NO_VALUES = new Set([
     'yes',
     'no'
 ]);
+const COLLECTED_VIA_VALUES = new Set([
+    'AGENT_INIT_PROMPT.md',
+    'CLI_INTERACTIVE',
+    'CLI_NONINTERACTIVE'
+]);
 const SKIPPED_ENTRY_NAMES = new Set([
     '__pycache__',
     '.pytest_cache'
@@ -42,6 +51,15 @@ const SKIPPED_FILE_SUFFIXES = Object.freeze([
     '.pyc',
     '.pyo',
     '.pyd'
+]);
+const SOURCE_TO_ENTRYPOINT_MAP = new Map([
+    ['CLAUDE', 'CLAUDE.md'],
+    ['CODEX', 'AGENTS.md'],
+    ['GEMINI', 'GEMINI.md'],
+    ['GITHUBCOPILOT', '.github/copilot-instructions.md'],
+    ['WINDSURF', '.windsurf/rules/rules.md'],
+    ['JUNIE', '.junie/guidelines.md'],
+    ['ANTIGRAVITY', '.antigravity/rules.md']
 ]);
 const DEPLOY_ITEMS = Object.freeze([
     '.gitattributes',
@@ -57,6 +75,175 @@ const DEPLOY_ITEMS = Object.freeze([
     'VERSION',
     'package.json'
 ]);
+const PROJECT_COMMAND_PLACEHOLDERS = Object.freeze([
+    '<install dependencies command>',
+    '<local environment bootstrap command>',
+    '<start backend command>',
+    '<start frontend command>',
+    '<start worker or background job command>',
+    '<unit test command>',
+    '<integration test command>',
+    '<e2e test command>',
+    '<lint command>',
+    '<type-check command>',
+    '<format check command>',
+    '<compile command>',
+    '<build command>',
+    '<container or artifact packaging command>'
+]);
+const COMMAND_SUMMARY = Object.freeze([
+    ['setup', 'First-run onboarding'],
+    ['status', 'Show workspace status'],
+    ['doctor', 'Run verify + manifest validation'],
+    ['bootstrap', 'Deploy bundle only'],
+    ['reinit', 'Change init answers'],
+    ['update', 'Check/apply updates'],
+    ['uninstall', 'Remove orchestrator']
+]);
+const ALL_AGENT_ENTRYPOINT_FILES = Object.freeze([...SOURCE_TO_ENTRYPOINT_MAP.values()]);
+
+function supportsColor() {
+    return Boolean(process.stdout && process.stdout.isTTY && !process.env.NO_COLOR);
+}
+
+function colorize(text, code) {
+    return supportsColor() ? `\u001b[${code}m${text}\u001b[0m` : text;
+}
+
+function bold(text) {
+    return colorize(text, '1');
+}
+
+function cyan(text) {
+    return colorize(text, '36');
+}
+
+function green(text) {
+    return colorize(text, '32');
+}
+
+function yellow(text) {
+    return colorize(text, '33');
+}
+
+function red(text) {
+    return colorize(text, '31');
+}
+
+function dim(text) {
+    return colorize(text, '2');
+}
+
+function printHighlightedPair(label, value, { labelColor = yellow, valueColor = green, indent = '' } = {}) {
+    console.log(`${indent}${labelColor(label)} ${valueColor(value)}`);
+}
+
+function supportsInteractivePrompts() {
+    return Boolean(process.stdin && process.stdout && process.stdin.isTTY && process.stdout.isTTY);
+}
+
+function readLineInput(promptText) {
+    return new Promise((resolve) => {
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+
+        rl.question(promptText, (value) => {
+            rl.close();
+            resolve(String(value || '').trim());
+        });
+    });
+}
+
+async function promptTextInput(title, defaultValue) {
+    const answer = await readLineInput(`${yellow(`${title} [default: ${defaultValue}]:`)} `);
+    const resolvedValue = answer || defaultValue;
+    console.log(green(`Selected: ${resolvedValue}`));
+    return resolvedValue;
+}
+
+async function promptSingleSelect({ title, defaultLabel, options, defaultValue }) {
+    if (!supportsInteractivePrompts()) {
+        throw new Error('Interactive setup requires a TTY terminal.');
+    }
+
+    const defaultIndex = Math.max(0, options.findIndex((option) => option.value === defaultValue));
+    console.log(yellow(title));
+    console.log(`Default: ${defaultLabel}.`);
+    options.forEach((option, index) => {
+        console.log(`  ${index + 1}. ${option.label}`);
+    });
+
+    while (true) {
+        const answer = await readLineInput(`Select option [1-${options.length}] (Enter = ${defaultIndex + 1}): `);
+        if (!answer) {
+            console.log(green(`Selected: ${options[defaultIndex].label}`));
+            return options[defaultIndex].value;
+        }
+
+        if (/^\d+$/.test(answer)) {
+            const numericIndex = Number.parseInt(answer, 10) - 1;
+            if (numericIndex >= 0 && numericIndex < options.length) {
+                console.log(green(`Selected: ${options[numericIndex].label}`));
+                return options[numericIndex].value;
+            }
+        }
+
+        console.log(red(`Invalid selection. Enter a number between 1 and ${options.length}.`));
+    }
+}
+
+async function promptMultiSelect({ title, canonicalFile, options, selectedValues }) {
+    if (!supportsInteractivePrompts()) {
+        throw new Error('Interactive setup requires a TTY terminal.');
+    }
+
+    const defaultSelections = options
+        .map((option, index) => (selectedValues.includes(option.value) ? String(index + 1) : null))
+        .filter(Boolean);
+    const defaultSelectionHint = defaultSelections.length > 0 ? defaultSelections.join(', ') : 'none';
+
+    console.log(yellow(title));
+    console.log(`Primary file '${canonicalFile}' will be created automatically.`);
+    console.log('Recommendation: select only the extra agent files you actually use in this project.');
+    options.forEach((option, index) => {
+        console.log(`  ${index + 1}. ${option.label}`);
+    });
+
+    while (true) {
+        const answer = await readLineInput(
+            `Enter extra file numbers separated by commas (Enter = ${defaultSelectionHint}, "none" = no extras): `
+        );
+
+        if (!answer) {
+            const defaultResult = options.filter((option) => selectedValues.includes(option.value)).map((option) => option.value);
+            console.log(green(`Selected additional files: ${defaultResult.length > 0 ? defaultResult.join(', ') : 'none'}`));
+            return defaultResult;
+        }
+
+        if (/^(none|no|0)$/i.test(answer)) {
+            console.log(green('Selected additional files: none'));
+            return [];
+        }
+
+        const numericSelections = [...new Set(answer.split(/[,\s]+/).filter(Boolean))];
+        if (numericSelections.every((token) => /^\d+$/.test(token))) {
+            const indexes = numericSelections.map((token) => Number.parseInt(token, 10) - 1);
+            if (indexes.every((index) => index >= 0 && index < options.length)) {
+                const resolvedSelection = indexes.map((index) => options[index].value);
+                console.log(green(`Selected additional files: ${resolvedSelection.length > 0 ? resolvedSelection.join(', ') : 'none'}`));
+                return resolvedSelection;
+            }
+        }
+
+        console.log(red(`Invalid selection. Enter numbers between 1 and ${options.length}, separated by commas.`));
+    }
+}
+
+function padRight(text, width) {
+    return String(text).padEnd(width, ' ');
+}
 
 function readPackageJson(packageRoot = PACKAGE_ROOT) {
     return JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
@@ -135,6 +322,20 @@ function parseRequiredText(value, label) {
     return text;
 }
 
+function parseOptionalText(value) {
+    if (value === undefined || value === null) {
+        return null;
+    }
+
+    if (Array.isArray(value)) {
+        const items = value.map((item) => String(item || '').trim()).filter(Boolean);
+        return items.length > 0 ? items.join(', ') : null;
+    }
+
+    const text = String(value).trim();
+    return text || null;
+}
+
 function normalizeSourceOfTruth(value) {
     const text = parseRequiredText(value, 'SourceOfTruth');
     const match = [...SOURCE_OF_TRUTH_VALUES].find((candidate) => candidate.toLowerCase() === text.toLowerCase());
@@ -161,6 +362,198 @@ function normalizeYesNo(value, label) {
     }
 
     return text;
+}
+
+function normalizeCollectedVia(value) {
+    const text = parseRequiredText(value, 'CollectedVia');
+    const match = [...COLLECTED_VIA_VALUES].find((candidate) => candidate.toLowerCase() === text.toLowerCase());
+    if (!match) {
+        throw new Error(`CollectedVia must be one of: ${[...COLLECTED_VIA_VALUES].join(', ')}.`);
+    }
+
+    return match;
+}
+
+function convertSourceOfTruthToEntrypoint(sourceOfTruth) {
+    const sourceKey = String(sourceOfTruth || '').trim().toUpperCase().replace(/\s+/g, '');
+    return SOURCE_TO_ENTRYPOINT_MAP.get(sourceKey) || null;
+}
+
+function normalizeAgentEntrypointToken(value) {
+    const trimmed = String(value || '').trim().replace(/^or\s+/i, '');
+    if (!trimmed) {
+        return null;
+    }
+
+    const normalized = trimmed.toLowerCase().replace(/\\/g, '/');
+    switch (normalized) {
+        case 'claude':
+        case 'claude.md':
+            return 'CLAUDE.md';
+        case 'codex':
+        case 'agents':
+        case 'agents.md':
+            return 'AGENTS.md';
+        case 'gemini':
+        case 'gemini.md':
+            return 'GEMINI.md';
+        case 'githubcopilot':
+        case 'copilot':
+        case '.github/copilot-instructions.md':
+            return '.github/copilot-instructions.md';
+        case 'windsurf':
+        case '.windsurf/rules/rules.md':
+            return '.windsurf/rules/rules.md';
+        case 'junie':
+        case '.junie/guidelines.md':
+            return '.junie/guidelines.md';
+        case 'antigravity':
+        case '.antigravity/rules.md':
+            return '.antigravity/rules.md';
+        default: {
+            const match = ALL_AGENT_ENTRYPOINT_FILES.find((candidate) => candidate.toLowerCase() === normalized);
+            return match || null;
+        }
+    }
+}
+
+function normalizeActiveAgentFiles(value, sourceOfTruth) {
+    const canonicalEntrypoint = convertSourceOfTruthToEntrypoint(sourceOfTruth);
+    const tokens = parseOptionalText(value)
+        ? String(value).split(/[;,]+/).map((token) => normalizeAgentEntrypointToken(token)).filter(Boolean)
+        : [];
+    const unique = new Set(tokens);
+    if (canonicalEntrypoint) {
+        unique.add(canonicalEntrypoint);
+    }
+
+    const ordered = ALL_AGENT_ENTRYPOINT_FILES.filter((entry) => unique.has(entry));
+    return ordered.length > 0 ? ordered.join(', ') : null;
+}
+
+function tryNormalizeAssistantBrevity(value, fallback = 'concise') {
+    try {
+        return value === undefined || value === null || String(value).trim() === ''
+            ? fallback
+            : normalizeAssistantBrevity(value);
+    } catch {
+        return fallback;
+    }
+}
+
+function tryNormalizeSourceOfTruth(value, fallback = 'Claude') {
+    try {
+        return value === undefined || value === null || String(value).trim() === ''
+            ? fallback
+            : normalizeSourceOfTruth(value);
+    } catch {
+        return fallback;
+    }
+}
+
+function tryParseBooleanText(value, fallback) {
+    try {
+        return value === undefined || value === null || String(value).trim() === ''
+            ? fallback
+            : parseBooleanText(value, 'boolean');
+    } catch {
+        return fallback;
+    }
+}
+
+function readOptionalJsonFile(filePath) {
+    if (!fs.existsSync(filePath)) {
+        return null;
+    }
+
+    try {
+        const raw = fs.readFileSync(filePath, 'utf8');
+        if (!raw.trim()) {
+            return null;
+        }
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+function getSetupAnswerDefaults(targetRoot, initAnswersPath, options) {
+    const resolvedInitAnswersPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
+    const existingAnswers = readOptionalJsonFile(resolvedInitAnswersPath) || {};
+    const sourceOfTruth = tryNormalizeSourceOfTruth(options.sourceOfTruth ?? getInitAnswerValue(existingAnswers, 'SourceOfTruth'), 'Claude');
+    const activeAgentFiles = normalizeActiveAgentFiles(
+        options.activeAgentFiles ?? getInitAnswerValue(existingAnswers, 'ActiveAgentFiles'),
+        sourceOfTruth
+    );
+
+    return {
+        assistantLanguage: parseOptionalText(options.assistantLanguage) || parseOptionalText(getInitAnswerValue(existingAnswers, 'AssistantLanguage')) || 'English',
+        assistantBrevity: tryNormalizeAssistantBrevity(options.assistantBrevity ?? getInitAnswerValue(existingAnswers, 'AssistantBrevity'), 'concise'),
+        sourceOfTruth,
+        enforceNoAutoCommit: tryParseBooleanText(options.enforceNoAutoCommit ?? getInitAnswerValue(existingAnswers, 'EnforceNoAutoCommit'), true),
+        claudeOrchestratorFullAccess: tryParseBooleanText(options.claudeOrchestratorFullAccess ?? getInitAnswerValue(existingAnswers, 'ClaudeOrchestratorFullAccess'), false),
+        tokenEconomyEnabled: tryParseBooleanText(options.tokenEconomyEnabled ?? getInitAnswerValue(existingAnswers, 'TokenEconomyEnabled'), true),
+        activeAgentFiles
+    };
+}
+
+async function collectSetupAnswersInteractively(targetRoot, initAnswersPath, options) {
+    const defaults = getSetupAnswerDefaults(targetRoot, initAnswersPath, options);
+    const assistantLanguage = await promptTextInput('Set communication language', defaults.assistantLanguage);
+    const assistantBrevity = await promptSingleSelect({
+        title: 'Set default response brevity',
+        defaultLabel: defaults.assistantBrevity,
+        defaultValue: defaults.assistantBrevity,
+        options: [
+            { label: 'concise', value: 'concise' },
+            { label: 'detailed', value: 'detailed' }
+        ]
+    });
+    const sourceOfTruth = await promptSingleSelect({
+        title: 'Set primary source-of-truth entrypoint',
+        defaultLabel: defaults.sourceOfTruth,
+        defaultValue: defaults.sourceOfTruth,
+        options: [...SOURCE_OF_TRUTH_VALUES].map((value) => ({ label: value, value }))
+    });
+    const enforceNoAutoCommit = await promptSingleSelect({
+        title: 'Set no-auto-commit guard mode',
+        defaultLabel: defaults.enforceNoAutoCommit ? 'Yes' : 'No',
+        defaultValue: defaults.enforceNoAutoCommit ? 'true' : 'false',
+        options: [
+            { label: 'No', value: 'false' },
+            { label: 'Yes', value: 'true' }
+        ]
+    });
+    const claudeOrchestratorFullAccess = await promptSingleSelect({
+        title: 'Set Claude access level for orchestrator files',
+        defaultLabel: defaults.claudeOrchestratorFullAccess ? 'Yes' : 'No',
+        defaultValue: defaults.claudeOrchestratorFullAccess ? 'true' : 'false',
+        options: [
+            { label: 'No', value: 'false' },
+            { label: 'Yes', value: 'true' }
+        ]
+    });
+    const tokenEconomyEnabled = await promptSingleSelect({
+        title: 'Set default token economy mode',
+        defaultLabel: defaults.tokenEconomyEnabled ? 'Yes' : 'No',
+        defaultValue: defaults.tokenEconomyEnabled ? 'true' : 'false',
+        options: [
+            { label: 'No', value: 'false' },
+            { label: 'Yes', value: 'true' }
+        ]
+    });
+
+    const activeAgentFiles = normalizeActiveAgentFiles(defaults.activeAgentFiles, sourceOfTruth);
+
+    return {
+        assistantLanguage,
+        assistantBrevity,
+        sourceOfTruth,
+        enforceNoAutoCommit,
+        claudeOrchestratorFullAccess,
+        tokenEconomyEnabled,
+        activeAgentFiles
+    };
 }
 
 function getCommandName(argv) {
@@ -411,13 +804,22 @@ function emitChildResult(result, executableName) {
     }
 }
 
-function runProcess(executableName, args, { cwd, description } = {}) {
+function runProcess(executableName, args, { cwd, description, interactive = false } = {}) {
     const result = childProcess.spawnSync(executableName, args, {
         cwd,
         encoding: 'utf8',
-        windowsHide: true
+        windowsHide: true,
+        stdio: interactive ? 'inherit' : 'pipe'
     });
-    emitChildResult(result, executableName);
+    if (!interactive) {
+        emitChildResult(result, executableName);
+    } else if (result.error) {
+        if (result.error.code === 'ENOENT') {
+            throw new Error(`${executableName} is required but was not found in PATH.`);
+        }
+
+        throw result.error;
+    }
 
     if (result.status !== 0) {
         throw new Error(`${description || executableName} failed with exit code ${result.status}.`);
@@ -464,8 +866,8 @@ function buildMissingInitAnswersMessage(commandName, bundlePath, initAnswersPath
     const initPromptPath = path.join(bundlePath, 'AGENT_INIT_PROMPT.md');
     return [
         `Init answers artifact not found: ${initAnswersPath}`,
-        `The '${commandName}' command only works after an agent has prepared init answers.`,
-        `Give the agent "${initPromptPath}" and let it write "${initAnswersPath}", then rerun this command.`
+        `The '${commandName}' command requires init answers prepared either by 'npx octopus-agent-orchestrator setup' or by the setup agent.`,
+        `Run 'npx octopus-agent-orchestrator setup --target-root "${path.dirname(bundlePath)}"' or give the agent "${initPromptPath}", then rerun this command.`
     ].join('\n');
 }
 
@@ -502,10 +904,8 @@ function readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, comman
         getInitAnswerValue(answers, 'TokenEconomyEnabled') ?? false,
         'TokenEconomyEnabled'
     );
-    const collectedVia = parseRequiredText(getInitAnswerValue(answers, 'CollectedVia'), 'CollectedVia');
-    if (collectedVia.toLowerCase() !== 'agent_init_prompt.md') {
-        throw new Error(`CollectedVia must be 'AGENT_INIT_PROMPT.md'. Current value: '${collectedVia}'.`);
-    }
+    const collectedVia = normalizeCollectedVia(getInitAnswerValue(answers, 'CollectedVia'));
+    const activeAgentFiles = parseOptionalText(getInitAnswerValue(answers, 'ActiveAgentFiles'));
 
     return {
         resolvedPath,
@@ -514,7 +914,9 @@ function readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, comman
         sourceOfTruth,
         enforceNoAutoCommit,
         claudeOrchestratorFullAccess,
-        tokenEconomyEnabled
+        tokenEconomyEnabled,
+        collectedVia,
+        activeAgentFiles
     };
 }
 
@@ -554,7 +956,7 @@ function addBooleanArg(args, name, value) {
     }
 }
 
-function runPowerShellScript(scriptPath, configureArgs) {
+function runPowerShellScript(scriptPath, configureArgs, { interactive = false } = {}) {
     if (!fs.existsSync(scriptPath)) {
         throw new Error(`PowerShell script not found: ${scriptPath}`);
     }
@@ -563,8 +965,215 @@ function runPowerShellScript(scriptPath, configureArgs) {
     configureArgs(args);
     runProcess('pwsh', args, {
         cwd: process.cwd(),
-        description: path.basename(scriptPath)
+        description: path.basename(scriptPath),
+        interactive
     });
+}
+
+function getCommandsRulePath(bundlePath) {
+    return path.join(bundlePath, 'live', 'docs', 'agent-rules', '40-commands.md');
+}
+
+function getAgentInitPromptPath(bundlePath) {
+    return path.join(bundlePath, 'AGENT_INIT_PROMPT.md');
+}
+
+function readUtf8IfExists(filePath) {
+    if (!fs.existsSync(filePath) || !fs.lstatSync(filePath).isFile()) {
+        return null;
+    }
+
+    return fs.readFileSync(filePath, 'utf8');
+}
+
+function getMissingProjectCommands(commandsContent) {
+    if (!commandsContent) {
+        return [...PROJECT_COMMAND_PLACEHOLDERS];
+    }
+
+    return PROJECT_COMMAND_PLACEHOLDERS.filter((placeholder) => commandsContent.includes(placeholder));
+}
+
+function getStageBadge(completed, { warning = false } = {}) {
+    const label = completed ? '[x]' : '[ ]';
+    if (completed) {
+        return green(label);
+    }
+    if (warning) {
+        return yellow(label);
+    }
+    return dim(label);
+}
+
+function getWorkspaceHeadline(snapshot) {
+    if (snapshot.readyForTasks) {
+        return green('Workspace ready');
+    }
+    if (snapshot.primaryInitializationComplete) {
+        return yellow('Agent setup required');
+    }
+    if (snapshot.bundlePresent) {
+        return yellow('Primary setup required');
+    }
+
+    return red('Not installed');
+}
+
+function printBanner(packageJson, title, subtitle) {
+    const width = 62;
+    const top = `+${'-'.repeat(width - 2)}+`;
+    const titleText = ` OCTOPUS AGENT ORCHESTRATOR `;
+    const versionText = `v${packageJson.version}`;
+    const titleLine = `|${padRight(titleText, width - versionText.length - 3)} ${versionText}|`;
+
+    console.log(cyan(top));
+    console.log(cyan(titleLine));
+    console.log(cyan(top));
+    if (title) {
+        console.log(bold(title));
+    }
+    if (subtitle) {
+        console.log(dim(subtitle));
+    }
+}
+
+function printCommandSummary() {
+    console.log(bold('Available Commands'));
+    for (const [name, description] of COMMAND_SUMMARY) {
+        console.log(`  ${padRight(name, 10)} ${description}`);
+    }
+}
+
+function printSetupHandoff(snapshot) {
+    const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
+
+    console.log('');
+    console.log(bold('Agent Initialization'));
+    if (snapshot.activeAgentFiles) {
+        console.log(`  Active agent files: ${snapshot.activeAgentFiles}`);
+    }
+    printHighlightedPair('1. Give your agent:', `"${initPromptPath}"`, { indent: '  ' });
+    console.log('  2. The prompt already tells the agent to reuse existing init answers,');
+    console.log('     validate/normalize language, fill project context, replace placeholders,');
+    console.log('     and run the final doctor check.');
+    console.log('  3. After that you can execute tasks, for example:');
+    console.log(`     ${green('Execute task T-001 depth=2')}`);
+}
+
+function getStatusSnapshot(targetRoot, initAnswersPath = DEFAULT_INIT_ANSWERS_RELATIVE_PATH) {
+    const bundlePath = getBundlePath(targetRoot);
+    const bundlePresent = fs.existsSync(bundlePath) && fs.lstatSync(bundlePath).isDirectory();
+    const taskPath = path.join(targetRoot, 'TASK.md');
+    const livePath = path.join(bundlePath, 'live');
+    const usagePath = path.join(livePath, 'USAGE.md');
+    const commandsRulePath = getCommandsRulePath(bundlePath);
+    const commandsContent = readUtf8IfExists(commandsRulePath);
+    const missingProjectCommands = getMissingProjectCommands(commandsContent);
+    const initAnswersResolvedPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
+    const initAnswersPresent = fs.existsSync(initAnswersResolvedPath) && fs.lstatSync(initAnswersResolvedPath).isFile();
+
+    let answers = null;
+    let initAnswersError = null;
+    if (initAnswersPresent) {
+        try {
+            answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePresent ? bundlePath : getBundlePath(targetRoot), 'status');
+        } catch (error) {
+            initAnswersError = error instanceof Error ? error.message : String(error);
+        }
+    }
+
+    const liveVersionPath = path.join(livePath, 'version.json');
+    let liveVersion = null;
+    let liveVersionError = null;
+    if (fs.existsSync(liveVersionPath)) {
+        try {
+            liveVersion = JSON.parse(fs.readFileSync(liveVersionPath, 'utf8'));
+        } catch (error) {
+            liveVersionError = error instanceof Error ? error.message : String(error);
+        }
+    }
+
+    const sourceOfTruth = answers ? answers.sourceOfTruth : (liveVersion && String(liveVersion.SourceOfTruth || '').trim()) || null;
+    const sourceKey = sourceOfTruth ? sourceOfTruth.trim().toUpperCase().replace(/\s+/g, '') : null;
+    const canonicalEntrypoint = sourceKey && SOURCE_TO_ENTRYPOINT_MAP.has(sourceKey)
+        ? SOURCE_TO_ENTRYPOINT_MAP.get(sourceKey)
+        : null;
+    const livePresent = fs.existsSync(livePath) && fs.lstatSync(livePath).isDirectory();
+    const taskPresent = fs.existsSync(taskPath) && fs.lstatSync(taskPath).isFile();
+    const usagePresent = fs.existsSync(usagePath) && fs.lstatSync(usagePath).isFile();
+    const primaryInitializationComplete = bundlePresent && initAnswersPresent && !initAnswersError && livePresent && taskPresent && usagePresent;
+    const agentInitializationComplete = primaryInitializationComplete && missingProjectCommands.length === 0;
+    const readyForTasks = agentInitializationComplete;
+
+    let recommendedNextCommand = 'npx octopus-agent-orchestrator setup';
+    if (readyForTasks) {
+        recommendedNextCommand = 'Execute task T-001 depth=2';
+    } else if (primaryInitializationComplete) {
+        recommendedNextCommand = `Give your agent "${getAgentInitPromptPath(bundlePath)}" and then run npx octopus-agent-orchestrator doctor`;
+    } else if (bundlePresent && (!initAnswersPresent || initAnswersError)) {
+        recommendedNextCommand = `npx octopus-agent-orchestrator setup --target-root "${targetRoot}"`;
+    } else if (bundlePresent) {
+        recommendedNextCommand = `npx octopus-agent-orchestrator install --target-root "${targetRoot}" --init-answers-path "${initAnswersPath}"`;
+    }
+
+    return {
+        targetRoot,
+        bundlePath,
+        initAnswersResolvedPath,
+        initAnswersPathForDisplay: initAnswersPath,
+        bundlePresent,
+        initAnswersPresent,
+        initAnswersError,
+        taskPresent,
+        livePresent,
+        usagePresent,
+        commandsRulePath,
+        missingProjectCommands,
+        sourceOfTruth,
+        canonicalEntrypoint,
+        collectedVia: answers ? answers.collectedVia : null,
+        activeAgentFiles: answers ? answers.activeAgentFiles : null,
+        liveVersionError,
+        primaryInitializationComplete,
+        agentInitializationComplete,
+        readyForTasks,
+        recommendedNextCommand
+    };
+}
+
+function printStatus(snapshot, { heading = 'OCTOPUS_STATUS' } = {}) {
+    console.log(heading);
+    console.log(bold(getWorkspaceHeadline(snapshot)));
+    console.log(`Project: ${snapshot.targetRoot}`);
+    console.log(`Bundle: ${snapshot.bundlePath}`);
+    console.log(`InitAnswers: ${snapshot.initAnswersResolvedPath}`);
+    console.log(`CollectedVia: ${snapshot.collectedVia || 'n/a'}`);
+    if (snapshot.activeAgentFiles) {
+        console.log(`ActiveAgentFiles: ${snapshot.activeAgentFiles}`);
+    }
+    console.log(`SourceOfTruth: ${snapshot.sourceOfTruth || 'n/a'}${snapshot.canonicalEntrypoint ? ` -> ${snapshot.canonicalEntrypoint}` : ''}`);
+    console.log('');
+    console.log(bold('Workspace Stages'));
+    console.log(`  ${getStageBadge(snapshot.bundlePresent)} Installed`);
+    console.log(`  ${getStageBadge(snapshot.primaryInitializationComplete, { warning: snapshot.bundlePresent && !snapshot.primaryInitializationComplete })} Primary initialization`);
+    console.log(`  ${getStageBadge(snapshot.agentInitializationComplete, { warning: snapshot.primaryInitializationComplete && !snapshot.agentInitializationComplete })} Agent initialization`);
+    console.log(`  ${getStageBadge(snapshot.readyForTasks, { warning: snapshot.agentInitializationComplete && !snapshot.readyForTasks })} Ready for task execution`);
+    if (snapshot.primaryInitializationComplete && !snapshot.agentInitializationComplete) {
+        console.log(`  Missing project commands: ${snapshot.missingProjectCommands.length}`);
+    }
+    if (snapshot.initAnswersError) {
+        console.log(`InitAnswersStatus: INVALID (${snapshot.initAnswersError})`);
+    }
+    if (snapshot.liveVersionError) {
+        console.log(`LiveVersionStatus: INVALID (${snapshot.liveVersionError})`);
+    }
+    if (snapshot.missingProjectCommands.length > 0 && snapshot.primaryInitializationComplete) {
+        console.log(`CommandsRule: ${snapshot.commandsRulePath}`);
+        printHighlightedPair('CommandsStatus:', 'PENDING_AGENT_CONTEXT');
+    }
+    printHighlightedPair('RecommendedNextCommand:', snapshot.recommendedNextCommand);
+    console.log('');
+    printCommandSummary();
 }
 
 function printHelp(packageJson) {
@@ -572,14 +1181,19 @@ function printHelp(packageJson) {
         [
             `Octopus Agent Orchestrator CLI v${packageJson.version}`,
             'Usage:',
-            '  octopus-agent-orchestrator [destination]',
-            '  octopus-agent-orchestrator <command> [options]'
+            '  octopus-agent-orchestrator',
+            '  octopus-agent-orchestrator setup [options]',
+            '  octopus-agent-orchestrator status [options]',
+            '  octopus-agent-orchestrator COMMAND [options]'
         ],
         [
             'Commands:',
-            '  bootstrap     Deploy the bundle only (default when no command is provided).',
-            '  install       Deploy or refresh the bundle and run scripts/install.ps1 using agent-produced init answers.',
-            '  init          Run scripts/init.ps1 using agent-produced init answers from an existing deployed bundle.',
+            '  setup         First-run onboarding: deploy/refresh bundle, collect init answers, run install, and validate manifest.',
+            '  status        Show current project status without changing files.',
+            '  doctor        Run verify + manifest validation using existing init answers.',
+            '  bootstrap     Deploy the bundle only.',
+            '  install       Deploy or refresh the bundle and run scripts/install.ps1 using prepared init answers.',
+            '  init          Run scripts/init.ps1 using prepared init answers from an existing deployed bundle.',
             '  reinit        Run scripts/reinit.ps1 for an existing deployed bundle.',
             '  update        Run scripts/check-update.ps1 for an existing deployed bundle.',
             '  uninstall     Run scripts/uninstall.ps1 for an existing deployed bundle.'
@@ -591,23 +1205,32 @@ function printHelp(packageJson) {
         ],
         [
             'Shared lifecycle options:',
-            '      --target-root <path>         Workspace root. Defaults to the current working directory.',
-            '      --init-answers-path <path>   Path inside the workspace to agent-produced init answers.'
+            '      --target-root PATH           Workspace root. Defaults to the current working directory.',
+            '      --init-answers-path PATH     Path inside the workspace to agent-produced init answers.'
         ],
         [
             'Bootstrap/install source override options:',
-            '      --repo-url <url>             Clone bundle source from a repo instead of the packaged bundle.',
-            '      --branch <name>              Clone a specific branch for branch testing.'
+            '      --repo-url URL               Clone bundle source from a repo instead of the packaged bundle.',
+            '      --branch NAME                Clone a specific branch for branch testing.'
         ],
         [
             'Notes:',
             `  - The default deployed bundle path is ${DEFAULT_BUNDLE_NAME}.`,
-            '  - install/init do not ask the human user init questions; the agent must prepare init-answers.json first.',
+            '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
+            '  - setup can collect init answers itself; install/init/doctor use an existing init-answers.json.',
+            '  - setup skips full verify by default because project-specific command placeholders are usually filled later by the setup agent.',
             '  - update delegates to check-update.ps1, so --apply controls immediate update and --no-prompt disables prompts.'
         ]
     ];
 
     console.log(sections.map((section) => section.join('\n')).join('\n\n'));
+}
+
+function printOverview(packageJson, targetRoot = normalizePathValue('.')) {
+    const snapshot = getStatusSnapshot(targetRoot);
+    console.log('OCTOPUS_OVERVIEW');
+    printBanner(packageJson, 'Workspace overview', targetRoot);
+    printStatus(snapshot, { heading: 'OCTOPUS_STATUS' });
 }
 
 function printBootstrapSuccess(packageJson, bundleVersion, destinationPath) {
@@ -664,6 +1287,130 @@ function handleBootstrap(commandArgv, packageJson) {
     try {
         deployFreshBundle(source.sourceRoot, destinationPath);
         printBootstrapSuccess(packageJson, source.bundleVersion, destinationPath);
+    } finally {
+        source.cleanup();
+    }
+}
+
+async function handleSetup(commandArgv, packageJson) {
+    const setupDefinitions = {
+        '--target-root': { key: 'targetRoot', type: 'string' },
+        '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
+        '--repo-url': { key: 'repoUrl', type: 'string' },
+        '--branch': { key: 'branch', type: 'string' },
+        '--dry-run': { key: 'dryRun', type: 'boolean' },
+        '--verify': { key: 'runVerify', type: 'boolean' },
+        '--no-prompt': { key: 'noPrompt', type: 'boolean' },
+        '--skip-verify': { key: 'skipVerify', type: 'boolean' },
+        '--skip-manifest-validation': { key: 'skipManifestValidation', type: 'boolean' },
+        '--assistant-language': { key: 'assistantLanguage', type: 'string' },
+        '--assistant-brevity': { key: 'assistantBrevity', type: 'string' },
+        '--active-agent-files': { key: 'activeAgentFiles', type: 'string' },
+        '--source-of-truth': { key: 'sourceOfTruth', type: 'string' },
+        '--enforce-no-auto-commit': { key: 'enforceNoAutoCommit', type: 'string' },
+        '--claude-orchestrator-full-access': { key: 'claudeOrchestratorFullAccess', type: 'string' },
+        '--claude-full-access': { key: 'claudeOrchestratorFullAccess', type: 'string' },
+        '--token-economy-enabled': { key: 'tokenEconomyEnabled', type: 'string' }
+    };
+    const { options } = parseOptions(commandArgv, setupDefinitions);
+
+    if (options.help) {
+        printHelp(packageJson);
+        return;
+    }
+    if (options.version) {
+        console.log(packageJson.version);
+        return;
+    }
+
+    const targetRoot = normalizePathValue(options.targetRoot || '.');
+    ensureDirectoryExists(targetRoot, 'Target root');
+    const interactiveSetup = !options.noPrompt;
+    const canUseInteractivePrompts = interactiveSetup && supportsInteractivePrompts();
+
+    console.log('OCTOPUS_SETUP');
+    printBanner(
+        packageJson,
+        'Primary setup',
+        canUseInteractivePrompts
+            ? 'You will be asked 6 control questions.'
+            : interactiveSetup
+                ? 'Interactive prompts are unavailable in this terminal. Falling back to script-managed setup.'
+                : 'Running in non-interactive mode with provided/default answers.'
+    );
+    console.log(`Project: ${targetRoot}`);
+    console.log(`BundlePath: ${getBundlePath(targetRoot)}`);
+    console.log('');
+    console.log(bold('Setup Steps'));
+    console.log(`  ${green('[1/3]')} Deploy bundle`);
+    console.log(`  ${green('[2/3]')} Collect or reuse init answers`);
+    console.log(`  ${green('[3/3]')} Run install and prepare agent handoff`);
+    console.log('');
+
+    const source = acquireSourceRoot(options.repoUrl, options.branch);
+    try {
+        const promptedAnswers = canUseInteractivePrompts
+            ? await collectSetupAnswersInteractively(targetRoot, options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH, options)
+            : null;
+        const bundlePath = getBundlePath(targetRoot);
+        if (fs.existsSync(bundlePath) && fs.lstatSync(bundlePath).isDirectory()) {
+            syncBundleItems(source.sourceRoot, bundlePath);
+        } else if (!options.dryRun) {
+            syncBundleItems(source.sourceRoot, bundlePath);
+        }
+
+        const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
+        const setupScriptPath = path.join(effectiveBundlePath, 'scripts', 'setup.ps1');
+        const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+
+        runPowerShellScript(setupScriptPath, (args) => {
+            addStringArg(args, 'TargetRoot', targetRoot);
+            addStringArg(args, 'InitAnswersPath', initAnswersPath);
+            addSwitchArg(args, 'DryRun', options.dryRun);
+            addSwitchArg(args, 'RunVerify', options.runVerify);
+            addSwitchArg(args, 'NoPrompt', options.noPrompt);
+            addSwitchArg(args, 'SkipVerify', options.skipVerify);
+            addSwitchArg(args, 'SkipManifestValidation', options.skipManifestValidation);
+            addStringArg(args, 'AssistantLanguage', promptedAnswers ? promptedAnswers.assistantLanguage : options.assistantLanguage);
+            if (promptedAnswers || options.assistantBrevity !== undefined) {
+                addStringArg(args, 'AssistantBrevity', promptedAnswers ? promptedAnswers.assistantBrevity : normalizeAssistantBrevity(options.assistantBrevity));
+            }
+            addStringArg(args, 'ActiveAgentFiles', promptedAnswers ? promptedAnswers.activeAgentFiles : options.activeAgentFiles);
+            if (promptedAnswers || options.sourceOfTruth !== undefined) {
+                addStringArg(args, 'SourceOfTruth', promptedAnswers ? promptedAnswers.sourceOfTruth : normalizeSourceOfTruth(options.sourceOfTruth));
+            }
+            if (promptedAnswers || options.enforceNoAutoCommit !== undefined) {
+                addStringArg(
+                    args,
+                    'EnforceNoAutoCommit',
+                    promptedAnswers ? promptedAnswers.enforceNoAutoCommit : (parseCliBoolean(options.enforceNoAutoCommit, 'EnforceNoAutoCommit') ? 'true' : 'false')
+                );
+            }
+            if (promptedAnswers || options.claudeOrchestratorFullAccess !== undefined) {
+                addStringArg(
+                    args,
+                    'ClaudeOrchestratorFullAccess',
+                    promptedAnswers ? promptedAnswers.claudeOrchestratorFullAccess : (parseCliBoolean(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess') ? 'true' : 'false')
+                );
+            }
+            if (promptedAnswers || options.tokenEconomyEnabled !== undefined) {
+                addStringArg(
+                    args,
+                    'TokenEconomyEnabled',
+                    promptedAnswers ? promptedAnswers.tokenEconomyEnabled : (parseCliBoolean(options.tokenEconomyEnabled, 'TokenEconomyEnabled') ? 'true' : 'false')
+                );
+            }
+        }, {
+            interactive: interactiveSetup && Boolean(process.stdin && process.stdin.isTTY)
+        });
+
+        const snapshot = getStatusSnapshot(targetRoot, initAnswersPath);
+        console.log('');
+        printBanner(packageJson, 'Setup complete', snapshot.readyForTasks ? 'Workspace is ready.' : 'Primary setup finished. Agent handoff is still required.');
+        printStatus(snapshot, { heading: 'OCTOPUS_SETUP_STATUS' });
+        if (!snapshot.agentInitializationComplete) {
+            printSetupHandoff(snapshot);
+        }
     } finally {
         source.cleanup();
     }
@@ -753,6 +1500,68 @@ function handleInit(commandArgv, packageJson) {
     });
 }
 
+function handleStatus(commandArgv, packageJson) {
+    const statusDefinitions = {
+        '--target-root': { key: 'targetRoot', type: 'string' },
+        '--init-answers-path': { key: 'initAnswersPath', type: 'string' }
+    };
+    const { options } = parseOptions(commandArgv, statusDefinitions);
+
+    if (options.help) {
+        printHelp(packageJson);
+        return;
+    }
+    if (options.version) {
+        console.log(packageJson.version);
+        return;
+    }
+
+    const targetRoot = normalizePathValue(options.targetRoot || '.');
+    ensureDirectoryExists(targetRoot, 'Target root');
+    printBanner(packageJson, 'Workspace status', targetRoot);
+    printStatus(getStatusSnapshot(targetRoot, options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH));
+}
+
+function handleDoctor(commandArgv, packageJson) {
+    const doctorDefinitions = {
+        '--target-root': { key: 'targetRoot', type: 'string' },
+        '--init-answers-path': { key: 'initAnswersPath', type: 'string' }
+    };
+    const { options } = parseOptions(commandArgv, doctorDefinitions);
+
+    if (options.help) {
+        printHelp(packageJson);
+        return;
+    }
+    if (options.version) {
+        console.log(packageJson.version);
+        return;
+    }
+
+    const targetRoot = normalizePathValue(options.targetRoot || '.');
+    ensureDirectoryExists(targetRoot, 'Target root');
+    printBanner(packageJson, 'Workspace doctor', targetRoot);
+    const bundlePath = ensureBundleExists(targetRoot, 'doctor');
+    const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+    const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'doctor');
+    const verifyScriptPath = path.join(bundlePath, 'scripts', 'verify.ps1');
+    const manifestScriptPath = path.join(bundlePath, 'live', 'scripts', 'agent-gates', 'validate-manifest.ps1');
+    const manifestPath = path.join(bundlePath, 'MANIFEST.md');
+
+    runPowerShellScript(verifyScriptPath, (args) => {
+        addStringArg(args, 'TargetRoot', targetRoot);
+        addStringArg(args, 'SourceOfTruth', answers.sourceOfTruth);
+        addStringArg(args, 'InitAnswersPath', answers.resolvedPath);
+    });
+
+    runPowerShellScript(manifestScriptPath, (args) => {
+        addStringArg(args, 'ManifestPath', manifestPath);
+    });
+
+    console.log('Doctor: PASS');
+    console.log(`Next: Execute task T-001 depth=2`);
+}
+
 function handleReinit(commandArgv, packageJson) {
     const reinitDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
@@ -806,6 +1615,8 @@ function handleReinit(commandArgv, packageJson) {
         if (options.tokenEconomyEnabled !== undefined) {
             addStringArg(args, 'TokenEconomyEnabled', parseCliBoolean(options.tokenEconomyEnabled, 'TokenEconomyEnabled') ? 'true' : 'false');
         }
+    }, {
+        interactive: !options.noPrompt && Boolean(process.stdin && process.stdin.isTTY)
     });
 }
 
@@ -847,6 +1658,8 @@ function handleUpdate(commandArgv, packageJson) {
         addSwitchArg(args, 'DryRun', options.dryRun);
         addSwitchArg(args, 'SkipVerify', options.skipVerify);
         addSwitchArg(args, 'SkipManifestValidation', options.skipManifestValidation);
+    }, {
+        interactive: !options.noPrompt && Boolean(process.stdin && process.stdin.isTTY)
     });
 }
 
@@ -892,12 +1705,18 @@ function handleUninstall(commandArgv, packageJson) {
         if (options.keepRuntimeArtifacts !== undefined) {
             addStringArg(args, 'KeepRuntimeArtifacts', normalizeYesNo(options.keepRuntimeArtifacts, 'KeepRuntimeArtifacts'));
         }
+    }, {
+        interactive: !options.noPrompt && Boolean(process.stdin && process.stdin.isTTY)
     });
 }
 
-function main() {
+async function main() {
     const packageJson = readPackageJson();
     const argv = process.argv.slice(2);
+    if (argv.length === 0) {
+        printOverview(packageJson);
+        return;
+    }
     const commandName = getCommandName(argv);
 
     if (commandName === 'help') {
@@ -905,8 +1724,17 @@ function main() {
         return;
     }
 
-    const commandArgv = commandName === 'bootstrap' ? argv : argv.slice(1);
+    const commandArgv = commandName === 'bootstrap' && argv[0] !== 'bootstrap' ? argv : argv.slice(1);
     switch (commandName) {
+        case 'setup':
+            await handleSetup(commandArgv, packageJson);
+            return;
+        case 'status':
+            handleStatus(commandArgv, packageJson);
+            return;
+        case 'doctor':
+            handleDoctor(commandArgv, packageJson);
+            return;
         case 'bootstrap':
             handleBootstrap(commandArgv, packageJson);
             return;
@@ -931,7 +1759,11 @@ function main() {
 }
 
 try {
-    main();
+    Promise.resolve(main()).catch((error) => {
+        console.error('OCTOPUS_BOOTSTRAP_FAILED');
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+    });
 } catch (error) {
     console.error('OCTOPUS_BOOTSTRAP_FAILED');
     console.error(error instanceof Error ? error.message : String(error));

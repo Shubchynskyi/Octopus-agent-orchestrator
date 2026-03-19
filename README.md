@@ -10,16 +10,14 @@ Deploys canonical rules, mandatory quality gates, and token-usage optimization i
 ## Quick Start
 
 ```powershell
-# 1. Install
-npm install octopus-agent-orchestrator
+# 1. Easiest first-run
+npx -y octopus-agent-orchestrator setup
 
-# 2. Bootstrap into your project
-octopus
+# 2. Then give AGENT_INIT_PROMPT.md to your coding agent
+#    Agent reuses existing init answers, only normalizes language if needed,
+#    fills project context, and reruns checks
 
-# 3. Give AGENT_INIT_PROMPT.md to your coding agent
-#    Agent asks 6 setup questions -> writes init-answers.json -> runs install + verify
-
-# 4. Start working
+# 3. Start working
 #    "Execute task T-001 depth=2"
 ```
 
@@ -51,7 +49,11 @@ octopus
 
 | Command | Description |
 |---|---|
-| `octopus` | Bootstrap bundle into project |
+| `octopus` | Safe overview: help + current project status |
+| `octopus setup` | First-run CLI onboarding without requiring an agent for the 6 answers |
+| `octopus status` | Short project status snapshot |
+| `octopus doctor` | Run verify + manifest validation from existing answers |
+| `octopus bootstrap` | Bundle-only deploy without install |
 | `octopus install` | Deploy/refresh orchestrator (requires init-answers.json) |
 | `octopus init` | Re-materialize `live/` from existing answers |
 | `octopus reinit` | Change init answers without full reinstall |
@@ -96,7 +98,9 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 
 ## Important Notes
 
-- Run initialization through `AGENT_INIT_PROMPT.md` — do not call `scripts/install.ps1` directly.
+- `octopus setup` can collect the 6 init answers itself and write `runtime/init-answers.json` without an agent.
+- After CLI setup, use `AGENT_INIT_PROMPT.md` so the agent reuses existing init answers, only clarifies language when it cannot recognize it confidently, fills project-specific context, and finishes project-level verification.
+- `octopus` without arguments is now non-destructive and only prints overview/help.
 - npm CLI commands wrap canonical PowerShell control-plane scripts.
 - Top-level `scripts/*.sh` are thin `pwsh` wrappers; `live/scripts/agent-gates/*.sh` are real bash+python implementations.
 - Installer is non-destructive for existing project files outside managed blocks.

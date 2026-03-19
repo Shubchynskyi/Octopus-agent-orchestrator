@@ -130,6 +130,40 @@ function Try-GetCanonicalEntrypointFromJsonFile {
     return $null
 }
 
+function Try-GetActiveAgentFilesFromJsonFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [AllowNull()]
+        [string]$FallbackSourceOfTruthValue
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return @()
+    }
+
+    try {
+        $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        return @()
+    }
+
+    $activeAgentFilesRaw = $null
+    $activeAgentFilesProperty = $payload.PSObject.Properties['ActiveAgentFiles']
+    if ($null -ne $activeAgentFilesProperty -and -not [string]::IsNullOrWhiteSpace([string]$activeAgentFilesProperty.Value)) {
+        $activeAgentFilesRaw = [string]$activeAgentFilesProperty.Value
+    }
+
+    $sourceOfTruthValue = $FallbackSourceOfTruthValue
+    $sourceProperty = $payload.PSObject.Properties['SourceOfTruth']
+    if ($null -ne $sourceProperty -and -not [string]::IsNullOrWhiteSpace([string]$sourceProperty.Value)) {
+        $sourceOfTruthValue = [string]$sourceProperty.Value
+    }
+
+    return @(Get-ActiveAgentEntrypointFiles -Value $activeAgentFilesRaw -SourceOfTruthValue $sourceOfTruthValue)
+}
+
 function Try-DetectCanonicalEntrypointFromManagedFiles {
     param(
         [Parameter(Mandatory = $true)]
@@ -214,6 +248,131 @@ function Get-BackupRoot {
     return $script:BackupRoot
 }
 
+function Get-InitializationBackupRoot {
+    if ($script:InitializationBackupRootResolved) {
+        return $script:InitializationBackupRoot
+    }
+
+    $script:InitializationBackupRootResolved = $true
+    $installBackupsRoot = Join-Path $orchestratorRoot 'runtime\backups'
+    if (-not (Test-Path -LiteralPath $installBackupsRoot -PathType Container)) {
+        $script:InitializationBackupRoot = $null
+        return $null
+    }
+
+    $backupDirectories = @(Get-ChildItem -LiteralPath $installBackupsRoot -Directory | Sort-Object Name)
+    if ($backupDirectories.Count -eq 0) {
+        $script:InitializationBackupRoot = $null
+        return $null
+    }
+
+    $script:InitializationBackupRoot = $backupDirectories[0].FullName
+    return $script:InitializationBackupRoot
+}
+
+function Get-InitializationBackupPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath
+    )
+
+    $initializationBackupRoot = Get-InitializationBackupRoot
+    if ([string]::IsNullOrWhiteSpace($initializationBackupRoot)) {
+        return $null
+    }
+
+    $backupPath = Join-Path $initializationBackupRoot $RelativePath
+    if (-not (Test-Path -LiteralPath $backupPath)) {
+        return $null
+    }
+
+    return $backupPath
+}
+
+function Get-InitializationBackupManifest {
+    if ($script:InitializationBackupManifestResolved) {
+        return $script:InitializationBackupManifest
+    }
+
+    $script:InitializationBackupManifestResolved = $true
+    $initializationBackupRoot = Get-InitializationBackupRoot
+    if ([string]::IsNullOrWhiteSpace($initializationBackupRoot)) {
+        $script:InitializationBackupManifest = $null
+        return $null
+    }
+
+    $manifestPath = Join-Path $initializationBackupRoot '_install-backup.manifest.json'
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        $script:InitializationBackupManifest = $null
+        return $null
+    }
+
+    try {
+        $script:InitializationBackupManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        $script:InitializationBackupManifest = $null
+    }
+
+    return $script:InitializationBackupManifest
+}
+
+function Test-IsManagedOnlyBackupContent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BackupPath
+    )
+
+    if (-not (Test-Path -LiteralPath $BackupPath -PathType Leaf)) {
+        return $false
+    }
+
+    $content = Get-Content -LiteralPath $BackupPath -Raw
+    if ([string]::IsNullOrWhiteSpace($content)) {
+        return $false
+    }
+
+    $pattern = '(?s)' + [regex]::Escape($managedStart) + '.*?' + [regex]::Escape($managedEnd)
+    if (-not [regex]::IsMatch($content, $pattern)) {
+        return $false
+    }
+
+    $withoutManagedBlock = [regex]::Replace($content, $pattern, '')
+    $normalized = Normalize-TextAfterManagedBlockRemoval -Content $withoutManagedBlock
+    return [string]::IsNullOrWhiteSpace($normalized)
+}
+
+function Test-ShouldRestoreItemFromInitializationBackup {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath,
+        [Parameter(Mandatory = $true)]
+        [string]$BackupPath
+    )
+
+    $manifest = Get-InitializationBackupManifest
+    if ($null -ne $manifest) {
+        $preExistingFilesProperty = $manifest.PSObject.Properties['PreExistingFiles']
+        if ($null -ne $preExistingFilesProperty) {
+            $normalizedRelativePath = $RelativePath.Replace('/', '\')
+            foreach ($item in @($preExistingFilesProperty.Value)) {
+                if ($null -eq $item) {
+                    continue
+                }
+
+                $candidate = [string]$item
+                if ([string]::Equals($candidate.Replace('/', '\'), $normalizedRelativePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    return $true
+                }
+            }
+
+            return $false
+        }
+    }
+
+    return -not (Test-IsManagedOnlyBackupContent -BackupPath $BackupPath)
+}
+
 function Backup-Item {
     param(
         [Parameter(Mandatory = $true)]
@@ -254,6 +413,52 @@ function Backup-Item {
 
     [void]$script:BackedUpSet.Add($normalizedRelativePath)
     $script:ItemsBackedUp++
+}
+
+function Restore-ItemFromInitializationBackup {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath
+    )
+
+    $backupPath = Get-InitializationBackupPath -RelativePath $RelativePath
+    if ([string]::IsNullOrWhiteSpace($backupPath)) {
+        return $false
+    }
+
+    if (-not (Test-ShouldRestoreItemFromInitializationBackup -RelativePath $RelativePath -BackupPath $backupPath)) {
+        return $false
+    }
+
+    $destinationPath = Join-Path $TargetRoot $RelativePath
+    Backup-Item -Path $destinationPath -RelativePath $RelativePath
+
+    if (-not $DryRun) {
+        $destinationParent = Split-Path -Parent $destinationPath
+        if ($destinationParent -and -not (Test-Path -LiteralPath $destinationParent -PathType Container)) {
+            New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+        }
+
+        $backupItem = Get-Item -LiteralPath $backupPath
+        if (Test-Path -LiteralPath $destinationPath) {
+            $destinationItem = Get-Item -LiteralPath $destinationPath
+            if ($destinationItem.PSIsContainer -ne $backupItem.PSIsContainer) {
+                Remove-Item -LiteralPath $destinationPath -Recurse -Force
+            }
+        }
+
+        if ($backupItem.PSIsContainer) {
+            if (Test-Path -LiteralPath $destinationPath -PathType Container) {
+                Remove-Item -LiteralPath $destinationPath -Recurse -Force
+            }
+            Copy-Item -LiteralPath $backupPath -Destination $destinationPath -Recurse -Force
+        } else {
+            Copy-Item -LiteralPath $backupPath -Destination $destinationPath -Force
+        }
+    }
+
+    $script:RestoredFiles++
+    return $true
 }
 
 function Add-CleanupWarning {
@@ -618,7 +823,7 @@ $githubSkillBridgeFiles = @(
 $qwenSettingsRelativePath = '.qwen/settings.json'
 $claudeLocalSettingsRelativePath = '.claude/settings.local.json'
 $preCommitHookRelativePath = '.git/hooks/pre-commit'
-$qwenManagedEntries = @('AGENTS.md', 'TASK.md')
+$qwenManagedEntries = @('TASK.md')
 $claudeManagedAllowEntries = @(
     'Bash(pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
     'Bash(bash Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
@@ -651,11 +856,16 @@ $script:InteractivePrompting = Test-InteractivePromptSupport
 $script:BackedUpSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 $script:Warnings = @()
 $script:BackupRoot = $null
+$script:InitializationBackupRoot = $null
+$script:InitializationBackupRootResolved = $false
+$script:InitializationBackupManifest = $null
+$script:InitializationBackupManifestResolved = $false
 $script:PreservedRuntimePath = $null
 $script:DeletedFiles = 0
 $script:UpdatedFiles = 0
 $script:DeletedDirectories = 0
 $script:ItemsBackedUp = 0
+$script:RestoredFiles = 0
 
 $canonicalEntrypoint = Try-GetCanonicalEntrypointFromJsonFile -Path $initAnswersCandidatePath
 if ([string]::IsNullOrWhiteSpace($canonicalEntrypoint)) {
@@ -664,6 +874,21 @@ if ([string]::IsNullOrWhiteSpace($canonicalEntrypoint)) {
 if ([string]::IsNullOrWhiteSpace($canonicalEntrypoint)) {
     $canonicalEntrypoint = Try-DetectCanonicalEntrypointFromManagedFiles -EntrypointFiles $entrypointFiles
 }
+
+$detectedActiveAgentFiles = @()
+if (Test-Path -LiteralPath $initAnswersCandidatePath -PathType Leaf) {
+    $detectedActiveAgentFiles = @(Try-GetActiveAgentFilesFromJsonFile -Path $initAnswersCandidatePath)
+}
+if ($detectedActiveAgentFiles.Count -eq 0 -and (Test-Path -LiteralPath $liveVersionPath -PathType Leaf)) {
+    $detectedActiveAgentFiles = @(Try-GetActiveAgentFilesFromJsonFile -Path $liveVersionPath)
+}
+if ($detectedActiveAgentFiles.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace($canonicalEntrypoint)) {
+    $detectedActiveAgentFiles = @($canonicalEntrypoint)
+}
+$qwenManagedEntries = @(
+    @('TASK.md') + @($detectedActiveAgentFiles | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+)
+$qwenManagedEntries = @($qwenManagedEntries | Sort-Object -Unique)
 
 $canonicalEntrypointPath = $null
 if (-not [string]::IsNullOrWhiteSpace($canonicalEntrypoint)) {
@@ -675,30 +900,29 @@ $runtimePath = Join-Path $orchestratorRoot 'runtime'
 
 $KeepPrimaryEntrypointValue = $false
 if (-not [string]::IsNullOrWhiteSpace($canonicalEntrypoint) -and (Test-Path -LiteralPath $canonicalEntrypointPath -PathType Leaf)) {
-    $KeepPrimaryEntrypointValue = Resolve-Decision `
-        -ProvidedValue $KeepPrimaryEntrypoint `
-        -FieldName 'KeepPrimaryEntrypoint' `
-        -PromptText "Keep primary agent instructions file '$canonicalEntrypoint' as-is? (yes/no)"
+    if (-not [string]::IsNullOrWhiteSpace($KeepPrimaryEntrypoint)) {
+        $KeepPrimaryEntrypointValue = Convert-ToBooleanAnswer -Value $KeepPrimaryEntrypoint -FieldName 'KeepPrimaryEntrypoint'
+    }
 }
 
 $KeepTaskFileValue = $false
 if (Test-Path -LiteralPath $taskPath -PathType Leaf) {
-    $KeepTaskFileValue = Resolve-Decision `
-        -ProvidedValue $KeepTaskFile `
-        -FieldName 'KeepTaskFile' `
-        -PromptText "Keep TASK.md as-is? (yes/no)"
+    if (-not [string]::IsNullOrWhiteSpace($KeepTaskFile)) {
+        $KeepTaskFileValue = Convert-ToBooleanAnswer -Value $KeepTaskFile -FieldName 'KeepTaskFile'
+    }
 }
 
 $KeepRuntimeArtifactsValue = $false
 if (Test-Path -LiteralPath $runtimePath -PathType Container) {
-    $KeepRuntimeArtifactsValue = Resolve-Decision `
-        -ProvidedValue $KeepRuntimeArtifacts `
-        -FieldName 'KeepRuntimeArtifacts' `
-        -PromptText "Keep runtime artifacts by preserving 'Octopus-agent-orchestrator/runtime/' in uninstall backups before bundle removal? (yes/no)"
+    if (-not [string]::IsNullOrWhiteSpace($KeepRuntimeArtifacts)) {
+        $KeepRuntimeArtifactsValue = Convert-ToBooleanAnswer -Value $KeepRuntimeArtifacts -FieldName 'KeepRuntimeArtifacts'
+    }
 }
 
 if (-not $KeepTaskFileValue) {
-    Remove-ManagedFile -RelativePath 'TASK.md'
+    if (-not (Restore-ItemFromInitializationBackup -RelativePath 'TASK.md')) {
+        Remove-ManagedFile -RelativePath 'TASK.md'
+    }
 }
 
 foreach ($relativePath in $entrypointFiles) {
@@ -706,22 +930,35 @@ foreach ($relativePath in $entrypointFiles) {
         continue
     }
 
-    Remove-ManagedFile -RelativePath $relativePath
+    if (-not (Restore-ItemFromInitializationBackup -RelativePath $relativePath)) {
+        Remove-ManagedFile -RelativePath $relativePath
+    }
 }
 
 foreach ($relativePath in @($providerAgentFiles + $githubSkillBridgeFiles)) {
-    Remove-ManagedFile -RelativePath $relativePath
+    if (-not (Restore-ItemFromInitializationBackup -RelativePath $relativePath)) {
+        Remove-ManagedFile -RelativePath $relativePath
+    }
 }
 
-Cleanup-QwenSettings
-Cleanup-ClaudeLocalSettings
-Cleanup-CommitGuardHook
-Cleanup-Gitignore
+if (-not (Restore-ItemFromInitializationBackup -RelativePath $qwenSettingsRelativePath)) {
+    Cleanup-QwenSettings
+}
+if (-not (Restore-ItemFromInitializationBackup -RelativePath $claudeLocalSettingsRelativePath)) {
+    Cleanup-ClaudeLocalSettings
+}
+if (-not (Restore-ItemFromInitializationBackup -RelativePath $preCommitHookRelativePath)) {
+    Cleanup-CommitGuardHook
+}
+if (-not (Restore-ItemFromInitializationBackup -RelativePath '.gitignore')) {
+    Cleanup-Gitignore
+}
 Remove-BundleDirectory
 
 Write-Output "TargetRoot: $TargetRoot"
 Write-Output "OrchestratorRoot: $orchestratorRoot"
 Write-Output "InitAnswersPath: $initAnswersCandidatePath"
+Write-Output "InitializationBackupRoot: $(if ([string]::IsNullOrWhiteSpace((Get-InitializationBackupRoot))) { '<none>' } else { Get-InitializationBackupRoot })"
 Write-Output "CanonicalEntrypoint: $(if ([string]::IsNullOrWhiteSpace($canonicalEntrypoint)) { '<unknown>' } else { $canonicalEntrypoint })"
 Write-Output "KeepPrimaryEntrypoint: $KeepPrimaryEntrypointValue"
 Write-Output "KeepTaskFile: $KeepTaskFileValue"
@@ -732,7 +969,18 @@ Write-Output "BackupRoot: $(if ([string]::IsNullOrWhiteSpace($script:BackupRoot)
 Write-Output "PreservedRuntimePath: $(if ([string]::IsNullOrWhiteSpace($script:PreservedRuntimePath)) { '<none>' } else { $script:PreservedRuntimePath })"
 Write-Output "FilesUpdated: $($script:UpdatedFiles)"
 Write-Output "FilesDeleted: $($script:DeletedFiles)"
+Write-Output "FilesRestored: $($script:RestoredFiles)"
 Write-Output "DirectoriesDeleted: $($script:DeletedDirectories)"
 Write-Output "ItemsBackedUp: $($script:ItemsBackedUp)"
 Write-Output "WarningsCount: $($script:Warnings.Count)"
 Write-Output "Result: $(if ($DryRun) { 'DRY_RUN' } else { 'SUCCESS' })"
+
+if (-not $DryRun) {
+    $backupBasePath = Join-Path $TargetRoot 'Octopus-agent-orchestrator-uninstall-backups'
+    Write-Host ''
+    Write-Host 'Octopus orchestrator was removed from this project.' -ForegroundColor Yellow
+    if (Test-Path -LiteralPath $backupBasePath -PathType Container) {
+        Write-Host "Uninstall backups are stored in '$backupBasePath'." -ForegroundColor Yellow
+        Write-Host 'You can delete that folder manually when you no longer need the backup.' -ForegroundColor Yellow
+    }
+}

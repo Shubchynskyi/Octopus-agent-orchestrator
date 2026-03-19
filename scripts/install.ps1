@@ -100,11 +100,9 @@ $tokenEconomyEnabled = Convert-ToBooleanAnswer -Value $artifactTokenEconomyEnabl
 
 $artifactCollectedVia = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'CollectedVia'
 if ([string]::IsNullOrWhiteSpace($artifactCollectedVia)) {
-    throw "Init answers artifact must include CollectedVia='AGENT_INIT_PROMPT.md': $initAnswersResolvedPath"
+    throw "Init answers artifact must include CollectedVia with one of: $((Get-AllowedCollectedViaValues) -join ', '): $initAnswersResolvedPath"
 }
-if (-not [string]::Equals($artifactCollectedVia.Trim(), 'AGENT_INIT_PROMPT.md', [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "Init answers artifact CollectedVia must be 'AGENT_INIT_PROMPT.md'. Current value: '$artifactCollectedVia'."
-}
+$artifactCollectedVia = Convert-ToCollectedViaAnswer -Value $artifactCollectedVia -FieldName 'CollectedVia'
 
 $sourceOfTruthKey = $SourceOfTruth.Trim().ToUpperInvariant().Replace(' ', '')
 $artifactSourceOfTruthKey = $artifactSourceOfTruth.ToUpperInvariant().Replace(' ', '')
@@ -120,48 +118,36 @@ if ($AssistantBrevity -ne $artifactAssistantBrevity) {
     throw "AssistantBrevity parameter '$AssistantBrevity' does not match init answers artifact value '$artifactAssistantBrevity'."
 }
 
-$sourceToEntrypoint = Get-SourceToEntrypointMap
-if (-not $sourceToEntrypoint.ContainsKey($sourceOfTruthKey)) {
-    throw "Unsupported SourceOfTruth value '$SourceOfTruth'."
+$canonicalEntryFile = Convert-ToCanonicalEntrypointFile -SourceOfTruth $SourceOfTruth
+$artifactActiveAgentFilesRaw = Get-InitAnswerValue -Answers $initAnswers -LogicalName 'ActiveAgentFiles'
+$activeEntryFilesSeed = $artifactActiveAgentFilesRaw
+$activeEntryFiles = @(Get-ActiveAgentEntrypointFiles -Value $activeEntryFilesSeed -SourceOfTruthValue $SourceOfTruth)
+if ($activeEntryFiles.Count -eq 0) {
+    $activeEntryFiles = @($canonicalEntryFile)
 }
-$canonicalEntryFile = $sourceToEntrypoint[$sourceOfTruthKey]
-$entrypointFiles = @(
-    'CLAUDE.md',
-    'AGENTS.md',
-    'GEMINI.md',
-    '.github/copilot-instructions.md',
-    '.windsurf/rules/rules.md',
-    '.junie/guidelines.md',
-    '.antigravity/rules.md'
+$redirectEntryFiles = @($activeEntryFiles | Where-Object { $_ -ne $canonicalEntryFile })
+$providerOrchestratorProfiles = @(
+    (Get-ProviderOrchestratorProfileDefinitions) | Where-Object {
+        $activeEntryFiles -contains [string]$_.EntrypointFile
+    }
 )
-$redirectEntryFiles = @($entrypointFiles | Where-Object { $_ -ne $canonicalEntryFile })
+$githubSkillBridgeProfiles = if ($activeEntryFiles -contains '.github/copilot-instructions.md') {
+    @(Get-GitHubSkillBridgeProfileDefinitions)
+} else {
+    @()
+}
+$providerBridgePaths = @($providerOrchestratorProfiles | ForEach-Object { [string]$_.OrchestratorRelativePath })
 
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $backupRoot = Join-Path $bundleRoot "runtime/backups/$timestamp"
 
 $exactFiles = @(
-    'CLAUDE.md',
-    'AGENTS.md',
-    'GEMINI.md',
-    'TASK.md',
-    '.antigravity/rules.md',
-    '.github/copilot-instructions.md',
-    '.junie/guidelines.md',
-    '.windsurf/rules/rules.md'
+    'TASK.md'
 )
 
-$forceOverwriteFiles = @(
-    $canonicalEntryFile
-)
+$forceOverwriteFiles = @()
 
-$managedEntryFiles = @(
-    'AGENTS.md',
-    'GEMINI.md',
-    '.antigravity/rules.md',
-    '.github/copilot-instructions.md',
-    '.junie/guidelines.md',
-    '.windsurf/rules/rules.md'
-)
+$managedEntryFiles = @()
 
 $directoryPrefixes = @()
 
@@ -188,6 +174,42 @@ $bundleVersionRelativePath = 'Octopus-agent-orchestrator/VERSION'
 $bundleVersionFilePath = Join-Path $bundleRoot 'VERSION'
 $liveVersionRelativePath = 'Octopus-agent-orchestrator/live/version.json'
 $liveVersionPath = Join-Path $bundleRoot 'live/version.json'
+$installBackupManifestRelativePath = '_install-backup.manifest.json'
+$installBackupCandidatePaths = @(
+    'CLAUDE.md',
+    'AGENTS.md',
+    'GEMINI.md',
+    'TASK.md',
+    '.antigravity/rules.md',
+    '.github/copilot-instructions.md',
+    '.junie/guidelines.md',
+    '.windsurf/rules/rules.md',
+    '.qwen/settings.json',
+    '.claude/settings.local.json',
+    '.git/hooks/pre-commit',
+    '.gitignore',
+    '.github/agents/orchestrator.md',
+    '.windsurf/agents/orchestrator.md',
+    '.junie/agents/orchestrator.md',
+    '.antigravity/agents/orchestrator.md',
+    '.github/agents/reviewer.md',
+    '.github/agents/code-review.md',
+    '.github/agents/db-review.md',
+    '.github/agents/security-review.md',
+    '.github/agents/refactor-review.md',
+    '.github/agents/api-review.md',
+    '.github/agents/test-review.md',
+    '.github/agents/performance-review.md',
+    '.github/agents/infra-review.md',
+    '.github/agents/dependency-review.md'
+)
+$preExistingInstallPaths = @()
+foreach ($candidateRelativePath in $installBackupCandidatePaths) {
+    if (Test-Path -LiteralPath (Join-Path $TargetRoot $candidateRelativePath)) {
+        $preExistingInstallPaths += $candidateRelativePath.Replace('/', '\')
+    }
+}
+$preExistingInstallPaths = @($preExistingInstallPaths | Sort-Object -Unique)
 
 if (-not (Test-Path -LiteralPath $bundleVersionFilePath -PathType Leaf)) {
     throw "Bundle version file not found: $bundleVersionFilePath"
@@ -197,6 +219,28 @@ $bundleVersion = (Get-Content -LiteralPath $bundleVersionFilePath -Raw).Trim()
 if ([string]::IsNullOrWhiteSpace($bundleVersion)) {
     throw "Bundle version file is empty: $bundleVersionFilePath"
 }
+
+function Write-InstallBackupManifest {
+    if ($SkipBackups -or $DryRun) {
+        return
+    }
+
+    $manifestPath = Join-Path $backupRoot $installBackupManifestRelativePath
+    $manifestParent = Split-Path -Parent $manifestPath
+    if ($manifestParent -and -not (Test-Path -LiteralPath $manifestParent -PathType Container)) {
+        New-Item -ItemType Directory -Path $manifestParent -Force | Out-Null
+    }
+
+    $payload = [ordered]@{
+        Version          = 1
+        CreatedAt        = $timestamp
+        PreExistingFiles = @($preExistingInstallPaths)
+    }
+
+    Set-Content -LiteralPath $manifestPath -Value ($payload | ConvertTo-Json -Depth 10)
+}
+
+Write-InstallBackupManifest
 
 function Get-TemplateContent {
     param(
@@ -604,10 +648,36 @@ function Build-RedirectManagedBlock {
         [Parameter(Mandatory = $true)]
         [string]$TargetFile,
         [Parameter(Mandatory = $true)]
-        [string]$CanonicalFile
+        [string]$CanonicalFile,
+        [AllowNull()]
+        [string[]]$ProviderBridgePaths = @()
     )
 
     $title = "# $TargetFile"
+    $providerLines = @()
+    foreach ($bridgePath in @($ProviderBridgePaths)) {
+        switch ($bridgePath.Replace('\', '/')) {
+            '.github/agents/orchestrator.md' {
+                $providerLines += 'For GitHub Copilot Agents, run task execution through `.github/agents/orchestrator.md`.'
+            }
+            '.windsurf/agents/orchestrator.md' {
+                $providerLines += 'For Windsurf Agents, run task execution through `.windsurf/agents/orchestrator.md`.'
+            }
+            '.junie/agents/orchestrator.md' {
+                $providerLines += 'For Junie Agents, run task execution through `.junie/agents/orchestrator.md`.'
+            }
+            '.antigravity/agents/orchestrator.md' {
+                $providerLines += 'For Antigravity Agents, run task execution through `.antigravity/agents/orchestrator.md`.'
+            }
+        }
+    }
+    $providerLines = @($providerLines | Sort-Object -Unique)
+    $providerBridgeSection = if ($providerLines.Count -gt 0) {
+        ($providerLines -join "`r`n")
+    } else {
+        'No provider-specific bridge files are enabled for this workspace.'
+    }
+
     $template = @'
 {MANAGED_START}
 {TITLE}
@@ -619,26 +689,26 @@ Hard stop: read `{CANONICAL_FILE}` first and follow its routing links before res
 Hard stop: before any task execution, open `TASK.md` and `{CANONICAL_FILE}`.
 Do not implement tasks directly without orchestration preflight and required review gates.
 Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are expected local artifacts; never `git add -f` them unless the user explicitly asks to version orchestrator internals.
-For GitHub Copilot Agents, run task execution through `.github/agents/orchestrator.md`.
-For Windsurf Agents, run task execution through `.windsurf/agents/orchestrator.md`.
-For Junie Agents, run task execution through `.junie/agents/orchestrator.md`.
-For Antigravity Agents, run task execution through `.antigravity/agents/orchestrator.md`.
+{PROVIDER_BRIDGE_LINES}
 {MANAGED_END}
 '@
 
     return $template.Replace('{MANAGED_START}', $managedStart).
         Replace('{TITLE}', $title).
         Replace('{CANONICAL_FILE}', $CanonicalFile).
+        Replace('{PROVIDER_BRIDGE_LINES}', $providerBridgeSection).
         Replace('{MANAGED_END}', $managedEnd)
 }
 
 function Get-QwenSettingsContent {
     param(
         [AllowNull()]
-        [string]$ExistingContent
+        [string]$ExistingContent,
+        [AllowNull()]
+        [string[]]$RequiredEntries = @('TASK.md', 'AGENTS.md')
     )
 
-    $requiredEntries = @('AGENTS.md', 'TASK.md')
+    $requiredEntries = @($RequiredEntries | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
     $settingsMap = [ordered]@{}
     $needsUpdate = $false
     $parseMode = 'default'
@@ -1150,7 +1220,7 @@ $canonicalManagedBlock = Build-CanonicalManagedBlock -CanonicalFile $canonicalEn
 Apply-EntrypointManagedBlock -RelativePath $canonicalEntryFile -ManagedBlock $canonicalManagedBlock
 
 foreach ($redirectFile in $redirectEntryFiles) {
-    $redirectManagedBlock = Build-RedirectManagedBlock -TargetFile $redirectFile -CanonicalFile $canonicalEntryFile
+    $redirectManagedBlock = Build-RedirectManagedBlock -TargetFile $redirectFile -CanonicalFile $canonicalEntryFile -ProviderBridgePaths $providerBridgePaths
     Apply-EntrypointManagedBlock -RelativePath $redirectFile -ManagedBlock $redirectManagedBlock
 }
 
@@ -1160,7 +1230,8 @@ $qwenSettingsExistingContent = $null
 if (Test-Path $qwenSettingsPath) {
     $qwenSettingsExistingContent = Get-Content -Path $qwenSettingsPath -Raw
 }
-$qwenSettingsPlan = Get-QwenSettingsContent -ExistingContent $qwenSettingsExistingContent
+$qwenSettingsRequiredEntries = @('TASK.md', $canonicalEntryFile)
+$qwenSettingsPlan = Get-QwenSettingsContent -ExistingContent $qwenSettingsExistingContent -RequiredEntries $qwenSettingsRequiredEntries
 $qwenSettingsContent = $qwenSettingsPlan.Content
 $qwenSettingsNeedsUpdate = [bool]$qwenSettingsPlan.NeedsUpdate
 $qwenSettingsParseMode = [string]$qwenSettingsPlan.ParseMode
@@ -1231,102 +1302,10 @@ if ($enableClaudeOrchestratorFullAccess) {
     $claudeLocalSettingsNeedsUpdate = $false
 }
 
-$providerOrchestratorProfiles = @(
-    [PSCustomObject]@{
-        ProviderLabel = 'GitHub Copilot'
-        RelativePath = '.github/agents/orchestrator.md'
-    },
-    [PSCustomObject]@{
-        ProviderLabel = 'Windsurf'
-        RelativePath = '.windsurf/agents/orchestrator.md'
-    },
-    [PSCustomObject]@{
-        ProviderLabel = 'Junie'
-        RelativePath = '.junie/agents/orchestrator.md'
-    },
-    [PSCustomObject]@{
-        ProviderLabel = 'Antigravity'
-        RelativePath = '.antigravity/agents/orchestrator.md'
-    }
-)
-
 foreach ($profile in $providerOrchestratorProfiles) {
-    $managedBlock = Get-ProviderOrchestratorAgentContent -ProviderLabel $profile.ProviderLabel -CanonicalFile $canonicalEntryFile -BridgePath $profile.RelativePath
-    Apply-EntrypointManagedBlock -RelativePath $profile.RelativePath -ManagedBlock $managedBlock
+    $managedBlock = Get-ProviderOrchestratorAgentContent -ProviderLabel $profile.ProviderLabel -CanonicalFile $canonicalEntryFile -BridgePath $profile.OrchestratorRelativePath
+    Apply-EntrypointManagedBlock -RelativePath $profile.OrchestratorRelativePath -ManagedBlock $managedBlock
 }
-
-$githubSkillBridgeProfiles = @(
-    [PSCustomObject]@{
-        RelativePath = '.github/agents/reviewer.md'
-        ProfileTitle = 'Reviewer Bridge'
-        SkillPath = 'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md'
-        ReviewRequirement = 'Use preflight `required_reviews.*` flags from orchestrator.'
-        CapabilityFlag = 'always-on'
-    },
-    [PSCustomObject]@{
-        RelativePath = '.github/agents/code-review.md'
-        ProfileTitle = 'Code Review Bridge'
-        SkillPath = 'Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
-        ReviewRequirement = 'required_reviews.code=true'
-        CapabilityFlag = 'always-on'
-    },
-    [PSCustomObject]@{
-        RelativePath = '.github/agents/db-review.md'
-        ProfileTitle = 'DB Review Bridge'
-        SkillPath = 'Octopus-agent-orchestrator/live/skills/db-review/SKILL.md'
-        ReviewRequirement = 'required_reviews.db=true'
-        CapabilityFlag = 'always-on'
-    },
-    [PSCustomObject]@{
-        RelativePath = '.github/agents/security-review.md'
-        ProfileTitle = 'Security Review Bridge'
-        SkillPath = 'Octopus-agent-orchestrator/live/skills/security-review/SKILL.md'
-        ReviewRequirement = 'required_reviews.security=true'
-        CapabilityFlag = 'always-on'
-    },
-    [PSCustomObject]@{
-        RelativePath = '.github/agents/refactor-review.md'
-        ProfileTitle = 'Refactor Review Bridge'
-        SkillPath = 'Octopus-agent-orchestrator/live/skills/refactor-review/SKILL.md'
-        ReviewRequirement = 'required_reviews.refactor=true'
-        CapabilityFlag = 'always-on'
-    },
-    [PSCustomObject]@{
-        RelativePath = '.github/agents/api-review.md'
-        ProfileTitle = 'API Review Bridge'
-        SkillPath = 'Octopus-agent-orchestrator/live/skills/api-review/SKILL.md'
-        ReviewRequirement = 'required_reviews.api=true'
-        CapabilityFlag = 'review-capabilities.api=true'
-    },
-    [PSCustomObject]@{
-        RelativePath = '.github/agents/test-review.md'
-        ProfileTitle = 'Test Review Bridge'
-        SkillPath = 'Octopus-agent-orchestrator/live/skills/test-review/SKILL.md'
-        ReviewRequirement = 'required_reviews.test=true'
-        CapabilityFlag = 'review-capabilities.test=true'
-    },
-    [PSCustomObject]@{
-        RelativePath = '.github/agents/performance-review.md'
-        ProfileTitle = 'Performance Review Bridge'
-        SkillPath = 'Octopus-agent-orchestrator/live/skills/performance-review/SKILL.md'
-        ReviewRequirement = 'required_reviews.performance=true'
-        CapabilityFlag = 'review-capabilities.performance=true'
-    },
-    [PSCustomObject]@{
-        RelativePath = '.github/agents/infra-review.md'
-        ProfileTitle = 'Infra Review Bridge'
-        SkillPath = 'Octopus-agent-orchestrator/live/skills/infra-review/SKILL.md'
-        ReviewRequirement = 'required_reviews.infra=true'
-        CapabilityFlag = 'review-capabilities.infra=true'
-    },
-    [PSCustomObject]@{
-        RelativePath = '.github/agents/dependency-review.md'
-        ProfileTitle = 'Dependency Review Bridge'
-        SkillPath = 'Octopus-agent-orchestrator/live/skills/dependency-review/SKILL.md'
-        ReviewRequirement = 'required_reviews.dependency=true'
-        CapabilityFlag = 'review-capabilities.dependency=true'
-    }
-)
 
 foreach ($profile in $githubSkillBridgeProfiles) {
     $managedBlock = Get-GitHubSkillBridgeAgentContent -ProfileTitle $profile.ProfileTitle -CanonicalFile $canonicalEntryFile -SkillPath $profile.SkillPath -ReviewRequirement $profile.ReviewRequirement -CapabilityFlag $profile.CapabilityFlag
@@ -1335,15 +1314,23 @@ foreach ($profile in $githubSkillBridgeProfiles) {
 
 $gitignoreEntries = @(
     'Octopus-agent-orchestrator/',
-    'AGENTS.md',
     'TASK.md',
-    '.qwen/',
-    '.github/agents/',
-    '.antigravity/',
-    '.junie/',
-    '.windsurf/',
-    '.github/copilot-instructions.md'
+    '.qwen/'
 )
+foreach ($activeEntryFile in $activeEntryFiles) {
+    switch ($activeEntryFile.Replace('\', '/')) {
+        'AGENTS.md' {
+            $gitignoreEntries += 'AGENTS.md'
+        }
+        '.github/copilot-instructions.md' {
+            $gitignoreEntries += '.github/copilot-instructions.md'
+        }
+    }
+}
+foreach ($profile in $providerOrchestratorProfiles) {
+    $gitignoreEntries += @($profile.GitignoreEntries)
+}
+$gitignoreEntries = @($gitignoreEntries | Sort-Object -Unique)
 if ($enableClaudeOrchestratorFullAccess) {
     $gitignoreEntries += '.claude/'
 }
@@ -1406,6 +1393,7 @@ if (-not $DryRun) {
         UpdatedAt          = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ssK')
         SourceOfTruth      = $SourceOfTruth
         CanonicalEntrypoint = $canonicalEntryFile
+        ActiveAgentFiles   = (Convert-ActiveAgentEntrypointFilesToString -ActiveEntrypointFiles $activeEntryFiles)
         AssistantLanguage  = $AssistantLanguage
         AssistantBrevity   = $AssistantBrevity
         EnforceNoAutoCommit = $enforceNoAutoCommit
@@ -1436,6 +1424,7 @@ Write-Output "EnforceNoAutoCommit: $enforceNoAutoCommit"
 Write-Output "ClaudeOrchestratorFullAccess: $enableClaudeOrchestratorFullAccess"
 Write-Output "TokenEconomyEnabled: $tokenEconomyEnabled"
 Write-Output "CanonicalEntrypoint: $canonicalEntryFile"
+Write-Output "ActiveAgentFiles: $(Convert-ActiveAgentEntrypointFilesToString -ActiveEntrypointFiles $activeEntryFiles)"
 Write-Output "FilesDeployed: $deployed"
 Write-Output "FilesForcedOverwrite: $forcedOverwrites"
 Write-Output "FilesSkippedExisting: $skippedExisting"
