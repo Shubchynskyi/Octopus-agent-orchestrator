@@ -27,7 +27,7 @@ from pathlib import Path
 script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
 sys.path.insert(0, str(script_dir / "lib"))
 
-from gate_utils import assert_valid_task_id, inspect_task_event_file, join_orchestrator_path, resolve_path_inside_repo, resolve_project_root, to_posix
+from gate_utils import audit_command_compactness, assert_valid_task_id, inspect_task_event_file, join_orchestrator_path, resolve_path_inside_repo, resolve_project_root, to_posix
 
 
 def parse_timestamp(value):
@@ -67,6 +67,29 @@ def format_timestamp(value):
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc).isoformat()
+
+
+def get_command_audit_from_details(details):
+    if not isinstance(details, dict):
+        return None
+
+    existing = details.get("command_policy_audit")
+    if isinstance(existing, dict):
+        return existing
+
+    command_text = ""
+    for key in ("command", "command_text", "shell_command"):
+        value = details.get(key)
+        if isinstance(value, str) and value.strip():
+            command_text = value.strip()
+            break
+
+    if not command_text:
+        return None
+
+    mode = str(details.get("command_mode") or details.get("mode") or "scan")
+    justification = str(details.get("command_justification") or details.get("justification") or "")
+    return audit_command_compactness(command_text, mode=mode, justification=justification)
 
 
 parser = argparse.ArgumentParser()
@@ -119,12 +142,18 @@ summary = {
     "events_count": len(events),
     "parse_errors": parse_errors,
     "integrity": integrity_report,
+    "command_policy_warnings": [],
+    "command_policy_warning_count": 0,
     "first_event_utc": format_timestamp(events[0].get("timestamp_utc")) if events else None,
     "last_event_utc": format_timestamp(events[-1].get("timestamp_utc")) if events else None,
     "timeline": [],
 }
 
 for index, event in enumerate(events, start=1):
+    details = event.get("details")
+    command_policy_audit = get_command_audit_from_details(details)
+    if isinstance(command_policy_audit, dict) and int(command_policy_audit.get("warning_count", 0)) > 0:
+        summary["command_policy_warnings"].extend(list(command_policy_audit.get("warnings") or []))
     summary["timeline"].append(
         {
             "index": index,
@@ -133,9 +162,11 @@ for index, event in enumerate(events, start=1):
             "outcome": str(event.get("outcome") or "UNKNOWN"),
             "actor": str(event.get("actor")) if event.get("actor") is not None else None,
             "message": str(event.get("message") or ""),
-            "details": event.get("details"),
+            "details": details,
+            "command_policy_audit": command_policy_audit,
         }
     )
+summary["command_policy_warning_count"] = len(summary["command_policy_warnings"])
 
 if args.as_json:
     output_text = json.dumps(summary, ensure_ascii=False, indent=2)
@@ -158,6 +189,8 @@ else:
         output_lines.append(f"FirstEventUTC: {summary['first_event_utc']}")
     if summary["last_event_utc"]:
         output_lines.append(f"LastEventUTC: {summary['last_event_utc']}")
+    if summary["command_policy_warning_count"] > 0:
+        output_lines.append(f"CommandPolicyWarnings: {summary['command_policy_warning_count']}")
 
     output_lines.extend(["", "Timeline:"])
 
@@ -180,6 +213,10 @@ else:
         output_lines.extend(["", "IntegrityViolations:"])
         for violation in integrity_report["violations"]:
             output_lines.append(f"- {violation}")
+    if summary["command_policy_warning_count"] > 0:
+        output_lines.extend(["", "CommandPolicyWarnings:"])
+        for warning in summary["command_policy_warnings"]:
+            output_lines.append(f"- {warning}")
 
     output_text = "\n".join(output_lines)
 

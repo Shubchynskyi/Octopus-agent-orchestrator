@@ -80,6 +80,64 @@ function Convert-ToDetailsMap {
     }
 }
 
+function Get-CommandAuditPayload {
+    param([object]$DetailsObject)
+
+    if ($null -eq $DetailsObject) {
+        return $null
+    }
+
+    $commandText = $null
+    $mode = 'scan'
+    $justification = ''
+    if ($DetailsObject -is [System.Collections.IDictionary]) {
+        foreach ($candidateKey in @('command', 'command_text', 'shell_command')) {
+            if ($DetailsObject.Contains($candidateKey) -and -not [string]::IsNullOrWhiteSpace([string]$DetailsObject[$candidateKey])) {
+                $commandText = [string]$DetailsObject[$candidateKey]
+                break
+            }
+        }
+        if ($DetailsObject.Contains('command_mode')) {
+            $mode = [string]$DetailsObject['command_mode']
+        } elseif ($DetailsObject.Contains('mode')) {
+            $mode = [string]$DetailsObject['mode']
+        }
+        if ($DetailsObject.Contains('command_justification')) {
+            $justification = [string]$DetailsObject['command_justification']
+        } elseif ($DetailsObject.Contains('justification')) {
+            $justification = [string]$DetailsObject['justification']
+        }
+    } elseif ($DetailsObject -is [PSCustomObject]) {
+        foreach ($candidateKey in @('command', 'command_text', 'shell_command')) {
+            $property = $DetailsObject.PSObject.Properties[$candidateKey]
+            if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+                $commandText = [string]$property.Value
+                break
+            }
+        }
+        if ($null -ne $DetailsObject.PSObject.Properties['command_mode']) {
+            $mode = [string]$DetailsObject.command_mode
+        } elseif ($null -ne $DetailsObject.PSObject.Properties['mode']) {
+            $mode = [string]$DetailsObject.mode
+        }
+        if ($null -ne $DetailsObject.PSObject.Properties['command_justification']) {
+            $justification = [string]$DetailsObject.command_justification
+        } elseif ($null -ne $DetailsObject.PSObject.Properties['justification']) {
+            $justification = [string]$DetailsObject.justification
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($commandText)) {
+        return $null
+    }
+
+    return [ordered]@{
+        command_text = $commandText
+        mode = $mode
+        justification = $justification
+    }
+}
+
 function Invoke-TerminalLogCleanup {
     param(
         [string]$RepoRootPath,
@@ -188,6 +246,7 @@ $terminalCleanup = [ordered]@{
 }
 $cleanupFailed = $false
 $eventDetails = $details
+$commandCompactnessAudit = $null
 
 $isTerminalEvent = $EventType -in @('TASK_DONE', 'TASK_BLOCKED')
 if ($isTerminalEvent) {
@@ -195,6 +254,14 @@ if ($isTerminalEvent) {
     $cleanupFailed = $terminalCleanup.errors.Count -gt 0
     $detailsMap = Convert-ToDetailsMap -DetailsObject $details
     $detailsMap['terminal_log_cleanup'] = $terminalCleanup
+    $eventDetails = [PSCustomObject]$detailsMap
+}
+
+$auditPayload = Get-CommandAuditPayload -DetailsObject $eventDetails
+if ($null -ne $auditPayload) {
+    $commandCompactnessAudit = Test-GateCommandCompactness -CommandText $auditPayload.command_text -Mode $auditPayload.mode -Justification $auditPayload.justification
+    $detailsMap = Convert-ToDetailsMap -DetailsObject $eventDetails
+    $detailsMap['command_policy_audit'] = $commandCompactnessAudit
     $eventDetails = [PSCustomObject]$detailsMap
 }
 
@@ -230,6 +297,16 @@ if ($null -ne $appendResult) {
     }
     if ($appendResult.Contains('warnings') -and @($appendResult.warnings).Count -gt 0) {
         $result['warnings'] = @($appendResult.warnings)
+    }
+}
+if ($null -ne $commandCompactnessAudit) {
+    $result['command_policy_audit'] = $commandCompactnessAudit
+    if ($commandCompactnessAudit.warning_count -gt 0) {
+        $existingWarnings = @()
+        if ($result.Contains('warnings')) {
+            $existingWarnings = @($result['warnings'])
+        }
+        $result['warnings'] = @($existingWarnings + @($commandCompactnessAudit.warnings))
     }
 }
 if ($isTerminalEvent) {

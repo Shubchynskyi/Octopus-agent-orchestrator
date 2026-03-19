@@ -12,6 +12,13 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 7. Never use `git add -f` / `git add --force` to stage ignored orchestration files just to satisfy gates or documentation bookkeeping.
 8. If doc-impact or audit trail requires updates to ignored orchestrator files, write them on disk and continue without expanding the project commit scope unless the user explicitly asks for it.
 
+## Command Output Discipline
+1. Default to compact command output for everyday shell usage; start with summary, bounded, structured, or path-scoped output.
+2. Apply command escalation in order: `scan -> inspect -> debug`.
+3. Do not jump to verbose or full-output commands on first pass when a compact equivalent exists.
+4. Use full output immediately only for security/auth/secrets/migrations/infra-sensitive diagnostics, unfamiliar tool output, or single-target failure debugging.
+5. Before switching from compact to verbose/full output, state briefly why the compact pass was insufficient.
+
 ## Execution Depth
 1. Resolve execution depth from user request as `depth=1`, `depth=2`, or `depth=3`; default is `depth=2`.
 2. Treat depth as context and validation rigor profile, not as a way to bypass mandatory gates.

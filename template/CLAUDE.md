@@ -12,6 +12,7 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 1. Always read `Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md`.
 2. Read only the linked rule files required for the current task.
 3. Avoid loading unrelated rule files to save context and tokens.
+4. Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.
 
 ## Hard Stop For Task Execution
 - Before implementing any task, open `TASK.md`.

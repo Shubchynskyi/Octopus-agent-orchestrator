@@ -30,6 +30,7 @@ script_dir = Path(os.environ["OA_GATE_SCRIPT_DIR"]).resolve()
 sys.path.insert(0, str(script_dir / "lib"))
 
 from gate_utils import (
+    audit_command_compactness,
     assert_valid_task_id,
     append_task_event,
     join_orchestrator_path,
@@ -87,6 +88,29 @@ def as_details_map(details_obj):
     if isinstance(details_obj, dict):
         return dict(details_obj)
     return {"input_details": details_obj}
+
+
+def get_command_audit_payload(details_obj):
+    if not isinstance(details_obj, dict):
+        return None
+
+    command_text = ""
+    for key in ("command", "command_text", "shell_command"):
+        value = details_obj.get(key)
+        if isinstance(value, str) and value.strip():
+            command_text = value.strip()
+            break
+
+    if not command_text:
+        return None
+
+    mode = str(details_obj.get("command_mode") or details_obj.get("mode") or "scan")
+    justification = str(details_obj.get("command_justification") or details_obj.get("justification") or "")
+    return {
+        "command_text": command_text,
+        "mode": mode,
+        "justification": justification,
+    }
 
 
 def cleanup_terminal_compile_logs(repo_root_path: Path, task_identifier: str):
@@ -153,12 +177,23 @@ terminal_log_cleanup = {
 }
 cleanup_failed = False
 event_details = details
+command_compactness_audit = None
 
 if is_terminal_event:
     terminal_log_cleanup = cleanup_terminal_compile_logs(repo_root, task_id)
     cleanup_failed = len(terminal_log_cleanup["errors"]) > 0
     event_details = as_details_map(details)
     event_details["terminal_log_cleanup"] = terminal_log_cleanup
+
+audit_payload = get_command_audit_payload(event_details)
+if audit_payload is not None:
+    command_compactness_audit = audit_command_compactness(
+        audit_payload["command_text"],
+        mode=audit_payload["mode"],
+        justification=audit_payload["justification"],
+    )
+    event_details = as_details_map(event_details)
+    event_details["command_policy_audit"] = command_compactness_audit
 
 task_file_path = (events_root / f"{task_id}.jsonl").resolve()
 all_tasks_path = (events_root / "all-tasks.jsonl").resolve()
@@ -188,6 +223,10 @@ if isinstance(append_result, dict):
     warnings = append_result.get("warnings") or []
     if warnings:
         result["warnings"] = warnings
+if isinstance(command_compactness_audit, dict):
+    result["command_policy_audit"] = command_compactness_audit
+    if command_compactness_audit.get("warning_count", 0) > 0:
+        result["warnings"] = list(result.get("warnings") or []) + list(command_compactness_audit.get("warnings") or [])
 if is_terminal_event:
     result["terminal_log_cleanup"] = terminal_log_cleanup
 if cleanup_failed:

@@ -52,16 +52,48 @@ npm run build
 docker build .
 ```
 
-## Compact Command Hints
+## Compact Command Policy
 
-Prefer compact output flags for everyday shell commands. This reduces context noise and saves tokens regardless of token-economy settings.
-Switch to full/verbose output only when diagnosing a specific failure.
+Compact command usage is mandatory by default. Treat full or verbose output as an escalation step, not a starting point.
 
-### Principle
-1. Use summary or structured (`--json`) output by default.
-2. Limit result counts (`--max-count`, `-n`, `--tail`) when scanning, not inspecting.
-3. Scope commands to affected paths instead of entire repository.
-4. Never truncate output of security-relevant, migration, or auth-path commands.
+### Required Protocol
+1. First pass must use compact, summary, structured (`--json`), bounded, or path-scoped output.
+2. Escalate in this order only: `scan -> inspect -> debug`.
+3. Use repository-wide or unbounded output only when no scoped equivalent exists or the scoped pass failed to localize the issue.
+4. Full output is allowed immediately only for:
+   - security, auth, secrets, migrations, or infra-sensitive diagnostics;
+   - the first encounter with an unfamiliar tool output format;
+   - single-target failure debugging after localization.
+5. Before switching to verbose or full output, state briefly why compact output is insufficient.
+
+### Mode Selection
+| Mode | Default output policy | Expected usage |
+|---|---|---|
+| `scan` | compact, bounded, summary-only | quick repo or tool overview |
+| `inspect` | scoped, file/path/test-target bounded | localized investigation |
+| `debug` | verbose/full, local target only | reproduce or explain a known failure |
+| `sensitive` | complete output, no unsafe truncation | auth, secrets, CVE, migration, infra diagnostics |
+
+### Two-Pass Rule
+1. Start with compact scan.
+2. Narrow to targeted inspect.
+3. Escalate to verbose/full output only for the localized target.
+
+Examples:
+- `git diff --stat` -> `git diff -- path/to/file.ts`
+- `rg -l --max-count=5 pattern src/` -> `rg -C2 pattern src/feature/`
+- `pytest -q --tb=short` -> `pytest tests/test_auth.py::test_refresh -vv --tb=long`
+
+### Noisy Commands Require Justification
+Do not start with noisy or unbounded commands when a compact equivalent exists.
+
+Examples that must not be first pass without a reason:
+- `git diff` without `--stat` or pathspec
+- `git log --all`
+- `rg` or `grep` across the entire repository without path scope
+- `cat` on large files
+- `docker logs` / `kubectl logs` without `--tail`
+- verbose test runners on the first pass
 
 ### Version Control (git)
 | Instead of | Prefer | Use case |

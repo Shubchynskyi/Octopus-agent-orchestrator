@@ -622,6 +622,109 @@ function Test-GateReviewArtifactCompaction {
     }
 }
 
+function Test-GateCommandHasScope {
+    param([AllowEmptyString()][string]$CommandText)
+
+    if ([string]::IsNullOrWhiteSpace($CommandText)) {
+        return $false
+    }
+
+    if ($CommandText -match '(?:^|\s)--\s+\S+') {
+        return $true
+    }
+    if ($CommandText -match '(?:^|\s)(?:src|app|lib|test|tests|docs|scripts|config|packages|services|server|client|web|api|cmd|pkg|internal|live|template)(?:[\\/][^\s]+)?(?=\s|$)') {
+        return $true
+    }
+    if ($CommandText -match '(?:^|\s)\S+[\\/]\S+(?=\s|$)') {
+        return $true
+    }
+
+    return $false
+}
+
+function Test-GateCommandCompactness {
+    param(
+        [AllowEmptyString()][string]$CommandText,
+        [string]$Mode = 'scan',
+        [AllowEmptyString()][string]$Justification = ''
+    )
+
+    $rawCommand = $(if ($null -eq $CommandText) { '' } else { [string]$CommandText }).Trim()
+    $normalizedMode = $(if ($null -eq $Mode) { 'scan' } else { [string]$Mode }).Trim().ToLowerInvariant()
+    if ($normalizedMode -notin @('scan', 'inspect', 'debug', 'sensitive')) {
+        $normalizedMode = 'scan'
+    }
+
+    $warnings = @()
+    $matchedRules = @()
+    $justificationPresent = -not [string]::IsNullOrWhiteSpace($Justification)
+    if ([string]::IsNullOrWhiteSpace($rawCommand)) {
+        return [ordered]@{
+            mode = $normalizedMode
+            command_text = $rawCommand
+            justification_present = $justificationPresent
+            matched_rules = $matchedRules
+            warnings = $warnings
+            warning_count = 0
+        }
+    }
+
+    $lowered = $rawCommand.ToLowerInvariant()
+    $suppressWarnings = $justificationPresent -or $normalizedMode -in @('debug', 'sensitive')
+
+    if ($lowered -match '^\s*git\s+diff(?:\s|$)' -and $lowered -notmatch '--stat' -and $lowered -notmatch '(?:^|\s)--\s+\S+') {
+        $matchedRules += 'git_diff_unscoped'
+        if (-not $suppressWarnings) { $warnings += 'Use `git diff --stat` or `git diff -- <path>` before full `git diff`.' }
+    }
+    if ($lowered -match '^\s*git\s+log\b' -and $lowered -match '--all') {
+        $matchedRules += 'git_log_all'
+        if (-not $suppressWarnings) { $warnings += 'Avoid `git log --all` on first pass; prefer `git log --oneline -n 20` or a bounded graph view.' }
+    }
+    if ($lowered -match '^\s*(?:rg|grep)\b' -and -not (Test-GateCommandHasScope -CommandText $rawCommand)) {
+        $matchedRules += 'search_unscoped'
+        if (-not $suppressWarnings) { $warnings += 'Scope `rg`/`grep` to affected paths or start with `-l` / bounded context.' }
+    }
+    if ($lowered -match '^\s*cat\s+\S+') {
+        $matchedRules += 'cat_full_file'
+        if (-not $suppressWarnings) { $warnings += 'Avoid reading large files with `cat` on first pass; prefer `head`, `tail`, or scoped search.' }
+    }
+    if ($lowered -match '^\s*docker\s+logs\b' -and $lowered -notmatch '--tail') {
+        $matchedRules += 'docker_logs_unbounded'
+        if (-not $suppressWarnings) { $warnings += 'Use `docker logs --tail 50` before full container logs.' }
+    }
+    if ($lowered -match '^\s*kubectl\s+logs\b' -and $lowered -notmatch '--tail') {
+        $matchedRules += 'kubectl_logs_unbounded'
+        if (-not $suppressWarnings) { $warnings += 'Use `kubectl logs --tail=50` before full pod logs.' }
+    }
+    if ($normalizedMode -in @('scan', 'inspect')) {
+        if ($lowered -match '^\s*pytest\b' -and ($lowered -match '(?:^|\s)-vv(?:\s|$)' -or $lowered -match '--tb=long')) {
+            $matchedRules += 'pytest_verbose_first_pass'
+            if (-not $suppressWarnings) { $warnings += 'Use `pytest -q --tb=short` first; reserve verbose traceback for localized failures.' }
+        }
+        if ($lowered -match '^\s*(?:jest|vitest)\b' -and ($lowered -match '--verbose' -or $lowered -match '--runinband')) {
+            $matchedRules += 'js_test_verbose_first_pass'
+            if (-not $suppressWarnings) { $warnings += 'Start JS test runners with compact output before verbose debug flags.' }
+        }
+        if ($lowered -match '^\s*go\s+test\b' -and $lowered -match '(?:^|\s)-v(?:\s|$)') {
+            $matchedRules += 'go_test_verbose_first_pass'
+            if (-not $suppressWarnings) { $warnings += 'Use `go test -short` first; reserve `-v` for targeted debug.' }
+        }
+        if ($lowered -match '^\s*dotnet\s+test\b' -and $lowered -match '--verbosity\s+(?:normal|detailed|diagnostic)') {
+            $matchedRules += 'dotnet_test_verbose_first_pass'
+            if (-not $suppressWarnings) { $warnings += 'Use `dotnet test --verbosity quiet` first; escalate only for localized failures.' }
+        }
+    }
+
+    return [ordered]@{
+        mode = $normalizedMode
+        command_text = $rawCommand
+        justification_present = $justificationPresent
+        matched_rules = $matchedRules
+        warnings = $warnings
+        warning_count = $warnings.Count
+    }
+}
+
 function Assert-GateTaskId {
     param(
         [Parameter(Mandatory = $true)]
@@ -1841,7 +1944,7 @@ function Add-GateTaskEvent {
         }
 
         try {
-            Acquire-GateAppendLock -LockPath $allTasksLockPath
+            Acquire-GateAppendLock -LockPath $allTasksLockPath -TimeoutMilliseconds 1500 -StaleMilliseconds 30000
             try {
                 Add-Content -LiteralPath $allTasksPath -Value $line
             } finally {
@@ -2071,6 +2174,91 @@ function Release-GateAppendLock {
     }
 }
 
+function Get-GateLastNonEmptyLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [int]$TailLineCount = 32
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $null
+    }
+
+    $tailLines = @()
+    try {
+        $tailLines = @(Get-Content -LiteralPath $Path -Tail $TailLineCount -ErrorAction Stop)
+    } catch {
+        return $null
+    }
+
+    for ($index = $tailLines.Count - 1; $index -ge 0; $index--) {
+        $candidate = [string]$tailLines[$index]
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Get-GateTaskEventAppendStateFast {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TaskFilePath,
+        [Parameter(Mandatory = $true)]
+        [string]$TaskId
+    )
+
+    $lastLine = Get-GateLastNonEmptyLine -Path $TaskFilePath
+    if ([string]::IsNullOrWhiteSpace($lastLine)) {
+        return $null
+    }
+
+    try {
+        $eventObject = $lastLine | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        return $null
+    }
+
+    $eventTaskId = ''
+    if ($null -ne $eventObject.PSObject.Properties['task_id']) {
+        $eventTaskId = [string]$eventObject.task_id
+    }
+    if (-not [string]::IsNullOrWhiteSpace($eventTaskId) -and -not [string]::Equals($eventTaskId.Trim(), $TaskId, [System.StringComparison]::Ordinal)) {
+        return $null
+    }
+
+    $integrity = $null
+    if ($null -ne $eventObject.PSObject.Properties['integrity']) {
+        $integrity = $eventObject.integrity
+    }
+    if ($null -eq $integrity) {
+        return $null
+    }
+
+    $sequence = $null
+    if ($null -ne $integrity.PSObject.Properties['task_sequence']) {
+        $sequence = $integrity.task_sequence
+    }
+
+    $eventSha256 = ''
+    if ($null -ne $integrity.PSObject.Properties['event_sha256']) {
+        $eventSha256 = [string]$integrity.event_sha256
+    }
+
+    if (-not ($sequence -is [int] -or $sequence -is [long]) -or [int]$sequence -le 0 -or [string]::IsNullOrWhiteSpace($eventSha256)) {
+        return $null
+    }
+
+    return [ordered]@{
+        matching_events = [int]$sequence
+        parse_errors = 0
+        last_integrity_sequence = [int]$sequence
+        last_event_sha256 = $eventSha256.Trim().ToLowerInvariant()
+    }
+}
+
 function Get-GateTaskEventAppendState {
     param(
         [Parameter(Mandatory = $true)]
@@ -2088,6 +2276,11 @@ function Get-GateTaskEventAppendState {
 
     if (-not (Test-Path -LiteralPath $TaskFilePath -PathType Leaf)) {
         return $state
+    }
+
+    $fastState = Get-GateTaskEventAppendStateFast -TaskFilePath $TaskFilePath -TaskId $TaskId
+    if ($null -ne $fastState) {
+        return $fastState
     }
 
     foreach ($rawLine in (Get-Content -LiteralPath $TaskFilePath)) {
@@ -2314,6 +2507,7 @@ Export-ModuleMember -Function @(
     'Invoke-GateMarkdownCompaction',
     'New-GateRuleContextArtifact',
     'Test-GateReviewArtifactCompaction',
+    'Test-GateCommandCompactness',
     'Add-GateMetricsEvent',
     'Get-GateOutputTelemetry',
     'Get-GateVisibleSavingsLine',

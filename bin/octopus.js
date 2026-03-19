@@ -787,46 +787,73 @@ function syncBundleItems(sourceRoot, destinationPath) {
     }
 }
 
-function emitChildResult(result, executableName) {
-    if (result.stdout) {
-        process.stdout.write(result.stdout);
-    }
-    if (result.stderr) {
-        process.stderr.write(result.stderr);
-    }
-
-    if (result.error) {
-        if (result.error.code === 'ENOENT') {
-            throw new Error(`${executableName} is required but was not found in PATH.`);
-        }
-
-        throw result.error;
-    }
+function createMissingExecutableError(executableName) {
+    return new Error(`${executableName} is required but was not found in PATH.`);
 }
 
 function runProcess(executableName, args, { cwd, description, interactive = false } = {}) {
-    const result = childProcess.spawnSync(executableName, args, {
-        cwd,
-        encoding: 'utf8',
-        windowsHide: true,
-        stdio: interactive ? 'inherit' : 'pipe'
-    });
-    if (!interactive) {
-        emitChildResult(result, executableName);
-    } else if (result.error) {
-        if (result.error.code === 'ENOENT') {
-            throw new Error(`${executableName} is required but was not found in PATH.`);
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const child = childProcess.spawn(executableName, args, {
+            cwd,
+            windowsHide: true,
+            stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe']
+        });
+
+        const rejectOnce = (error) => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            reject(error);
+        };
+        const resolveOnce = () => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            resolve();
+        };
+
+        child.once('error', (error) => {
+            if (error && error.code === 'ENOENT') {
+                rejectOnce(createMissingExecutableError(executableName));
+                return;
+            }
+
+            rejectOnce(error);
+        });
+
+        if (!interactive) {
+            if (child.stdout) {
+                child.stdout.setEncoding('utf8');
+                child.stdout.on('data', (chunk) => {
+                    process.stdout.write(chunk);
+                });
+            }
+
+            if (child.stderr) {
+                child.stderr.setEncoding('utf8');
+                child.stderr.on('data', (chunk) => {
+                    process.stderr.write(chunk);
+                });
+            }
         }
 
-        throw result.error;
-    }
+        child.once('close', (code) => {
+            if (code !== 0) {
+                rejectOnce(new Error(`${description || executableName} failed with exit code ${code}.`));
+                return;
+            }
 
-    if (result.status !== 0) {
-        throw new Error(`${description || executableName} failed with exit code ${result.status}.`);
-    }
+            resolveOnce();
+        });
+    });
 }
 
-function acquireSourceRoot(repoUrl, branch) {
+async function acquireSourceRoot(repoUrl, branch) {
     if (!repoUrl && !branch) {
         return {
             sourceRoot: PACKAGE_ROOT,
@@ -844,7 +871,7 @@ function acquireSourceRoot(repoUrl, branch) {
             cloneArgs.push('--branch', String(branch).trim(), '--single-branch');
         }
         cloneArgs.push(effectiveRepoUrl, tempRoot);
-        runProcess('git', cloneArgs, {
+        await runProcess('git', cloneArgs, {
             cwd: process.cwd(),
             description: `git clone from ${effectiveRepoUrl}`
         });
@@ -956,14 +983,14 @@ function addBooleanArg(args, name, value) {
     }
 }
 
-function runPowerShellScript(scriptPath, configureArgs, { interactive = false } = {}) {
+async function runPowerShellScript(scriptPath, configureArgs, { interactive = false } = {}) {
     if (!fs.existsSync(scriptPath)) {
         throw new Error(`PowerShell script not found: ${scriptPath}`);
     }
 
     const args = ['-NoLogo', '-NoProfile', '-File', scriptPath];
     configureArgs(args);
-    runProcess('pwsh', args, {
+    await runProcess('pwsh', args, {
         cwd: process.cwd(),
         description: path.basename(scriptPath),
         interactive
@@ -1261,7 +1288,7 @@ function printBootstrapSuccess(packageJson, bundleVersion, destinationPath) {
     }
 }
 
-function handleBootstrap(commandArgv, packageJson) {
+async function handleBootstrap(commandArgv, packageJson) {
     const bootstrapDefinitions = {
         '--destination': { key: 'destination', type: 'string' },
         '--target': { key: 'destination', type: 'string' },
@@ -1283,7 +1310,7 @@ function handleBootstrap(commandArgv, packageJson) {
     }
 
     const destinationPath = normalizePathValue(options.destination || positionals[0] || DEFAULT_BUNDLE_NAME);
-    const source = acquireSourceRoot(options.repoUrl, options.branch);
+    const source = await acquireSourceRoot(options.repoUrl, options.branch);
     try {
         deployFreshBundle(source.sourceRoot, destinationPath);
         printBootstrapSuccess(packageJson, source.bundleVersion, destinationPath);
@@ -1347,7 +1374,7 @@ async function handleSetup(commandArgv, packageJson) {
     console.log(`  ${green('[3/3]')} Run install and prepare agent handoff`);
     console.log('');
 
-    const source = acquireSourceRoot(options.repoUrl, options.branch);
+    const source = await acquireSourceRoot(options.repoUrl, options.branch);
     try {
         const promptedAnswers = canUseInteractivePrompts
             ? await collectSetupAnswersInteractively(targetRoot, options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH, options)
@@ -1363,7 +1390,7 @@ async function handleSetup(commandArgv, packageJson) {
         const setupScriptPath = path.join(effectiveBundlePath, 'scripts', 'setup.ps1');
         const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
 
-        runPowerShellScript(setupScriptPath, (args) => {
+        await runPowerShellScript(setupScriptPath, (args) => {
             addStringArg(args, 'TargetRoot', targetRoot);
             addStringArg(args, 'InitAnswersPath', initAnswersPath);
             addSwitchArg(args, 'DryRun', options.dryRun);
@@ -1416,7 +1443,7 @@ async function handleSetup(commandArgv, packageJson) {
     }
 }
 
-function handleInstall(commandArgv, packageJson) {
+async function handleInstall(commandArgv, packageJson) {
     const installDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
@@ -1438,7 +1465,7 @@ function handleInstall(commandArgv, packageJson) {
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
 
-    const source = acquireSourceRoot(options.repoUrl, options.branch);
+    const source = await acquireSourceRoot(options.repoUrl, options.branch);
     try {
         const bundlePath = getBundlePath(targetRoot);
         if (fs.existsSync(bundlePath) && fs.lstatSync(bundlePath).isDirectory()) {
@@ -1452,7 +1479,7 @@ function handleInstall(commandArgv, packageJson) {
         const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, getBundlePath(targetRoot), 'install');
         const installScriptPath = path.join(effectiveBundlePath, 'scripts', 'install.ps1');
 
-        runPowerShellScript(installScriptPath, (args) => {
+        await runPowerShellScript(installScriptPath, (args) => {
             addStringArg(args, 'TargetRoot', targetRoot);
             addStringArg(args, 'AssistantLanguage', answers.assistantLanguage);
             addStringArg(args, 'AssistantBrevity', answers.assistantBrevity);
@@ -1465,7 +1492,7 @@ function handleInstall(commandArgv, packageJson) {
     }
 }
 
-function handleInit(commandArgv, packageJson) {
+async function handleInit(commandArgv, packageJson) {
     const initDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
@@ -1489,7 +1516,7 @@ function handleInit(commandArgv, packageJson) {
     const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'init');
     const initScriptPath = path.join(bundlePath, 'scripts', 'init.ps1');
 
-    runPowerShellScript(initScriptPath, (args) => {
+    await runPowerShellScript(initScriptPath, (args) => {
         addStringArg(args, 'TargetRoot', targetRoot);
         addStringArg(args, 'AssistantLanguage', answers.assistantLanguage);
         addStringArg(args, 'AssistantBrevity', answers.assistantBrevity);
@@ -1522,7 +1549,7 @@ function handleStatus(commandArgv, packageJson) {
     printStatus(getStatusSnapshot(targetRoot, options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH));
 }
 
-function handleDoctor(commandArgv, packageJson) {
+async function handleDoctor(commandArgv, packageJson) {
     const doctorDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--init-answers-path': { key: 'initAnswersPath', type: 'string' }
@@ -1548,13 +1575,13 @@ function handleDoctor(commandArgv, packageJson) {
     const manifestScriptPath = path.join(bundlePath, 'live', 'scripts', 'agent-gates', 'validate-manifest.ps1');
     const manifestPath = path.join(bundlePath, 'MANIFEST.md');
 
-    runPowerShellScript(verifyScriptPath, (args) => {
+    await runPowerShellScript(verifyScriptPath, (args) => {
         addStringArg(args, 'TargetRoot', targetRoot);
         addStringArg(args, 'SourceOfTruth', answers.sourceOfTruth);
         addStringArg(args, 'InitAnswersPath', answers.resolvedPath);
     });
 
-    runPowerShellScript(manifestScriptPath, (args) => {
+    await runPowerShellScript(manifestScriptPath, (args) => {
         addStringArg(args, 'ManifestPath', manifestPath);
     });
 
@@ -1562,7 +1589,7 @@ function handleDoctor(commandArgv, packageJson) {
     console.log(`Next: Execute task T-001 depth=2`);
 }
 
-function handleReinit(commandArgv, packageJson) {
+async function handleReinit(commandArgv, packageJson) {
     const reinitDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
@@ -1593,7 +1620,7 @@ function handleReinit(commandArgv, packageJson) {
     const bundlePath = ensureBundleExists(targetRoot, 'reinit');
     const reinitScriptPath = path.join(bundlePath, 'scripts', 'reinit.ps1');
 
-    runPowerShellScript(reinitScriptPath, (args) => {
+    await runPowerShellScript(reinitScriptPath, (args) => {
         addStringArg(args, 'TargetRoot', targetRoot);
         addStringArg(args, 'InitAnswersPath', options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH);
         addSwitchArg(args, 'NoPrompt', options.noPrompt);
@@ -1620,7 +1647,7 @@ function handleReinit(commandArgv, packageJson) {
     });
 }
 
-function handleUpdate(commandArgv, packageJson) {
+async function handleUpdate(commandArgv, packageJson) {
     const updateDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
@@ -1648,7 +1675,7 @@ function handleUpdate(commandArgv, packageJson) {
     const bundlePath = ensureBundleExists(targetRoot, 'update');
     const updateScriptPath = path.join(bundlePath, 'scripts', 'check-update.ps1');
 
-    runPowerShellScript(updateScriptPath, (args) => {
+    await runPowerShellScript(updateScriptPath, (args) => {
         addStringArg(args, 'TargetRoot', targetRoot);
         addStringArg(args, 'InitAnswersPath', options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH);
         addStringArg(args, 'RepoUrl', options.repoUrl);
@@ -1663,7 +1690,7 @@ function handleUpdate(commandArgv, packageJson) {
     });
 }
 
-function handleUninstall(commandArgv, packageJson) {
+async function handleUninstall(commandArgv, packageJson) {
     const uninstallDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
@@ -1690,7 +1717,7 @@ function handleUninstall(commandArgv, packageJson) {
     const bundlePath = ensureBundleExists(targetRoot, 'uninstall');
     const uninstallScriptPath = path.join(bundlePath, 'scripts', 'uninstall.ps1');
 
-    runPowerShellScript(uninstallScriptPath, (args) => {
+    await runPowerShellScript(uninstallScriptPath, (args) => {
         addStringArg(args, 'TargetRoot', targetRoot);
         addStringArg(args, 'InitAnswersPath', options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH);
         addSwitchArg(args, 'NoPrompt', options.noPrompt);
@@ -1733,25 +1760,25 @@ async function main() {
             handleStatus(commandArgv, packageJson);
             return;
         case 'doctor':
-            handleDoctor(commandArgv, packageJson);
+            await handleDoctor(commandArgv, packageJson);
             return;
         case 'bootstrap':
-            handleBootstrap(commandArgv, packageJson);
+            await handleBootstrap(commandArgv, packageJson);
             return;
         case 'install':
-            handleInstall(commandArgv, packageJson);
+            await handleInstall(commandArgv, packageJson);
             return;
         case 'init':
-            handleInit(commandArgv, packageJson);
+            await handleInit(commandArgv, packageJson);
             return;
         case 'reinit':
-            handleReinit(commandArgv, packageJson);
+            await handleReinit(commandArgv, packageJson);
             return;
         case 'update':
-            handleUpdate(commandArgv, packageJson);
+            await handleUpdate(commandArgv, packageJson);
             return;
         case 'uninstall':
-            handleUninstall(commandArgv, packageJson);
+            await handleUninstall(commandArgv, packageJson);
             return;
         default:
             throw new Error(`Unsupported command: ${commandName}`);

@@ -76,6 +76,72 @@ function Format-TimestampValue {
     }
 }
 
+function Get-CommandAuditFromDetails {
+    param([object]$DetailsObject)
+
+    if ($null -eq $DetailsObject) {
+        return $null
+    }
+
+    $existingAudit = $null
+    if ($DetailsObject -is [System.Collections.IDictionary]) {
+        if ($DetailsObject.Contains('command_policy_audit')) {
+            $existingAudit = $DetailsObject['command_policy_audit']
+        }
+    } elseif ($null -ne $DetailsObject.PSObject.Properties['command_policy_audit']) {
+        $existingAudit = $DetailsObject.command_policy_audit
+    }
+    if ($null -ne $existingAudit) {
+        return $existingAudit
+    }
+
+    $commandText = $null
+    $mode = 'scan'
+    $justification = ''
+    if ($DetailsObject -is [System.Collections.IDictionary]) {
+        foreach ($candidateKey in @('command', 'command_text', 'shell_command')) {
+            if ($DetailsObject.Contains($candidateKey) -and -not [string]::IsNullOrWhiteSpace([string]$DetailsObject[$candidateKey])) {
+                $commandText = [string]$DetailsObject[$candidateKey]
+                break
+            }
+        }
+        if ($DetailsObject.Contains('command_mode')) {
+            $mode = [string]$DetailsObject['command_mode']
+        } elseif ($DetailsObject.Contains('mode')) {
+            $mode = [string]$DetailsObject['mode']
+        }
+        if ($DetailsObject.Contains('command_justification')) {
+            $justification = [string]$DetailsObject['command_justification']
+        } elseif ($DetailsObject.Contains('justification')) {
+            $justification = [string]$DetailsObject['justification']
+        }
+    } else {
+        foreach ($candidateKey in @('command', 'command_text', 'shell_command')) {
+            $property = $DetailsObject.PSObject.Properties[$candidateKey]
+            if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+                $commandText = [string]$property.Value
+                break
+            }
+        }
+        if ($null -ne $DetailsObject.PSObject.Properties['command_mode']) {
+            $mode = [string]$DetailsObject.command_mode
+        } elseif ($null -ne $DetailsObject.PSObject.Properties['mode']) {
+            $mode = [string]$DetailsObject.mode
+        }
+        if ($null -ne $DetailsObject.PSObject.Properties['command_justification']) {
+            $justification = [string]$DetailsObject.command_justification
+        } elseif ($null -ne $DetailsObject.PSObject.Properties['justification']) {
+            $justification = [string]$DetailsObject.justification
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($commandText)) {
+        return $null
+    }
+
+    return Test-GateCommandCompactness -CommandText $commandText -Mode $mode -Justification $justification
+}
+
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Resolve-ProjectRoot
 } else {
@@ -119,6 +185,8 @@ $summary = [ordered]@{
     events_count = $events.Count
     parse_errors = $parseErrors
     integrity = $integrityReport
+    command_policy_warnings = @()
+    command_policy_warning_count = 0
     first_event_utc = $(if ($events.Count -gt 0) { Format-TimestampValue -Value $events[0].timestamp_utc } else { $null })
     last_event_utc = $(if ($events.Count -gt 0) { Format-TimestampValue -Value $events[$events.Count - 1].timestamp_utc } else { $null })
     timeline = @()
@@ -126,6 +194,11 @@ $summary = [ordered]@{
 
 for ($i = 0; $i -lt $events.Count; $i++) {
     $event = $events[$i]
+    $eventDetails = $(if ($null -ne $event.PSObject.Properties['details']) { $event.details } else { $null })
+    $commandAudit = Get-CommandAuditFromDetails -DetailsObject $eventDetails
+    if ($null -ne $commandAudit -and $commandAudit.warning_count -gt 0) {
+        $summary.command_policy_warnings += @($commandAudit.warnings)
+    }
     $summary.timeline += [ordered]@{
         index = $i + 1
         timestamp_utc = $(if ($null -ne $event.PSObject.Properties['timestamp_utc']) { Format-TimestampValue -Value $event.timestamp_utc } else { $null })
@@ -133,9 +206,11 @@ for ($i = 0; $i -lt $events.Count; $i++) {
         outcome = $(if ($null -ne $event.PSObject.Properties['outcome']) { [string]$event.outcome } else { 'UNKNOWN' })
         actor = $(if ($null -ne $event.PSObject.Properties['actor']) { [string]$event.actor } else { $null })
         message = $(if ($null -ne $event.PSObject.Properties['message']) { [string]$event.message } else { '' })
-        details = $(if ($null -ne $event.PSObject.Properties['details']) { $event.details } else { $null })
+        details = $eventDetails
+        command_policy_audit = $commandAudit
     }
 }
+$summary.command_policy_warning_count = @($summary.command_policy_warnings).Count
 
 if ($AsJson) {
     $outputText = $summary | ConvertTo-Json -Depth 14
@@ -163,6 +238,9 @@ if ($AsJson) {
     if ($summary.last_event_utc) {
         $outputLines += "LastEventUTC: $($summary.last_event_utc)"
     }
+    if ($summary.command_policy_warning_count -gt 0) {
+        $outputLines += "CommandPolicyWarnings: $($summary.command_policy_warning_count)"
+    }
     $outputLines += ''
     $outputLines += 'Timeline:'
 
@@ -187,6 +265,13 @@ if ($AsJson) {
         $outputLines += 'IntegrityViolations:'
         foreach ($violation in @($integrityReport.violations)) {
             $outputLines += "- $violation"
+        }
+    }
+    if ($summary.command_policy_warning_count -gt 0) {
+        $outputLines += ''
+        $outputLines += 'CommandPolicyWarnings:'
+        foreach ($warning in @($summary.command_policy_warnings)) {
+            $outputLines += "- $warning"
         }
     }
 

@@ -156,6 +156,62 @@ def _release_append_lock(lock_path: Path) -> None:
         pass
 
 
+def _read_last_non_empty_line(path: Path, *, chunk_size: int = 4096) -> Optional[str]:
+    if not path.exists() or not path.is_file():
+        return None
+
+    with path.open("rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        file_size = fh.tell()
+        if file_size <= 0:
+            return None
+
+        buffer = b""
+        position = file_size
+        while position > 0:
+            read_size = min(chunk_size, position)
+            position -= read_size
+            fh.seek(position, os.SEEK_SET)
+            buffer = fh.read(read_size) + buffer
+            lines = buffer.splitlines()
+            for raw_line in reversed(lines):
+                if raw_line.strip():
+                    return raw_line.decode("utf-8", errors="replace")
+
+    return None
+
+
+def _read_task_event_append_state_fast(task_file_path: Path, task_id: str) -> Optional[dict]:
+    raw_line = _read_last_non_empty_line(task_file_path)
+    if not raw_line or not raw_line.strip():
+        return None
+
+    try:
+        event = json.loads(raw_line)
+    except Exception:
+        return None
+
+    event_task_id = str(event.get("task_id", "")).strip()
+    if event_task_id and event_task_id != task_id:
+        return None
+
+    integrity = event.get("integrity")
+    if not isinstance(integrity, dict):
+        return None
+
+    sequence = integrity.get("task_sequence")
+    event_sha256 = str(integrity.get("event_sha256", "")).strip().lower()
+    if not isinstance(sequence, int) or sequence <= 0 or not event_sha256:
+        return None
+
+    return {
+        "matching_events": sequence,
+        "parse_errors": 0,
+        "last_integrity_sequence": sequence,
+        "last_event_sha256": event_sha256,
+    }
+
+
 def _read_task_event_append_state(task_file_path: Path, task_id: str) -> dict:
     state = {
         "matching_events": 0,
@@ -166,6 +222,10 @@ def _read_task_event_append_state(task_file_path: Path, task_id: str) -> dict:
 
     if not task_file_path.exists() or not task_file_path.is_file():
         return state
+
+    fast_state = _read_task_event_append_state_fast(task_file_path, task_id)
+    if fast_state is not None:
+        return fast_state
 
     for raw_line in task_file_path.read_text(encoding="utf-8").splitlines():
         if not raw_line.strip():
@@ -969,6 +1029,81 @@ def audit_review_artifact_compaction(
     }
 
 
+def _command_has_scope(command_text: str) -> bool:
+    lowered = command_text.lower()
+    if re.search(r"(?:^|\s)--\s+\S+", lowered):
+        return True
+    if re.search(r"(?:^|\s)(?:src|app|lib|test|tests|docs|scripts|config|packages|services|server|client|web|api|cmd|pkg|internal|live|template)(?:[\\/][^\s]+)?(?=\s|$)", lowered):
+        return True
+    if re.search(r"(?:^|\s)\S+[\\/]\S+(?=\s|$)", command_text):
+        return True
+    return False
+
+
+def audit_command_compactness(
+    command_text: Any,
+    *,
+    mode: str = "scan",
+    justification: str = "",
+) -> dict:
+    raw_command = "" if command_text is None else str(command_text).strip()
+    normalized_mode = str(mode or "scan").strip().lower()
+    if normalized_mode not in {"scan", "inspect", "debug", "sensitive"}:
+        normalized_mode = "scan"
+
+    warnings = []
+    matched_rules = []
+    if not raw_command:
+        return {
+            "mode": normalized_mode,
+            "command_text": raw_command,
+            "justification_present": bool(str(justification or "").strip()),
+            "matched_rules": matched_rules,
+            "warnings": warnings,
+            "warning_count": 0,
+        }
+
+    lowered = raw_command.lower()
+    justification_present = bool(str(justification or "").strip())
+    suppress_warnings = justification_present or normalized_mode in {"debug", "sensitive"}
+
+    def add_warning(rule_id: str, message: str) -> None:
+        matched_rules.append(rule_id)
+        if not suppress_warnings:
+            warnings.append(message)
+
+    if re.search(r"^\s*git\s+diff(?:\s|$)", lowered) and "--stat" not in lowered and not re.search(r"(?:^|\s)--\s+\S+", lowered):
+        add_warning("git_diff_unscoped", "Use `git diff --stat` or `git diff -- <path>` before full `git diff`.")
+    if re.search(r"^\s*git\s+log\b", lowered) and "--all" in lowered:
+        add_warning("git_log_all", "Avoid `git log --all` on first pass; prefer `git log --oneline -n 20` or a bounded graph view.")
+    if re.search(r"^\s*(?:rg|grep)\b", lowered) and not _command_has_scope(raw_command):
+        add_warning("search_unscoped", "Scope `rg`/`grep` to affected paths or start with `-l` / bounded context.")
+    if re.search(r"^\s*cat\s+\S+", lowered):
+        add_warning("cat_full_file", "Avoid reading large files with `cat` on first pass; prefer `head`, `tail`, or scoped search.")
+    if re.search(r"^\s*docker\s+logs\b", lowered) and "--tail" not in lowered:
+        add_warning("docker_logs_unbounded", "Use `docker logs --tail 50` before full container logs.")
+    if re.search(r"^\s*kubectl\s+logs\b", lowered) and "--tail" not in lowered:
+        add_warning("kubectl_logs_unbounded", "Use `kubectl logs --tail=50` before full pod logs.")
+    if normalized_mode in {"scan", "inspect"}:
+        if re.search(r"^\s*pytest\b", lowered) and (" -vv" in f" {lowered}" or "--tb=long" in lowered):
+            add_warning("pytest_verbose_first_pass", "Use `pytest -q --tb=short` first; reserve verbose traceback for localized failures.")
+        if re.search(r"^\s*(?:jest|vitest)\b", lowered) and ("--verbose" in lowered or "--runinband" in lowered):
+            add_warning("js_test_verbose_first_pass", "Start JS test runners with compact output before verbose debug flags.")
+        if re.search(r"^\s*go\s+test\b", lowered) and re.search(r"(?:^|\s)-v(?:\s|$)", lowered):
+            add_warning("go_test_verbose_first_pass", "Use `go test -short` first; reserve `-v` for targeted debug.")
+        if re.search(r"^\s*dotnet\s+test\b", lowered) and re.search(r"--verbosity\s+(?:normal|detailed|diagnostic)", lowered):
+            add_warning("dotnet_test_verbose_first_pass", "Use `dotnet test --verbosity quiet` first; escalate only for localized failures.")
+
+    return {
+        "mode": normalized_mode,
+        "command_text": raw_command,
+        "justification_present": justification_present,
+        "matched_rules": matched_rules,
+        "warnings": warnings,
+        "warning_count": len(warnings),
+    }
+
+
 def _resolve_filter_str(
     value: Any,
     context: Optional[dict],
@@ -1532,7 +1667,7 @@ def append_task_event(
         return result if pass_thru else None
 
     try:
-        _acquire_append_lock(all_tasks_lock_path)
+        _acquire_append_lock(all_tasks_lock_path, timeout_seconds=1.5, stale_seconds=30.0)
         try:
             with all_tasks_path.open("a", encoding="utf-8") as fh:
                 fh.write((line or "") + "\n")
