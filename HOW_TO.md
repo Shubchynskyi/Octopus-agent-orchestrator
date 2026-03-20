@@ -174,7 +174,7 @@ The agent uses `live/skills/skill-builder/SKILL.md` to create skills and wire tr
 
 | Component | Requirement |
 |---|---|
-| npm CLI | Node.js 18+ |
+| npm CLI | Node.js 20 LTS |
 | Control-plane scripts | PowerShell 7+ (`pwsh`) |
 | Gate scripts (`.sh`) | `bash` + Python (`python3`, `python`, or `py -3`) |
 

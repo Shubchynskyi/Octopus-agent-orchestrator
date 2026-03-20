@@ -20,6 +20,7 @@ Desktop.ini
 # Local temp/runtime noise
 __pycache__/
 *.pyc
+.node-build/
 .tmp_rtk_bin_*/
 /Octopus-agent-orchestrator/
 /TASK.md

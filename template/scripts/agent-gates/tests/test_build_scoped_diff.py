@@ -10,6 +10,7 @@ Run:
 
 from __future__ import annotations
 
+import os
 import json
 import shutil
 import subprocess
@@ -44,12 +45,13 @@ def resolve_bash() -> str | None:
 
 
 BASH_PATH = resolve_bash()
+BASH_TEST_ENV = {**os.environ, "OCTOPUS_COMPAT_SHIM": "0"}
 
 pytestmark = pytest.mark.skipif(BASH_PATH is None, reason="bash is required for build-scoped-diff.sh tests")
 
 
-def run_checked(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    completed = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+def run_checked(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, check=False)
     assert completed.returncode == 0, (
         f"Command failed ({completed.returncode}): {' '.join(command)}\n"
         f"stdout:\n{completed.stdout}\n"
@@ -106,6 +108,7 @@ def run_scoped_diff(repo_path: Path, variant: str, changed_files: list[str]) -> 
             str(repo_path),
         ],
         REPO_ROOT,
+        env=BASH_TEST_ENV,
     )
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))

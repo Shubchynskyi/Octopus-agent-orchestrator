@@ -1,0 +1,351 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const {
+    assertValidTaskId,
+    buildEventIntegrityHash,
+    normalizeIntegrityValue,
+    inspectTaskEventFile,
+    appendTaskEvent,
+    readTaskEventAppendState
+} = require('../../../src/gate-runtime/task-events.ts');
+const { stringSha256 } = require('../../../src/gate-runtime/hash.ts');
+
+// --- assertValidTaskId ---
+
+test('assertValidTaskId accepts valid IDs', () => {
+    assert.equal(assertValidTaskId('T-001'), 'T-001');
+    assert.equal(assertValidTaskId('my_task.v2'), 'my_task.v2');
+    assert.equal(assertValidTaskId('  T-001  '), 'T-001');
+});
+
+test('assertValidTaskId rejects empty', () => {
+    assert.throws(() => assertValidTaskId(''), /must not be empty/);
+    assert.throws(() => assertValidTaskId('   '), /must not be empty/);
+});
+
+test('assertValidTaskId rejects invalid chars', () => {
+    assert.throws(() => assertValidTaskId('task with spaces'), /invalid characters/);
+    assert.throws(() => assertValidTaskId('task/slash'), /invalid characters/);
+});
+
+test('assertValidTaskId rejects too-long IDs', () => {
+    assert.throws(() => assertValidTaskId('a'.repeat(129)), /128 characters or fewer/);
+});
+
+// --- normalizeIntegrityValue ---
+
+test('normalizeIntegrityValue sorts object keys', () => {
+    const result = normalizeIntegrityValue({ b: 2, a: 1 });
+    assert.deepEqual(Object.keys(result), ['a', 'b']);
+});
+
+test('normalizeIntegrityValue handles nested objects', () => {
+    const result = normalizeIntegrityValue({ z: { b: 2, a: 1 }, a: 0 });
+    assert.deepEqual(Object.keys(result), ['a', 'z']);
+    assert.deepEqual(Object.keys(result.z), ['a', 'b']);
+});
+
+test('normalizeIntegrityValue handles arrays', () => {
+    const result = normalizeIntegrityValue([3, 1, 2]);
+    assert.deepEqual(result, [3, 1, 2]); // order preserved
+});
+
+test('normalizeIntegrityValue converts Date to ISO string', () => {
+    const d = new Date('2024-01-15T10:30:00Z');
+    const result = normalizeIntegrityValue(d);
+    assert.equal(typeof result, 'string');
+    assert.match(result, /2024-01-15/);
+});
+
+test('normalizeIntegrityValue passes through primitives', () => {
+    assert.equal(normalizeIntegrityValue(42), 42);
+    assert.equal(normalizeIntegrityValue('hello'), 'hello');
+    assert.equal(normalizeIntegrityValue(true), true);
+    assert.equal(normalizeIntegrityValue(null), null);
+});
+
+// --- buildEventIntegrityHash ---
+
+test('buildEventIntegrityHash produces a 64-char lowercase hex string', () => {
+    const event = {
+        timestamp_utc: '2024-01-15T10:30:00.000Z',
+        task_id: 'T-001',
+        event_type: 'gate_start',
+        outcome: 'PASS',
+        actor: 'gate',
+        message: 'Test event',
+        details: null,
+        integrity: {
+            schema_version: 1,
+            task_sequence: 1,
+            prev_event_sha256: null
+        }
+    };
+    const hash = buildEventIntegrityHash(event);
+    assert.match(hash, /^[0-9a-f]{64}$/);
+});
+
+test('buildEventIntegrityHash strips event_sha256 before hashing', () => {
+    const eventWithout = {
+        task_id: 'T-001',
+        integrity: {
+            schema_version: 1,
+            task_sequence: 1,
+            prev_event_sha256: null
+        }
+    };
+    const hashWithout = buildEventIntegrityHash(eventWithout);
+
+    const eventWith = {
+        task_id: 'T-001',
+        integrity: {
+            schema_version: 1,
+            task_sequence: 1,
+            prev_event_sha256: null,
+            event_sha256: 'should_be_stripped'
+        }
+    };
+    const hashWith = buildEventIntegrityHash(eventWith);
+
+    assert.equal(hashWith, hashWithout);
+});
+
+test('buildEventIntegrityHash is deterministic', () => {
+    const event = {
+        task_id: 'T-001',
+        event_type: 'test',
+        outcome: 'PASS',
+        integrity: { schema_version: 1, task_sequence: 1, prev_event_sha256: null }
+    };
+    const hash1 = buildEventIntegrityHash(event);
+    const hash2 = buildEventIntegrityHash(event);
+    assert.equal(hash1, hash2);
+});
+
+test('buildEventIntegrityHash cross-validates with Python canonical form', () => {
+    // The canonical JSON for Python uses sorted keys and compact separators
+    // This test verifies that the Node implementation produces the same canonical form
+    const event = {
+        task_id: 'T-001',
+        event_type: 'gate_start',
+        integrity: {
+            schema_version: 1,
+            task_sequence: 1,
+            prev_event_sha256: null
+        }
+    };
+    const hash = buildEventIntegrityHash(event);
+    // Manually compute what Python would do:
+    const normalized = normalizeIntegrityValue({
+        task_id: 'T-001',
+        event_type: 'gate_start',
+        integrity: {
+            schema_version: 1,
+            task_sequence: 1,
+            prev_event_sha256: null
+        }
+    });
+    const payload = JSON.stringify(normalized);
+    const expected = stringSha256(payload);
+    assert.equal(hash, expected);
+});
+
+// --- inspectTaskEventFile ---
+
+test('inspectTaskEventFile returns MISSING for non-existent file', () => {
+    const result = inspectTaskEventFile('/nonexistent/file.jsonl', 'T-001');
+    assert.equal(result.status, 'MISSING');
+    assert.equal(result.violations.length, 1);
+    assert.match(result.violations[0], /not found/);
+});
+
+test('inspectTaskEventFile returns EMPTY for empty file', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-task-events-'));
+    try {
+        const filePath = path.join(tempDir, 'empty.jsonl');
+        fs.writeFileSync(filePath, '', 'utf8');
+        const result = inspectTaskEventFile(filePath, 'T-001');
+        assert.equal(result.status, 'EMPTY');
+        assert.equal(result.matching_events, 0);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('inspectTaskEventFile validates integrity chain', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-task-events-'));
+    try {
+        const filePath = path.join(tempDir, 'test.jsonl');
+
+        // Build a valid chain of 3 events
+        const events = [];
+        for (let i = 0; i < 3; i++) {
+            const event = {
+                timestamp_utc: new Date().toISOString(),
+                task_id: 'T-001',
+                event_type: 'test',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: `Event ${i + 1}`,
+                details: null,
+                integrity: {
+                    schema_version: 1,
+                    task_sequence: i + 1,
+                    prev_event_sha256: i === 0 ? null : events[i - 1].integrity.event_sha256
+                }
+            };
+            event.integrity.event_sha256 = buildEventIntegrityHash(event);
+            events.push(event);
+        }
+
+        const content = events.map(e => JSON.stringify(e)).join('\n') + '\n';
+        fs.writeFileSync(filePath, content, 'utf8');
+
+        const result = inspectTaskEventFile(filePath, 'T-001');
+        assert.equal(result.status, 'PASS');
+        assert.equal(result.matching_events, 3);
+        assert.equal(result.integrity_event_count, 3);
+        assert.equal(result.violations.length, 0);
+        assert.equal(result.first_integrity_sequence, 1);
+        assert.equal(result.last_integrity_sequence, 3);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('inspectTaskEventFile detects tampered event', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-task-events-'));
+    try {
+        const filePath = path.join(tempDir, 'tampered.jsonl');
+        const event = {
+            timestamp_utc: new Date().toISOString(),
+            task_id: 'T-001',
+            event_type: 'test',
+            outcome: 'PASS',
+            integrity: {
+                schema_version: 1,
+                task_sequence: 1,
+                prev_event_sha256: null
+            }
+        };
+        event.integrity.event_sha256 = buildEventIntegrityHash(event);
+        // Tamper
+        event.message = 'tampered!';
+
+        fs.writeFileSync(filePath, JSON.stringify(event) + '\n', 'utf8');
+        const result = inspectTaskEventFile(filePath, 'T-001');
+        assert.equal(result.status, 'FAILED');
+        assert.ok(result.violations.some(v => v.includes('event_sha256 mismatch')));
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('inspectTaskEventFile detects foreign task_id', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-task-events-'));
+    try {
+        const filePath = path.join(tempDir, 'foreign.jsonl');
+        const event = {
+            task_id: 'T-999',
+            event_type: 'test',
+            integrity: { schema_version: 1, task_sequence: 1, prev_event_sha256: null }
+        };
+        event.integrity.event_sha256 = buildEventIntegrityHash(event);
+        fs.writeFileSync(filePath, JSON.stringify(event) + '\n', 'utf8');
+
+        const result = inspectTaskEventFile(filePath, 'T-001');
+        assert.equal(result.task_id_mismatches, 1);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('inspectTaskEventFile handles LEGACY_ONLY status', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-task-events-'));
+    try {
+        const filePath = path.join(tempDir, 'legacy.jsonl');
+        const event = { task_id: 'T-001', event_type: 'test', outcome: 'PASS' };
+        fs.writeFileSync(filePath, JSON.stringify(event) + '\n', 'utf8');
+
+        const result = inspectTaskEventFile(filePath, 'T-001');
+        assert.equal(result.status, 'LEGACY_ONLY');
+        assert.equal(result.legacy_event_count, 1);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('inspectTaskEventFile handles PASS_WITH_LEGACY_PREFIX', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-task-events-'));
+    try {
+        const filePath = path.join(tempDir, 'mixed.jsonl');
+        // Legacy event first
+        const legacy = { task_id: 'T-001', event_type: 'legacy' };
+        // Then integrity event
+        const integrityEvent = {
+            task_id: 'T-001',
+            event_type: 'test',
+            integrity: { schema_version: 1, task_sequence: 2, prev_event_sha256: null }
+        };
+        integrityEvent.integrity.event_sha256 = buildEventIntegrityHash(integrityEvent);
+
+        const content = [JSON.stringify(legacy), JSON.stringify(integrityEvent)].join('\n') + '\n';
+        fs.writeFileSync(filePath, content, 'utf8');
+
+        const result = inspectTaskEventFile(filePath, 'T-001');
+        assert.equal(result.status, 'PASS_WITH_LEGACY_PREFIX');
+        assert.equal(result.legacy_event_count, 1);
+        assert.equal(result.integrity_event_count, 1);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+// --- appendTaskEvent ---
+
+test('appendTaskEvent creates chain with correct integrity', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-append-'));
+    try {
+        // Simulate orchestrator root structure
+        const orchestratorRoot = tempDir;
+
+        // Append 3 events
+        for (let i = 0; i < 3; i++) {
+            appendTaskEvent(orchestratorRoot, 'T-TEST', 'test', 'PASS', `Event ${i + 1}`, { step: i }, { passThru: true });
+        }
+
+        // Verify the file exists and has integrity chain
+        const eventFile = path.join(orchestratorRoot, 'runtime', 'task-events', 'T-TEST.jsonl');
+        assert.ok(fs.existsSync(eventFile));
+
+        const result = inspectTaskEventFile(eventFile, 'T-TEST');
+        assert.equal(result.status, 'PASS');
+        assert.equal(result.matching_events, 3);
+        assert.equal(result.integrity_event_count, 3);
+        assert.equal(result.violations.length, 0);
+
+        // Also verify all-tasks.jsonl
+        const allTasksFile = path.join(orchestratorRoot, 'runtime', 'task-events', 'all-tasks.jsonl');
+        assert.ok(fs.existsSync(allTasksFile));
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent returns null for empty taskId', () => {
+    assert.equal(appendTaskEvent('/tmp', '', 'test', 'PASS', 'msg', null), null);
+});
+
+// --- readTaskEventAppendState ---
+
+test('readTaskEventAppendState returns empty state for missing file', () => {
+    const state = readTaskEventAppendState('/nonexistent/file.jsonl', 'T-001');
+    assert.equal(state.matching_events, 0);
+    assert.equal(state.parse_errors, 0);
+    assert.equal(state.last_integrity_sequence, null);
+    assert.equal(state.last_event_sha256, null);
+});

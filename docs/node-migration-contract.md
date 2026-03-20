@@ -380,7 +380,7 @@ when it produces equivalent output markers, file trees, and exit codes.
 ### 7.10 Verify
 
 - **Trigger**: `pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -TargetRoot "." -SourceOfTruth "<provider>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`
-- **Wrapper parity**: `scripts/verify.sh` forwards to the same PowerShell implementation.
+- **Wrapper parity**: `scripts/verify.sh` prefers `node bin/octopus.js verify` and falls back to `verify.ps1` when Node shimming is disabled or `node` is unavailable.
 - **Output on success**: `Verification: PASS`.
 - **Failure contract**: exits non-zero after printing the detected contract violations and terminating with `Verification failed. Resolve listed issues and rerun.`
 - **Side effects**: none.
@@ -459,7 +459,7 @@ Under `live/scripts/agent-gates/`:
 
 | Component | Requirement |
 |---|---|
-| `bin/octopus.js` | Node.js ≥ 16.14 (`engines` in package.json) |
+| `bin/octopus.js` | Shipped M0 baseline: Node.js ≥ 16.14 before the M1 repository baseline moved to Node 20 LTS |
 | `scripts/*.ps1` | PowerShell 7+ (`pwsh`) |
 | `scripts/*.sh` | `bash` + `pwsh` (wrappers) |
 | Gate `.ps1` | PowerShell 7+ |

@@ -70,6 +70,12 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 - Current: `1.0.8` (source: `VERSION`)
 - npm: `npm install octopus-agent-orchestrator`
 
+## Runtime Baseline
+
+- npm CLI and the new TypeScript-based Node foundation now target **Node 20 LTS**.
+- Current lifecycle execution still delegates to the canonical PowerShell control-plane.
+- PowerShell / bash / Python remain compatibility runtimes until later migration phases remove them.
+
 ## Documentation
 
 | Document | Description |
@@ -78,6 +84,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 | **[docs/cli-reference.md](docs/cli-reference.md)** | Complete CLI command reference |
 | **[docs/architecture.md](docs/architecture.md)** | Design, runtime model, deployed files |
 | **[docs/configuration.md](docs/configuration.md)** | Token economy, output filters, review capabilities |
+| **[docs/node-platform-foundation.md](docs/node-platform-foundation.md)** | Node 20 M1 foundation, validators, and build/test skeleton |
 | **[docs/work-example.md](docs/work-example.md)** | Task lifecycle walkthrough |
 | **[AGENT_INIT_PROMPT.md](AGENT_INIT_PROMPT.md)** | Setup prompt for coding agents |
 | **[CHANGELOG.md](CHANGELOG.md)** | Full changelog |
@@ -101,7 +108,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 - `octopus setup` can collect the 6 init answers itself and write `runtime/init-answers.json` without an agent.
 - After CLI setup, use `AGENT_INIT_PROMPT.md` so the agent reuses existing init answers, only clarifies language when it cannot recognize it confidently, fills project-specific context, and finishes project-level verification.
 - `octopus` without arguments is now non-destructive and only prints overview/help.
-- npm CLI commands wrap canonical PowerShell control-plane scripts.
+- npm CLI commands still wrap canonical PowerShell control-plane scripts; the new `src/` TypeScript foundation is staged for later migration phases.
 - Top-level `scripts/*.sh` are thin `pwsh` wrappers; `live/scripts/agent-gates/*.sh` are real bash+python implementations.
 - Installer is non-destructive for existing project files outside managed blocks.
 - Commit message format is project-defined; conventional commits are optional.

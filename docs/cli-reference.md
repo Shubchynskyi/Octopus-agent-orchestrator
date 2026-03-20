@@ -307,4 +307,4 @@ fi
 | Control-plane wrappers (`scripts/*.sh`) | `bash` + `pwsh` |
 | Gate scripts (`.ps1`) | PowerShell 7+ |
 | Gate scripts (`.sh`) | `bash` + Python (`python3`, `python`, or `py -3`) |
-| npm CLI (`bin/octopus.js`) | Node.js 18+ |
+| npm CLI (`bin/octopus.js`) | Node.js 20 LTS |

@@ -23,6 +23,7 @@ The migration is not a low-risk refactor. It is a staged platform migration and 
 
 Recommended direction:
 - Move to Node 20 LTS as the only required runtime.
+- Author all new Node migration code in TypeScript.
 - Use strangler migration, not a big-bang rewrite.
 - Keep user-facing CLI commands, artifacts, managed files, and rule contracts stable.
 - Treat PowerShell, bash, and Python as compatibility layers first, then deprecate, then remove.
@@ -37,7 +38,7 @@ Not recommended:
 Observed in the repository:
 - `package.json` exposes `octopus`, `oao`, and `octopus-agent-orchestrator` through `bin/octopus.js`.
 - `bin/octopus.js` routes `setup`, `install`, `init`, `doctor`, `reinit`, `update`, and `uninstall` to PowerShell scripts.
-- top-level `scripts/*.sh` are thin wrappers that require `pwsh`.
+- top-level `scripts/*.sh` are compatibility shims that prefer `node bin/octopus.js <command>` and fall back to `pwsh`.
 - gate `.sh` files are not wrappers; they are real bash + Python implementations.
 - architecture and CLI docs explicitly describe the current runtime split.
 
@@ -221,6 +222,7 @@ Goal:
 Deliverables:
 - Node project structure
 - build pipeline for the new runtime
+- TypeScript-first source policy for new Node modules
 - internal utility modules:
   - path resolution
   - file IO

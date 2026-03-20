@@ -38,6 +38,13 @@
 └──────────────────────────────────────────────────────────────┘
 ```
 
+### Transition Foundation (M1)
+
+- `src/` now holds the staged TypeScript foundation for the migration: CLI metadata, core helpers, validators, and runtime loaders.
+- This layer is **not** the active lifecycle runtime yet; `bin/octopus.js` still delegates all user-facing lifecycle work to PowerShell.
+- New Node migration code is authored in TypeScript; `.node-build/` contains the staged runnable `.js` output used by the current foundation tests.
+- The new build/test harness is documented in [`docs/node-platform-foundation.md`](node-platform-foundation.md).
+
 ### Three Script Categories
 
 | Category | Location | Runtime | Role |

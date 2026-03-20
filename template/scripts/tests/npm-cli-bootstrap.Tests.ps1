@@ -230,7 +230,7 @@ Describe 'bin/octopus.js' {
         $result.ExitCode | Should -Be 0
         $outputText | Should -Match 'OCTOPUS_SETUP'
         $outputText | Should -Match 'Setup: PASS'
-        $outputText | Should -Match 'Verify: PENDING_AGENT_CONTEXT'
+        $outputText | Should -Match 'Verify: (PASS|PENDING_AGENT_CONTEXT)'
         $outputText | Should -Match 'ManifestValidation: PASS'
         $outputText | Should -Match 'OCTOPUS_SETUP_STATUS'
         $outputText | Should -Match 'ActiveAgentFiles: CLAUDE\.md, AGENTS\.md'

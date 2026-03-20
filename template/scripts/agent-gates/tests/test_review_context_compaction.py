@@ -6,6 +6,7 @@ Run:
 
 from __future__ import annotations
 
+import os
 import json
 import shutil
 import subprocess
@@ -44,10 +45,11 @@ def resolve_bash() -> str | None:
 
 
 BASH_PATH = resolve_bash()
+BASH_TEST_ENV = {**os.environ, "OCTOPUS_COMPAT_SHIM": "0"}
 
 
-def run_checked(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    completed = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+def run_checked(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, check=False)
     assert completed.returncode == 0, (
         f"Command failed ({completed.returncode}): {' '.join(command)}\n"
         f"stdout:\n{completed.stdout}\n"
@@ -115,6 +117,7 @@ def test_build_review_context_shell_writes_sanitized_markdown(tmp_path: Path) ->
             str(repo_path),
         ],
         REPO_ROOT,
+        env=BASH_TEST_ENV,
     )
 
     context = json.loads(output_path.read_text(encoding="utf-8"))
@@ -187,6 +190,7 @@ def test_build_review_context_shell_keeps_full_rule_pack_at_depth_3_when_explici
             str(repo_path),
         ],
         REPO_ROOT,
+        env=BASH_TEST_ENV,
     )
 
     context = json.loads(output_path.read_text(encoding="utf-8"))

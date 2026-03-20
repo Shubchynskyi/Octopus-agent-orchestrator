@@ -6,6 +6,11 @@ const os = require('os');
 const path = require('path');
 const readline = require('readline');
 
+// Enable .ts extension support — src/ uses CJS-compatible .ts files
+if (!require.extensions['.ts']) {
+    require.extensions['.ts'] = require.extensions['.js'];
+}
+
 const PACKAGE_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_BUNDLE_NAME = 'Octopus-agent-orchestrator';
 const DEFAULT_INIT_ANSWERS_RELATIVE_PATH = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json');
@@ -19,7 +24,10 @@ const LIFECYCLE_COMMANDS = new Set([
     'init',
     'reinit',
     'uninstall',
-    'update'
+    'update',
+    'verify',
+    'check-update',
+    'gate'
 ]);
 const SOURCE_OF_TRUTH_VALUES = new Set([
     'Claude',
@@ -98,7 +106,10 @@ const COMMAND_SUMMARY = Object.freeze([
     ['bootstrap', 'Deploy bundle only'],
     ['reinit', 'Change init answers'],
     ['update', 'Check/apply updates'],
-    ['uninstall', 'Remove orchestrator']
+    ['uninstall', 'Remove orchestrator'],
+    ['verify', 'Verify workspace layout'],
+    ['check-update', 'Check for available updates'],
+    ['gate', 'Run an agent gate (gate <name>)']
 ]);
 const ALL_AGENT_ENTRYPOINT_FILES = Object.freeze([...SOURCE_TO_ENTRYPOINT_MAP.values()]);
 
@@ -245,6 +256,18 @@ function padRight(text, width) {
     return String(text).padEnd(width, ' ');
 }
 
+function formatKeyValueOutput(obj, keys) {
+    if (!obj || typeof obj !== 'object') return;
+    for (const key of keys) {
+        if (obj[key] === undefined) continue;
+        const label = key.charAt(0).toUpperCase() + key.slice(1);
+        const val = typeof obj[key] === 'boolean'
+            ? (obj[key] ? 'True' : 'False')
+            : String(obj[key]);
+        console.log(label + ': ' + val);
+    }
+}
+
 function readPackageJson(packageRoot = PACKAGE_ROOT) {
     return JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
 }
@@ -357,8 +380,14 @@ function normalizeAssistantBrevity(value) {
 
 function normalizeYesNo(value, label) {
     const text = parseRequiredText(value, label).toLowerCase();
+    if (text === 'true') {
+        return 'yes';
+    }
+    if (text === 'false') {
+        return 'no';
+    }
     if (!YES_NO_VALUES.has(text)) {
-        throw new Error(`${label} must be one of: yes, no.`);
+        throw new Error(`${label} must be one of: yes, no (legacy true/false also accepted).`);
     }
 
     return text;
@@ -382,6 +411,16 @@ function convertSourceOfTruthToEntrypoint(sourceOfTruth) {
 function normalizeAgentEntrypointToken(value) {
     const trimmed = String(value || '').trim().replace(/^or\s+/i, '');
     if (!trimmed) {
+        return null;
+    }
+
+    // Handle numeric selection (1-based index into ALL_AGENT_ENTRYPOINT_FILES)
+    const numericMatch = trimmed.match(/^\d+$/);
+    if (numericMatch) {
+        const idx = parseInt(numericMatch[0], 10) - 1;
+        if (idx >= 0 && idx < ALL_AGENT_ENTRYPOINT_FILES.length) {
+            return ALL_AGENT_ENTRYPOINT_FILES[idx];
+        }
         return null;
     }
 
@@ -1380,58 +1419,116 @@ async function handleSetup(commandArgv, packageJson) {
             ? await collectSetupAnswersInteractively(targetRoot, options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH, options)
             : null;
         const bundlePath = getBundlePath(targetRoot);
-        if (fs.existsSync(bundlePath) && fs.lstatSync(bundlePath).isDirectory()) {
-            syncBundleItems(source.sourceRoot, bundlePath);
-        } else if (!options.dryRun) {
-            syncBundleItems(source.sourceRoot, bundlePath);
+        const sourceResolvedSetup = path.resolve(source.sourceRoot);
+        const bundleResolvedSetup = path.resolve(bundlePath);
+        if (sourceResolvedSetup.toLowerCase() !== bundleResolvedSetup.toLowerCase()) {
+            if (fs.existsSync(bundlePath) && fs.lstatSync(bundlePath).isDirectory()) {
+                syncBundleItems(source.sourceRoot, bundlePath);
+            } else if (!options.dryRun) {
+                syncBundleItems(source.sourceRoot, bundlePath);
+            }
         }
 
         const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
-        const setupScriptPath = path.join(effectiveBundlePath, 'scripts', 'setup.ps1');
         const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
 
-        await runPowerShellScript(setupScriptPath, (args) => {
-            addStringArg(args, 'TargetRoot', targetRoot);
-            addStringArg(args, 'InitAnswersPath', initAnswersPath);
-            addSwitchArg(args, 'DryRun', options.dryRun);
-            addSwitchArg(args, 'RunVerify', options.runVerify);
-            addSwitchArg(args, 'NoPrompt', options.noPrompt);
-            addSwitchArg(args, 'SkipVerify', options.skipVerify);
-            addSwitchArg(args, 'SkipManifestValidation', options.skipManifestValidation);
-            addStringArg(args, 'AssistantLanguage', promptedAnswers ? promptedAnswers.assistantLanguage : options.assistantLanguage);
-            if (promptedAnswers || options.assistantBrevity !== undefined) {
-                addStringArg(args, 'AssistantBrevity', promptedAnswers ? promptedAnswers.assistantBrevity : normalizeAssistantBrevity(options.assistantBrevity));
-            }
-            addStringArg(args, 'ActiveAgentFiles', promptedAnswers ? promptedAnswers.activeAgentFiles : options.activeAgentFiles);
-            if (promptedAnswers || options.sourceOfTruth !== undefined) {
-                addStringArg(args, 'SourceOfTruth', promptedAnswers ? promptedAnswers.sourceOfTruth : normalizeSourceOfTruth(options.sourceOfTruth));
-            }
-            if (promptedAnswers || options.enforceNoAutoCommit !== undefined) {
-                addStringArg(
-                    args,
-                    'EnforceNoAutoCommit',
-                    promptedAnswers ? promptedAnswers.enforceNoAutoCommit : (parseCliBoolean(options.enforceNoAutoCommit, 'EnforceNoAutoCommit') ? 'true' : 'false')
-                );
-            }
-            if (promptedAnswers || options.claudeOrchestratorFullAccess !== undefined) {
-                addStringArg(
-                    args,
-                    'ClaudeOrchestratorFullAccess',
-                    promptedAnswers ? promptedAnswers.claudeOrchestratorFullAccess : (parseCliBoolean(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess') ? 'true' : 'false')
-                );
-            }
-            if (promptedAnswers || options.tokenEconomyEnabled !== undefined) {
-                addStringArg(
-                    args,
-                    'TokenEconomyEnabled',
-                    promptedAnswers ? promptedAnswers.tokenEconomyEnabled : (parseCliBoolean(options.tokenEconomyEnabled, 'TokenEconomyEnabled') ? 'true' : 'false')
-                );
-            }
-        }, {
-            interactive: interactiveSetup && Boolean(process.stdin && process.stdin.isTTY)
+        // T-074: build and save init answers, then call TS install+init directly
+        const resolvedAnswers = promptedAnswers || {};
+        const assistantLanguage = resolvedAnswers.assistantLanguage || options.assistantLanguage || 'English';
+        const assistantBrevity = resolvedAnswers.assistantBrevity
+            || (options.assistantBrevity !== undefined ? normalizeAssistantBrevity(options.assistantBrevity) : 'concise');
+        const sourceOfTruth = resolvedAnswers.sourceOfTruth
+            || (options.sourceOfTruth !== undefined ? normalizeSourceOfTruth(options.sourceOfTruth) : 'Claude');
+        const enforceNoAutoCommit = resolvedAnswers.enforceNoAutoCommit !== undefined
+            ? (String(resolvedAnswers.enforceNoAutoCommit) === 'true')
+            : (options.enforceNoAutoCommit !== undefined ? parseCliBoolean(options.enforceNoAutoCommit, 'EnforceNoAutoCommit') : true);
+        const claudeOrchestratorFullAccess = resolvedAnswers.claudeOrchestratorFullAccess !== undefined
+            ? (String(resolvedAnswers.claudeOrchestratorFullAccess) === 'true')
+            : (options.claudeOrchestratorFullAccess !== undefined ? parseCliBoolean(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess') : false);
+        const tokenEconomyEnabled = resolvedAnswers.tokenEconomyEnabled !== undefined
+            ? (String(resolvedAnswers.tokenEconomyEnabled) === 'true')
+            : (options.tokenEconomyEnabled !== undefined ? parseCliBoolean(options.tokenEconomyEnabled, 'TokenEconomyEnabled') : true);
+        const rawActiveAgentFiles = resolvedAnswers.activeAgentFiles || options.activeAgentFiles || null;
+        const activeAgentFiles = normalizeActiveAgentFiles(rawActiveAgentFiles, sourceOfTruth) || '';
+
+        const collectedVia = canUseInteractivePrompts ? 'CLI_INTERACTIVE' : 'CLI_NONINTERACTIVE';
+
+        // Save init answers
+        const resolvedInitAnswersPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
+        const initAnswersDir = path.dirname(resolvedInitAnswersPath);
+        if (!options.dryRun) {
+            if (!fs.existsSync(initAnswersDir)) { fs.mkdirSync(initAnswersDir, { recursive: true }); }
+            const { serializeInitAnswers } = require(path.join(PACKAGE_ROOT, 'src', 'schemas', 'init-answers.ts'));
+            const serialized = serializeInitAnswers({
+                AssistantLanguage: assistantLanguage,
+                AssistantBrevity: assistantBrevity,
+                SourceOfTruth: sourceOfTruth,
+                EnforceNoAutoCommit: enforceNoAutoCommit,
+                ClaudeOrchestratorFullAccess: claudeOrchestratorFullAccess,
+                TokenEconomyEnabled: tokenEconomyEnabled,
+                CollectedVia: collectedVia,
+                ActiveAgentFiles: activeAgentFiles
+                    ? activeAgentFiles.split(',').map(function (s) { return s.trim(); }).filter(Boolean)
+                    : []
+            });
+            fs.writeFileSync(resolvedInitAnswersPath, JSON.stringify(serialized, null, 2), 'utf8');
+        }
+
+        // Run install
+        const { runInstall } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'install.ts'));
+        runInstall({
+            targetRoot,
+            bundleRoot: effectiveBundlePath,
+            assistantLanguage,
+            assistantBrevity,
+            sourceOfTruth,
+            initAnswersPath: resolvedInitAnswersPath,
+            dryRun: options.dryRun
+        });
+
+        // Run init
+        const { runInit } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'init.ts'));
+        runInit({
+            targetRoot,
+            bundleRoot: effectiveBundlePath,
+            assistantLanguage,
+            assistantBrevity,
+            sourceOfTruth,
+            enforceNoAutoCommit,
+            tokenEconomyEnabled,
+            dryRun: options.dryRun
         });
 
         const snapshot = getStatusSnapshot(targetRoot, initAnswersPath);
+
+        // Run manifest validation
+        let manifestStatus = 'SKIPPED';
+        try {
+            const manifestPath = path.join(effectiveBundlePath, 'MANIFEST.md');
+            if (fs.existsSync(manifestPath)) {
+                const { validateManifest } = require(path.join(PACKAGE_ROOT, 'src', 'validators', 'validate-manifest.ts'));
+                const manifestResult = validateManifest(manifestPath);
+                manifestStatus = manifestResult.passed ? 'PASS' : 'FAIL';
+            }
+        } catch { manifestStatus = 'ERROR'; }
+
+        // Run verify if possible
+        let verifyStatus = 'PENDING_AGENT_CONTEXT';
+        try {
+            if (snapshot.readyForTasks) {
+                const { runVerify } = require(path.join(PACKAGE_ROOT, 'src', 'validators', 'verify.ts'));
+                const verifyResult = runVerify({
+                    targetRoot,
+                    sourceOfTruth,
+                    initAnswersPath: resolvedInitAnswersPath
+                });
+                verifyStatus = (verifyResult.totalViolationCount > 0) ? 'FAIL' : 'PASS';
+            }
+        } catch { verifyStatus = 'PENDING_AGENT_CONTEXT'; }
+
+        console.log('Setup: PASS');
+        console.log('Verify: ' + verifyStatus);
+        console.log('ManifestValidation: ' + manifestStatus);
         console.log('');
         printBanner(packageJson, 'Setup complete', snapshot.readyForTasks ? 'Workspace is ready.' : 'Primary setup finished. Agent handoff is still required.');
         printStatus(snapshot, { heading: 'OCTOPUS_SETUP_STATUS' });
@@ -1468,25 +1565,40 @@ async function handleInstall(commandArgv, packageJson) {
     const source = await acquireSourceRoot(options.repoUrl, options.branch);
     try {
         const bundlePath = getBundlePath(targetRoot);
-        if (fs.existsSync(bundlePath) && fs.lstatSync(bundlePath).isDirectory()) {
-            syncBundleItems(source.sourceRoot, bundlePath);
-        } else if (!options.dryRun) {
-            syncBundleItems(source.sourceRoot, bundlePath);
+        const sourceResolved = path.resolve(source.sourceRoot);
+        const bundleResolved = path.resolve(bundlePath);
+        if (sourceResolved.toLowerCase() !== bundleResolved.toLowerCase()) {
+            if (fs.existsSync(bundlePath) && fs.lstatSync(bundlePath).isDirectory()) {
+                syncBundleItems(source.sourceRoot, bundlePath);
+            } else if (!options.dryRun) {
+                syncBundleItems(source.sourceRoot, bundlePath);
+            }
         }
 
         const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
         const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
         const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, getBundlePath(targetRoot), 'install');
-        const installScriptPath = path.join(effectiveBundlePath, 'scripts', 'install.ps1');
 
-        await runPowerShellScript(installScriptPath, (args) => {
-            addStringArg(args, 'TargetRoot', targetRoot);
-            addStringArg(args, 'AssistantLanguage', answers.assistantLanguage);
-            addStringArg(args, 'AssistantBrevity', answers.assistantBrevity);
-            addStringArg(args, 'SourceOfTruth', answers.sourceOfTruth);
-            addStringArg(args, 'InitAnswersPath', answers.resolvedPath);
-            addSwitchArg(args, 'DryRun', options.dryRun);
+        const { runInstall } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'install.ts'));
+        const { runInit: initRunner } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'init.ts'));
+        const installResult = runInstall({
+            targetRoot,
+            bundleRoot: effectiveBundlePath,
+            assistantLanguage: answers.assistantLanguage,
+            assistantBrevity: answers.assistantBrevity,
+            sourceOfTruth: answers.sourceOfTruth,
+            initAnswersPath: answers.resolvedPath,
+            dryRun: options.dryRun,
+            initRunner: function (initOpts) {
+                initRunner(Object.assign({ bundleRoot: effectiveBundlePath }, initOpts));
+            }
         });
+        formatKeyValueOutput(installResult, [
+            'targetRoot', 'sourceOfTruth', 'canonicalEntrypoint',
+            'assistantLanguage', 'assistantBrevity',
+            'filesDeployed', 'initInvoked', 'liveVersionWritten',
+            'dryRun'
+        ]);
     } finally {
         source.cleanup();
     }
@@ -1514,17 +1626,23 @@ async function handleInit(commandArgv, packageJson) {
     const bundlePath = ensureBundleExists(targetRoot, 'init');
     const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
     const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'init');
-    const initScriptPath = path.join(bundlePath, 'scripts', 'init.ps1');
 
-    await runPowerShellScript(initScriptPath, (args) => {
-        addStringArg(args, 'TargetRoot', targetRoot);
-        addStringArg(args, 'AssistantLanguage', answers.assistantLanguage);
-        addStringArg(args, 'AssistantBrevity', answers.assistantBrevity);
-        addStringArg(args, 'SourceOfTruth', answers.sourceOfTruth);
-        addBooleanArg(args, 'EnforceNoAutoCommit', answers.enforceNoAutoCommit);
-        addBooleanArg(args, 'TokenEconomyEnabled', answers.tokenEconomyEnabled);
-        addSwitchArg(args, 'DryRun', options.dryRun);
+    const { runInit } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'init.ts'));
+    const initResult = runInit({
+        targetRoot,
+        bundleRoot: bundlePath,
+        assistantLanguage: answers.assistantLanguage,
+        assistantBrevity: answers.assistantBrevity,
+        sourceOfTruth: answers.sourceOfTruth,
+        enforceNoAutoCommit: answers.enforceNoAutoCommit,
+        tokenEconomyEnabled: answers.tokenEconomyEnabled,
+        dryRun: options.dryRun
     });
+    console.log('Init: PASS');
+    formatKeyValueOutput(initResult, [
+        'targetRoot', 'sourceOfTruth', 'assistantLanguage',
+        'ruleFilesMaterialized', 'projectDiscoveryPath', 'usagePath'
+    ]);
 }
 
 function handleStatus(commandArgv, packageJson) {
@@ -1571,19 +1689,25 @@ async function handleDoctor(commandArgv, packageJson) {
     const bundlePath = ensureBundleExists(targetRoot, 'doctor');
     const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
     const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'doctor');
-    const verifyScriptPath = path.join(bundlePath, 'scripts', 'verify.ps1');
-    const manifestScriptPath = path.join(bundlePath, 'live', 'scripts', 'agent-gates', 'validate-manifest.ps1');
     const manifestPath = path.join(bundlePath, 'MANIFEST.md');
 
-    await runPowerShellScript(verifyScriptPath, (args) => {
-        addStringArg(args, 'TargetRoot', targetRoot);
-        addStringArg(args, 'SourceOfTruth', answers.sourceOfTruth);
-        addStringArg(args, 'InitAnswersPath', answers.resolvedPath);
+    // T-074: call TS implementations directly instead of PowerShell
+    const { runVerify, formatVerifyResult } = require(path.join(PACKAGE_ROOT, 'src', 'validators', 'verify.ts'));
+    const verifyResult = runVerify({
+        targetRoot,
+        sourceOfTruth: answers.sourceOfTruth,
+        initAnswersPath: answers.resolvedPath
     });
+    if (verifyResult.totalViolationCount > 0) {
+        console.error(formatVerifyResult(verifyResult));
+        throw new Error('Workspace verification failed with ' + verifyResult.totalViolationCount + ' violation(s).');
+    }
 
-    await runPowerShellScript(manifestScriptPath, (args) => {
-        addStringArg(args, 'ManifestPath', manifestPath);
-    });
+    const { validateManifest } = require(path.join(PACKAGE_ROOT, 'src', 'validators', 'validate-manifest.ts'));
+    const manifestResult = validateManifest(manifestPath);
+    if (!manifestResult.passed) {
+        throw new Error('Manifest validation failed: ' + manifestResult.duplicates.length + ' duplicate(s) found.');
+    }
 
     console.log('Doctor: PASS');
     console.log(`Next: Execute task T-001 depth=2`);
@@ -1618,33 +1742,31 @@ async function handleReinit(commandArgv, packageJson) {
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
     const bundlePath = ensureBundleExists(targetRoot, 'reinit');
-    const reinitScriptPath = path.join(bundlePath, 'scripts', 'reinit.ps1');
 
-    await runPowerShellScript(reinitScriptPath, (args) => {
-        addStringArg(args, 'TargetRoot', targetRoot);
-        addStringArg(args, 'InitAnswersPath', options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH);
-        addSwitchArg(args, 'NoPrompt', options.noPrompt);
-        addSwitchArg(args, 'SkipVerify', options.skipVerify);
-        addSwitchArg(args, 'SkipManifestValidation', options.skipManifestValidation);
-        addStringArg(args, 'AssistantLanguage', options.assistantLanguage);
-        if (options.assistantBrevity !== undefined) {
-            addStringArg(args, 'AssistantBrevity', normalizeAssistantBrevity(options.assistantBrevity));
-        }
-        if (options.sourceOfTruth !== undefined) {
-            addStringArg(args, 'SourceOfTruth', normalizeSourceOfTruth(options.sourceOfTruth));
-        }
-        if (options.enforceNoAutoCommit !== undefined) {
-            addStringArg(args, 'EnforceNoAutoCommit', parseCliBoolean(options.enforceNoAutoCommit, 'EnforceNoAutoCommit') ? 'true' : 'false');
-        }
-        if (options.claudeOrchestratorFullAccess !== undefined) {
-            addStringArg(args, 'ClaudeOrchestratorFullAccess', parseCliBoolean(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess') ? 'true' : 'false');
-        }
-        if (options.tokenEconomyEnabled !== undefined) {
-            addStringArg(args, 'TokenEconomyEnabled', parseCliBoolean(options.tokenEconomyEnabled, 'TokenEconomyEnabled') ? 'true' : 'false');
-        }
-    }, {
-        interactive: !options.noPrompt && Boolean(process.stdin && process.stdin.isTTY)
+    // T-074: call TS implementation directly instead of PowerShell
+    const overrides = {};
+    if (options.assistantLanguage !== undefined) overrides.AssistantLanguage = options.assistantLanguage;
+    if (options.assistantBrevity !== undefined) overrides.AssistantBrevity = normalizeAssistantBrevity(options.assistantBrevity);
+    if (options.sourceOfTruth !== undefined) overrides.SourceOfTruth = normalizeSourceOfTruth(options.sourceOfTruth);
+    if (options.enforceNoAutoCommit !== undefined) overrides.EnforceNoAutoCommit = String(parseCliBoolean(options.enforceNoAutoCommit, 'EnforceNoAutoCommit'));
+    if (options.claudeOrchestratorFullAccess !== undefined) overrides.ClaudeOrchestratorFullAccess = String(parseCliBoolean(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess'));
+    if (options.tokenEconomyEnabled !== undefined) overrides.TokenEconomyEnabled = String(parseCliBoolean(options.tokenEconomyEnabled, 'TokenEconomyEnabled'));
+
+    const { runReinit } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'reinit.ts'));
+    const reinitResult = runReinit({
+        targetRoot,
+        bundleRoot: bundlePath,
+        initAnswersPath: options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+        overrides,
+        skipVerify: options.skipVerify,
+        skipManifestValidation: options.skipManifestValidation
     });
+    console.log('Reinit: PASS');
+    formatKeyValueOutput(reinitResult, [
+        'targetRoot', 'sourceOfTruth', 'canonicalEntrypoint',
+        'assistantLanguage', 'assistantBrevity',
+        'coreRuleUpdated', 'tokenEconomyConfigUpdated'
+    ]);
 }
 
 async function handleUpdate(commandArgv, packageJson) {
@@ -1673,21 +1795,26 @@ async function handleUpdate(commandArgv, packageJson) {
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
     const bundlePath = ensureBundleExists(targetRoot, 'update');
-    const updateScriptPath = path.join(bundlePath, 'scripts', 'check-update.ps1');
 
-    await runPowerShellScript(updateScriptPath, (args) => {
-        addStringArg(args, 'TargetRoot', targetRoot);
-        addStringArg(args, 'InitAnswersPath', options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH);
-        addStringArg(args, 'RepoUrl', options.repoUrl);
-        addStringArg(args, 'Branch', options.branch);
-        addSwitchArg(args, 'Apply', options.apply);
-        addSwitchArg(args, 'NoPrompt', options.noPrompt);
-        addSwitchArg(args, 'DryRun', options.dryRun);
-        addSwitchArg(args, 'SkipVerify', options.skipVerify);
-        addSwitchArg(args, 'SkipManifestValidation', options.skipManifestValidation);
-    }, {
-        interactive: !options.noPrompt && Boolean(process.stdin && process.stdin.isTTY)
+    // T-075: call TS implementation directly — Node-only runtime
+    const { runCheckUpdate } = require(path.join(PACKAGE_ROOT, 'src', 'lifecycle', 'check-update.ts'));
+    const updateResult = runCheckUpdate({
+        targetRoot,
+        bundleRoot: bundlePath,
+        initAnswersPath: options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+        repoUrl: options.repoUrl,
+        branch: options.branch,
+        apply: true,
+        noPrompt: options.noPrompt,
+        dryRun: options.dryRun,
+        skipVerify: options.skipVerify,
+        skipManifestValidation: options.skipManifestValidation
     });
+    formatKeyValueOutput(updateResult, [
+        'targetRoot', 'repoUrl', 'branch',
+        'currentVersion', 'latestVersion', 'updateAvailable',
+        'updateApplied', 'checkUpdateResult'
+    ]);
 }
 
 async function handleUninstall(commandArgv, packageJson) {
@@ -1715,26 +1842,144 @@ async function handleUninstall(commandArgv, packageJson) {
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
     const bundlePath = ensureBundleExists(targetRoot, 'uninstall');
-    const uninstallScriptPath = path.join(bundlePath, 'scripts', 'uninstall.ps1');
 
-    await runPowerShellScript(uninstallScriptPath, (args) => {
-        addStringArg(args, 'TargetRoot', targetRoot);
-        addStringArg(args, 'InitAnswersPath', options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH);
-        addSwitchArg(args, 'NoPrompt', options.noPrompt);
-        addSwitchArg(args, 'DryRun', options.dryRun);
-        addSwitchArg(args, 'SkipBackups', options.skipBackups);
-        if (options.keepPrimaryEntrypoint !== undefined) {
-            addStringArg(args, 'KeepPrimaryEntrypoint', normalizeYesNo(options.keepPrimaryEntrypoint, 'KeepPrimaryEntrypoint'));
-        }
-        if (options.keepTaskFile !== undefined) {
-            addStringArg(args, 'KeepTaskFile', normalizeYesNo(options.keepTaskFile, 'KeepTaskFile'));
-        }
-        if (options.keepRuntimeArtifacts !== undefined) {
-            addStringArg(args, 'KeepRuntimeArtifacts', normalizeYesNo(options.keepRuntimeArtifacts, 'KeepRuntimeArtifacts'));
-        }
-    }, {
-        interactive: !options.noPrompt && Boolean(process.stdin && process.stdin.isTTY)
+    // T-075: Node-only runtime
+    const { runUninstall } = require(path.join(PACKAGE_ROOT, 'src', 'lifecycle', 'uninstall.ts'));
+    const uninstallResult = runUninstall({
+        targetRoot,
+        bundleRoot: bundlePath,
+        initAnswersPath: options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+        noPrompt: options.noPrompt,
+        dryRun: options.dryRun,
+        skipBackups: options.skipBackups,
+        keepPrimaryEntrypoint: options.keepPrimaryEntrypoint !== undefined
+            ? normalizeYesNo(options.keepPrimaryEntrypoint, 'KeepPrimaryEntrypoint') : undefined,
+        keepTaskFile: options.keepTaskFile !== undefined
+            ? normalizeYesNo(options.keepTaskFile, 'KeepTaskFile') : undefined,
+        keepRuntimeArtifacts: options.keepRuntimeArtifacts !== undefined
+            ? normalizeYesNo(options.keepRuntimeArtifacts, 'KeepRuntimeArtifacts') : undefined
     });
+    formatKeyValueOutput(uninstallResult, [
+        'targetRoot', 'keepPrimaryEntrypoint', 'keepTaskFile',
+        'keepRuntimeArtifacts', 'dryRun', 'backupRoot',
+        'preservedRuntimePath', 'filesDeleted', 'directoriesDeleted',
+        'warningsCount'
+    ]);
+    console.log('Result: ' + (uninstallResult.result || 'SUCCESS'));
+}
+
+// ---------------------------------------------------------------------------
+// T-074: verify command (new CLI entrypoint)
+// ---------------------------------------------------------------------------
+
+function handleVerify(commandArgv, packageJson) {
+    const verifyDefinitions = {
+        '--target-root': { key: 'targetRoot', type: 'string' },
+        '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
+        '--source-of-truth': { key: 'sourceOfTruth', type: 'string' }
+    };
+    const { options } = parseOptions(commandArgv, verifyDefinitions);
+
+    if (options.help) { printHelp(packageJson); return; }
+    if (options.version) { console.log(packageJson.version); return; }
+
+    const targetRoot = normalizePathValue(options.targetRoot || '.');
+    ensureDirectoryExists(targetRoot, 'Target root');
+    const bundlePath = ensureBundleExists(targetRoot, 'verify');
+    const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+    const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'verify');
+    const sot = options.sourceOfTruth ? normalizeSourceOfTruth(options.sourceOfTruth) : answers.sourceOfTruth;
+
+    const { runVerify, formatVerifyResult } = require(path.join(PACKAGE_ROOT, 'src', 'validators', 'verify.ts'));
+    const result = runVerify({
+        targetRoot,
+        sourceOfTruth: sot,
+        initAnswersPath: answers.resolvedPath
+    });
+    console.log(formatVerifyResult(result));
+    if (result.totalViolationCount > 0) {
+        throw new Error('Workspace verification failed with ' + result.totalViolationCount + ' violation(s).');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// check-update command
+// ---------------------------------------------------------------------------
+
+function handleCheckUpdate(commandArgv, packageJson) {
+    const checkUpdateDefinitions = {
+        '--target-root': { key: 'targetRoot', type: 'string' },
+        '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
+        '--repo-url': { key: 'repoUrl', type: 'string' },
+        '--branch': { key: 'branch', type: 'string' },
+        '--apply': { key: 'apply', type: 'boolean' },
+        '--no-prompt': { key: 'noPrompt', type: 'boolean' },
+        '--dry-run': { key: 'dryRun', type: 'boolean' },
+        '--skip-verify': { key: 'skipVerify', type: 'boolean' },
+        '--skip-manifest-validation': { key: 'skipManifestValidation', type: 'boolean' }
+    };
+    const { options } = parseOptions(commandArgv, checkUpdateDefinitions);
+
+    if (options.help) { printHelp(packageJson); return; }
+    if (options.version) { console.log(packageJson.version); return; }
+
+    const targetRoot = normalizePathValue(options.targetRoot || '.');
+    ensureDirectoryExists(targetRoot, 'Target root');
+    const bundlePath = ensureBundleExists(targetRoot, 'check-update');
+
+    const { runCheckUpdate } = require(path.join(PACKAGE_ROOT, 'src', 'lifecycle', 'check-update.ts'));
+    const checkResult = runCheckUpdate({
+        targetRoot,
+        bundleRoot: bundlePath,
+        initAnswersPath: options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+        repoUrl: options.repoUrl,
+        branch: options.branch,
+        apply: options.apply,
+        noPrompt: options.noPrompt,
+        dryRun: options.dryRun,
+        skipVerify: options.skipVerify,
+        skipManifestValidation: options.skipManifestValidation
+    });
+    formatKeyValueOutput(checkResult, [
+        'targetRoot', 'repoUrl', 'branch',
+        'currentVersion', 'latestVersion', 'updateAvailable',
+        'checkUpdateResult'
+    ]);
+}
+
+// ---------------------------------------------------------------------------
+// T-074: gate command family (new CLI entrypoint)
+// ---------------------------------------------------------------------------
+
+function handleGate(commandArgv, packageJson) {
+    if (commandArgv.length === 0 || commandArgv[0] === '-h' || commandArgv[0] === '--help') {
+        const { getAllShimmedGateNames } = require(path.join(PACKAGE_ROOT, 'src', 'compat', 'shim-registry.ts'));
+        console.log(bold('Available gates:'));
+        getAllShimmedGateNames().forEach(function (name) { console.log('  ' + name); });
+        return;
+    }
+
+    const gateName = commandArgv[0];
+    const gateArgv = commandArgv.slice(1);
+
+    // Adapt PS-style args if present
+    const { adaptPsArgs } = require(path.join(PACKAGE_ROOT, 'src', 'compat', 'ps-arg-adapter.ts'));
+    const adaptedArgv = adaptPsArgs(gateArgv);
+
+    switch (gateName) {
+        case 'validate-manifest': {
+            const defs = { '--manifest-path': { key: 'manifestPath', type: 'string' } };
+            const { options } = parseOptions(adaptedArgv, defs);
+            const manifestPath = options.manifestPath || path.join('Octopus-agent-orchestrator', 'MANIFEST.md');
+            const { validateManifest, formatManifestResult } = require(path.join(PACKAGE_ROOT, 'src', 'validators', 'validate-manifest.ts'));
+            const result = validateManifest(manifestPath);
+            if (typeof formatManifestResult === 'function') console.log(formatManifestResult(result));
+            if (!result.passed) throw new Error('Manifest validation failed.');
+            return;
+        }
+        default:
+            throw new Error('Unknown gate: ' + gateName + '. Run "octopus gate --help" for available gates.');
+    }
 }
 
 async function main() {
@@ -1779,6 +2024,15 @@ async function main() {
             return;
         case 'uninstall':
             await handleUninstall(commandArgv, packageJson);
+            return;
+        case 'verify':
+            handleVerify(commandArgv, packageJson);
+            return;
+        case 'check-update':
+            handleCheckUpdate(commandArgv, packageJson);
+            return;
+        case 'gate':
+            handleGate(commandArgv, packageJson);
             return;
         default:
             throw new Error(`Unsupported command: ${commandName}`);

@@ -109,10 +109,6 @@ Describe 'Contract: package.json aliases' {
         $script:PackageJson.bin.oao | Should -Be 'bin/octopus.js'
         $script:PackageJson.bin.'octopus-agent-orchestrator' | Should -Be 'bin/octopus.js'
     }
-
-    It 'package.json engines requires Node >= 16.14.0' {
-        $script:PackageJson.engines.node | Should -Be '>=16.14.0'
-    }
 }
 
 Describe 'Contract: LIFECYCLE_COMMANDS set' {
@@ -295,6 +291,11 @@ Describe 'Contract: contract doc exists' {
         $contractContent = Get-Content -LiteralPath $script:ContractDocPath -Raw
         $currentVersion = (Get-Content -LiteralPath $script:VersionPath -Raw).Trim()
         $contractContent | Should -Match ([regex]::Escape($currentVersion))
+    }
+
+    It 'contract doc preserves the shipped M0 Node floor' {
+        $contractContent = Get-Content -LiteralPath $script:ContractDocPath -Raw
+        $contractContent | Should -Match 'Node\.js .+16\.14'
     }
 
     It 'contract doc covers required lifecycle scenarios including verify' {

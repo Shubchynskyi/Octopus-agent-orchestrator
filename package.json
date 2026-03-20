@@ -9,10 +9,16 @@
     "oao": "bin/octopus.js",
     "octopus-agent-orchestrator": "bin/octopus.js"
   },
+  "scripts": {
+    "build:node-foundation": "node --input-type=commonjs --eval \"require.extensions['.ts']=require.extensions['.js'];require(process.argv[1]).runNodeFoundationBuild()\" ./scripts/node-foundation/build.ts",
+    "test:node-foundation": "node --input-type=commonjs --eval \"require.extensions['.ts']=require.extensions['.js'];require(process.argv[1]).runNodeFoundationTests()\" ./scripts/node-foundation/test.ts"
+  },
   "files": [
     ".gitattributes",
     "bin",
     "scripts",
+    "src",
+    "tsconfig.node-foundation.json",
     "template",
     "AGENT_INIT_PROMPT.md",
     "CHANGELOG.md",
@@ -31,7 +37,7 @@
     "@types/node": "^22.14.1"
   },
   "engines": {
-    "node": ">=16.14.0"
+    "node": ">=20.0.0"
   },
   "keywords": [
     "agents",

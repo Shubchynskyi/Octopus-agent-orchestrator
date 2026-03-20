@@ -6,6 +6,7 @@ Run:
 
 from __future__ import annotations
 
+import os
 import hashlib
 import json
 import shutil
@@ -42,6 +43,7 @@ def resolve_bash() -> str | None:
 
 
 BASH_PATH = resolve_bash()
+BASH_TEST_ENV = {**os.environ, "OCTOPUS_COMPAT_SHIM": "0"}
 
 
 def write_text(path: Path, content: str) -> None:
@@ -233,6 +235,7 @@ def run_completion_gate(workspace_root: Path, task_id: str = "T-015") -> subproc
             task_id,
         ],
         cwd=REPO_ROOT,
+        env=BASH_TEST_ENV,
         capture_output=True,
         text=True,
         check=False,
