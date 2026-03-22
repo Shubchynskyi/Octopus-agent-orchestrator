@@ -2,20 +2,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-    DEFAULT_BUNDLE_NAME,
     DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
     SOURCE_OF_TRUTH_VALUES
 } = require('../../core/constants.ts');
 
-const {
-    getStatusSnapshot,
-    formatStatusSnapshot
-} = require('../../validators/status.ts');
+const { getStatusSnapshot } = require('../../validators/status.ts');
 
 const {
     acquireSourceRoot,
-    addStringArg,
-    addSwitchArg,
     bold,
     ensureDirectoryExists,
     getAgentInitPromptPath,
@@ -26,7 +20,7 @@ const {
     normalizeAssistantBrevity,
     normalizePathValue,
     normalizeSourceOfTruth,
-    parseCliBoolean,
+    parseBooleanText,
     parseOptionalText,
     parseOptions,
     printBanner,
@@ -37,7 +31,6 @@ const {
     promptTextInput,
     readOptionalJsonFile,
     resolvePathInsideRoot,
-    runPowerShellScript,
     supportsInteractivePrompts,
     syncBundleItems,
     tryNormalizeAssistantBrevity,
@@ -285,59 +278,105 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
             : null;
 
         const bundlePath = getBundlePath(targetRoot);
-        if (fs.existsSync(bundlePath) && fs.lstatSync(bundlePath).isDirectory()) {
-            syncBundleItems(source.sourceRoot, bundlePath);
-        } else if (!options.dryRun) {
-            syncBundleItems(source.sourceRoot, bundlePath);
+        const sourceResolved = path.resolve(source.sourceRoot);
+        const bundleResolved = path.resolve(bundlePath);
+        if (sourceResolved.toLowerCase() !== bundleResolved.toLowerCase()) {
+            if (fs.existsSync(bundlePath) && fs.lstatSync(bundlePath).isDirectory()) {
+                syncBundleItems(source.sourceRoot, bundlePath);
+            } else if (!options.dryRun) {
+                syncBundleItems(source.sourceRoot, bundlePath);
+            }
         }
 
         const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
-        const setupScriptPath = path.join(effectiveBundlePath, 'scripts', 'setup.ps1');
         const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+        const resolvedAnswers = promptedAnswers || {};
+        const assistantLanguage = resolvedAnswers.assistantLanguage || options.assistantLanguage || 'English';
+        const assistantBrevity = resolvedAnswers.assistantBrevity
+            || (options.assistantBrevity !== undefined ? normalizeAssistantBrevity(options.assistantBrevity) : 'concise');
+        const sourceOfTruth = resolvedAnswers.sourceOfTruth
+            || (options.sourceOfTruth !== undefined ? normalizeSourceOfTruth(options.sourceOfTruth) : 'Claude');
+        const enforceNoAutoCommit = resolvedAnswers.enforceNoAutoCommit !== undefined
+            ? (String(resolvedAnswers.enforceNoAutoCommit) === 'true')
+            : (options.enforceNoAutoCommit !== undefined ? parseBooleanText(options.enforceNoAutoCommit, 'EnforceNoAutoCommit') : true);
+        const claudeOrchestratorFullAccess = resolvedAnswers.claudeOrchestratorFullAccess !== undefined
+            ? (String(resolvedAnswers.claudeOrchestratorFullAccess) === 'true')
+            : (options.claudeOrchestratorFullAccess !== undefined ? parseBooleanText(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess') : false);
+        const tokenEconomyEnabled = resolvedAnswers.tokenEconomyEnabled !== undefined
+            ? (String(resolvedAnswers.tokenEconomyEnabled) === 'true')
+            : (options.tokenEconomyEnabled !== undefined ? parseBooleanText(options.tokenEconomyEnabled, 'TokenEconomyEnabled') : true);
+        const rawActiveAgentFiles = resolvedAnswers.activeAgentFiles || options.activeAgentFiles || null;
+        const activeAgentFiles = normalizeActiveAgentFiles(rawActiveAgentFiles, sourceOfTruth) || [];
+        const collectedVia = canUseInteractivePrompts ? 'CLI_INTERACTIVE' : 'CLI_NONINTERACTIVE';
+        const resolvedInitAnswersPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
 
-        await runPowerShellScript(setupScriptPath, function (args) {
-            addStringArg(args, 'TargetRoot', targetRoot);
-            addStringArg(args, 'InitAnswersPath', initAnswersPath);
-            addSwitchArg(args, 'DryRun', options.dryRun);
-            addSwitchArg(args, 'RunVerify', options.runVerify);
-            addSwitchArg(args, 'NoPrompt', options.noPrompt);
-            addSwitchArg(args, 'SkipVerify', options.skipVerify);
-            addSwitchArg(args, 'SkipManifestValidation', options.skipManifestValidation);
-            addStringArg(args, 'AssistantLanguage',
-                promptedAnswers ? promptedAnswers.assistantLanguage : options.assistantLanguage);
-            if (promptedAnswers || options.assistantBrevity !== undefined) {
-                addStringArg(args, 'AssistantBrevity',
-                    promptedAnswers ? promptedAnswers.assistantBrevity : normalizeAssistantBrevity(options.assistantBrevity));
+        if (!options.dryRun) {
+            const initAnswersDir = path.dirname(resolvedInitAnswersPath);
+            if (!fs.existsSync(initAnswersDir)) {
+                fs.mkdirSync(initAnswersDir, { recursive: true });
             }
-            addStringArg(args, 'ActiveAgentFiles',
-                promptedAnswers ? promptedAnswers.activeAgentFiles : options.activeAgentFiles);
-            if (promptedAnswers || options.sourceOfTruth !== undefined) {
-                addStringArg(args, 'SourceOfTruth',
-                    promptedAnswers ? promptedAnswers.sourceOfTruth : normalizeSourceOfTruth(options.sourceOfTruth));
+            const { serializeInitAnswers } = require('../../schemas/init-answers.ts');
+            const serialized = serializeInitAnswers({
+                AssistantLanguage: assistantLanguage,
+                AssistantBrevity: assistantBrevity,
+                SourceOfTruth: sourceOfTruth,
+                EnforceNoAutoCommit: enforceNoAutoCommit,
+                ClaudeOrchestratorFullAccess: claudeOrchestratorFullAccess,
+                TokenEconomyEnabled: tokenEconomyEnabled,
+                CollectedVia: collectedVia,
+                ActiveAgentFiles: activeAgentFiles
+            });
+            fs.writeFileSync(resolvedInitAnswersPath, JSON.stringify(serialized, null, 2), 'utf8');
+        }
+
+        const { runInstall } = require('../../materialization/install.ts');
+        const { runInit } = require('../../materialization/init.ts');
+        runInstall({
+            targetRoot,
+            bundleRoot: effectiveBundlePath,
+            assistantLanguage,
+            assistantBrevity,
+            sourceOfTruth,
+            initAnswersPath: resolvedInitAnswersPath,
+            dryRun: options.dryRun,
+            initRunner: function (initOptions) {
+                runInit(Object.assign({ bundleRoot: effectiveBundlePath }, initOptions));
             }
-            if (promptedAnswers || options.enforceNoAutoCommit !== undefined) {
-                addStringArg(args, 'EnforceNoAutoCommit',
-                    promptedAnswers
-                        ? promptedAnswers.enforceNoAutoCommit
-                        : (parseCliBoolean(options.enforceNoAutoCommit, 'EnforceNoAutoCommit') ? 'true' : 'false'));
-            }
-            if (promptedAnswers || options.claudeOrchestratorFullAccess !== undefined) {
-                addStringArg(args, 'ClaudeOrchestratorFullAccess',
-                    promptedAnswers
-                        ? promptedAnswers.claudeOrchestratorFullAccess
-                        : (parseCliBoolean(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess') ? 'true' : 'false'));
-            }
-            if (promptedAnswers || options.tokenEconomyEnabled !== undefined) {
-                addStringArg(args, 'TokenEconomyEnabled',
-                    promptedAnswers
-                        ? promptedAnswers.tokenEconomyEnabled
-                        : (parseCliBoolean(options.tokenEconomyEnabled, 'TokenEconomyEnabled') ? 'true' : 'false'));
-            }
-        }, {
-            interactive: interactiveSetup && Boolean(process.stdin && process.stdin.isTTY)
         });
 
+        let manifestStatus = options.skipManifestValidation ? 'SKIPPED' : 'PASS';
+        if (!options.skipManifestValidation) {
+            try {
+                const manifestPath = path.join(effectiveBundlePath, 'MANIFEST.md');
+                const { validateManifest } = require('../../validators/validate-manifest.ts');
+                const manifestResult = validateManifest(manifestPath);
+                manifestStatus = manifestResult.passed ? 'PASS' : 'FAIL';
+            } catch (_error) {
+                manifestStatus = 'ERROR';
+            }
+        }
+
         const snapshot = getStatusSnapshot(targetRoot, initAnswersPath);
+        let verifyStatus = options.skipVerify ? 'SKIPPED' : 'PENDING_AGENT_CONTEXT';
+        if (!options.skipVerify) {
+            try {
+                if (snapshot.readyForTasks || options.runVerify) {
+                    const { runVerify } = require('../../validators/verify.ts');
+                    const verifyResult = runVerify({
+                        targetRoot,
+                        sourceOfTruth,
+                        initAnswersPath: resolvedInitAnswersPath
+                    });
+                    verifyStatus = verifyResult.totalViolationCount > 0 ? 'FAIL' : 'PASS';
+                }
+            } catch (_error) {
+                verifyStatus = 'PENDING_AGENT_CONTEXT';
+            }
+        }
+
+        console.log(`Setup: ${manifestStatus === 'FAIL' ? 'FAIL' : 'PASS'}`);
+        console.log(`Verify: ${verifyStatus}`);
+        console.log(`ManifestValidation: ${manifestStatus}`);
         console.log('');
         printBanner(
             packageJson,

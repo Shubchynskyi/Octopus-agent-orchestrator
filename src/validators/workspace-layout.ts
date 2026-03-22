@@ -10,7 +10,7 @@ const { pathExists, readTextFile } = require('../core/fs.ts');
 
 /**
  * Required workspace paths that must exist after a full install.
- * Matches the $requiredPaths list in scripts/verify.ps1.
+ * Matches the deployed Node-only bundle surface.
  */
 const BASE_REQUIRED_PATHS = Object.freeze([
     '.qwen/settings.json',
@@ -19,18 +19,14 @@ const BASE_REQUIRED_PATHS = Object.freeze([
     'Octopus-agent-orchestrator/VERSION',
     'Octopus-agent-orchestrator/package.json',
     'Octopus-agent-orchestrator/bin/octopus.js',
+    'Octopus-agent-orchestrator/src',
+    'Octopus-agent-orchestrator/src/cli',
+    'Octopus-agent-orchestrator/src/materialization',
+    'Octopus-agent-orchestrator/src/validators',
+    'Octopus-agent-orchestrator/src/gates',
+    'Octopus-agent-orchestrator/src/lifecycle',
     'Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md',
     'Octopus-agent-orchestrator/HOW_TO.md',
-    'Octopus-agent-orchestrator/scripts/reinit.ps1',
-    'Octopus-agent-orchestrator/scripts/reinit.sh',
-    'Octopus-agent-orchestrator/scripts/uninstall.ps1',
-    'Octopus-agent-orchestrator/scripts/uninstall.sh',
-    'Octopus-agent-orchestrator/scripts/check-update.ps1',
-    'Octopus-agent-orchestrator/scripts/check-update.sh',
-    'Octopus-agent-orchestrator/scripts/update.ps1',
-    'Octopus-agent-orchestrator/scripts/update.sh',
-    'Octopus-agent-orchestrator/scripts/lib/managed-config-contracts.ps1',
-    'Octopus-agent-orchestrator/scripts/lib/rule-contract-migrations.ps1',
     'Octopus-agent-orchestrator/MANIFEST.md',
     'Octopus-agent-orchestrator/live/version.json',
     'Octopus-agent-orchestrator/live/config/review-capabilities.json',
@@ -38,28 +34,6 @@ const BASE_REQUIRED_PATHS = Object.freeze([
     'Octopus-agent-orchestrator/live/config/token-economy.json',
     'Octopus-agent-orchestrator/live/config/output-filters.json',
     'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.sh',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.ps1',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.sh',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.ps1',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.sh',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.sh',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.sh',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.ps1',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.sh',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1',
-    'Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.sh',
     'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md',
     'Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md',
     'Octopus-agent-orchestrator/live/skills/security-review/SKILL.md',
@@ -110,7 +84,7 @@ const PROJECT_COMMAND_PLACEHOLDERS = Object.freeze([
 /**
  * Template placeholder regex: {{SOME_TOKEN}}.
  */
-const TEMPLATE_PLACEHOLDER_PATTERN = /\{\{[A-Z0-9_]+\}\}/;
+const TEMPLATE_PLACEHOLDER_PATTERN = /{{[A-Z0-9_]+}}/;
 
 /**
  * Managed block markers.

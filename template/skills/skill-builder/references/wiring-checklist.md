@@ -8,8 +8,7 @@ For every new live-only specialist skill:
 4. If supported key (`api|test|performance|infra|dependency`), set flag in:
    - `Octopus-agent-orchestrator/live/config/review-capabilities.json`
 5. If mandatory gate requested, confirm script support exists:
-   - `classify-change.ps1` emits `required_reviews.<key>`
-   - `required-reviews-check.ps1` validates `<Key>ReviewVerdict`
+   - `classify-change` emits `required_reviews.<key>`
+   - `required-reviews-check` validates `<Key>ReviewVerdict`
 6. Run verification and manifest validation.
 7. Record added skills and flags in final report.
-

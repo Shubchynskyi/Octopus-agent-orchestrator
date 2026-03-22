@@ -2,8 +2,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { auditReviewArtifactCompaction } = require('../gate-runtime/review-context.ts');
-const { assertValidTaskId, appendTaskEvent } = require('../gate-runtime/task-events.ts');
-const { fileSha256, normalizePath, joinOrchestratorPath, parseBool, resolvePathInsideRepo, toStringArray, toPosix } = require('./helpers.ts');
+const { assertValidTaskId } = require('../gate-runtime/task-events.ts');
+const { fileSha256, normalizePath } = require('./helpers.ts');
 
 const REVIEW_CONTRACTS = [
     ['code', 'REVIEW PASSED'],
@@ -51,7 +51,7 @@ function testExpectedVerdict(errors, label, required, skippedByOverride, actualV
 
 /**
  * Validate preflight for required-reviews-check.
- * Matches Python validate_preflight in required-reviews-check.sh.
+ * Validates preflight payload shape for the Node review gate.
  */
 function validatePreflightForReview(preflightPath, explicitTaskId) {
     let preflight;
@@ -119,7 +119,7 @@ function validatePreflightForReview(preflightPath, explicitTaskId) {
 
 /**
  * Check required reviews validation.
- * Pure-logic core matching required-reviews-check.sh.
+ * Pure-logic core for the required reviews gate.
  */
 function checkRequiredReviews(options) {
     const validatedPreflight = options.validatedPreflight;

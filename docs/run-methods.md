@@ -114,9 +114,9 @@ octopus doctor --target-root .
 ```powershell
 cd D:\Projects\Octopus-agent-orchestrator
 
-pwsh -NoLogo -NoProfile -File template\scripts\tests\npm-cli-bootstrap.Tests.ps1
-pwsh -NoLogo -NoProfile -File template\scripts\tests\reinit-flow.Tests.ps1
-pwsh -NoLogo -NoProfile -File live\scripts\agent-gates\validate-manifest.ps1 -ManifestPath MANIFEST.md
+Invoke-Pester -Path template\scripts\tests\npm-cli-bootstrap.Tests.ps1 -CI
+Invoke-Pester -Path template\scripts\tests\node-migration-contract.Tests.ps1 -CI
+node .\bin\octopus.js gate validate-manifest --manifest-path MANIFEST.md
 npm pack --dry-run
 ```
 

@@ -26,7 +26,7 @@ Pass criteria:
 ## Gate 6: Checks
 Pass criteria:
 - Compile gate passed before review phase:
-  - `compile-gate.ps1` / `compile-gate.sh` result is pass.
+  - `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate` result is pass.
   - Compile evidence artifact exists: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-compile-gate.json`.
   - Task timeline contains `COMPILE_GATE_PASSED`.
   - No preflight scope drift is reported by compile gate.
@@ -39,13 +39,13 @@ Pass criteria:
 - Security review verdict `SECURITY REVIEW PASSED` when `required_reviews.security=true`, otherwise `NOT_REQUIRED`.
 - Refactor review verdict `REFACTOR REVIEW PASSED` when `required_reviews.refactor=true`, otherwise `NOT_REQUIRED`.
 - Review artifacts satisfy `TASK.md` artifact contract.
-- `required-reviews-check.ps1` / `.sh` result is pass.
+- `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check` result is pass.
 - `required-reviews-check` compile-evidence check is pass for same task id.
 - Review gate evidence artifact exists: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-review-gate.json`.
 
 ## Gate 8: Documentation Finalization
 Pass criteria:
-- Documentation impact gate passed (`doc-impact-gate.ps1` / `.sh`).
+- Documentation impact gate passed (`node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate`).
 - Documentation impact artifact exists: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-doc-impact.json`.
 - Required docs updated for impacted behavior.
 - Changelog updated for runtime behavior changes.
@@ -53,7 +53,7 @@ Pass criteria:
 ## Gate 9: Completion
 Pass criteria:
 - All required gates passed.
-- `completion-gate.ps1` / `.sh` result is pass.
+- `node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate` result is pass.
 - Timeline contains `COMPLETION_GATE_PASSED`.
 - Final PASS review artifacts keep active `Findings by Severity` and `Residual Risks` empty (`none`), or record accepted non-blocking follow-up only in `Deferred Findings` with `Justification:`.
 - Task marked `DONE`.
@@ -64,5 +64,4 @@ Pass criteria:
 - Any failed gate blocks next gates.
 - Set task status to `BLOCKED` when gate cannot be satisfied now.
 - Resume only after blocker is resolved.
-
 

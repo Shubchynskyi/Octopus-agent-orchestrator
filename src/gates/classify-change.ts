@@ -3,24 +3,16 @@ const path = require('node:path');
 
 const { matchAnyRegex } = require('../gate-runtime/text-utils.ts');
 const {
-    appendMetricsEvent,
-    countFileLines,
     joinOrchestratorPath,
-    normalizePath,
     normalizeRootPrefixes,
     orchestratorRelativePath,
-    parseBool,
-    resolvePathInsideRepo,
-    resolveProjectRoot,
-    resolveTaskId,
     testPathPrefix,
     toPosix,
     toStringArray
 } = require('./helpers.ts');
-const { assertValidTaskId, appendTaskEvent } = require('../gate-runtime/task-events.ts');
 
 /**
- * Default classification config matching classify-change.ps1 / .sh
+ * Default classification config for the Node gate runtime.
  */
 function getDefaultClassificationConfig(repoRoot) {
     return {
@@ -40,7 +32,7 @@ function getDefaultClassificationConfig(repoRoot) {
                 '(^|/)(db|database|migrations?|schema)(/|$)',
                 '\\.sql$',
                 '(Repository|Dao|Specification|Query|Migration)[^/]*\\.(java|kt|ts|js|py|go|cs|rb|php)$',
-                '(?i)(typeorm|prisma|flyway|liquibase|alembic|knex|sequelize)'
+                '(typeorm|prisma|flyway|liquibase|alembic|knex|sequelize)'
             ],
             security: [
                 '(^|/)(auth|security|oauth|jwt|token|rbac|acl|keycloak|okta|saml|openid|mfa|crypt|encryption|certificate|secret|vault|webhook|payment|checkout|billing)(/|\\.|$)'
@@ -162,7 +154,7 @@ function getReviewCapabilities(repoRoot) {
 
 /**
  * Pure-logic classification of changed files.
- * Matches the output shape of classify-change.ps1 / classify-change.sh.
+ * Produces the canonical classify-change output shape.
  */
 function classifyChange(options) {
     const normalizedFiles = options.normalizedFiles || [];

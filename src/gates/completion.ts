@@ -1,9 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { assertValidTaskId, inspectTaskEventFile, appendTaskEvent } = require('../gate-runtime/task-events.ts');
-const { auditReviewArtifactCompaction } = require('../gate-runtime/review-context.ts');
-const { fileSha256, normalizePath, joinOrchestratorPath, parseBool, resolvePathInsideRepo, toPosix } = require('./helpers.ts');
+const { assertValidTaskId } = require('../gate-runtime/task-events.ts');
+const { fileSha256, normalizePath, joinOrchestratorPath, resolvePathInsideRepo } = require('./helpers.ts');
 
 const REVIEW_CONTRACTS = [
     ['code', 'REVIEW PASSED'],
@@ -276,14 +275,169 @@ function validatePreflightForCompletion(preflightPath, explicitTaskId) {
     };
 }
 
+function readJsonArtifact(artifactPath, label, errors, { required = true } = {}) {
+    const resolvedPath = path.resolve(String(artifactPath || ''));
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+        if (required) {
+            errors.push(`${label} artifact not found: ${normalizePath(resolvedPath)}`);
+        }
+        return null;
+    }
+
+    try {
+        return JSON.parse(fs.readFileSync(resolvedPath, 'utf8'));
+    } catch {
+        errors.push(`${label} artifact is not valid JSON: ${normalizePath(resolvedPath)}`);
+        return null;
+    }
+}
+
+function readTaskTimeline(timelinePath, errors) {
+    const resolvedPath = path.resolve(String(timelinePath || ''));
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+        errors.push(`Task timeline not found: ${normalizePath(resolvedPath)}`);
+        return [];
+    }
+
+    const lines = fs.readFileSync(resolvedPath, 'utf8').split('\n').filter(line => line.trim());
+    const events = [];
+    for (const line of lines) {
+        try {
+            events.push(JSON.parse(line));
+        } catch {
+            errors.push(`Task timeline contains invalid JSON line: ${normalizePath(resolvedPath)}`);
+            break;
+        }
+    }
+    return events;
+}
+
+function ensurePassedArtifactStatus(artifact, label, errors) {
+    if (!artifact) {
+        return;
+    }
+    if (String(artifact.status || '').trim().toUpperCase() !== 'PASSED') {
+        errors.push(`${label} artifact status must be PASSED, got '${String(artifact.status || 'UNKNOWN')}'.`);
+    }
+    if (String(artifact.outcome || '').trim().toUpperCase() !== 'PASS') {
+        errors.push(`${label} artifact outcome must be PASS, got '${String(artifact.outcome || 'UNKNOWN')}'.`);
+    }
+}
+
+function runCompletionGate(options) {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const preflightPath = resolvePathInsideRepo(options.preflightPath, repoRoot);
+    const validatedPreflight = validatePreflightForCompletion(preflightPath, options.taskId || '');
+    const errors = [...validatedPreflight.errors];
+    const resolvedTaskId = validatedPreflight.resolved_task_id;
+
+    const reviewsRoot = options.reviewsRoot
+        ? resolvePathInsideRepo(options.reviewsRoot, repoRoot, { allowMissing: true })
+        : path.dirname(preflightPath);
+    const compileEvidencePath = options.compileEvidencePath
+        ? resolvePathInsideRepo(options.compileEvidencePath, repoRoot, { allowMissing: true })
+        : path.join(reviewsRoot, `${resolvedTaskId}-compile-gate.json`);
+    const reviewEvidencePath = options.reviewEvidencePath
+        ? resolvePathInsideRepo(options.reviewEvidencePath, repoRoot, { allowMissing: true })
+        : path.join(reviewsRoot, `${resolvedTaskId}-review-gate.json`);
+    const docImpactPath = options.docImpactPath
+        ? resolvePathInsideRepo(options.docImpactPath, repoRoot, { allowMissing: true })
+        : path.join(reviewsRoot, `${resolvedTaskId}-doc-impact.json`);
+    const timelinePath = options.timelinePath
+        ? resolvePathInsideRepo(options.timelinePath, repoRoot, { allowMissing: true })
+        : joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`));
+
+    const compileEvidence = readJsonArtifact(compileEvidencePath, 'Compile gate', errors);
+    const reviewEvidence = readJsonArtifact(reviewEvidencePath, 'Review gate', errors);
+    const docImpactEvidence = readJsonArtifact(docImpactPath, 'Doc impact gate', errors);
+
+    ensurePassedArtifactStatus(compileEvidence, 'Compile gate', errors);
+    ensurePassedArtifactStatus(reviewEvidence, 'Review gate', errors);
+    ensurePassedArtifactStatus(docImpactEvidence, 'Doc impact gate', errors);
+
+    const timeline = readTaskTimeline(timelinePath, errors);
+    const timelineEventTypes = new Set(timeline.map(event => String(event.event_type || '').trim().toUpperCase()).filter(Boolean));
+    if (!timelineEventTypes.has('COMPILE_GATE_PASSED')) {
+        errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing COMPILE_GATE_PASSED.`);
+    }
+    if (!timelineEventTypes.has('REVIEW_GATE_PASSED')) {
+        errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing REVIEW_GATE_PASSED.`);
+    }
+
+    const requiredReviews = validatedPreflight.preflight && typeof validatedPreflight.preflight.required_reviews === 'object'
+        ? validatedPreflight.preflight.required_reviews
+        : {};
+    const reviewArtifacts = {};
+
+    for (const [reviewKey] of REVIEW_CONTRACTS) {
+        const artifactPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}.md`);
+        const artifactExists = fs.existsSync(artifactPath) && fs.statSync(artifactPath).isFile();
+        const required = !!requiredReviews[reviewKey];
+
+        if (!artifactExists) {
+            if (required) {
+                errors.push(`Required review artifact not found: ${normalizePath(artifactPath)}`);
+            }
+            continue;
+        }
+
+        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+        const findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, artifactContent);
+        reviewArtifacts[reviewKey] = {
+            path: normalizePath(artifactPath),
+            findings_evidence: findingsEvidence
+        };
+        if (Array.isArray(findingsEvidence.violations) && findingsEvidence.violations.length > 0) {
+            errors.push(...findingsEvidence.violations);
+        }
+    }
+
+    const status = errors.length > 0 ? 'FAILED' : 'PASSED';
+    const outcome = errors.length > 0 ? 'FAIL' : 'PASS';
+
+    return {
+        status,
+        outcome,
+        task_id: resolvedTaskId,
+        preflight_path: normalizePath(preflightPath),
+        reviews_root: normalizePath(reviewsRoot),
+        compile_evidence_path: normalizePath(compileEvidencePath),
+        review_evidence_path: normalizePath(reviewEvidencePath),
+        doc_impact_path: normalizePath(docImpactPath),
+        timeline_path: normalizePath(timelinePath),
+        review_artifacts: reviewArtifacts,
+        violations: errors
+    };
+}
+
+function formatCompletionGateResult(result) {
+    const lines = [
+        result.outcome === 'PASS' ? 'COMPLETION_GATE_PASSED' : 'COMPLETION_GATE_FAILED',
+        `TaskId: ${result.task_id}`,
+        `Status: ${result.status}`,
+        `Outcome: ${result.outcome}`
+    ];
+
+    if (Array.isArray(result.violations) && result.violations.length > 0) {
+        lines.push('Violations:');
+        for (const violation of result.violations) {
+            lines.push(`- ${violation}`);
+        }
+    }
+
+    return lines.join('\n');
+}
+
 module.exports = {
     EMPTY_REVIEW_MARKERS,
     REVIEW_CONTRACTS,
+    formatCompletionGateResult,
     extractMarkdownSectionLines,
     getFindingsBySeverity,
     getMarkdownMeaningfulEntries,
     getReviewArtifactFindingsEvidence,
     isMeaningfulReviewEntry,
     normalizeReviewListText,
+    runCompletionGate,
     validatePreflightForCompletion
 };

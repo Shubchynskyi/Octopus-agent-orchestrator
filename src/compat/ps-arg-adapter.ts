@@ -1,11 +1,9 @@
 /**
- * PowerShell argument adapter for Node compatibility shims.
+ * Legacy PowerShell-style argument adapter for the Node CLI.
  *
- * Converts -PascalCase arguments (used by PowerShell scripts) to
- * --kebab-case format (used by the Node CLI router). This enables
- * .sh and .ps1 entrypoints to delegate transparently to
- *   node bin/octopus.js <command> <translated-args>
- * without requiring callers to change their invocation syntax.
+ * Converts `-PascalCase` arguments to `--kebab-case` so callers that still
+ * emit the old shell-style flag syntax can continue using the Node router
+ * without changing their invocation shape immediately.
  */
 
 const PS_ARG_MAP = Object.freeze({
@@ -64,15 +62,37 @@ const PS_ARG_MAP = Object.freeze({
     '-FullDiffPath': '--full-diff-path',
     '-Decision': '--decision',
     '-BehaviorChanged': '--behavior-changed',
+    '-ArtifactPath': '--artifact-path',
+    '-Actor': '--actor',
+    '-ApiReviewVerdict': '--api-review-verdict',
     '-ChangelogUpdated': '--changelog-updated',
+    '-CodeReviewVerdict': '--code-review-verdict',
+    '-DbReviewVerdict': '--db-review-verdict',
+    '-DependencyReviewVerdict': '--dependency-review-verdict',
+    '-DetailsJson': '--details-json',
+    '-DocImpactPath': '--doc-impact-path',
+    '-SensitiveScopeReviewed': '--sensitive-scope-reviewed',
     '-SensitiveReviewed': '--sensitive-reviewed',
     '-DocsUpdated': '--docs-updated',
+    '-EventType': '--event-type',
+    '-InfraReviewVerdict': '--infra-review-verdict',
+    '-Message': '--message',
+    '-Outcome': '--outcome',
+    '-OverrideArtifactPath': '--override-artifact-path',
+    '-PerformanceReviewVerdict': '--performance-review-verdict',
     '-Rationale': '--rationale',
+    '-ReviewEvidencePath': '--review-evidence-path',
+    '-ReviewsRoot': '--reviews-root',
+    '-SecurityReviewVerdict': '--security-review-verdict',
     '-SkipReviews': '--skip-reviews',
+    '-SkipReason': '--skip-reason',
+    '-TestReviewVerdict': '--test-review-verdict',
+    '-TimelinePath': '--timeline-path',
     '-EventsRoot': '--events-root',
     '-IncludeDetails': '--include-details',
     '-AsJson': '--as-json',
-    '-MetadataPath': '--metadata-path'
+    '-MetadataPath': '--metadata-path',
+    '-RefactorReviewVerdict': '--refactor-review-verdict'
 });
 
 /**
@@ -93,17 +113,17 @@ function convertPsArgToCliTokens(token) {
     if (colonIndex > 0) {
         var name = token.substring(0, colonIndex);
         var value = token.substring(colonIndex + 1);
-        var mapped = PS_ARG_MAP[name];
-        if (!mapped) return [token];
+        var mappedName = PS_ARG_MAP[name];
+        if (!mappedName) return [token];
 
         var lower = value.toLowerCase();
-        if (lower === '$true' || lower === 'true') return [mapped];
+        if (lower === '$true' || lower === 'true') return [mappedName];
         if (lower === '$false' || lower === 'false') return [];
-        return [mapped, value];
+        return [mappedName, value];
     }
 
-    var mapped = PS_ARG_MAP[token];
-    return mapped ? [mapped] : [token];
+    var mappedToken = PS_ARG_MAP[token];
+    return mappedToken ? [mappedToken] : [token];
 }
 
 /**

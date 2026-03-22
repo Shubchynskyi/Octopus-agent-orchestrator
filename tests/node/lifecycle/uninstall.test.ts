@@ -5,7 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 
 const { runUninstall, parseBooleanAnswer } = require('../../../src/lifecycle/uninstall.ts');
-const { removePathRecursive, copyPathRecursive } = require('../../../src/lifecycle/common.ts');
+const { removePathRecursive } = require('../../../src/lifecycle/common.ts');
 const { MANAGED_START, MANAGED_END, COMMIT_GUARD_START, COMMIT_GUARD_END } = require('../../../src/materialization/content-builders.ts');
 
 function findRepoRoot() {
@@ -256,7 +256,7 @@ describe('runUninstall', () => {
                 JSON.stringify({
                     permissions: {
                         allow: [
-                            'Bash(pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
+                            'Bash(node Octopus-agent-orchestrator/bin/octopus.js *:*)',
                             'user-custom-permission'
                         ]
                     }

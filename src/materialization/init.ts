@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
-const { readJsonFile, writeJsonFile } = require('../core/json.ts');
+const { readJsonFile } = require('../core/json.ts');
 const {
     getCanonicalEntrypointFile
 } = require('./common.ts');
@@ -13,15 +13,19 @@ const {
 } = require('./project-discovery.ts');
 const {
     RULE_FILES,
-    CONTEXT_RULE_FILES,
     selectRuleSource,
     applyContextDefaults,
     applyAssistantDefaults
 } = require('./rule-materialization.ts');
+const {
+    NODE_HUMAN_COMMIT_COMMAND,
+    NODE_INTERACTIVE_UPDATE_COMMAND,
+    NODE_NON_INTERACTIVE_UPDATE_COMMAND
+} = require('./command-constants.ts');
 
 /**
  * Runs the init materialization pipeline.
- * This ports init.ps1 to Node/TS.
+ * Node implementation of live materialization.
  *
  * @param {object} options
  * @param {string} options.targetRoot - Project root
@@ -123,7 +127,7 @@ function runInit(options) {
 
     // Copy support directories from template to live
     const supportDirectories = [
-        'config', 'scripts', 'skills', 'docs/changes', 'docs/reviews', 'docs/tasks'
+        'config', 'skills', 'docs/changes', 'docs/reviews', 'docs/tasks'
     ];
     let copiedSupportDirs = 0;
 
@@ -173,7 +177,6 @@ function runInit(options) {
             }
 
             if (!dryRun) {
-                const depth = configName === 'output-filters' ? 64 : 24;
                 const json = JSON.stringify(merged, null, 2);
                 ensureDirectory(path.dirname(destConfigPath));
                 fs.writeFileSync(destConfigPath, json, 'utf8');
@@ -296,7 +299,6 @@ function copyDirectoryRecursive(srcDir, destDir) {
 
 function buildSourceInventoryLines(targetRoot, timestampIso) {
     const normalized = targetRoot.replace(/\\/g, '/');
-    const tick = '`';
     return [
         '# Source Inventory', '',
         `Generated at: ${timestampIso}`,
@@ -366,7 +368,7 @@ function buildInitReportLines(opts) {
 function buildUsageLines(opts) {
     const { lang, brevity, canonicalEntrypoint, enforceNoAutoCommit } = opts;
     const commitGuardLine = enforceNoAutoCommit
-        ? 'Hard no-auto-commit guard is enabled. It blocks detected agent-session commits while normal human commits remain available; for intentional manual commits from the same agent shell use: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.ps1 -m "<message>"`.'
+        ? `Hard no-auto-commit guard is enabled. It blocks detected agent-session commits while normal human commits remain available; for intentional manual commits from the same agent shell use: \`${NODE_HUMAN_COMMIT_COMMAND}\`.`
         : 'Hard no-auto-commit guard is disabled.';
 
     return [
@@ -382,8 +384,8 @@ function buildUsageLines(opts) {
         '- `depth=3`: high-risk or cross-cutting work.',
         '- If token economy mode is enabled, use `depth=1` only for small, well-localized tasks; default `depth=3` keeps full reviewer context while shared gate-output compaction still applies.', '',
         '## Update Workspace',
-        '- Check/update (recommended): `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`',
-        '- Manual fallback: `pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`', '',
+        `- Interactive update: \`${NODE_INTERACTIVE_UPDATE_COMMAND}\``,
+        `- Non-interactive apply: \`${NODE_NON_INTERACTIVE_UPDATE_COMMAND}\``, '',
         `Canonical instructions entrypoint for orchestration: \`${canonicalEntrypoint}\`.`,
         `Hard stop: first open \`${canonicalEntrypoint}\` and follow its routing links. Only then execute any task from \`TASK.md\`.`,
         'Orchestrator mode starts when task execution is requested from this file (`TASK.md`).',

@@ -25,7 +25,7 @@ function parseManifestItems(content) {
 
 /**
  * Validate a MANIFEST.md file for duplicate entries.
- * Preserves exact parity with live/scripts/agent-gates/validate-manifest.ps1.
+ * Canonical Node-only manifest validation implementation.
  *
  * Returns { passed, manifestPath, entriesChecked, duplicates }.
  */
@@ -65,7 +65,7 @@ function validateManifest(manifestPath) {
 
 /**
  * Format manifest validation result as diagnostic output lines.
- * Matches the output format of validate-manifest.ps1.
+ * Stable machine-readable diagnostic format for the Node CLI.
  */
 function formatManifestResult(result) {
     const lines = [];

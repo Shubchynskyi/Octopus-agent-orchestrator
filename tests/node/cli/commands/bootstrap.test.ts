@@ -10,8 +10,24 @@ const {
     handleBootstrap
 } = require('../../../../src/cli/commands/bootstrap.ts');
 
-const { DEPLOY_ITEMS, deployFreshBundle } = require('../../../../src/cli/commands/cli-helpers.ts');
 const { DEFAULT_BUNDLE_NAME } = require('../../../../src/core/constants.ts');
+
+function findRepoRoot(startDir) {
+    let current = path.resolve(startDir);
+    while (true) {
+        const packageJsonPath = path.join(current, 'package.json');
+        const cliPath = path.join(current, 'bin', 'octopus.js');
+        if (fs.existsSync(packageJsonPath) && fs.existsSync(cliPath)) {
+            return current;
+        }
+
+        const parent = path.dirname(current);
+        if (parent === current) {
+            throw new Error(`Could not resolve repository root from: ${startDir}`);
+        }
+        current = parent;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // BOOTSTRAP_DEFINITIONS
@@ -70,14 +86,15 @@ test('buildBootstrapSuccessOutput uses npx for default bundle name', () => {
     assert.ok(output.includes('install'));
 });
 
-test('buildBootstrapSuccessOutput uses raw installer for custom bundle paths', () => {
+test('buildBootstrapSuccessOutput uses Node CLI for custom bundle paths', () => {
     const dest = path.join('/workspace', 'custom-bundle');
     const pkg = { version: '1.0.8', name: 'octopus-agent-orchestrator' };
     const output = buildBootstrapSuccessOutput(pkg, '1.0.8', dest);
-    assert.ok(output.includes('pwsh -File'));
-    assert.ok(output.includes('bash'));
-    assert.ok(output.includes('install.ps1'));
-    assert.ok(output.includes('install.sh'));
+    assert.ok(output.includes('Custom bundle paths should still use the Node CLI'));
+    assert.ok(output.includes('node'));
+    assert.ok(output.includes('octopus.js'));
+    assert.ok(output.includes('install'));
+    assert.ok(output.includes('node'));
 });
 
 // ---------------------------------------------------------------------------
@@ -87,8 +104,7 @@ test('buildBootstrapSuccessOutput uses raw installer for custom bundle paths', (
 test('handleBootstrap deploys bundle to destination', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-integ-'));
     try {
-        // Resolve repo root: __dirname is .node-build/tests/node/cli/commands/ → 5 up
-        const repoRoot = path.resolve(__dirname, '..', '..', '..', '..', '..');
+        const repoRoot = findRepoRoot(__dirname);
         const dest = path.join(tmpDir, DEFAULT_BUNDLE_NAME);
 
         // Capture console output
@@ -108,6 +124,7 @@ test('handleBootstrap deploys bundle to destination', async () => {
         assert.ok(fs.existsSync(path.join(dest, 'VERSION')), 'VERSION file should exist');
         assert.ok(fs.existsSync(path.join(dest, 'package.json')), 'package.json should exist');
         assert.ok(fs.existsSync(path.join(dest, 'bin', 'octopus.js')), 'bin/octopus.js should exist');
+        assert.ok(!fs.existsSync(path.join(dest, 'scripts')), 'scripts directory should not exist');
         assert.ok(lines.some(function (l) { return l.includes('OCTOPUS_BOOTSTRAP_OK'); }), 'Should print OCTOPUS_BOOTSTRAP_OK');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -117,7 +134,7 @@ test('handleBootstrap deploys bundle to destination', async () => {
 test('handleBootstrap uses positional as destination fallback', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-integ-'));
     try {
-        const repoRoot = path.resolve(__dirname, '..', '..', '..', '..', '..');
+        const repoRoot = findRepoRoot(__dirname);
         const dest = path.join(tmpDir, 'my-bundle');
 
         const originalLog = console.log;

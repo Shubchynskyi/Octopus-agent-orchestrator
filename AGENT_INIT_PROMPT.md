@@ -67,7 +67,7 @@ Additional rules for saving:
    - If you expand `ActiveAgentFiles` beyond the canonical entrypoint, rerun installer so the additional redirect entrypoints and provider bridge files are materialized.
 6. If reinstall is needed, run installer (this also runs init automatically):
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/install.ps1 -AssistantLanguage "<assistant-language>" -AssistantBrevity "<assistant-brevity>" -SourceOfTruth "<source-of-truth>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
+node Octopus-agent-orchestrator/bin/octopus.js install --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 7. Read discovery artifact and update project-context rules for this real project:
    - `Octopus-agent-orchestrator/live/project-discovery.md`
@@ -79,8 +79,8 @@ npx octopus-agent-orchestrator doctor --target-root "." --init-answers-path "Oct
 ```
 If `npx octopus-agent-orchestrator` is unavailable in the current environment, run the equivalent canonical checks directly:
 ```powershell
-pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<source-of-truth>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
-pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md
+node Octopus-agent-orchestrator/bin/octopus.js verify --target-root "." --source-of-truth "<source-of-truth>" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest --manifest-path "Octopus-agent-orchestrator/MANIFEST.md"
 ```
 9. Confirm task execution contract supports depth:
    - accepted command shape: `Execute task <task-id> depth=<1|2|3>`
@@ -135,18 +135,14 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
 - After `octopus setup`, treat the 6 answers as already collected; the agent must not repeat them unless the file is missing, invalid, incomplete, or `AssistantLanguage` cannot be confidently recognized.
 - Always validate and normalize `AssistantLanguage` into a clear agent-readable label before saving or re-saving init answers.
 - If `AssistantLanguage` cannot be confidently recognized, ask the user for clarification before continuing.
-- Never run `install.ps1` before writing `Octopus-agent-orchestrator/runtime/init-answers.json` with all 6 required answers.
+- Never run install before writing `Octopus-agent-orchestrator/runtime/init-answers.json` with all 6 required answers.
 - Do not overwrite `CollectedVia=CLI_INTERACTIVE` or `CLI_NONINTERACTIVE` when you are only reusing CLI-collected answers and normalizing the language field.
 - Run the final doctor check yourself; do not ask the user to run `doctor`, `verify`, or `validate-manifest` manually.
 - Do not modify `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md` during project onboarding.
 - Update `Octopus-agent-orchestrator/live/USAGE.md` as part of successful onboarding; that file is expected to become project-specific.
-- Never run initialization by directly calling `install.ps1` outside this prompt flow.
+- Never bypass the Node CLI install flow outside this prompt.
 - After `<assistant-language>` is collected, continue all following user-facing questions and reports in `<assistant-language>`.
-- For top-level bundle maintenance entrypoints (`scripts/install|init|verify|update|check-update`), treat `.ps1` as canonical implementation. The sibling `.sh` files are only `pwsh` wrappers.
-- For gate scripts during task execution under `live/scripts/agent-gates/`, auto-detect environment:
-  - prefer `.ps1` via `pwsh` when `pwsh` is available;
-  - otherwise use `.sh` equivalents via `bash`.
-- When using `.sh` gate scripts, ensure a Python runtime is available in PATH (`python3`, `python`, or `py -3`).
+- Treat `node Octopus-agent-orchestrator/bin/octopus.js` as the only canonical runtime surface for lifecycle commands and gates.
 - If any check fails, fix the issue and rerun checks until PASS.
 
 ## Final Report Format
@@ -161,8 +157,8 @@ pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest
   - default `depth=3` keeps full reviewer context while shared gate-output filtering still applies.
   - where tasks are defined: tasks are managed in the root `TASK.md` file.
   - updating orchestrator workspace:
-    - `pwsh -File Octopus-agent-orchestrator/scripts/check-update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`
-    - manual fallback: `pwsh -File Octopus-agent-orchestrator/scripts/update.ps1 -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`
+    - `node Octopus-agent-orchestrator/bin/octopus.js check-update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"`
+    - manual apply: `node Octopus-agent-orchestrator/bin/octopus.js update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --apply --no-prompt`
 - Explicit orchestration note:
   - orchestrator mode starts when the agent executes a task from `TASK.md`;
   - if needed, the agent may create new tasks from user requests and then execute them through the orchestrator workflow.

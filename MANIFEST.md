@@ -4,7 +4,7 @@ Bundle root: `Octopus-agent-orchestrator`
 Template root: `Octopus-agent-orchestrator/template`
 Live root: `Octopus-agent-orchestrator/live`
 
-Installed to project root by `scripts/install.ps1`:
+Installed to project root by `node Octopus-agent-orchestrator/bin/octopus.js install`:
 - CLAUDE.md
 - AGENTS.md
 - GEMINI.md
@@ -29,7 +29,7 @@ Installed to project root by `scripts/install.ps1`:
 - .windsurf/agents/orchestrator.md
 - .antigravity/agents/orchestrator.md
 
-Materialized inside `Octopus-agent-orchestrator/live` by `scripts/init.ps1`:
+Materialized inside `Octopus-agent-orchestrator/live` by `node Octopus-agent-orchestrator/bin/octopus.js init`:
 - live/config/review-capabilities.json
 - live/config/paths.json
 - live/config/token-economy.json
@@ -38,7 +38,6 @@ Materialized inside `Octopus-agent-orchestrator/live` by `scripts/init.ps1`:
 - live/docs/changes/**
 - live/docs/reviews/**
 - live/docs/tasks/**
-- live/scripts/**
 - live/skills/**
 - live/source-inventory.md
 - live/init-report.md
@@ -54,7 +53,7 @@ Generated during updates:
 - runtime/update-reports/**
 - runtime/bundle-backups/**
 
-Removed by `scripts/uninstall.ps1`:
+Removed by `node Octopus-agent-orchestrator/bin/octopus.js uninstall`:
 - the deployed `Octopus-agent-orchestrator/` bundle directory
 - all redirect entrypoints and provider bridge agent files created by install
 - the selected primary entrypoint only when the user chooses delete during uninstall
@@ -66,32 +65,10 @@ Configured when `EnforceNoAutoCommit=true`:
 - .git/hooks/pre-commit (managed guard block)
 
 Kept inside bundle:
-- Control-plane scripts:
-  - canonical implementations: `scripts/*.ps1`
-  - compatibility wrappers: `scripts/*.sh` (invoke `pwsh`, not standalone Bash implementations)
-- Gate scripts under `live/scripts/agent-gates/*.ps1` and `*.sh` are materialized runtime implementations; `.sh` gate files are real shell variants.
 - `package.json` (npm package metadata shipped with the source bundle and synced into deployed workspaces during update)
-- `bin/octopus.js` (npm bootstrap/lifecycle CLI; exposes `octopus`, `oao`, and `octopus-agent-orchestrator`; `octopus` now defaults to overview/status while `octopus setup` is the first-run installer entrypoint)
+- `bin/octopus.js` (npm bootstrap/lifecycle/gate CLI; exposes `octopus`, `oao`, and `octopus-agent-orchestrator`)
+- `src/**` (canonical Node/TypeScript runtime for lifecycle commands, validators, and gates)
 - template/**
-- scripts/setup.ps1
-- scripts/setup.sh
-- scripts/install.ps1
-- scripts/install.sh
-- scripts/init.ps1
-- scripts/init.sh
-- scripts/reinit.ps1
-- scripts/reinit.sh
-- scripts/uninstall.ps1
-- scripts/uninstall.sh
-- scripts/verify.ps1
-- scripts/verify.sh
-- scripts/update.ps1
-- scripts/update.sh
-- scripts/check-update.ps1
-- scripts/check-update.sh
-- scripts/lib/init-answer-migrations.ps1
-- scripts/lib/rule-contract-migrations.ps1
-- scripts/lib/managed-config-contracts.ps1
 - .gitattributes
 - README.md
 - CHANGELOG.md

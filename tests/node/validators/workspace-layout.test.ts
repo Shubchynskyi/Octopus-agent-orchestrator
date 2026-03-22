@@ -12,7 +12,6 @@ const {
     MANAGED_END,
     buildRequiredPaths,
     detectMissingPaths,
-    detectRuleFileViolations,
     detectVersionViolations,
     detectGitignoreViolations,
     extractManagedBlock,
@@ -25,8 +24,9 @@ const {
 
 test('BASE_REQUIRED_PATHS is a frozen non-empty array', () => {
     assert.ok(Array.isArray(BASE_REQUIRED_PATHS));
-    assert.ok(BASE_REQUIRED_PATHS.length > 50);
+    assert.ok(BASE_REQUIRED_PATHS.length > 25);
     assert.ok(Object.isFrozen(BASE_REQUIRED_PATHS));
+    assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/src'));
 });
 
 test('RULE_FILES contains all 11 standard rule files', () => {

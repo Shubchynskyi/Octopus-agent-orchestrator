@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { buildReviewContextSections } = require('../gate-runtime/review-context.ts');
-const { normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray, toPosix } = require('./helpers.ts');
+const { normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } = require('./helpers.ts');
 
 /**
  * Rule pack configuration by review type.
@@ -75,7 +75,7 @@ function toNonNegativeInt(value) {
 
 /**
  * Build review context for a specific review type and depth.
- * Matches build-review-context.sh output shape.
+ * Builds the review-context artifact shape for the Node gate runtime.
  */
 function buildReviewContext(options) {
     const reviewType = options.reviewType;

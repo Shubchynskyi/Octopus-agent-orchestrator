@@ -1,4 +1,9 @@
 const { normalizeLineEndings } = require('../core/line-endings.ts');
+const {
+    NODE_BUNDLE_CLI_COMMAND,
+    NODE_GATE_COMMAND_PREFIX,
+    NODE_HUMAN_COMMIT_COMMAND
+} = require('./command-constants.ts');
 
 const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
 const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
@@ -30,14 +35,10 @@ const INSTALL_BACKUP_CANDIDATE_PATHS = Object.freeze([
 ]);
 
 const CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES = Object.freeze([
-    'Bash(pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
-    'Bash(bash Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
-    'Bash(pwsh -File Octopus-agent-orchestrator/scripts/*:*)',
-    'Bash(bash Octopus-agent-orchestrator/scripts/*:*)',
-    'Bash(cd * && pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
-    'Bash(cd * && bash Octopus-agent-orchestrator/live/scripts/agent-gates/*:*)',
-    'Bash(cd * && pwsh -File Octopus-agent-orchestrator/scripts/*:*)',
-    'Bash(cd * && bash Octopus-agent-orchestrator/scripts/*:*)',
+    `Bash(${NODE_BUNDLE_CLI_COMMAND} *:*)`,
+    `Bash(cd * && ${NODE_BUNDLE_CLI_COMMAND} *:*)`,
+    'Bash(npx octopus-agent-orchestrator *:*)',
+    'Bash(cd * && npx octopus-agent-orchestrator *:*)',
     'Bash(cd * && git diff *:*)',
     'Bash(cd * && git log *:*)',
     'Bash(grep -n * | head * && echo * && grep -n * | head *:*)',
@@ -203,7 +204,7 @@ function buildRedirectManagedBlock(targetFile, canonicalFile, providerBridgePath
  */
 function buildCommitGuardManagedBlock() {
     const agentEnvLines = COMMIT_GUARD_AGENT_MARKERS.map((m) => `  "${m}"`).join('\n');
-    const block = `${COMMIT_GUARD_START}
+    return `${COMMIT_GUARD_START}
 # Commit blocked by Octopus auto-commit guard only for detected agent sessions.
 if [ "\${${COMMIT_GUARD_ENV_NAME}:-}" = "1" ]; then
   exit 0
@@ -233,13 +234,10 @@ done
 if [ -n "$octopus_detected_agent_var" ]; then
   echo "Commit blocked: agent commit guard is enabled (detected env: $octopus_detected_agent_var)."
   echo "If this is a manual human commit from the same shell, use helper:"
-  echo "  pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.ps1 -m \\"<message>\\""
-  echo "or:"
-  echo "  bash Octopus-agent-orchestrator/live/scripts/agent-gates/human-commit.sh -m \\"<message>\\""
+  echo "  ${NODE_HUMAN_COMMIT_COMMAND.replace(/"/g, '\\"')}"
   exit 1
 fi
 ${COMMIT_GUARD_END}`;
-    return block;
 }
 
 /**
@@ -254,18 +252,18 @@ Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
 Hard stop: first open \`${canonicalFile}\` and \`TASK.md\`.
 Do not implement tasks directly without orchestration preflight and required review gates.
 Ignored orchestration control-plane files (for example \`TASK.md\`, \`Octopus-agent-orchestrator/runtime/**\`, and \`Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
-This provider profile is a strict bridge to Octopus skills and gate scripts.
+This provider profile is a strict bridge to Octopus skills and the Node gate router.
 Do not execute task or review workflow with provider-default reviewer agents that bypass this bridge.
 
 ## Required Execution Contract
 1. Read \`${canonicalFile}\` and its routing links before making changes.
 2. Read \`TASK.md\` and select/create a task row before implementation.
 3. Execute task workflow only in orchestrator mode: \`Execute task <task-id> depth=<1|2|3>\`.
-4. Run preflight classification before implementation (\`classify-change.ps1\` or \`.sh\`).
-5. Run compile gate before review (\`compile-gate.ps1\` or \`.sh\`) using \`live/docs/agent-rules/40-commands.md\`.
-6. Run required independent reviews and gates (\`required-reviews-check.ps1\` or \`.sh\`, then \`doc-impact-gate.ps1\` or \`.sh\`, then \`completion-gate.ps1\` or \`.sh\`) before marking \`DONE\`.
+4. Run preflight classification before implementation via \`${NODE_GATE_COMMAND_PREFIX} classify-change ...\`.
+5. Run compile gate before review via \`${NODE_GATE_COMMAND_PREFIX} compile-gate --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"\`.
+6. Run required independent reviews and gates via \`${NODE_GATE_COMMAND_PREFIX} required-reviews-check ...\`, then \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
 7. Update task status and artifacts in \`TASK.md\`.
-8. Log lifecycle events by task id (\`log-task-event.ps1\` or \`.sh\`) into \`Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl\`.
+8. Log lifecycle events by task id via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` into \`Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl\`.
 
 ## Reviewer Launch Mapping (Required)
 - Claude Code: launch clean-context reviewers via Agent tool (\`fork_context=false\`).
@@ -287,7 +285,7 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 - Include specialist skills added after initialization from \`Octopus-agent-orchestrator/live/skills/**\` when required by preflight and capability flags.
 
 ## Task Timeline Logging (Required)
-- Event logger: \`Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1\` or \`.sh\`
+- Event logger: \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\`
 - Log file (per task): \`Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl\`
 - Aggregate log: \`Octopus-agent-orchestrator/runtime/task-events/all-tasks.jsonl\`
 
@@ -318,7 +316,7 @@ Ignored orchestration control-plane files (for example \`TASK.md\`, \`Octopus-ag
 - Re-read \`Octopus-agent-orchestrator/live/config/output-filters.json\` before execution.
 - On GitHub Copilot CLI, spawn reviewer helper tasks via \`task\` tool with \`agent_type="general-purpose"\` and isolated context.
 - Honor specialist skills added after initialization under \`Octopus-agent-orchestrator/live/skills/**\`.
-- Log review invocation and outcomes via \`log-task-event.ps1\` or \`.sh\` into task timeline.
+- Log review invocation and outcomes via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` into task timeline.
 - Task timeline path (per task): \`Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl\`.
 - Review verdicts and completion status are recorded only through orchestrator workflow.
 - Never mark task \`DONE\` from this profile; hand off to \`.github/agents/orchestrator.md\`.

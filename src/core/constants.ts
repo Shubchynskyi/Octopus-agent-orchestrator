@@ -13,6 +13,8 @@ const LIFECYCLE_COMMANDS = Object.freeze([
     'install',
     'init',
     'reinit',
+    'verify',
+    'check-update',
     'uninstall',
     'update'
 ]);

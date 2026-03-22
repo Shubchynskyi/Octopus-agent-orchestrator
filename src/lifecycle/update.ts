@@ -2,25 +2,22 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { DEFAULT_BUNDLE_NAME } = require('../core/constants.ts');
-const { ensureDirectory, pathExists, readTextFile, writeTextFile } = require('../core/fs.ts');
-const { readJsonFile, writeJsonFile } = require('../core/json.ts');
-const { isPathInsideRoot, resolvePathInsideRoot } = require('../core/paths.ts');
+const { pathExists, readTextFile } = require('../core/fs.ts');
+const { readJsonFile } = require('../core/json.ts');
+const { isPathInsideRoot } = require('../core/paths.ts');
 const { validateInitAnswers } = require('../schemas/init-answers.ts');
 const { runInstall } = require('../materialization/install.ts');
-const { recollectInitAnswers, getOptionalValue } = require('../materialization/reinit.ts');
 
 const {
-    BUNDLE_SYNC_ITEMS,
     createRollbackSnapshot,
     getTimestamp,
     restoreRollbackSnapshot,
-    syncWorkingTreeBundleItems,
     validateTargetRoot
 } = require('./common.ts');
 
 /**
  * Computes the list of relative paths that should be included in an update rollback.
- * Mirrors Get-UpdateRollbackItems from update.ps1.
+ * Returns the rollback item set for the Node update lifecycle.
  */
 function getUpdateRollbackItems(rootPath, initAnswersResolvedPath) {
     const items = [
@@ -44,8 +41,8 @@ function getUpdateRollbackItems(rootPath, initAnswersResolvedPath) {
         'Octopus-agent-orchestrator/bin',
         'Octopus-agent-orchestrator/live',
         'Octopus-agent-orchestrator/package.json',
+        'Octopus-agent-orchestrator/src',
         'Octopus-agent-orchestrator/template',
-        'Octopus-agent-orchestrator/scripts',
         'Octopus-agent-orchestrator/README.md',
         'Octopus-agent-orchestrator/HOW_TO.md',
         'Octopus-agent-orchestrator/MANIFEST.md',
@@ -66,14 +63,13 @@ function getUpdateRollbackItems(rootPath, initAnswersResolvedPath) {
 
 /**
  * Runs the update pipeline.
- * Ports update.ps1 to Node/TS.
+ * Node implementation of the update lifecycle.
  *
  * @param {object} options
  * @param {string} options.targetRoot - Project root directory
  * @param {string} options.bundleRoot - Orchestrator bundle directory (source of scripts/template)
  * @param {string} [options.initAnswersPath]
  * @param {boolean} [options.dryRun=false]
- * @param {boolean} [options.noInitAnswerPrompt=false]
  * @param {boolean} [options.skipVerify=false]
  * @param {boolean} [options.skipManifestValidation=false]
  * @param {Function} [options.installRunner] - Optional override for install step
@@ -88,7 +84,6 @@ function runUpdate(options) {
         bundleRoot,
         initAnswersPath = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json'),
         dryRun = false,
-        noInitAnswerPrompt = false,
         skipVerify = false,
         skipManifestValidation = false,
         installRunner = null,
@@ -98,8 +93,6 @@ function runUpdate(options) {
     } = options;
 
     const normalizedTarget = validateTargetRoot(targetRoot, bundleRoot);
-    const targetBundleRoot = path.join(normalizedTarget, DEFAULT_BUNDLE_NAME);
-
     // Resolve init answers path
     let initAnswersResolvedPath;
     if (path.isAbsolute(initAnswersPath)) {
@@ -288,7 +281,6 @@ function runUpdate(options) {
         }
 
         if (!dryRun && rollbackSnapshotCreated) {
-            rollbackStatus = 'ATTEMPTED';
             try {
                 restoreRollbackSnapshot(normalizedTarget, rollbackSnapshotPath, rollbackRecords);
                 rollbackStatus = 'SUCCESS';

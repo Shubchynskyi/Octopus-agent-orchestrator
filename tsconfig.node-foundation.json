@@ -3,6 +3,7 @@
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "Node",
+    "moduleDetection": "force",
     "allowJs": false,
     "checkJs": false,
     "noEmit": true,

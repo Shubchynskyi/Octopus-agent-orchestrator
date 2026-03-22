@@ -1,12 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { DEFAULT_BUNDLE_NAME } = require('../core/constants.ts');
-const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
-const { isPathInsideRoot } = require('../core/paths.ts');
-
 // ---------------------------------------------------------------------------
-// Version comparison (mirrors Compare-VersionStrings from check-update.ps1)
+// Version comparison used by update flows.
 // ---------------------------------------------------------------------------
 
 function compareVersionStrings(current, latest) {
@@ -105,8 +101,8 @@ const BUNDLE_SYNC_ITEMS = Object.freeze([
     '.gitattributes',
     'bin',
     'package.json',
+    'src',
     'template',
-    'scripts',
     'README.md',
     'HOW_TO.md',
     'MANIFEST.md',
@@ -229,8 +225,8 @@ function restoreSyncedItemsFromBackup(targetBundleRoot, backupRoot, preexistingM
                 throw new Error(`Missing backup entry for '${item}': ${backupPath}`);
             }
 
-            const isScriptsDir = item.toLowerCase() === 'scripts';
-            if (isScriptsDir && fs.existsSync(backupPath) && fs.lstatSync(backupPath).isDirectory()) {
+            const isNodeRuntimeDir = item.toLowerCase() === 'src';
+            if (isNodeRuntimeDir && fs.existsSync(backupPath) && fs.lstatSync(backupPath).isDirectory()) {
                 if (!fs.existsSync(destinationPath) || !fs.lstatSync(destinationPath).isDirectory()) {
                     removePathRecursive(destinationPath);
                     fs.mkdirSync(destinationPath, { recursive: true });
@@ -251,7 +247,7 @@ function restoreSyncedItemsFromBackup(targetBundleRoot, backupRoot, preexistingM
 }
 
 // ---------------------------------------------------------------------------
-// Sync-WorkingTreeBundleItems (mirrors update.ps1)
+// Sync working-tree bundle items into a deployed workspace.
 // ---------------------------------------------------------------------------
 
 function syncWorkingTreeBundleItems(sourceBundleRoot, targetBundleRoot, relativeItems) {

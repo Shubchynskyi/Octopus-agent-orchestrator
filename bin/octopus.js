@@ -72,7 +72,7 @@ const SOURCE_TO_ENTRYPOINT_MAP = new Map([
 const DEPLOY_ITEMS = Object.freeze([
     '.gitattributes',
     'bin',
-    'scripts',
+    'src',
     'template',
     'AGENT_INIT_PROMPT.md',
     'CHANGELOG.md',
@@ -205,53 +205,6 @@ async function promptSingleSelect({ title, defaultLabel, options, defaultValue }
     }
 }
 
-async function promptMultiSelect({ title, canonicalFile, options, selectedValues }) {
-    if (!supportsInteractivePrompts()) {
-        throw new Error('Interactive setup requires a TTY terminal.');
-    }
-
-    const defaultSelections = options
-        .map((option, index) => (selectedValues.includes(option.value) ? String(index + 1) : null))
-        .filter(Boolean);
-    const defaultSelectionHint = defaultSelections.length > 0 ? defaultSelections.join(', ') : 'none';
-
-    console.log(yellow(title));
-    console.log(`Primary file '${canonicalFile}' will be created automatically.`);
-    console.log('Recommendation: select only the extra agent files you actually use in this project.');
-    options.forEach((option, index) => {
-        console.log(`  ${index + 1}. ${option.label}`);
-    });
-
-    while (true) {
-        const answer = await readLineInput(
-            `Enter extra file numbers separated by commas (Enter = ${defaultSelectionHint}, "none" = no extras): `
-        );
-
-        if (!answer) {
-            const defaultResult = options.filter((option) => selectedValues.includes(option.value)).map((option) => option.value);
-            console.log(green(`Selected additional files: ${defaultResult.length > 0 ? defaultResult.join(', ') : 'none'}`));
-            return defaultResult;
-        }
-
-        if (/^(none|no|0)$/i.test(answer)) {
-            console.log(green('Selected additional files: none'));
-            return [];
-        }
-
-        const numericSelections = [...new Set(answer.split(/[,\s]+/).filter(Boolean))];
-        if (numericSelections.every((token) => /^\d+$/.test(token))) {
-            const indexes = numericSelections.map((token) => Number.parseInt(token, 10) - 1);
-            if (indexes.every((index) => index >= 0 && index < options.length)) {
-                const resolvedSelection = indexes.map((index) => options[index].value);
-                console.log(green(`Selected additional files: ${resolvedSelection.length > 0 ? resolvedSelection.join(', ') : 'none'}`));
-                return resolvedSelection;
-            }
-        }
-
-        console.log(red(`Invalid selection. Enter numbers between 1 and ${options.length}, separated by commas.`));
-    }
-}
-
 function padRight(text, width) {
     return String(text).padEnd(width, ' ');
 }
@@ -279,10 +232,6 @@ function readBundleVersion(sourceRoot) {
     }
 
     return readPackageJson(sourceRoot).version;
-}
-
-function toPosixPath(value) {
-    return value.replace(/\\/g, '/');
 }
 
 function normalizeLogicalKey(value) {
@@ -330,10 +279,6 @@ function parseBooleanText(value, label) {
     }
 
     throw new Error(`${label} must be one of: true, false, yes, no, 1, 0.`);
-}
-
-function parseCliBoolean(value, label) {
-    return parseBooleanText(value, label);
 }
 
 function parseRequiredText(value, label) {
@@ -650,7 +595,7 @@ function parseOptions(argv, definitions, { allowPositionals = false, maxPosition
         }
 
         if (definition.type === 'boolean') {
-            options[definition.key] = inlineValue === undefined ? true : parseCliBoolean(inlineValue, optionName);
+            options[definition.key] = inlineValue === undefined ? true : parseBooleanText(inlineValue, optionName);
             continue;
         }
 
@@ -662,6 +607,14 @@ function parseOptions(argv, definitions, { allowPositionals = false, maxPosition
 
             resolvedValue = argv[index + 1];
             index += 1;
+        }
+
+        if (definition.type === 'string[]') {
+            if (!Array.isArray(options[definition.key])) {
+                options[definition.key] = [];
+            }
+            options[definition.key].push(resolvedValue);
+            continue;
         }
 
         options[definition.key] = resolvedValue;
@@ -755,26 +708,45 @@ function removePathIfExists(targetPath) {
     fs.rmSync(targetPath, { recursive: true, force: true });
 }
 
-function copyPath(sourcePath, destinationPath) {
+function getCopyBoundaryRoot(sourcePath, stats, bundleRoot) {
+    if (bundleRoot) {
+        return path.resolve(bundleRoot);
+    }
+
+    return path.resolve(stats.isDirectory() ? sourcePath : path.dirname(sourcePath));
+}
+
+function readSafeSymlinkTarget(sourcePath, boundaryRoot) {
+    const linkTarget = fs.readlinkSync(sourcePath);
+    const resolvedTarget = path.resolve(path.dirname(sourcePath), linkTarget);
+    if (!isPathInsideRoot(boundaryRoot, resolvedTarget)) {
+        throw new Error(`Refusing to copy symlink outside bundle root: ${sourcePath}`);
+    }
+
+    return linkTarget;
+}
+
+function copyPath(sourcePath, destinationPath, bundleRoot) {
     if (shouldSkipPath(sourcePath)) {
         return;
     }
 
     const stats = fs.lstatSync(sourcePath);
+    const boundaryRoot = getCopyBoundaryRoot(sourcePath, stats, bundleRoot);
     const destinationParent = path.dirname(destinationPath);
     fs.mkdirSync(destinationParent, { recursive: true });
 
     if (stats.isDirectory()) {
         fs.mkdirSync(destinationPath, { recursive: true });
         for (const entry of fs.readdirSync(sourcePath)) {
-            copyPath(path.join(sourcePath, entry), path.join(destinationPath, entry));
+            copyPath(path.join(sourcePath, entry), path.join(destinationPath, entry), boundaryRoot);
         }
 
         return;
     }
 
     if (stats.isSymbolicLink()) {
-        const linkTarget = fs.readlinkSync(sourcePath);
+        const linkTarget = readSafeSymlinkTarget(sourcePath, boundaryRoot);
         fs.symlinkSync(linkTarget, destinationPath);
         return;
     }
@@ -808,7 +780,7 @@ function deployFreshBundle(sourceRoot, destinationPath) {
     fs.mkdirSync(destinationPath, { recursive: true });
     for (const relativePath of DEPLOY_ITEMS) {
         const sourcePath = ensureSourceItemExists(sourceRoot, relativePath);
-        copyPath(sourcePath, path.join(destinationPath, relativePath));
+        copyPath(sourcePath, path.join(destinationPath, relativePath), sourceRoot);
     }
 }
 
@@ -822,7 +794,7 @@ function syncBundleItems(sourceRoot, destinationPath) {
         const sourcePath = ensureSourceItemExists(sourceRoot, relativePath);
         const targetPath = path.join(destinationPath, relativePath);
         removePathIfExists(targetPath);
-        copyPath(sourcePath, targetPath);
+        copyPath(sourcePath, targetPath, sourceRoot);
     }
 }
 
@@ -1000,40 +972,6 @@ function ensureBundleExists(targetRoot, commandName) {
     }
 
     return bundlePath;
-}
-
-function addStringArg(args, name, value) {
-    if (value === undefined || value === null || String(value).trim() === '') {
-        return;
-    }
-
-    args.push(`-${name}`, String(value));
-}
-
-function addSwitchArg(args, name, enabled) {
-    if (enabled) {
-        args.push(`-${name}`);
-    }
-}
-
-function addBooleanArg(args, name, value) {
-    if (typeof value === 'boolean') {
-        args.push(`-${name}:${value ? '$true' : '$false'}`);
-    }
-}
-
-async function runPowerShellScript(scriptPath, configureArgs, { interactive = false } = {}) {
-    if (!fs.existsSync(scriptPath)) {
-        throw new Error(`PowerShell script not found: ${scriptPath}`);
-    }
-
-    const args = ['-NoLogo', '-NoProfile', '-File', scriptPath];
-    configureArgs(args);
-    await runProcess('pwsh', args, {
-        cwd: process.cwd(),
-        description: path.basename(scriptPath),
-        interactive
-    });
 }
 
 function getCommandsRulePath(bundlePath) {
@@ -1258,11 +1196,11 @@ function printHelp(packageJson) {
             '  status        Show current project status without changing files.',
             '  doctor        Run verify + manifest validation using existing init answers.',
             '  bootstrap     Deploy the bundle only.',
-            '  install       Deploy or refresh the bundle and run scripts/install.ps1 using prepared init answers.',
-            '  init          Run scripts/init.ps1 using prepared init answers from an existing deployed bundle.',
-            '  reinit        Run scripts/reinit.ps1 for an existing deployed bundle.',
-            '  update        Run scripts/check-update.ps1 for an existing deployed bundle.',
-            '  uninstall     Run scripts/uninstall.ps1 for an existing deployed bundle.'
+            '  install       Deploy or refresh the bundle and run the Node install pipeline.',
+            '  init          Re-materialize live/ from an existing deployed bundle.',
+            '  reinit        Re-ask or override init answers for an existing deployed bundle.',
+            '  update        Check for updates and optionally apply them.',
+            '  uninstall     Remove the deployed orchestrator bundle and managed files.'
         ],
         [
             'Global options:',
@@ -1285,7 +1223,7 @@ function printHelp(packageJson) {
             '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
             '  - setup can collect init answers itself; install/init/doctor use an existing init-answers.json.',
             '  - setup skips full verify by default because project-specific command placeholders are usually filled later by the setup agent.',
-            '  - update delegates to check-update.ps1, so --apply controls immediate update and --no-prompt disables prompts.'
+            '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
         ]
     ];
 
@@ -1303,8 +1241,7 @@ function printBootstrapSuccess(packageJson, bundleVersion, destinationPath) {
     const targetRoot = path.dirname(destinationPath);
     const bundleRelativePath = path.relative(targetRoot, destinationPath) || path.basename(destinationPath);
     const initPromptPath = path.join(destinationPath, 'AGENT_INIT_PROMPT.md');
-    const installScriptPath = path.join(destinationPath, 'scripts', 'install.ps1');
-    const installShellPath = path.join(destinationPath, 'scripts', 'install.sh');
+    const bundleCliPath = path.join(destinationPath, 'bin', 'octopus.js');
     const initAnswersRelativePath = path.join(bundleRelativePath, 'runtime', 'init-answers.json');
 
     console.log('OCTOPUS_BOOTSTRAP_OK');
@@ -1321,9 +1258,8 @@ function printBootstrapSuccess(packageJson, bundleVersion, destinationPath) {
         console.log('3. After init answers exist, run the lifecycle CLI:');
         console.log(`   npx ${packageJson.name} install --target-root "${targetRoot}" --init-answers-path "${initAnswersRelativePath}"`);
     } else {
-        console.log('3. Custom bundle paths should use the raw installer entrypoint:');
-        console.log(`   pwsh -File "${installScriptPath}" -TargetRoot "${targetRoot}" -AssistantLanguage "<language>" -AssistantBrevity "<concise|detailed>" -SourceOfTruth "<Claude|Codex|Gemini|GitHubCopilot|Windsurf|Junie|Antigravity>" -InitAnswersPath "${initAnswersRelativePath}"`);
-        console.log(`   bash "${toPosixPath(installShellPath)}" -TargetRoot "${toPosixPath(targetRoot)}" -AssistantLanguage "<language>" -AssistantBrevity "<concise|detailed>" -SourceOfTruth "<Claude|Codex|Gemini|GitHubCopilot|Windsurf|Junie|Antigravity>" -InitAnswersPath "${toPosixPath(initAnswersRelativePath)}"`);
+        console.log('3. Custom bundle paths should still use the Node CLI:');
+        console.log(`   node "${bundleCliPath}" install --target-root "${targetRoot}" --assistant-language "<language>" --assistant-brevity "<concise|detailed>" --source-of-truth "<Claude|Codex|Gemini|GitHubCopilot|Windsurf|Junie|Antigravity>" --init-answers-path "${initAnswersRelativePath}"`);
     }
 }
 
@@ -1441,13 +1377,13 @@ async function handleSetup(commandArgv, packageJson) {
             || (options.sourceOfTruth !== undefined ? normalizeSourceOfTruth(options.sourceOfTruth) : 'Claude');
         const enforceNoAutoCommit = resolvedAnswers.enforceNoAutoCommit !== undefined
             ? (String(resolvedAnswers.enforceNoAutoCommit) === 'true')
-            : (options.enforceNoAutoCommit !== undefined ? parseCliBoolean(options.enforceNoAutoCommit, 'EnforceNoAutoCommit') : true);
+            : (options.enforceNoAutoCommit !== undefined ? parseBooleanText(options.enforceNoAutoCommit, 'EnforceNoAutoCommit') : true);
         const claudeOrchestratorFullAccess = resolvedAnswers.claudeOrchestratorFullAccess !== undefined
             ? (String(resolvedAnswers.claudeOrchestratorFullAccess) === 'true')
-            : (options.claudeOrchestratorFullAccess !== undefined ? parseCliBoolean(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess') : false);
+            : (options.claudeOrchestratorFullAccess !== undefined ? parseBooleanText(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess') : false);
         const tokenEconomyEnabled = resolvedAnswers.tokenEconomyEnabled !== undefined
             ? (String(resolvedAnswers.tokenEconomyEnabled) === 'true')
-            : (options.tokenEconomyEnabled !== undefined ? parseCliBoolean(options.tokenEconomyEnabled, 'TokenEconomyEnabled') : true);
+            : (options.tokenEconomyEnabled !== undefined ? parseBooleanText(options.tokenEconomyEnabled, 'TokenEconomyEnabled') : true);
         const rawActiveAgentFiles = resolvedAnswers.activeAgentFiles || options.activeAgentFiles || null;
         const activeAgentFiles = normalizeActiveAgentFiles(rawActiveAgentFiles, sourceOfTruth) || '';
 
@@ -1748,9 +1684,9 @@ async function handleReinit(commandArgv, packageJson) {
     if (options.assistantLanguage !== undefined) overrides.AssistantLanguage = options.assistantLanguage;
     if (options.assistantBrevity !== undefined) overrides.AssistantBrevity = normalizeAssistantBrevity(options.assistantBrevity);
     if (options.sourceOfTruth !== undefined) overrides.SourceOfTruth = normalizeSourceOfTruth(options.sourceOfTruth);
-    if (options.enforceNoAutoCommit !== undefined) overrides.EnforceNoAutoCommit = String(parseCliBoolean(options.enforceNoAutoCommit, 'EnforceNoAutoCommit'));
-    if (options.claudeOrchestratorFullAccess !== undefined) overrides.ClaudeOrchestratorFullAccess = String(parseCliBoolean(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess'));
-    if (options.tokenEconomyEnabled !== undefined) overrides.TokenEconomyEnabled = String(parseCliBoolean(options.tokenEconomyEnabled, 'TokenEconomyEnabled'));
+    if (options.enforceNoAutoCommit !== undefined) overrides.EnforceNoAutoCommit = String(parseBooleanText(options.enforceNoAutoCommit, 'EnforceNoAutoCommit'));
+    if (options.claudeOrchestratorFullAccess !== undefined) overrides.ClaudeOrchestratorFullAccess = String(parseBooleanText(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess'));
+    if (options.tokenEconomyEnabled !== undefined) overrides.TokenEconomyEnabled = String(parseBooleanText(options.tokenEconomyEnabled, 'TokenEconomyEnabled'));
 
     const { runReinit } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'reinit.ts'));
     const reinitResult = runReinit({
@@ -1951,7 +1887,7 @@ function handleCheckUpdate(commandArgv, packageJson) {
 // T-074: gate command family (new CLI entrypoint)
 // ---------------------------------------------------------------------------
 
-function handleGate(commandArgv, packageJson) {
+function handleGate(commandArgv) {
     if (commandArgv.length === 0 || commandArgv[0] === '-h' || commandArgv[0] === '--help') {
         const { getAllShimmedGateNames } = require(path.join(PACKAGE_ROOT, 'src', 'compat', 'shim-registry.ts'));
         console.log(bold('Available gates:'));
@@ -1964,6 +1900,7 @@ function handleGate(commandArgv, packageJson) {
 
     // Adapt PS-style args if present
     const { adaptPsArgs } = require(path.join(PACKAGE_ROOT, 'src', 'compat', 'ps-arg-adapter.ts'));
+    const gateHelpers = require(path.join(PACKAGE_ROOT, 'src', 'gates', 'helpers.ts'));
     const adaptedArgv = adaptPsArgs(gateArgv);
 
     switch (gateName) {
@@ -1975,6 +1912,285 @@ function handleGate(commandArgv, packageJson) {
             const result = validateManifest(manifestPath);
             if (typeof formatManifestResult === 'function') console.log(formatManifestResult(result));
             if (!result.passed) throw new Error('Manifest validation failed.');
+            return;
+        }
+        case 'classify-change': {
+            const defs = {
+                '--repo-root': { key: 'repoRoot', type: 'string' },
+                '--changed-file': { key: 'changedFiles', type: 'string[]' },
+                '--changed-files': { key: 'changedFiles', type: 'string[]' },
+                '--use-staged': { key: 'useStaged', type: 'boolean' },
+                '--include-untracked': { key: 'includeUntracked', type: 'boolean' },
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--task-intent': { key: 'taskIntent', type: 'string' },
+                '--fast-path-max-files': { key: 'fastPathMaxFiles', type: 'string' },
+                '--fast-path-max-changed-lines': { key: 'fastPathMaxChangedLines', type: 'string' },
+                '--performance-heuristic-min-lines': { key: 'performanceHeuristicMinLines', type: 'string' },
+                '--output-path': { key: 'outputPath', type: 'string' },
+                '--metrics-path': { key: 'metricsPath', type: 'string' },
+                '--emit-metrics': { key: 'emitMetrics', type: 'boolean' }
+            };
+            const { options } = parseOptions(adaptedArgv, defs);
+            const { runClassifyChangeCommand } = require(path.join(PACKAGE_ROOT, 'src', 'cli', 'commands', 'gates.ts'));
+            const result = runClassifyChangeCommand(options);
+            process.stdout.write(result.outputText);
+            return;
+        }
+        case 'compile-gate': {
+            const defs = {
+                '--commands-path': { key: 'commandsPath', type: 'string' },
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--preflight-path': { key: 'preflightPath', type: 'string' },
+                '--compile-evidence-path': { key: 'compileEvidencePath', type: 'string' },
+                '--compile-output-path': { key: 'compileOutputPath', type: 'string' },
+                '--fail-tail-lines': { key: 'failTailLines', type: 'string' },
+                '--output-filters-path': { key: 'outputFiltersPath', type: 'string' },
+                '--metrics-path': { key: 'metricsPath', type: 'string' },
+                '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options } = parseOptions(adaptedArgv, defs);
+            const { runCompileGateCommand } = require(path.join(PACKAGE_ROOT, 'src', 'cli', 'commands', 'gates.ts'));
+            const result = runCompileGateCommand(options);
+            process.stdout.write(`${result.outputLines.join('\n')}\n`);
+            if (result.exitCode !== 0) {
+                process.exitCode = result.exitCode;
+            }
+            return;
+        }
+        case 'build-scoped-diff': {
+            const defs = {
+                '--review-type': { key: 'reviewType', type: 'string' },
+                '--preflight-path': { key: 'preflightPath', type: 'string' },
+                '--paths-config-path': { key: 'pathsConfigPath', type: 'string' },
+                '--output-path': { key: 'outputPath', type: 'string' },
+                '--metadata-path': { key: 'metadataPath', type: 'string' },
+                '--full-diff-path': { key: 'fullDiffPath', type: 'string' },
+                '--use-staged': { key: 'useStaged', type: 'boolean' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options } = parseOptions(adaptedArgv, defs);
+            const repoRoot = normalizePathValue(options.repoRoot || '.');
+            ensureDirectoryExists(repoRoot, 'Repo root');
+            const reviewType = parseRequiredText(options.reviewType, 'ReviewType');
+            const preflightPath = gateHelpers.resolvePathInsideRepo(parseRequiredText(options.preflightPath, 'PreflightPath'), repoRoot);
+            const { buildScopedDiff, resolveMetadataPath, resolveOutputPath } = require(path.join(PACKAGE_ROOT, 'src', 'gates', 'build-scoped-diff.ts'));
+            const pathsConfigPath = options.pathsConfigPath
+                ? gateHelpers.resolvePathInsideRepo(options.pathsConfigPath, repoRoot)
+                : gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'config', 'paths.json'));
+            const outputPath = resolveOutputPath(options.outputPath || '', preflightPath, reviewType, repoRoot);
+            const metadataPath = resolveMetadataPath(options.metadataPath || '', preflightPath, reviewType, repoRoot);
+            const fullDiffPath = options.fullDiffPath
+                ? gateHelpers.resolvePathInsideRepo(options.fullDiffPath, repoRoot)
+                : null;
+            const result = buildScopedDiff({
+                reviewType,
+                preflightPath,
+                pathsConfigPath,
+                outputPath,
+                metadataPath,
+                fullDiffPath,
+                repoRoot,
+                useStaged: options.useStaged
+            });
+            formatKeyValueOutput({
+                outputPath: result.output_path,
+                metadataPath: result.metadata_path,
+                matchedFilesCount: result.matched_files_count,
+                fallbackToFullDiff: result.fallback_to_full_diff
+            }, ['outputPath', 'metadataPath', 'matchedFilesCount', 'fallbackToFullDiff']);
+            return;
+        }
+        case 'build-review-context': {
+            const defs = {
+                '--review-type': { key: 'reviewType', type: 'string' },
+                '--depth': { key: 'depth', type: 'string' },
+                '--preflight-path': { key: 'preflightPath', type: 'string' },
+                '--token-economy-config-path': { key: 'tokenEconomyConfigPath', type: 'string' },
+                '--scoped-diff-metadata-path': { key: 'scopedDiffMetadataPath', type: 'string' },
+                '--output-path': { key: 'outputPath', type: 'string' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options } = parseOptions(adaptedArgv, defs);
+            const repoRoot = normalizePathValue(options.repoRoot || '.');
+            ensureDirectoryExists(repoRoot, 'Repo root');
+            const reviewType = parseRequiredText(options.reviewType, 'ReviewType');
+            const depth = Number.parseInt(parseRequiredText(options.depth, 'Depth'), 10);
+            if (!Number.isInteger(depth) || depth < 1 || depth > 3) {
+                throw new Error('Depth must be an integer between 1 and 3.');
+            }
+            const preflightPath = gateHelpers.resolvePathInsideRepo(parseRequiredText(options.preflightPath, 'PreflightPath'), repoRoot);
+            const { buildReviewContext, resolveContextOutputPath, resolveScopedDiffMetadataPath } = require(path.join(PACKAGE_ROOT, 'src', 'gates', 'build-review-context.ts'));
+            const tokenEconomyConfigPath = options.tokenEconomyConfigPath
+                ? gateHelpers.resolvePathInsideRepo(options.tokenEconomyConfigPath, repoRoot, { allowMissing: true })
+                : gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
+            const outputPath = resolveContextOutputPath(options.outputPath || '', preflightPath, reviewType, repoRoot);
+            const scopedDiffMetadataPath = resolveScopedDiffMetadataPath(options.scopedDiffMetadataPath || '', preflightPath, reviewType, repoRoot);
+            const result = buildReviewContext({
+                reviewType,
+                depth,
+                preflightPath,
+                tokenEconomyConfigPath,
+                scopedDiffMetadataPath,
+                outputPath,
+                repoRoot
+            });
+            formatKeyValueOutput({
+                outputPath: result.output_path,
+                ruleContextArtifactPath: result.rule_context.artifact_path,
+                tokenEconomyActive: result.token_economy_active
+            }, ['outputPath', 'ruleContextArtifactPath', 'tokenEconomyActive']);
+            return;
+        }
+        case 'task-events-summary': {
+            const defs = {
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--repo-root': { key: 'repoRoot', type: 'string' },
+                '--events-root': { key: 'eventsRoot', type: 'string' },
+                '--output-path': { key: 'outputPath', type: 'string' },
+                '--as-json': { key: 'asJson', type: 'boolean' },
+                '--include-details': { key: 'includeDetails', type: 'boolean' }
+            };
+            const { options } = parseOptions(adaptedArgv, defs);
+            const repoRoot = normalizePathValue(options.repoRoot || '.');
+            ensureDirectoryExists(repoRoot, 'Repo root');
+            const { buildTaskEventsSummary, formatTaskEventsSummaryText } = require(path.join(PACKAGE_ROOT, 'src', 'gates', 'task-events-summary.ts'));
+            const eventsRoot = options.eventsRoot
+                ? gateHelpers.resolvePathInsideRepo(options.eventsRoot, repoRoot, { allowMissing: true })
+                : gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
+            const summary = buildTaskEventsSummary({
+                taskId: parseRequiredText(options.taskId, 'TaskId'),
+                eventsRoot,
+                repoRoot,
+                includeDetails: options.includeDetails,
+                asJson: options.asJson
+            });
+            const rendered = options.asJson
+                ? `${JSON.stringify(summary, null, 2)}\n`
+                : `${formatTaskEventsSummaryText(summary, options.includeDetails)}\n`;
+            if (options.outputPath) {
+                const outputPath = gateHelpers.resolvePathInsideRepo(options.outputPath, repoRoot, { allowMissing: true });
+                fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+                fs.writeFileSync(outputPath, rendered, 'utf8');
+            }
+            process.stdout.write(rendered);
+            return;
+        }
+        case 'log-task-event': {
+            const defs = {
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--event-type': { key: 'eventType', type: 'string' },
+                '--outcome': { key: 'outcome', type: 'string' },
+                '--message': { key: 'message', type: 'string' },
+                '--actor': { key: 'actor', type: 'string' },
+                '--details-json': { key: 'detailsJson', type: 'string' },
+                '--repo-root': { key: 'repoRoot', type: 'string' },
+                '--events-root': { key: 'eventsRoot', type: 'string' }
+            };
+            const { options } = parseOptions(adaptedArgv, defs);
+            const { runLogTaskEventCommand } = require(path.join(PACKAGE_ROOT, 'src', 'cli', 'commands', 'gates.ts'));
+            const result = runLogTaskEventCommand(options);
+            process.stdout.write(result.outputText);
+            if (result.exitCode !== 0) {
+                process.exitCode = result.exitCode;
+            }
+            return;
+        }
+        case 'required-reviews-check': {
+            const defs = {
+                '--preflight-path': { key: 'preflightPath', type: 'string' },
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--code-review-verdict': { key: 'codeReviewVerdict', type: 'string' },
+                '--db-review-verdict': { key: 'dbReviewVerdict', type: 'string' },
+                '--security-review-verdict': { key: 'securityReviewVerdict', type: 'string' },
+                '--refactor-review-verdict': { key: 'refactorReviewVerdict', type: 'string' },
+                '--api-review-verdict': { key: 'apiReviewVerdict', type: 'string' },
+                '--test-review-verdict': { key: 'testReviewVerdict', type: 'string' },
+                '--performance-review-verdict': { key: 'performanceReviewVerdict', type: 'string' },
+                '--infra-review-verdict': { key: 'infraReviewVerdict', type: 'string' },
+                '--dependency-review-verdict': { key: 'dependencyReviewVerdict', type: 'string' },
+                '--skip-reviews': { key: 'skipReviews', type: 'string' },
+                '--skip-reason': { key: 'skipReason', type: 'string' },
+                '--override-artifact-path': { key: 'overrideArtifactPath', type: 'string' },
+                '--compile-evidence-path': { key: 'compileEvidencePath', type: 'string' },
+                '--reviews-root': { key: 'reviewsRoot', type: 'string' },
+                '--review-evidence-path': { key: 'reviewEvidencePath', type: 'string' },
+                '--output-filters-path': { key: 'outputFiltersPath', type: 'string' },
+                '--metrics-path': { key: 'metricsPath', type: 'string' },
+                '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options } = parseOptions(adaptedArgv, defs);
+            const { runRequiredReviewsCheckCommand } = require(path.join(PACKAGE_ROOT, 'src', 'cli', 'commands', 'gates.ts'));
+            const result = runRequiredReviewsCheckCommand(options);
+            process.stdout.write(`${result.outputLines.join('\n')}\n`);
+            if (result.exitCode !== 0) {
+                process.exitCode = result.exitCode;
+            }
+            return;
+        }
+        case 'doc-impact-gate': {
+            const defs = {
+                '--preflight-path': { key: 'preflightPath', type: 'string' },
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--decision': { key: 'decision', type: 'string' },
+                '--behavior-changed': { key: 'behaviorChanged', type: 'boolean' },
+                '--docs-updated': { key: 'docsUpdated', type: 'string[]' },
+                '--changelog-updated': { key: 'changelogUpdated', type: 'boolean' },
+                '--sensitive-scope-reviewed': { key: 'sensitiveScopeReviewed', type: 'boolean' },
+                '--sensitive-reviewed': { key: 'sensitiveReviewed', type: 'boolean' },
+                '--rationale': { key: 'rationale', type: 'string' },
+                '--artifact-path': { key: 'artifactPath', type: 'string' },
+                '--metrics-path': { key: 'metricsPath', type: 'string' },
+                '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options } = parseOptions(adaptedArgv, defs);
+            const { runDocImpactGateCommand } = require(path.join(PACKAGE_ROOT, 'src', 'cli', 'commands', 'gates.ts'));
+            const result = runDocImpactGateCommand(options);
+            process.stdout.write(`${result.outputLines.join('\n')}\n`);
+            if (result.exitCode !== 0) {
+                process.exitCode = result.exitCode;
+            }
+            return;
+        }
+        case 'completion-gate': {
+            const defs = {
+                '--preflight-path': { key: 'preflightPath', type: 'string' },
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--timeline-path': { key: 'timelinePath', type: 'string' },
+                '--reviews-root': { key: 'reviewsRoot', type: 'string' },
+                '--compile-evidence-path': { key: 'compileEvidencePath', type: 'string' },
+                '--review-evidence-path': { key: 'reviewEvidencePath', type: 'string' },
+                '--doc-impact-path': { key: 'docImpactPath', type: 'string' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options } = parseOptions(adaptedArgv, defs);
+            const repoRoot = normalizePathValue(options.repoRoot || '.');
+            ensureDirectoryExists(repoRoot, 'Repo root');
+            const { formatCompletionGateResult, runCompletionGate } = require(path.join(PACKAGE_ROOT, 'src', 'gates', 'completion.ts'));
+            const result = runCompletionGate({
+                repoRoot,
+                preflightPath: parseRequiredText(options.preflightPath, 'PreflightPath'),
+                taskId: options.taskId || '',
+                timelinePath: options.timelinePath || '',
+                reviewsRoot: options.reviewsRoot || '',
+                compileEvidencePath: options.compileEvidencePath || '',
+                reviewEvidencePath: options.reviewEvidencePath || '',
+                docImpactPath: options.docImpactPath || ''
+            });
+            process.stdout.write(`${formatCompletionGateResult(result)}\n`);
+            if (result.outcome !== 'PASS') {
+                process.exitCode = 1;
+            }
+            return;
+        }
+        case 'human-commit': {
+            const { runHumanCommitCommand } = require(path.join(PACKAGE_ROOT, 'src', 'cli', 'commands', 'gates.ts'));
+            const exitCode = runHumanCommitCommand(adaptedArgv, { cwd: process.cwd() });
+            if (exitCode !== 0) {
+                process.exitCode = exitCode;
+            }
             return;
         }
         default:
@@ -2032,7 +2248,7 @@ async function main() {
             handleCheckUpdate(commandArgv, packageJson);
             return;
         case 'gate':
-            handleGate(commandArgv, packageJson);
+            handleGate(commandArgv);
             return;
         default:
             throw new Error(`Unsupported command: ${commandName}`);

@@ -41,15 +41,35 @@ function resolveProjectRoot(startDir) {
 
 /**
  * Join orchestrator-relative path: if repoRoot already ends with the bundle name
- * use it directly, otherwise prepend bundle name.
+ * use it directly; otherwise prefer a deployed bundle when present and fall back
+ * to the workspace root when the bundle has not been materialized yet.
  */
 function joinOrchestratorPath(repoRoot, relativePath) {
     const repoRootResolved = path.resolve(repoRoot);
-    const baseName = path.basename(repoRootResolved);
-    if (baseName === DEFAULT_BUNDLE_NAME) {
-        return path.resolve(repoRootResolved, relativePath);
+    const deployedRoot = path.resolve(repoRootResolved, DEFAULT_BUNDLE_NAME);
+    const looksLikeBundleRoot = (candidatePath) => (
+        fs.existsSync(path.join(candidatePath, 'MANIFEST.md'))
+        && fs.existsSync(path.join(candidatePath, 'VERSION'))
+    );
+
+    let orchestratorRoot = repoRootResolved;
+    if (looksLikeBundleRoot(deployedRoot)) {
+        orchestratorRoot = deployedRoot;
+    } else if (looksLikeBundleRoot(repoRootResolved)) {
+        orchestratorRoot = repoRootResolved;
+    } else if (fs.existsSync(deployedRoot)) {
+        orchestratorRoot = deployedRoot;
     }
-    return path.resolve(repoRootResolved, DEFAULT_BUNDLE_NAME, relativePath);
+
+    let normalizedRelativePath = String(relativePath || '').replace(/\\/g, '/').replace(/^\.\//, '');
+    if (normalizedRelativePath.toLowerCase().startsWith(`${DEFAULT_BUNDLE_NAME.toLowerCase()}/`)) {
+        normalizedRelativePath = normalizedRelativePath.slice(DEFAULT_BUNDLE_NAME.length + 1);
+    }
+
+    if (!normalizedRelativePath.trim()) {
+        return path.resolve(orchestratorRoot);
+    }
+    return path.resolve(orchestratorRoot, normalizedRelativePath);
 }
 
 /**

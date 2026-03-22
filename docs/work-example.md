@@ -38,12 +38,8 @@ User asks:
 
 ### Task Timeline
 
-```powershell
-pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1 -TaskId "T-201"
-```
-
 ```bash
-bash Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh --task-id "T-201"
+node Octopus-agent-orchestrator/bin/octopus.js gate task-events-summary --task-id "T-201"
 ```
 
 Example output:

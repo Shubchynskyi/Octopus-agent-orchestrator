@@ -1,20 +1,15 @@
 const path = require('node:path');
 
 const {
-    DEFAULT_BUNDLE_NAME,
-    DEFAULT_INIT_ANSWERS_RELATIVE_PATH
+    DEFAULT_BUNDLE_NAME
 } = require('../../core/constants.ts');
 
 const {
     acquireSourceRoot,
     deployFreshBundle,
-    getAgentInitPromptPath,
     normalizePathValue,
     parseOptions,
-    printBanner,
-    printHelp,
-    readBundleVersion,
-    toPosixPath
+    printHelp
 } = require('./cli-helpers.ts');
 
 // ---------------------------------------------------------------------------
@@ -40,8 +35,7 @@ function buildBootstrapSuccessOutput(packageJson, bundleVersion, destinationPath
     const targetRoot = path.dirname(destinationPath);
     const bundleRelativePath = path.relative(targetRoot, destinationPath) || path.basename(destinationPath);
     const initPromptPath = path.join(destinationPath, 'AGENT_INIT_PROMPT.md');
-    const installScriptPath = path.join(destinationPath, 'scripts', 'install.ps1');
-    const installShellPath = path.join(destinationPath, 'scripts', 'install.sh');
+    const bundleCliPath = path.join(destinationPath, 'bin', 'octopus.js');
     const initAnswersRelativePath = path.join(bundleRelativePath, 'runtime', 'init-answers.json');
 
     const lines = [];
@@ -60,9 +54,8 @@ function buildBootstrapSuccessOutput(packageJson, bundleVersion, destinationPath
         lines.push('3. After init answers exist, run the lifecycle CLI:');
         lines.push(`   npx ${packageJson.name} install --target-root "${targetRoot}" --init-answers-path "${initAnswersRelativePath}"`);
     } else {
-        lines.push('3. Custom bundle paths should use the raw installer entrypoint:');
-        lines.push(`   pwsh -File "${installScriptPath}" -TargetRoot "${targetRoot}" -AssistantLanguage "<language>" -AssistantBrevity "<concise|detailed>" -SourceOfTruth "<Claude|Codex|Gemini|GitHubCopilot|Windsurf|Junie|Antigravity>" -InitAnswersPath "${initAnswersRelativePath}"`);
-        lines.push(`   bash "${toPosixPath(installShellPath)}" -TargetRoot "${toPosixPath(targetRoot)}" -AssistantLanguage "<language>" -AssistantBrevity "<concise|detailed>" -SourceOfTruth "<Claude|Codex|Gemini|GitHubCopilot|Windsurf|Junie|Antigravity>" -InitAnswersPath "${toPosixPath(initAnswersRelativePath)}"`);
+        lines.push('3. Custom bundle paths should still use the Node CLI:');
+        lines.push(`   node "${bundleCliPath}" install --target-root "${targetRoot}" --assistant-language "<language>" --assistant-brevity "<concise|detailed>" --source-of-truth "<Claude|Codex|Gemini|GitHubCopilot|Windsurf|Junie|Antigravity>" --init-answers-path "${initAnswersRelativePath}"`);
     }
 
     return lines.join('\n');

@@ -17,7 +17,7 @@ function describeFoundation() {
         managedConfigNames: [...MANAGED_CONFIG_NAMES],
         nodeBaseline: NODE_ENGINE_RANGE,
         nodeBaselineLabel: NODE_BASELINE_LABEL,
-        runtimeMode: 'compatibility-router',
+        runtimeMode: 'node-only-router',
         sourceOfTruthValues: [...SOURCE_OF_TRUTH_VALUES]
     };
 }

@@ -5,24 +5,25 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - Bash(pwsh:*)
+  - Bash(*)
   - Edit
   - Write
 metadata:
   author: Octopus-agent-orchestrator
   version: 1.6.2
-  runtime_requirement: PowerShell 7+ (pwsh) or Bash + Python 3 for gate scripts
+  runtime_requirement: Node.js 20 LTS for public CLI and gate commands
 ---
 
 # Orchestration
 
 This file is the canonical execution workflow.
 Rule files provide policy context, but lifecycle steps and gate order are defined here.
+Canonical gate surface is `node Octopus-agent-orchestrator/bin/octopus.js gate <name>`.
 
 ## Required Inputs
 - User request.
 - Current task queue: `TASK.md`.
-- Active source-of-truth entrypoint (`CLAUDE.md` or configured redirect target).
+- Active source-of-truth entrypoint selected for this workspace.
 - Relevant rule files from `Octopus-agent-orchestrator/live/docs/agent-rules/`.
 - Token economy config: `Octopus-agent-orchestrator/live/config/token-economy.json`.
 
@@ -68,14 +69,12 @@ Rule files provide policy context, but lifecycle steps and gate order are define
   - `strip_code_blocks=true`: remove code blocks from generated reviewer rule-context markdown snapshot.
 - Scoped diff contract when active:
   - if `scoped_diffs=true` and reviewer type is `db`, `security`, or `refactor`, generate scoped artifact before reviewer launch:
-    - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.ps1 -ReviewType "<db|security|refactor>" -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" -MetadataPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"`
-    - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.sh --review-type "<db|security|refactor>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" --metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"`
+    - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate build-scoped-diff --review-type "<db|security|refactor>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" --metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"`
   - helper resolves trigger regexes from `Octopus-agent-orchestrator/live/config/paths.json` `triggers.<review-type>`.
   - if helper reports `fallback_to_full_diff=true`, pass full diff to reviewer and continue required review.
 - Review-context artifact contract when active:
   - generate reviewer context artifact before reviewer launch:
-    - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.ps1 -ReviewType "<review-type>" -Depth "<1|2|3>" -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -ScopedDiffMetadataPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"`
-    - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.sh --review-type "<review-type>" --depth "<1|2|3>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"`
+    - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context --review-type "<review-type>" --depth "<1|2|3>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"`
   - JSON artifact must record selected rule pack, omitted sections, `deferred_by_depth` reason when applicable, scoped-diff fallback evidence, and nested `rule_context.*` metadata for the generated markdown snapshot.
   - sibling markdown snapshot (`rule_context.artifact_path`) is the preferred prompt payload for reviewer rule text when token economy mode is active.
 - Compact reviewer output contract when active:
@@ -97,10 +96,10 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 3. Resolve requested depth and record requested/effective depth in `TASK.md` notes.
 4. Build concise plan: scope, files, risks, tests or validation strategy.
    - Log event: `PLAN_CREATED`.
-5. Run preflight with explicit `-OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`:
-   - `classify-change.ps1` with `-ChangedFiles` for precise scope, or
-   - `-UseStaged` in dirty workspaces.
-   - environment selection: use `.ps1` via `pwsh` when available, otherwise use `.sh` bash equivalents.
+5. Run preflight with explicit `--output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`:
+   - `classify-change` with repeated `--changed-file` for precise scope, or
+   - `--use-staged` in dirty workspaces.
+   - canonical invocation: `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change ...`.
    - `classify-change` writes task-scoped event `PREFLIGHT_CLASSIFIED` automatically.
 6. Apply depth escalation from preflight output when required.
 7. Execute implementation path:
@@ -109,8 +108,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 8. Run compile gate (mandatory) before review phase:
    - Resolve `fail_tail_lines` from `Octopus-agent-orchestrator/live/config/token-economy.json`; when missing/invalid, fallback to `50`.
    - Gate output filter profiles are loaded from `Octopus-agent-orchestrator/live/config/output-filters.json`; invalid config must warn and fall back to passthrough output.
-   - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1 -TaskId "<task-id>" -CommandsPath "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" -FailTailLines "<fail_tail_lines>"`
-   - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.sh --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" --fail-tail-lines "<fail_tail_lines>"`
+   - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" --fail-tail-lines "<fail_tail_lines>"`
    - Compile gate writes task-scoped event `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED` automatically.
    - Compile gate is strict about preflight scope freshness and fails on scope drift; rerun preflight when scope changes.
    - On failure, do not move to review phase; fix and rerun until pass.
@@ -125,7 +123,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
     - when token economy mode is active, generate review-context artifact and attach both the JSON metadata artifact and its `rule_context.artifact_path` markdown snapshot to the reviewer prompt.
     - when `scoped_diffs=true` and required reviewer is `db`, `security`, or `refactor`, run scoped diff helper and attach scoped artifact path plus scoped metadata fallback flag to reviewer prompt.
     - Log event per reviewer invocation: `REVIEW_REQUESTED`.
-11. Run `required-reviews-check.ps1` and treat result as release gate.
+11. Run `required-reviews-check` and treat result as release gate.
    - `required-reviews-check` writes task-scoped event `REVIEW_GATE_PASSED` or `REVIEW_GATE_FAILED` automatically.
    - `required-reviews-check` fails if compile evidence is missing in `runtime/task-events/<task-id>.jsonl` (missing `COMPILE_GATE_PASSED`).
    - `required-reviews-check` fails if workspace changed after compile evidence; rerun compile gate after post-compile edits.
@@ -134,12 +132,10 @@ Rule files provide policy context, but lifecycle steps and gate order are define
    - non-blocking findings may be deferred only in `Deferred Findings` with `Justification:` after the active `Findings by Severity` and `Residual Risks` sections are cleared to `none`.
    - On failed gate and return to coding, log event: `REWORK_STARTED`.
 13. Run doc impact gate before completion:
-   - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>" -Decision "<NO_DOC_UPDATES|DOCS_UPDATED>" -BehaviorChanged "<true|false>" -ChangelogUpdated "<true|false>" -Rationale "<why>"`
-   - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
+   - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
    - Doc impact gate writes task-scoped event `DOC_IMPACT_ASSESSED` or `DOC_IMPACT_ASSESSMENT_FAILED`.
 14. Run completion gate and treat result as final readiness gate before `DONE`.
-   - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"`
-   - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"`
+   - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"`
    - Completion gate writes task-scoped event `COMPLETION_GATE_PASSED` or `COMPLETION_GATE_FAILED` automatically.
    - Completion gate fails if a PASS review artifact still contains active findings or residual risks, or if any deferred entry omits `Justification:`.
 15. Update required docs and changelog when behavior changed.
@@ -178,7 +174,7 @@ Rule files provide policy context, but lifecycle steps and gate order are define
      - explicit rule-context package paths selected for this reviewer/depth (do not include non-selected rule files while token economy mode is active);
      - review-context artifact path (`Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json`) and nested markdown snapshot from `rule_context.artifact_path` when token economy mode is active;
      - token economy flags when active (`depth`, `compact_reviewer_output`, `strip_examples`, `strip_code_blocks`);
-      - for `db` / `security` / `refactor` required reviews when scoped diffs are enabled: scoped artifact produced by `build-scoped-diff.ps1/.sh`, with scoped metadata artifact and full-diff fallback when helper reports empty scope;
+      - for `db` / `security` / `refactor` required reviews when scoped diffs are enabled: scoped artifact produced by `node Octopus-agent-orchestrator/bin/octopus.js gate build-scoped-diff`, with scoped metadata artifact and full-diff fallback when helper reports empty scope;
       - required output contract:
         - verdict token (`... PASSED` or `... FAILED`);
         - findings list with file evidence;
@@ -197,36 +193,28 @@ Rule files provide policy context, but lifecycle steps and gate order are define
   - `required_reviews.infra=true` => skill `Octopus-agent-orchestrator/live/skills/infra-review/SKILL.md` => pass token `INFRA REVIEW PASSED` => gate parameter `-InfraReviewVerdict`
   - `required_reviews.dependency=true` => skill `Octopus-agent-orchestrator/live/skills/dependency-review/SKILL.md` => pass token `DEPENDENCY REVIEW PASSED` => gate parameter `-DependencyReviewVerdict`
 - After all required verdicts are collected, run gate script with all verdict parameters:
-  - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1 -PreflightPath "<path>" -TaskId "<task-id>" -CodeReviewVerdict "<...>" -DbReviewVerdict "<...>" -SecurityReviewVerdict "<...>" -RefactorReviewVerdict "<...>" -ApiReviewVerdict "<...>" -TestReviewVerdict "<...>" -PerformanceReviewVerdict "<...>" -InfraReviewVerdict "<...>" -DependencyReviewVerdict "<...>"`
-  - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "<path>" --task-id "<task-id>" --code-review-verdict "<...>" --db-review-verdict "<...>" --security-review-verdict "<...>" --refactor-review-verdict "<...>" --api-review-verdict "<...>" --test-review-verdict "<...>" --performance-review-verdict "<...>" --infra-review-verdict "<...>" --dependency-review-verdict "<...>"`
+  - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check --preflight-path "<path>" --task-id "<task-id>" --code-review-verdict "<...>" --db-review-verdict "<...>" --security-review-verdict "<...>" --refactor-review-verdict "<...>" --api-review-verdict "<...>" --test-review-verdict "<...>" --performance-review-verdict "<...>" --infra-review-verdict "<...>" --dependency-review-verdict "<...>"`
 - After review gate pass, run doc impact gate:
-  - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1 -PreflightPath "<path>" -TaskId "<task-id>" -Decision "<NO_DOC_UPDATES|DOCS_UPDATED>" -BehaviorChanged "<true|false>" -ChangelogUpdated "<true|false>" -Rationale "<why>"`
-  - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.sh --preflight-path "<path>" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
+  - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate --preflight-path "<path>" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
 - After review gate pass, run completion gate before `DONE`:
-  - PowerShell: `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1 -PreflightPath "<path>" -TaskId "<task-id>"`
-  - Bash: `bash Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.sh --preflight-path "<path>" --task-id "<task-id>"`
+  - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate --preflight-path "<path>" --task-id "<task-id>"`
 - In single-agent fallback mode (no Agent tool), run the same review scopes sequentially with explicit role prompts and use the same verdict tokens and artifact contract.
 
 ## Task Event Logging Commands
-- PowerShell:
-  `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1 -TaskId "<task-id>" -EventType "<event-type>" -Outcome "INFO|PASS|FAIL|BLOCKED" -Message "<short message>" -Actor "orchestrator"`
-- Bash:
-  `bash Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.sh --task-id "<task-id>" --event-type "<event-type>" --outcome "INFO|PASS|FAIL|BLOCKED" --message "<short message>" --actor "orchestrator"`
+- Node:
+  `node Octopus-agent-orchestrator/bin/octopus.js gate log-task-event --task-id "<task-id>" --event-type "<event-type>" --outcome "INFO|PASS|FAIL|BLOCKED" --message "<short message>" --actor "orchestrator"`
 - Task event logs:
   - `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`
   - `Octopus-agent-orchestrator/runtime/task-events/all-tasks.jsonl`
 - New task-event writes add best-effort append locking and per-task integrity metadata (`integrity.task_sequence`, `prev_event_sha256`, `event_sha256`).
 - Terminal events `TASK_DONE` and `TASK_BLOCKED` trigger full log cleanup for temporary reviewer/specialist logs after required artifacts are persisted.
 - Human-readable summary:
-  - `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1 -TaskId "<task-id>"`
-  - `bash Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.sh --task-id "<task-id>"`
+  - `node Octopus-agent-orchestrator/bin/octopus.js gate task-events-summary --task-id "<task-id>"`
 
 ## Escape Hatch Policy (Audited Override)
 - Supported only for code review and only for tiny low-risk scopes.
 - Command pattern:
-  `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1 ... -SkipReviews "code" -SkipReason "<reason>"`
-- Bash equivalent:
-  `bash Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.sh --preflight-path "<path>" --code-review-verdict "SKIPPED_BY_OVERRIDE" --skip-reviews "code" --skip-reason "<reason>"`
+  `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check ... --skip-reviews "code" --skip-reason "<reason>"`
 - Guardrails enforced by script:
   - only `code` can be skipped,
   - `db/security/refactor` overrides are forbidden,
@@ -235,11 +223,11 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 
 ## Hard Stops
 - Do not assign `FAST_PATH` / `FULL_PATH` manually.
-- Do not skip preflight classification with explicit `-OutputPath`.
+- Do not skip preflight classification with explicit `--output-path`.
 - Do not move to implementation without plan.
 - Do not move to `IN_REVIEW` without passing compile gate (`COMPILE_GATE_PASSED`).
 - Do not bypass required reviews without deterministic gate override contract.
-- Do not set `DONE` without passing compile gate, `required-reviews-check.ps1`, `doc-impact-gate.ps1`, and `completion-gate.ps1`.
+- Do not set `DONE` without passing compile gate, `required-reviews-check`, `doc-impact-gate`, and `completion-gate`.
 - Do not continue after compile/review when scope changed; rerun preflight and full mandatory gates.
 - Do not use `git add -f` to stage ignored orchestration control-plane files just because gates or changelog rules mention them.
 - Do not change final report order: summary -> `git commit -m` suggestion -> `Do you want me to commit now? (yes/no)`.
@@ -256,8 +244,8 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 - Documentation impact gate result and artifact: `DOC_IMPACT_ASSESSED` + `Octopus-agent-orchestrator/runtime/reviews/<task-id>-doc-impact.json`.
 - Completion gate result (`COMPLETION_GATE_PASSED`).
 - Task event trace: `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
-- Optional timeline summary for final report: `task-events-summary.ps1` / `.sh` output.
-- Optional review-context artifacts for token economy mode: `build-review-context.ps1` / `.sh` JSON output plus sibling markdown snapshot referenced by `rule_context.artifact_path`.
+- Optional timeline summary for final report: `octopus gate task-events-summary` output.
+- Optional review-context artifacts for token economy mode: `octopus gate build-review-context` JSON output plus sibling markdown snapshot referenced by `rule_context.artifact_path`.
 - Final user report.
 
 ## Examples
@@ -270,19 +258,19 @@ Rule files provide policy context, but lifecycle steps and gate order are define
 
 ## Troubleshooting
 - Preflight not found or invalid:
-  - Re-run `classify-change.ps1` with explicit `-OutputPath`.
+  - Re-run `classify-change` with explicit output path.
 - Required review verdict missing:
-  - Re-run missing reviewer and then `required-reviews-check.ps1`.
+  - Re-run missing reviewer and then `required-reviews-check`.
 - Completion gate failed:
-  - Resolve listed timeline/artifact/integrity violations, then rerun `completion-gate.ps1` / `.sh`.
+  - Resolve listed timeline/artifact/integrity violations, then rerun `completion-gate`.
 - Compile gate failed:
-  - Fix compile errors and rerun `compile-gate.ps1` / `.sh` until `COMPILE_GATE_PASSED`.
+  - Fix compile errors and rerun `compile-gate` until `COMPILE_GATE_PASSED`.
 - Compile gate failed with preflight scope drift:
-  - Re-run `classify-change.ps1/.sh` for current scope, then rerun compile and review gates.
+  - Re-run `classify-change` for current scope, then rerun compile and review gates.
 - Doc impact gate failed:
-  - Fix doc-impact decision/rationale/changelog flags and rerun `doc-impact-gate.ps1` / `.sh`.
+  - Fix doc-impact decision/rationale/changelog flags and rerun `doc-impact-gate`.
 - Override rejected:
   - Scope is too large or specialized reviews are required; remove override and run full review path.
 - Git noise in dirty workspace:
-  - Stage task-specific project files and run preflight with `-UseStaged`.
+  - Stage task-specific project files and run preflight with `--use-staged`.
   - Ignored orchestration control-plane files should stay unstaged unless the user explicitly asks to version them.

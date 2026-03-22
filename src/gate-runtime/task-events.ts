@@ -391,16 +391,17 @@ function appendTaskEvent(repoRoot, taskId, eventType, outcome, message, details,
 
     const actor = options.actor || 'gate';
     const passThru = options.passThru || false;
-    const orchestratorRoot = repoRoot;
+    const eventsRoot = options.eventsRoot
+        ? path.resolve(String(options.eventsRoot))
+        : path.join(repoRoot, 'runtime', 'task-events');
 
     if (!taskId) {
         return null;
     }
 
     const safeTaskId = assertValidTaskId(taskId);
-    const eventsDir = path.join(orchestratorRoot, 'runtime', 'task-events');
-    const taskFilePath = path.join(eventsDir, `${safeTaskId}.jsonl`);
-    const allTasksPath = path.join(eventsDir, 'all-tasks.jsonl');
+    const taskFilePath = path.join(eventsRoot, `${safeTaskId}.jsonl`);
+    const allTasksPath = path.join(eventsRoot, 'all-tasks.jsonl');
 
     const event = {
         timestamp_utc: new Date().toISOString(),
@@ -421,7 +422,7 @@ function appendTaskEvent(repoRoot, taskId, eventType, outcome, message, details,
 
     let line = null;
     try {
-        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(eventsRoot, { recursive: true });
 
         const appendState = readTaskEventAppendState(taskFilePath, safeTaskId);
         const previousSequence = appendState.last_integrity_sequence;

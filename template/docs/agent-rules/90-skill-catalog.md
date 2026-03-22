@@ -1,6 +1,6 @@
 # Skill Catalog
 
-Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
+Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Purpose
 - Define available project skills.
@@ -24,11 +24,11 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 
 ## Preflight Gate (Mandatory)
 - Run before review stage:
-  `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1 -ChangedFiles @("<planned-file-1>", "<planned-file-2>") -TaskIntent "<task summary>" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
+  `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change --changed-file "<planned-file-1>" --changed-file "<planned-file-2>" --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
 - In dirty workspaces prefer staged mode:
-  `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1 -UseStaged -TaskIntent "<task summary>" -OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
+  `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
 - Compile gate is mandatory after implementation and before `IN_REVIEW`:
-  `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1 -TaskId "<task-id>" -CommandsPath "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"`
+  `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"`
 - Preflight artifact is the only source for:
   - `path_mode` (`FAST_PATH` / `FULL_PATH`)
   - `required_reviews.code`
@@ -65,9 +65,9 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
     - `infra-review` for `required_reviews.infra=true`
     - `dependency-review` for `required_reviews.dependency=true`
 - Before `DONE`, run:
-  `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" ...`
+  `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" ...`
 - Then run completion gate:
-  `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1 -PreflightPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" -TaskId "<task-id>"`
+  `node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"`
 
 ## Trigger Source of Truth
 - Specialized trigger semantics are defined only in:
@@ -77,7 +77,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 
 ## Escape Hatch Policy
 - Optional audited override for mandatory review gate is supported only via:
-  `required-reviews-check.ps1 -SkipReviews ... -SkipReason ...`
+  `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check --skip-reviews ... --skip-reason ...`
 - Default restrictions:
   - only code review can be skipped,
   - only tiny low-risk scope,
@@ -94,4 +94,3 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Missing task timeline evidence in `runtime/task-events/<task-id>.jsonl` blocks completion.
 - Missing required docs/changelog updates blocks completion for doc-impacting changes.
 - Reviewer/specialist agents must be closed after verdict capture.
-

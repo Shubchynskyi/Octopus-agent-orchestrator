@@ -1,8 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { assertValidTaskId, appendTaskEvent } = require('../gate-runtime/task-events.ts');
-const { fileSha256, normalizePath, joinOrchestratorPath, parseBool, resolvePathInsideRepo, toStringArray, toPosix, appendMetricsEvent } = require('./helpers.ts');
+const { assertValidTaskId } = require('../gate-runtime/task-events.ts');
+const { fileSha256, normalizePath, parseBool, toStringArray } = require('./helpers.ts');
 
 /**
  * Validate preflight for doc-impact gate.
@@ -56,7 +56,7 @@ function validatePreflightForDocImpact(preflightPath, explicitTaskId) {
 
 /**
  * Run doc-impact gate assessment.
- * Matches doc-impact-gate.sh output shape.
+ * Produces the canonical doc-impact gate output shape.
  */
 function assessDocImpact(options) {
     const preflightPath = options.preflightPath;
@@ -67,8 +67,6 @@ function assessDocImpact(options) {
     const sensitiveReviewed = parseBool(options.sensitiveReviewed);
     const docsUpdated = [...new Set(toStringArray(options.docsUpdated, { trimValues: true }).filter(Boolean))].sort();
     const rationale = (options.rationale || '').trim();
-    const repoRoot = options.repoRoot;
-
     const validated = validatePreflightForDocImpact(preflightPath, taskId);
     const resolvedTaskId = validated.resolved_task_id;
     const errors = [...validated.errors];
@@ -105,7 +103,7 @@ function assessDocImpact(options) {
     const status = errors.length > 0 ? 'FAILED' : 'PASSED';
     const outcome = errors.length > 0 ? 'FAIL' : 'PASS';
 
-    const artifact = {
+    return {
         timestamp_utc: new Date().toISOString(),
         event_source: 'doc-impact-gate',
         task_id: resolvedTaskId,
@@ -122,8 +120,6 @@ function assessDocImpact(options) {
         rationale,
         violations: errors
     };
-
-    return artifact;
 }
 
 module.exports = {

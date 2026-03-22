@@ -5,13 +5,13 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - Bash(pwsh:*)
+  - Bash(*)
   - Edit
   - Write
 metadata:
   author: Octopus-agent-orchestrator
   version: 1.0.1
-  runtime_requirement: PowerShell 7+ (pwsh) for gate scripts
+  runtime_requirement: Node.js 20 LTS for public CLI and gate commands
 ---
 
 # Skill Builder
@@ -46,11 +46,11 @@ Never write generated specialist skills into `Octopus-agent-orchestrator/templat
    - set `true` for supported skill keys in `Octopus-agent-orchestrator/live/config/review-capabilities.json`
    - supported keys: `api`, `test`, `performance`, `infra`, `dependency`
 6. Mandatory-gate wiring rules:
-   - if skill is mandatory and key is supported, ensure preflight trigger exists in `classify-change.ps1` and verdict check exists in `required-reviews-check.ps1`
+   - if skill is mandatory and key is supported, ensure the `classify-change` gate emits `required_reviews.<key>` and the `required-reviews-check` gate validates `<Key>ReviewVerdict`
    - if skill is custom and unsupported by gate scripts, mark as optional review and document limitation in catalog
 7. Validation:
-   - run `pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -SourceOfTruth "<source-of-truth>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"`
-   - run `pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md`
+   - run `node Octopus-agent-orchestrator/bin/octopus.js verify --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"`
+   - run `node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest --manifest-path "Octopus-agent-orchestrator/MANIFEST.md"`
 
 ## Hard Stops
 - Do not modify `Octopus-agent-orchestrator/template/**` for project-specific specialist skills.
@@ -63,4 +63,3 @@ Never write generated specialist skills into `Octopus-agent-orchestrator/templat
 - List updated wiring files.
 - Capability flags changed.
 - Validation results (`PASS`/`FAIL`).
-

@@ -138,7 +138,19 @@ function detectCommandsViolations(targetRoot) {
     var cp = path.join(targetRoot, 'Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md');
     if (!pathExists(cp)) return violations;
     var content = readTextFile(cp);
-    var req = ['### Compile Gate (Mandatory)','compile-gate.ps1','compile-gate.sh','build-scoped-diff.ps1','build-scoped-diff.sh','build-review-context.ps1','build-review-context.sh','task-events-summary.ps1','task-events-summary.sh'];
+    var req = [
+        '### Compile Gate (Mandatory)',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate classify-change',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate log-task-event',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate task-events-summary',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate build-scoped-diff',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest'
+    ];
     for (var i=0;i<req.length;i++) { if (!content.includes(req[i])) violations.push("40-commands.md must include gate contract snippet '"+req[i]+"'."); }
     for (var j=0;j<PROJECT_COMMAND_PLACEHOLDERS.length;j++) { if (content.includes(PROJECT_COMMAND_PLACEHOLDERS[j])) violations.push('40-commands.md contains unresolved command placeholder: '+PROJECT_COMMAND_PLACEHOLDERS[j]); }
     return violations;
@@ -173,7 +185,7 @@ function detectTaskViolations(targetRoot, canonicalEntrypoint) {
     if (!mb) { violations.push('TASK.md managed block missing.'); return violations; }
     if (!/\|\s*ID\s*\|\s*Status\s*\|\s*Priority\s*\|\s*Area\s*\|\s*Title\s*\|\s*Owner\s*\|\s*Updated\s*\|\s*Depth\s*\|\s*Notes\s*\|/.test(mb))
         violations.push('TASK.md queue header must include `Depth` column.');
-    if (/\{\{CANONICAL_ENTRYPOINT\}\}/.test(mb))
+    if (mb.includes('{{CANONICAL_ENTRYPOINT}}'))
         violations.push('TASK.md contains unresolved `{{CANONICAL_ENTRYPOINT}}` placeholder.');
     if (canonicalEntrypoint) {
         var ecl = 'Canonical instructions entrypoint for orchestration: `'+canonicalEntrypoint+'`.';

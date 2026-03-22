@@ -16,8 +16,8 @@
   "files": [
     ".gitattributes",
     "bin",
-    "scripts",
     "src",
+    "tsconfig.json",
     "tsconfig.node-foundation.json",
     "template",
     "AGENT_INIT_PROMPT.md",
@@ -26,12 +26,7 @@
     "LICENSE",
     "MANIFEST.md",
     "README.md",
-    "VERSION",
-    "!**/__pycache__",
-    "!**/.pytest_cache",
-    "!**/*.pyc",
-    "!**/*.pyo",
-    "!**/*.pyd"
+    "VERSION"
   ],
   "devDependencies": {
     "@types/node": "^22.14.1"

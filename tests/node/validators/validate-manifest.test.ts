@@ -15,8 +15,8 @@ test('parseManifestItems extracts list items from markdown', () => {
         '# MANIFEST',
         '',
         '- bin/octopus.js',
-        '- scripts/install.ps1',
-        '  - scripts/verify.ps1',
+        '- src/index.ts',
+        '  - src/validators/verify.ts',
         'Not a list item',
         '- package.json',
         ''
@@ -25,8 +25,8 @@ test('parseManifestItems extracts list items from markdown', () => {
     const items = parseManifestItems(content);
     assert.deepEqual(items, [
         'bin/octopus.js',
-        'scripts/install.ps1',
-        'scripts/verify.ps1',
+        'src/index.ts',
+        'src/validators/verify.ts',
         'package.json'
     ]);
 });
@@ -56,7 +56,7 @@ test('validateManifest detects duplicate entries (case-insensitive, slash-normal
     const manifestPath = path.join(tmpDir, 'MANIFEST.md');
     fs.writeFileSync(
         manifestPath,
-        '- scripts/install.ps1\n- scripts\\install.ps1\n- scripts/verify.ps1\n',
+        '- src/index.ts\n- src\\index.ts\n- src/validators/verify.ts\n',
         'utf8'
     );
 
@@ -65,7 +65,7 @@ test('validateManifest detects duplicate entries (case-insensitive, slash-normal
         assert.equal(result.passed, false);
         assert.equal(result.entriesChecked, 3);
         assert.equal(result.duplicates.length, 1);
-        assert.equal(result.duplicates[0], 'scripts\\install.ps1');
+        assert.equal(result.duplicates[0], 'src\\index.ts');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -120,7 +120,7 @@ test('formatManifestResult for failing result', () => {
     assert.ok(output.includes('- file-dup.txt'));
 });
 
-test('validateManifest produces parity markers with PowerShell validate-manifest.ps1', () => {
+test('validateManifest produces stable Node CLI markers', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'manifest-parity-'));
     const manifestPath = path.join(tmpDir, 'MANIFEST.md');
     fs.writeFileSync(manifestPath, '- alpha\n- beta\n- gamma\n', 'utf8');

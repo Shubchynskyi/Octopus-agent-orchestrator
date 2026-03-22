@@ -20,7 +20,7 @@ const DEFAULT_REPO_URL = 'https://github.com/Shubchynskyi/Octopus-agent-orchestr
 
 /**
  * Runs the check-update pipeline.
- * Ports check-update.ps1 to Node/TS.
+ * Node implementation of the check-update lifecycle.
  *
  * @param {object} options
  * @param {string} options.targetRoot - Project root directory
@@ -163,10 +163,10 @@ function runCheckUpdate(options) {
                     }
 
                     const sourceIsDirectory = fs.lstatSync(sourcePath).isDirectory();
-                    const isScriptsDir = item.toLowerCase() === 'scripts';
+                    const isNodeRuntimeDir = item.toLowerCase() === 'src';
 
                     if (sourceIsDirectory) {
-                        if (isScriptsDir) {
+                        if (isNodeRuntimeDir) {
                             if (!fs.existsSync(destinationPath) || !fs.lstatSync(destinationPath).isDirectory()) {
                                 removePathRecursive(destinationPath);
                                 fs.mkdirSync(destinationPath, { recursive: true });

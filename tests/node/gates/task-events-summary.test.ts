@@ -10,10 +10,9 @@ const {
     auditCommandCompactness,
     getCommandAuditFromDetails,
     buildTaskEventsSummary,
-    formatTaskEventsSummaryText
+    formatTaskEventsSummaryText,
+    getOutputTelemetryFromPayload
 } = require('../../../src/gates/task-events-summary.ts');
-
-const { stringSha256 } = require('../../../src/gates/helpers.ts');
 
 describe('gates/task-events-summary', () => {
     describe('parseTimestamp', () => {
@@ -151,6 +150,83 @@ describe('gates/task-events-summary', () => {
             assert.throws(() => buildTaskEventsSummary({ taskId: 'T-999', eventsRoot: eventsDir }), /not found/);
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
+
+        it('aggregates measurable token savings from command output and review context artifacts', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            const reviewsDir = path.join(tmpDir, 'runtime', 'reviews');
+            fs.mkdirSync(eventsDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+
+            const reviewContextPath = path.join(reviewsDir, 'T-003-code-review-context.json');
+            fs.writeFileSync(reviewContextPath, JSON.stringify({
+                review_type: 'code',
+                rule_context: {
+                    summary: {
+                        original_token_count_estimate: 180,
+                        output_token_count_estimate: 60,
+                        estimated_saved_tokens: 120
+                    }
+                }
+            }, null, 2), 'utf8');
+
+            const reviewEvidencePath = path.join(reviewsDir, 'T-003-review-gate.json');
+            fs.writeFileSync(reviewEvidencePath, JSON.stringify({
+                output_telemetry: {
+                    raw_token_count_estimate: 18,
+                    filtered_token_count_estimate: 6,
+                    estimated_saved_tokens: 12
+                },
+                artifact_evidence: {
+                    checked: [{
+                        review: 'code',
+                        review_context_path: reviewContextPath.replace(/\\/g, '/')
+                    }]
+                }
+            }, null, 2), 'utf8');
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-003',
+                    event_type: 'COMPILE_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Compile gate passed.',
+                    details: {
+                        raw_token_count_estimate: 50,
+                        filtered_token_count_estimate: 17,
+                        estimated_saved_tokens: 33
+                    }
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:05:00Z',
+                    task_id: 'T-003',
+                    event_type: 'REVIEW_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Review gate passed.',
+                    details: {
+                        review_evidence_path: reviewEvidencePath.replace(/\\/g, '/')
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-003.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const summary = buildTaskEventsSummary({ taskId: 'T-003', eventsRoot: eventsDir, repoRoot: tmpDir });
+            assert.equal(summary.token_economy.total_estimated_saved_tokens, 165);
+            assert.equal(summary.token_economy.total_raw_token_count_estimate, 248);
+            assert.match(summary.token_economy.visible_summary_line, /Saved tokens: ~165/);
+            assert.match(summary.token_economy.visible_summary_line, /120 code review context/);
+            assert.match(summary.token_economy.visible_summary_line, /33 compile gate output/);
+            assert.match(summary.token_economy.visible_summary_line, /12 review gate output/);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
     });
 
     describe('formatTaskEventsSummaryText', () => {
@@ -168,6 +244,9 @@ describe('gates/task-events-summary', () => {
                 },
                 command_policy_warnings: [],
                 command_policy_warning_count: 0,
+                token_economy: {
+                    visible_summary_line: 'Saved tokens: ~33 (~66%) (33 compile gate output).'
+                },
                 first_event_utc: '2024-01-15T10:00:00.000Z',
                 last_event_utc: '2024-01-15T10:00:00.000Z',
                 timeline: [{
@@ -183,8 +262,26 @@ describe('gates/task-events-summary', () => {
             assert.ok(text.includes('Task: T-001'));
             assert.ok(text.includes('Events: 1'));
             assert.ok(text.includes('IntegrityStatus: PASS'));
+            assert.ok(text.includes('Saved tokens: ~33 (~66%) (33 compile gate output).'));
             assert.ok(text.includes('PREFLIGHT_CLASSIFIED'));
             assert.ok(text.includes('Timeline:'));
+        });
+    });
+
+    describe('getOutputTelemetryFromPayload', () => {
+        it('extracts telemetry from nested output_telemetry payloads', () => {
+            const result = getOutputTelemetryFromPayload({
+                output_telemetry: {
+                    raw_token_count_estimate: 20,
+                    filtered_token_count_estimate: 10,
+                    estimated_saved_tokens: 10
+                }
+            });
+
+            assert.equal(result.raw_token_count_estimate, 20);
+            assert.equal(result.output_token_count_estimate, 10);
+            assert.equal(result.estimated_saved_tokens, 10);
+            assert.equal(result.baseline_known, true);
         });
     });
 });

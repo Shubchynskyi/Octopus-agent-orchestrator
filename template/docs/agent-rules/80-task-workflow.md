@@ -1,11 +1,11 @@
 # Task Workflow
 
-Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
+Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Canonical Workflow Source
 - Canonical execution flow is defined in:
   - `Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md`
-- Reviewer-agent execution mechanics are defined in `orchestration/SKILL.md` section `Reviewer Agent Execution (Claude Code)`.
+- Reviewer-agent execution mechanics are defined in `orchestration/SKILL.md` section `Reviewer Agent Execution (Platform-Agnostic)`.
 - This file defines lifecycle semantics and hard-stop contracts only.
 - Do not maintain parallel step-by-step workflow variants in multiple files.
 
@@ -22,7 +22,7 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - One task in active execution at a time.
 - Path mode values: `FAST_PATH` or `FULL_PATH`.
 - Path mode is assigned only by:
-  `Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1`.
+  `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change`.
 
 ## Depth Contract
 - Supported depth values: `1`, `2`, `3`.
@@ -43,22 +43,22 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 
 ## Mandatory Gate Contract
 - Preflight artifact must exist before review stage.
-- Preflight classification must run with explicit `-OutputPath "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
-- Compile gate script must pass before `IN_REVIEW`:
-  `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1`.
+- Preflight classification must run with explicit `--output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
+- Compile gate command must pass before `IN_REVIEW`:
+  `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate`.
 - Compile gate enforces preflight scope freshness; if scope drift is detected, re-run preflight before compile.
 - Compile gate invocation must pass `fail_tail_lines` from `live/config/token-economy.json` (fallback `50`) to keep failure-output budget deterministic.
 - Compile/review gate output compaction profiles are loaded from `live/config/output-filters.json`; invalid or missing config must warn and fall back to passthrough output instead of inventing filtered summaries.
 - Shared gate-output compaction is independent of reviewer-context token economy scope; even with token economy disabled or at the default `depth=3` policy, compile/review gates still use `output-filters.json` and `fail_tail_lines`.
 - Required reviews must be launched only from preflight `required_reviews.*`.
-- Review gate script must pass before `DONE`:
-  `Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1`.
-- Review gate script validates compile evidence (`COMPILE_GATE_PASSED`) from task timeline for the same task id.
-- Review gate script validates no workspace drift after compile evidence; post-compile edits require compile gate rerun.
-- Documentation impact gate script must pass before `DONE`:
-  `Octopus-agent-orchestrator/live/scripts/agent-gates/doc-impact-gate.ps1`.
-- Completion gate script must pass before `DONE`:
-  `Octopus-agent-orchestrator/live/scripts/agent-gates/completion-gate.ps1`.
+- Review gate command must pass before `DONE`:
+  `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check`.
+- Review gate command validates compile evidence (`COMPILE_GATE_PASSED`) from task timeline for the same task id.
+- Review gate command validates no workspace drift after compile evidence; post-compile edits require compile gate rerun.
+- Documentation impact gate command must pass before `DONE`:
+  `node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate`.
+- Completion gate command must pass before `DONE`:
+  `node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate`.
 - Completion gate validates compile evidence, review-gate evidence, doc-impact evidence, timeline integrity (`COMPILE_GATE_PASSED`, review pass evidence, `REWORK_STARTED` after latest `REVIEW_GATE_FAILED`), best-effort task-event hash-chain integrity, required review artifacts, and final findings-resolution state in PASS review artifacts.
 - Final PASS review artifacts must keep active `Findings by Severity` and `Residual Risks` empty (`none`). Non-blocking follow-ups may remain only in `Deferred Findings`, and every deferred entry must include `Justification:`.
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
@@ -108,4 +108,3 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - `BLOCKED` means pipeline is paused; no next stage may start.
 - Resume only after explicit blocking condition resolution.
 - Record `blocked_reason_code` in `TASK.md`.
-

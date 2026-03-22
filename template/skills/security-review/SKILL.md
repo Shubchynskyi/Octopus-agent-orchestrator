@@ -5,12 +5,12 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - Bash(pwsh:*)
+  - Bash(*)
   - Write
 metadata:
   author: Octopus-agent-orchestrator
   version: 1.3.0
-  runtime_requirement: PowerShell 7+ (pwsh) for gate scripts
+  runtime_requirement: Node.js 20 LTS for public CLI and gate commands
 ---
 
 # Security Review

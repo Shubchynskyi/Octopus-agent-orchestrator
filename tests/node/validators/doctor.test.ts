@@ -30,7 +30,7 @@ test('runDoctor runs verify and manifest validation when bundle exists', () => {
     fs.mkdirSync(bundlePath, { recursive: true });
     fs.writeFileSync(
         path.join(bundlePath, 'MANIFEST.md'),
-        '- bin/octopus.js\n- scripts/install.ps1\n',
+        '- bin/octopus.js\n- src/index.ts\n',
         'utf8'
     );
 

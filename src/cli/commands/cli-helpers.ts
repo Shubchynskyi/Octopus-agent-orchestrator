@@ -10,13 +10,10 @@ const {
     BOOLEAN_TRUE_VALUES,
     BREVITY_VALUES,
     DEFAULT_BUNDLE_NAME,
-    DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
-    LIFECYCLE_COMMANDS,
     SOURCE_OF_TRUTH_VALUES,
     SOURCE_TO_ENTRYPOINT_MAP
 } = require('../../core/constants.ts');
 
-const { pathExists, readTextFile } = require('../../core/fs.ts');
 const { isPathInsideRoot } = require('../../core/paths.ts');
 
 // ---------------------------------------------------------------------------
@@ -39,7 +36,7 @@ const SKIPPED_FILE_SUFFIXES = Object.freeze([
 const DEPLOY_ITEMS = Object.freeze([
     '.gitattributes',
     'bin',
-    'scripts',
+    'src',
     'template',
     'AGENT_INIT_PROMPT.md',
     'CHANGELOG.md',
@@ -179,7 +176,7 @@ function parseOptions(argv, definitions, config) {
         if (!definition) throw new Error(`Unknown option: ${argument}`);
 
         if (definition.type === 'boolean') {
-            options[definition.key] = inlineValue === undefined ? true : parseCliBoolean(inlineValue, optionName);
+            options[definition.key] = inlineValue === undefined ? true : parseBooleanText(inlineValue, optionName);
             continue;
         }
 
@@ -220,10 +217,6 @@ function parseBooleanText(value, label) {
         if (BOOLEAN_FALSE_VALUES.includes(normalized)) return false;
     }
     throw new Error(`${label} must be one of: true, false, yes, no, 1, 0.`);
-}
-
-function parseCliBoolean(value, label) {
-    return parseBooleanText(value, label);
 }
 
 function tryParseBooleanText(value, fallback) {
@@ -404,20 +397,37 @@ function shouldSkipPath(sourcePath) {
     return SKIPPED_FILE_SUFFIXES.some(function (suffix) { return entryName.endsWith(suffix); });
 }
 
-function copyPath(sourcePath, destinationPath) {
+function getCopyBoundaryRoot(sourcePath, stats, bundleRoot) {
+    if (bundleRoot) {
+        return path.resolve(bundleRoot);
+    }
+    return path.resolve(stats.isDirectory() ? sourcePath : path.dirname(sourcePath));
+}
+
+function readSafeSymlinkTarget(sourcePath, boundaryRoot) {
+    const linkTarget = fs.readlinkSync(sourcePath);
+    const resolvedTarget = path.resolve(path.dirname(sourcePath), linkTarget);
+    if (!isPathInsideRoot(boundaryRoot, resolvedTarget)) {
+        throw new Error(`Refusing to copy symlink outside bundle root: ${sourcePath}`);
+    }
+    return linkTarget;
+}
+
+function copyPath(sourcePath, destinationPath, bundleRoot) {
     if (shouldSkipPath(sourcePath)) return;
     const stats = fs.lstatSync(sourcePath);
+    const boundaryRoot = getCopyBoundaryRoot(sourcePath, stats, bundleRoot);
     const destinationParent = path.dirname(destinationPath);
     fs.mkdirSync(destinationParent, { recursive: true });
     if (stats.isDirectory()) {
         fs.mkdirSync(destinationPath, { recursive: true });
         for (const entry of fs.readdirSync(sourcePath)) {
-            copyPath(path.join(sourcePath, entry), path.join(destinationPath, entry));
+            copyPath(path.join(sourcePath, entry), path.join(destinationPath, entry), boundaryRoot);
         }
         return;
     }
     if (stats.isSymbolicLink()) {
-        const linkTarget = fs.readlinkSync(sourcePath);
+        const linkTarget = readSafeSymlinkTarget(sourcePath, boundaryRoot);
         fs.symlinkSync(linkTarget, destinationPath);
         return;
     }
@@ -446,7 +456,7 @@ function deployFreshBundle(sourceRoot, destinationPath) {
     fs.mkdirSync(destinationPath, { recursive: true });
     for (const relativePath of DEPLOY_ITEMS) {
         const sourcePath = ensureSourceItemExists(sourceRoot, relativePath);
-        copyPath(sourcePath, path.join(destinationPath, relativePath));
+        copyPath(sourcePath, path.join(destinationPath, relativePath), sourceRoot);
     }
 }
 
@@ -459,7 +469,7 @@ function syncBundleItems(sourceRoot, destinationPath) {
         const sourcePath = ensureSourceItemExists(sourceRoot, relativePath);
         const targetPath = path.join(destinationPath, relativePath);
         removePathIfExists(targetPath);
-        copyPath(sourcePath, targetPath);
+        copyPath(sourcePath, targetPath, sourceRoot);
     }
 }
 
@@ -528,10 +538,6 @@ async function acquireSourceRoot(repoUrl, branch, packageRoot) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// PowerShell execution
-// ---------------------------------------------------------------------------
-
 function addStringArg(args, name, value) {
     if (value === undefined || value === null || String(value).trim() === '') return;
     args.push(`-${name}`, String(value));
@@ -539,14 +545,6 @@ function addStringArg(args, name, value) {
 
 function addSwitchArg(args, name, enabled) {
     if (enabled) args.push(`-${name}`);
-}
-
-async function runPowerShellScript(scriptPath, configureArgs, options) {
-    const interactive = (options && options.interactive) || false;
-    if (!fs.existsSync(scriptPath)) throw new Error(`PowerShell script not found: ${scriptPath}`);
-    const args = ['-NoLogo', '-NoProfile', '-File', scriptPath];
-    configureArgs(args);
-    await runProcess('pwsh', args, { cwd: process.cwd(), description: path.basename(scriptPath), interactive });
 }
 
 // ---------------------------------------------------------------------------
@@ -646,11 +644,11 @@ function printHelp(packageJson) {
             '  status        Show current project status without changing files.',
             '  doctor        Run verify + manifest validation using existing init answers.',
             '  bootstrap     Deploy the bundle only.',
-            '  install       Deploy or refresh the bundle and run scripts/install.ps1 using prepared init answers.',
-            '  init          Run scripts/init.ps1 using prepared init answers from an existing deployed bundle.',
-            '  reinit        Run scripts/reinit.ps1 for an existing deployed bundle.',
-            '  update        Run scripts/check-update.ps1 for an existing deployed bundle.',
-            '  uninstall     Run scripts/uninstall.ps1 for an existing deployed bundle.'
+            '  install       Deploy or refresh the bundle and run the Node install pipeline.',
+            '  init          Re-materialize live/ from an existing deployed bundle.',
+            '  reinit        Re-ask or override init answers for an existing deployed bundle.',
+            '  update        Check for updates and optionally apply them.',
+            '  uninstall     Remove the deployed orchestrator bundle and managed files.'
         ],
         [
             'Global options:',
@@ -673,7 +671,7 @@ function printHelp(packageJson) {
             '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
             '  - setup can collect init answers itself; install/init/doctor use an existing init-answers.json.',
             '  - setup skips full verify by default because project-specific command placeholders are usually filled later by the setup agent.',
-            '  - update delegates to check-update.ps1, so --apply controls immediate update and --no-prompt disables prompts.'
+            '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
         ]
     ];
     console.log(sections.map(function (s) { return s.join('\n'); }).join('\n\n'));
@@ -695,11 +693,11 @@ function buildHelpText(packageJson) {
             '  status        Show current project status without changing files.',
             '  doctor        Run verify + manifest validation using existing init answers.',
             '  bootstrap     Deploy the bundle only.',
-            '  install       Deploy or refresh the bundle and run scripts/install.ps1 using prepared init answers.',
-            '  init          Run scripts/init.ps1 using prepared init answers from an existing deployed bundle.',
-            '  reinit        Run scripts/reinit.ps1 for an existing deployed bundle.',
-            '  update        Run scripts/check-update.ps1 for an existing deployed bundle.',
-            '  uninstall     Run scripts/uninstall.ps1 for an existing deployed bundle.'
+            '  install       Deploy or refresh the bundle and run the Node install pipeline.',
+            '  init          Re-materialize live/ from an existing deployed bundle.',
+            '  reinit        Re-ask or override init answers for an existing deployed bundle.',
+            '  update        Check for updates and optionally apply them.',
+            '  uninstall     Remove the deployed orchestrator bundle and managed files.'
         ],
         [
             'Global options:',
@@ -722,7 +720,7 @@ function buildHelpText(packageJson) {
             '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
             '  - setup can collect init answers itself; install/init/doctor use an existing init-answers.json.',
             '  - setup skips full verify by default because project-specific command placeholders are usually filled later by the setup agent.',
-            '  - update delegates to check-update.ps1, so --apply controls immediate update and --no-prompt disables prompts.'
+            '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
         ]
     ];
     return sections.map(function (s) { return s.join('\n'); }).join('\n\n');
@@ -805,7 +803,6 @@ module.exports = {
     normalizePathValue,
     normalizeSourceOfTruth,
     padRight,
-    parseCliBoolean,
     parseBooleanText,
     parseOptionalText,
     parseOptions,
@@ -825,7 +822,6 @@ module.exports = {
     red,
     removePathIfExists,
     resolvePathInsideRoot,
-    runPowerShellScript,
     runProcess,
     shouldSkipPath,
     SKIPPED_ENTRY_NAMES,

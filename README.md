@@ -30,7 +30,7 @@ npx -y octopus-agent-orchestrator setup
 | **Token Economy** | Reviewer-context compaction, scoped diffs, gate output filtering — saves 60–100% on green builds |
 | **Task Lifecycle** | `TODO → IN_PROGRESS → IN_REVIEW → DONE` with hash-chain integrity |
 | **9 Review Types** | code, db, security, refactor, api, test, performance, infra, dependency |
-| **Dual-Runtime Gates** | PowerShell + Bash/Python — works on Windows, macOS, Linux |
+| **Node Runtime** | Public CLI and gate flows run through the Node/TypeScript router with no shell runtime dependency |
 | **Compact Command Hints** | Agent rules teach efficient CLI flags for everyday commands |
 
 ## Supported Providers
@@ -72,9 +72,8 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 
 ## Runtime Baseline
 
-- npm CLI and the new TypeScript-based Node foundation now target **Node 20 LTS**.
-- Current lifecycle execution still delegates to the canonical PowerShell control-plane.
-- PowerShell / bash / Python remain compatibility runtimes until later migration phases remove them.
+- **Node.js 20 LTS is the only required runtime** for the public CLI, lifecycle commands, and gate commands.
+- Root `tsconfig.json` extends `tsconfig.node-foundation.json`, so editors like IntelliJ IDEA or WebStorm can discover the repository without custom setup.
 
 ## Documentation
 
@@ -92,15 +91,16 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 
 ## Recent Changes
 
-- Shared utility library (`scripts/lib/common.ps1`) extracted from 6 control-plane scripts.
+- Stabilized the Node gate router for scoped diff, review-context, task-event summary, and completion flows.
+- Added root `tsconfig.json` for standard editor/IDE TypeScript discovery and included it in the published package surface.
+- Full `template/scripts/tests` baseline now completes cleanly without noisy PowerShell progress output from temp workspace helpers.
 - Compact Command Hints added to agent rules for token-efficient CLI usage.
 - E2E smoke tests covering full install/reinit/uninstall lifecycle matrix.
 - Token-economy defaults aligned: `enabled=true` with `enabled_depths=[1,2]`.
 - LF line endings enforced for pre-commit hook and bash artifacts on all platforms.
 - Parser-aware gate compaction and review-context artifacts for token-economy mode.
 - Added update workflow with version check and optional auto-apply from git.
-- Added `scripts/reinit.ps1` for changing init answers without full reinstall.
-- Added `scripts/uninstall.ps1` for removing deployed orchestrator with keep/delete choices.
+- Completed the runtime cutover to a Node-only lifecycle and gate surface.
 - Added npm package CLI with `octopus`, `oao`, `octopus-agent-orchestrator` aliases.
 
 ## Important Notes
@@ -108,11 +108,11 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 - `octopus setup` can collect the 6 init answers itself and write `runtime/init-answers.json` without an agent.
 - After CLI setup, use `AGENT_INIT_PROMPT.md` so the agent reuses existing init answers, only clarifies language when it cannot recognize it confidently, fills project-specific context, and finishes project-level verification.
 - `octopus` without arguments is now non-destructive and only prints overview/help.
-- npm CLI commands still wrap canonical PowerShell control-plane scripts; the new `src/` TypeScript foundation is staged for later migration phases.
-- Top-level `scripts/*.sh` are thin `pwsh` wrappers; `live/scripts/agent-gates/*.sh` are real bash+python implementations.
+- The public CLI owns the validated runtime surface for lifecycle commands and gate routes.
+- Root `tsconfig.json` is the editor-facing entrypoint and simply extends `tsconfig.node-foundation.json`.
 - Installer is non-destructive for existing project files outside managed blocks.
 - Commit message format is project-defined; conventional commits are optional.
-- For detailed deployment, lifecycle, and configuration information, see the **[docs/](docs/)** directory.
+- For detailed deployment, lifecycle, and configuration information, see the `docs/` directory.
 
 ## License
 

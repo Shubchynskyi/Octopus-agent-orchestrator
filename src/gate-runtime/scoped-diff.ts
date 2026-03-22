@@ -1,10 +1,10 @@
-const { toStringArray, matchAnyRegex } = require('./text-utils.ts');
+const { matchAnyRegex } = require('./text-utils.ts');
 
 /**
  * Build a scoped diff by filtering changed files against trigger regexes.
  * Pure-logic helper: callers provide preflight data and diff text.
  *
- * Matches the behavioral logic of build-scoped-diff.ps1 / build-scoped-diff.sh
+ * Shared scoped-diff behavior used by the Node gate runtime.
  * without git or filesystem side effects.
  */
 function buildScopedDiffMetadata(options) {

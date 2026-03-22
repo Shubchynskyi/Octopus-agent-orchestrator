@@ -7,7 +7,7 @@ BeforeAll {
     $script:PackageJsonPath = Join-Path $repoRoot 'package.json'
     $script:TempRoots = [System.Collections.Generic.List[string]]::new()
 
-    foreach ($commandName in @('node', 'pwsh', 'git')) {
+    foreach ($commandName in @('node', 'git')) {
         if (-not (Get-Command $commandName -ErrorAction SilentlyContinue)) {
             throw "$commandName is required to run npm CLI tests."
         }
@@ -174,10 +174,11 @@ Describe 'bin/octopus.js' {
         Test-Path -LiteralPath (Join-Path $bundleRoot '.gitattributes') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $bundleRoot 'package.json') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $bundleRoot 'bin\octopus.js') | Should -BeTrue
-        Test-Path -LiteralPath (Join-Path $bundleRoot 'scripts\install.ps1') | Should -BeTrue
-        Test-Path -LiteralPath (Join-Path $bundleRoot 'scripts\setup.ps1') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $bundleRoot 'scripts') | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $bundleRoot 'src\index.ts') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $bundleRoot 'src\cli\index.ts') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $bundleRoot 'template\AGENTS.md') | Should -BeTrue
-        Test-Path -LiteralPath (Join-Path $bundleRoot 'template\scripts\agent-gates\lib\__pycache__') | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $bundleRoot 'template\scripts\agent-gates') | Should -BeFalse
         Test-Path -LiteralPath (Join-Path $bundleRoot 'runtime') | Should -BeFalse
         Test-Path -LiteralPath (Join-Path $bundleRoot 'live') | Should -BeFalse
     }
@@ -190,7 +191,8 @@ Describe 'bin/octopus.js' {
         $result.ExitCode | Should -Be 0
         Test-Path -LiteralPath (Join-Path $destinationPath 'package.json') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $destinationPath 'bin\octopus.js') | Should -BeTrue
-        Test-Path -LiteralPath (Join-Path $destinationPath 'scripts\install.sh') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $destinationPath 'scripts') | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $destinationPath 'src\validators\verify.ts') | Should -BeTrue
     }
 
     It 'refuses to overwrite an existing non-empty destination' {

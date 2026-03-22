@@ -207,7 +207,7 @@ describe('buildClaudeLocalSettingsContent', () => {
         assert.equal(result.needsUpdate, true);
         const parsed = JSON.parse(result.content);
         assert.ok(parsed.permissions.allow.length > 0);
-        assert.ok(parsed.permissions.allow.some((e) => e.includes('agent-gates')));
+        assert.ok(parsed.permissions.allow.some((e) => e.includes('bin/octopus.js')));
     });
 
     it('does not add entries when disabled', () => {

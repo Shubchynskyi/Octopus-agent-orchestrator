@@ -1,7 +1,8 @@
 # IDE
 .idea/
 *.iml
-.vscode/
+.vscode/*
+!.vscode/settings.json
 .claude/
 
 # Generated at install/init time
@@ -20,6 +21,10 @@ Desktop.ini
 # Local temp/runtime noise
 __pycache__/
 *.pyc
+pester-output.txt
+pester_output.txt
+testResults.xml
+node_modules/
 .node-build/
 .tmp_rtk_bin_*/
 /Octopus-agent-orchestrator/

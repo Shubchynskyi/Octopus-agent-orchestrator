@@ -1,23 +1,14 @@
-const path = require('node:path');
-
-const {
-    DEFAULT_BUNDLE_NAME,
-    DEFAULT_INIT_ANSWERS_RELATIVE_PATH
-} = require('../../core/constants.ts');
-
 const {
     getStatusSnapshot,
     formatStatusSnapshot
 } = require('../../validators/status.ts');
 
 const {
-    bold,
     buildBannerText,
     COMMAND_SUMMARY,
     normalizePathValue,
     padRight,
     printBanner,
-    printCommandSummary,
     printStatus
 } = require('./cli-helpers.ts');
 

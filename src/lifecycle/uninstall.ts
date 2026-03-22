@@ -5,21 +5,17 @@ const {
     ALL_AGENT_ENTRYPOINT_FILES,
     BOOLEAN_TRUE_VALUES,
     BOOLEAN_FALSE_VALUES,
-    DEFAULT_BUNDLE_NAME,
-    SOURCE_TO_ENTRYPOINT_MAP
+    DEFAULT_BUNDLE_NAME
 } = require('../core/constants.ts');
-const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
+const { pathExists, readTextFile } = require('../core/fs.ts');
 const { readJsonFile } = require('../core/json.ts');
-const { isPathInsideRoot, resolvePathInsideRoot } = require('../core/paths.ts');
-const { removeManagedBlock } = require('../core/managed-blocks.ts');
 const { getActiveAgentEntrypointFiles, getCanonicalEntrypointFile } = require('../materialization/common.ts');
 const {
     MANAGED_START,
     MANAGED_END,
     COMMIT_GUARD_START,
     COMMIT_GUARD_END,
-    CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES,
-    INSTALL_BACKUP_CANDIDATE_PATHS
+    CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES
 } = require('../materialization/content-builders.ts');
 
 const {
@@ -87,7 +83,7 @@ function parseBooleanAnswer(value, fieldName) {
 }
 
 // ---------------------------------------------------------------------------
-// Entrypoint detection helpers (mirror uninstall.ps1 helpers)
+// Entrypoint detection helpers
 // ---------------------------------------------------------------------------
 
 function getCanonicalEntrypointFromSourceOfTruth(sourceOfTruthValue) {
@@ -259,13 +255,12 @@ function escapeRegex(text) {
 
 /**
  * Runs the uninstall pipeline.
- * Ports uninstall.ps1 to Node/TS.
+ * Node implementation of the uninstall lifecycle.
  *
  * @param {object} options
  * @param {string} options.targetRoot
  * @param {string} options.bundleRoot
  * @param {string} [options.initAnswersPath]
- * @param {boolean} [options.noPrompt=true]
  * @param {boolean} [options.dryRun=false]
  * @param {boolean} [options.skipBackups=false]
  * @param {string|boolean} [options.keepPrimaryEntrypoint]
@@ -278,7 +273,6 @@ function runUninstall(options) {
         targetRoot,
         bundleRoot,
         initAnswersPath = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json'),
-        noPrompt = true,
         dryRun = false,
         skipBackups = false,
         keepPrimaryEntrypoint,
@@ -501,7 +495,7 @@ function runUninstall(options) {
             ? settings.permissions.allow.filter((e) => e && String(e).trim()).map((e) => String(e).trim())
             : [];
 
-        const managedSet = new Set(CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES);
+        const managedSet = new Set([...CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES]);
         const updatedAllowEntries = currentAllowEntries.filter((e) => !managedSet.has(e));
 
         if (updatedAllowEntries.length === currentAllowEntries.length) return;

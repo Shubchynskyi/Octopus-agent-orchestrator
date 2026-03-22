@@ -23,7 +23,7 @@ function getCanonicalEntrypointFile(sourceOfTruth) {
  */
 function normalizeAgentEntrypointToken(token) {
     let trimmed = String(token).trim();
-    trimmed = trimmed.replace(/^(?:or)\s+/i, '');
+    trimmed = trimmed.replace(/^or\s+/i, '');
     if (!trimmed) {
         return null;
     }
@@ -132,7 +132,7 @@ function convertActiveAgentEntrypointFilesToString(activeEntrypointFiles) {
 }
 
 /**
- * Returns provider orchestrator profile definitions (matching common.ps1).
+ * Returns provider orchestrator profile definitions.
  */
 function getProviderOrchestratorProfileDefinitions() {
     return [
@@ -164,7 +164,7 @@ function getProviderOrchestratorProfileDefinitions() {
 }
 
 /**
- * Returns GitHub skill bridge profile definitions (matching common.ps1).
+ * Returns GitHub skill bridge profile definitions.
  */
 function getGitHubSkillBridgeProfileDefinitions() {
     return [

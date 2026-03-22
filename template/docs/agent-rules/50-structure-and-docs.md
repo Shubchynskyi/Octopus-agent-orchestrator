@@ -1,14 +1,14 @@
 # Structure and Documentation
 
-Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default template).
+Primary entry point: selected source-of-truth entrypoint (depends on configured provider).
 
 ## Repository Structure
 ```text
 <ProjectRoot>/
-├── CLAUDE.md                     # Claude entrypoint; canonical only when source-of-truth=Claude
 ├── AGENTS.md                     # Codex entrypoint; canonical only when source-of-truth=Codex (recommended gitignore)
+├── CLAUDE.md                     # Claude entrypoint; canonical only when source-of-truth=Claude
 ├── GEMINI.md                     # Gemini entrypoint; canonical only when source-of-truth=Gemini
-├── .claude/settings.local.json   # Optional (when ClaudeOrchestratorFullAccess=true): Claude Code local permission allowlist for orchestrator scripts
+├── .claude/settings.local.json   # Optional (when ClaudeOrchestratorFullAccess=true): Claude Code local permission allowlist for the Node CLI
 ├── .qwen/settings.json           # Qwen context bootstrap (`AGENTS.md` + `TASK.md`)
 ├── TASK.md                       # Task queue for orchestration (recommended gitignore)
 ├── .antigravity/rules.md         # Platform instruction file (recommended gitignore)
@@ -39,7 +39,6 @@ Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default
     │   ├── docs/changes/CHANGELOG.md
     │   ├── docs/reviews/TEMPLATE.md
     │   ├── docs/tasks/TASKS.md
-    │   ├── scripts/agent-gates/** # Gate scripts (`.ps1` + `.sh`)
     │   ├── skills/**             # Orchestration and review skills
     │   ├── USAGE.md              # Post-init usage instructions for the selected assistant language
     │   ├── project-discovery.md  # Auto-detected stack and command signals
@@ -48,19 +47,16 @@ Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default
     ├── runtime/
     │   ├── reviews/**            # Generated preflight and review artifacts
     │   └── task-events/**        # Task timeline logs by task id
-    ├── scripts/install.ps1       # Installer + init trigger
-    ├── scripts/init.ps1          # Context materialization into live/
-    ├── scripts/verify.ps1        # Verification script
+    ├── bin/octopus.js            # Public Node CLI entrypoint
+    ├── src/**                    # Canonical Node/TypeScript runtime
     ├── MANIFEST.md               # Bundle manifest
     └── AGENT_INIT_PROMPT.md      # Single prompt for setup agent
 ```
 
 ## Core Documents
 - Source-of-truth entrypoint file (selected at install): canonical routing index for agent rules.
-- `CLAUDE.md` - Claude entrypoint (canonical only when selected).
-- `AGENTS.md` - Codex entrypoint (canonical only when selected).
-- `GEMINI.md` - Gemini entrypoint (canonical only when selected).
-- `.claude/settings.local.json` - optional (when `ClaudeOrchestratorFullAccess=true`): Claude Code local permission allowlist for orchestrator scripts.
+- `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` - supported root entrypoint files; only the selected source-of-truth file is canonical.
+- `.claude/settings.local.json` - optional (when `ClaudeOrchestratorFullAccess=true`): Claude Code local permission allowlist for the Node CLI.
 - `.qwen/settings.json` - Qwen context bootstrap (loads `AGENTS.md` and `TASK.md`).
 - `TASK.md` - canonical task list for agent execution workflow.
 - `.github/agents/orchestrator.md` - mandatory orchestration profile for GitHub Agents task execution.
@@ -75,14 +71,14 @@ Primary entry point: selected source-of-truth entrypoint (`CLAUDE.md` by default
 - `Octopus-agent-orchestrator/live/config/paths.json` - configurable preflight path roots and trigger regexes.
 - `Octopus-agent-orchestrator/live/config/output-filters.json` - shared compile/review output filter profiles for gate compaction.
 - `Octopus-agent-orchestrator/live/USAGE.md` - post-init usage instructions rendered in the selected assistant language.
-- `Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1` / `.sh` - path mode and required review preflight gate.
-- `Octopus-agent-orchestrator/live/scripts/agent-gates/compile-gate.ps1` / `.sh` - mandatory compile gate before review phase.
-- `Octopus-agent-orchestrator/live/scripts/agent-gates/required-reviews-check.ps1` / `.sh` - mandatory post-review gate checker.
-- `Octopus-agent-orchestrator/live/scripts/agent-gates/log-task-event.ps1` / `.sh` - task timeline event logger by task id.
-- `Octopus-agent-orchestrator/live/scripts/agent-gates/task-events-summary.ps1` / `.sh` - human-readable task timeline summary by task id.
-- `Octopus-agent-orchestrator/live/scripts/agent-gates/build-scoped-diff.ps1` / `.sh` - reviewer scoped-diff artifact builder with fallback metadata.
-- `Octopus-agent-orchestrator/live/scripts/agent-gates/build-review-context.ps1` / `.sh` - reviewer context artifact builder for token economy rule-pack selection.
-- `Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1` / `.sh` - manifest duplicate-entry validator.
+- `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change` - path mode and required review preflight gate.
+- `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate` - mandatory compile gate before review phase.
+- `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check` - mandatory post-review gate checker.
+- `node Octopus-agent-orchestrator/bin/octopus.js gate log-task-event` - task timeline event logger by task id.
+- `node Octopus-agent-orchestrator/bin/octopus.js gate task-events-summary` - human-readable task timeline summary by task id.
+- `node Octopus-agent-orchestrator/bin/octopus.js gate build-scoped-diff` - reviewer scoped-diff artifact builder with fallback metadata.
+- `node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context` - reviewer context artifact builder for token economy rule-pack selection.
+- `node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest` - manifest duplicate-entry validator.
 - `Octopus-agent-orchestrator/live/project-discovery.md` - auto-detected stack signals and suggested command baselines.
 - `Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md` - orchestration skill.
 - `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md` - optional live-only specialist skill generator and wiring workflow.

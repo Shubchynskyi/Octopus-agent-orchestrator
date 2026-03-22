@@ -26,7 +26,6 @@ const {
     normalizePathValue,
     normalizeSourceOfTruth,
     padRight,
-    parseCliBoolean,
     parseBooleanText,
     parseOptionalText,
     parseOptions,
@@ -36,10 +35,6 @@ const {
     removePathIfExists,
     resolvePathInsideRoot,
     shouldSkipPath,
-    SKIPPED_ENTRY_NAMES,
-    SKIPPED_FILE_SUFFIXES,
-    supportsColor,
-    supportsInteractivePrompts,
     syncBundleItems,
     toPosixPath,
     tryNormalizeAssistantBrevity,
@@ -369,6 +364,35 @@ test('copyPath skips __pycache__', () => {
     }
 });
 
+test('copyPath rejects symlink targets outside the bundle root', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copy-test-'));
+    try {
+        const sourceRoot = path.join(tmpDir, 'source');
+        const destRoot = path.join(tmpDir, 'dest');
+        const outsideFile = path.join(tmpDir, 'outside.txt');
+        const linkPath = path.join(sourceRoot, 'outside-link.txt');
+
+        fs.mkdirSync(sourceRoot, { recursive: true });
+        fs.writeFileSync(outsideFile, 'outside', 'utf8');
+
+        try {
+            fs.symlinkSync(outsideFile, linkPath);
+        } catch (error) {
+            if (error && ['EPERM', 'EACCES', 'UNKNOWN'].includes(error.code)) {
+                return;
+            }
+            throw error;
+        }
+
+        assert.throws(
+            () => copyPath(linkPath, path.join(destRoot, 'outside-link.txt'), sourceRoot),
+            /Refusing to copy symlink outside bundle root/
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('ensureSourceItemExists throws for missing asset', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'src-test-'));
     try {
@@ -404,7 +428,7 @@ test('deployFreshBundle copies DEPLOY_ITEMS to destination', () => {
         fs.mkdirSync(sourceRoot, { recursive: true });
         for (const item of DEPLOY_ITEMS) {
             const itemPath = path.join(sourceRoot, item);
-            if (item.includes('/') || item === 'bin' || item === 'scripts' || item === 'template') {
+            if (item.includes('/') || item === 'bin' || item === 'src' || item === 'template') {
                 fs.mkdirSync(itemPath, { recursive: true });
                 fs.writeFileSync(path.join(itemPath, 'marker.txt'), item, 'utf8');
             } else {
@@ -446,7 +470,7 @@ test('deployFreshBundle allows empty existing directory', () => {
         fs.mkdirSync(destPath, { recursive: true });
         for (const item of DEPLOY_ITEMS) {
             const itemPath = path.join(sourceRoot, item);
-            if (item.includes('/') || item === 'bin' || item === 'scripts' || item === 'template') {
+            if (item.includes('/') || item === 'bin' || item === 'src' || item === 'template') {
                 fs.mkdirSync(itemPath, { recursive: true });
                 fs.writeFileSync(path.join(itemPath, 'marker.txt'), item, 'utf8');
             } else {
@@ -473,7 +497,7 @@ test('syncBundleItems replaces existing items', () => {
         fs.mkdirSync(destPath, { recursive: true });
         for (const item of DEPLOY_ITEMS) {
             const itemPath = path.join(sourceRoot, item);
-            if (item.includes('/') || item === 'bin' || item === 'scripts' || item === 'template') {
+            if (item.includes('/') || item === 'bin' || item === 'src' || item === 'template') {
                 fs.mkdirSync(itemPath, { recursive: true });
                 fs.writeFileSync(path.join(itemPath, 'marker.txt'), 'new', 'utf8');
             } else {

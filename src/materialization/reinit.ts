@@ -14,7 +14,7 @@ const { runInstall } = require('./install.ts');
 
 /**
  * Runs the reinit pipeline.
- * This ports reinit.ps1 to Node/TS.
+ * Node implementation of the reinit lifecycle.
  *
  * @param {object} options
  * @param {string} options.targetRoot - Project root
@@ -58,8 +58,7 @@ function runReinit(options) {
     let existingAnswers = null;
     if (pathExists(resolvedInitPath)) {
         try {
-            const raw = readJsonFile(resolvedInitPath);
-            existingAnswers = raw;
+            existingAnswers = readJsonFile(resolvedInitPath);
         } catch {
             existingAnswers = null;
         }

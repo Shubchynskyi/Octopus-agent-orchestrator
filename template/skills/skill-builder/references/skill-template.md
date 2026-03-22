@@ -10,7 +10,7 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - Bash(pwsh:*)
+  - Bash(*)
   - Write
 metadata:
   author: <team>

@@ -34,7 +34,7 @@
       "(^|/)(db|database|migrations?|schema)(/|$)",
       "\\.sql$",
       "(Repository|Dao|Specification|Query|Migration)[^/]*\\.(java|kt|ts|js|py|go|cs|rb|php)$",
-      "(?i)(typeorm|prisma|flyway|liquibase|alembic|knex|sequelize)"
+      "(typeorm|prisma|flyway|liquibase|alembic|knex|sequelize)"
     ],
     "security": [
       "(^|/)(auth|security|oauth|jwt|token|rbac|acl|keycloak|okta|saml|openid|mfa|crypt|encryption|certificate|secret|vault|webhook|payment|checkout|billing)(/|\\.|$)"

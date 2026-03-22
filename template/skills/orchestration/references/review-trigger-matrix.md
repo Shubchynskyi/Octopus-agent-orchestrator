@@ -2,7 +2,7 @@
 
 ## Path Mode
 - `FULL_PATH` is default.
-- `FAST_PATH` may be selected only by `Octopus-agent-orchestrator/live/scripts/agent-gates/classify-change.ps1`.
+- `FAST_PATH` may be selected only by `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change`.
 - If any specialized trigger below matches, `FAST_PATH` is disallowed.
 - Path roots and regex trigger definitions are loaded from:
   `Octopus-agent-orchestrator/live/config/paths.json`.
@@ -73,7 +73,6 @@ Trigger `$refactor-review` if any condition is true:
 - Trigger key: `dependency`
 - Trigger conditions:
   - configured dependency trigger regexes (`triggers.dependency`) from `paths.json`
-
 
 
 

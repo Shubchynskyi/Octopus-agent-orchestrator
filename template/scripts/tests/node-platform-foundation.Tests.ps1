@@ -83,17 +83,17 @@ Describe 'Node platform foundation execution' {
     }
 }
 
-Describe 'M0 contract preservation' {
-    It 'keeps the historical pre-M1 Node floor in the frozen contract doc' {
+Describe 'Runtime contract alignment' {
+    It 'documents the current Node 20 floor in the contract doc' {
         $contractContent = Get-Content -LiteralPath $script:ContractDocPath -Raw
-        $contractContent | Should -Match 'Node\.js .+16\.14'
+        $contractContent | Should -Match 'Node\.js >=20\.0\.0'
     }
 
-    It 'documents the M1 foundation separately from the M0 contract freeze' {
+    It 'documents the active foundation separately from the runtime contract' {
         $foundationContent = Get-Content -LiteralPath $script:FoundationDocPath -Raw
         $foundationContent | Should -Match 'Node 20'
         $foundationContent | Should -Match 'TypeScript'
         $foundationContent | Should -Match 'bin/octopus\.js'
-        $foundationContent | Should -Match 'compatibility'
+        $foundationContent | Should -Match 'Node-only'
     }
 }

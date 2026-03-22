@@ -10,6 +10,8 @@ npx -y octopus-agent-orchestrator setup
 
 Equivalent aliases: `oao`, `octopus-agent-orchestrator`.
 
+Preferred and required runtime surface is the Node CLI.
+
 This path:
 - deploys `./Octopus-agent-orchestrator/`;
 - asks or accepts the 6 init answers;
@@ -79,9 +81,8 @@ After successful setup:
 - ✅ Root entrypoints exist and route correctly (selected source-of-truth has full index, others redirect).
 - ✅ Provider bridge profiles exist (`.github/agents/*.md`, `.windsurf/agents/`, etc.).
 - ✅ Canonical rules at `Octopus-agent-orchestrator/live/docs/agent-rules/`.
-- ✅ Gate scripts at `Octopus-agent-orchestrator/live/scripts/agent-gates/`.
 - ✅ Config files at `Octopus-agent-orchestrator/live/config/`.
-- ✅ `verify.ps1` and `validate-manifest.ps1` pass.
+- ✅ `octopus verify` and `octopus gate validate-manifest` pass.
 - ✅ `TASK.md` exists with task queue.
 
 See **[docs/architecture.md](docs/architecture.md)** for full list of deployed files.
@@ -114,13 +115,15 @@ See **[docs/work-example.md](docs/work-example.md)** for a full task lifecycle w
 
 ```powershell
 octopus doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
-pwsh -File Octopus-agent-orchestrator/scripts/verify.ps1 -TargetRoot "." -SourceOfTruth "<provider>" -InitAnswersPath "Octopus-agent-orchestrator/runtime/init-answers.json"
-pwsh -File Octopus-agent-orchestrator/live/scripts/agent-gates/validate-manifest.ps1 -ManifestPath Octopus-agent-orchestrator/MANIFEST.md
+octopus verify --target-root "." --source-of-truth "<provider>" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+octopus gate validate-manifest --manifest-path "Octopus-agent-orchestrator/MANIFEST.md"
 ```
 
 **Provider values:** `Claude`, `Codex`, `Gemini`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
 
-Gate scripts also have Bash alternatives — see **[docs/cli-reference.md](docs/cli-reference.md)** for full reference.
+For day-to-day validation, prefer `octopus doctor`, `octopus verify`, and `octopus gate validate-manifest`.
+
+See **[docs/cli-reference.md](docs/cli-reference.md)** for the full low-level script reference.
 
 ## 8. Change Init Answers (Reinit)
 
@@ -174,9 +177,9 @@ The agent uses `live/skills/skill-builder/SKILL.md` to create skills and wire tr
 
 | Component | Requirement |
 |---|---|
-| npm CLI | Node.js 20 LTS |
-| Control-plane scripts | PowerShell 7+ (`pwsh`) |
-| Gate scripts (`.sh`) | `bash` + Python (`python3`, `python`, or `py -3`) |
+| Public CLI and gate commands | Node.js 20 LTS |
+
+If you work on this repository itself in IntelliJ IDEA/WebStorm, open the root `tsconfig.json`; it extends `tsconfig.node-foundation.json` and is the editor-facing project file.
 
 ## Further Reading
 

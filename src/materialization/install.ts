@@ -1,11 +1,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { DEFAULT_BUNDLE_NAME } = require('../core/constants.ts');
-const { ensureDirectory, pathExists, readTextFile, writeTextFile } = require('../core/fs.ts');
+const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
 const { readJsonFile, writeJsonFile } = require('../core/json.ts');
 const { normalizeLineEndings } = require('../core/line-endings.ts');
-const { isPathInsideRoot, resolvePathInsideRoot } = require('../core/paths.ts');
+const { resolvePathInsideRoot } = require('../core/paths.ts');
 const { validateInitAnswers } = require('../schemas/init-answers.ts');
 const {
     getCanonicalEntrypointFile,
@@ -15,12 +14,9 @@ const {
     getGitHubSkillBridgeProfileDefinitions
 } = require('./common.ts');
 const {
-    MANAGED_START,
-    MANAGED_END,
     COMMIT_GUARD_START,
     COMMIT_GUARD_END,
     INSTALL_BACKUP_CANDIDATE_PATHS,
-    extractManagedBlockFromContent,
     buildTaskManagedBlockWithExistingQueue,
     buildCanonicalManagedBlock,
     buildRedirectManagedBlock,
@@ -39,7 +35,7 @@ function escapeRegex(text) {
 
 /**
  * Runs the install materialization pipeline.
- * This is the main entry point for porting install.ps1 to Node/TS.
+ * Main entry point for the Node install lifecycle.
  *
  * @param {object} options
  * @param {string} options.targetRoot - Project root directory
@@ -168,7 +164,6 @@ function runInstall(options) {
     let aligned = 0;
     let forcedOverwrites = 0;
     let initInvoked = false;
-    let commitGuardHookUpdated = false;
     const backedUpSet = new Set();
 
     // Pre-existing file tracking
@@ -238,8 +233,8 @@ function runInstall(options) {
         if (!content || !content.trim()) return null;
         const norm = relativePath.replace(/\\/g, '/');
         if (norm === 'TASK.md') {
-            content = content.replace(/\{\{DEPLOYMENT_DATE\}\}/g, deploymentDate);
-            content = content.replace(/\{\{CANONICAL_ENTRYPOINT\}\}/g, canonicalEntryFile);
+            content = content.replaceAll('{{DEPLOYMENT_DATE}}', deploymentDate);
+            content = content.replaceAll('{{CANONICAL_ENTRYPOINT}}', canonicalEntryFile);
         }
         return content;
     }
@@ -430,7 +425,7 @@ function runInstall(options) {
     }
 
     // Commit guard hook
-    commitGuardHookUpdated = applyCommitGuardHook(targetRoot, enforceNoAutoCommit, dryRun, backupFile);
+    const commitGuardHookUpdated = applyCommitGuardHook(targetRoot, enforceNoAutoCommit, dryRun, backupFile);
 
     // Run init if requested
     if (runInit && !dryRun && initRunner) {
