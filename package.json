@@ -10,12 +10,15 @@
     "octopus-agent-orchestrator": "bin/octopus.js"
   },
   "scripts": {
+    "build:publish-runtime": "node --input-type=commonjs --eval \"require.extensions['.ts']=require.extensions['.js'];require(process.argv[1]).runPublishRuntimeBuild()\" ./scripts/node-foundation/build.ts",
     "build:node-foundation": "node --input-type=commonjs --eval \"require.extensions['.ts']=require.extensions['.js'];require(process.argv[1]).runNodeFoundationBuild()\" ./scripts/node-foundation/build.ts",
-    "test:node-foundation": "node --input-type=commonjs --eval \"require.extensions['.ts']=require.extensions['.js'];require(process.argv[1]).runNodeFoundationTests()\" ./scripts/node-foundation/test.ts"
+    "test:node-foundation": "node --input-type=commonjs --eval \"require.extensions['.ts']=require.extensions['.js'];require(process.argv[1]).runNodeFoundationTests()\" ./scripts/node-foundation/test.ts",
+    "prepack": "npm run build:publish-runtime"
   },
   "files": [
     ".gitattributes",
     "bin",
+    "dist",
     "src",
     "tsconfig.json",
     "tsconfig.node-foundation.json",

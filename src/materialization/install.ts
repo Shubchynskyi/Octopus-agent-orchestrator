@@ -33,6 +33,37 @@ function escapeRegex(text) {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function formatInstallBackupTimestamp(date) {
+    const pad2 = (value) => String(value).padStart(2, '0');
+    const pad3 = (value) => String(value).padStart(3, '0');
+    return [
+        String(date.getUTCFullYear()),
+        pad2(date.getUTCMonth() + 1),
+        pad2(date.getUTCDate())
+    ].join('') + '-' + [
+        pad2(date.getUTCHours()),
+        pad2(date.getUTCMinutes()),
+        pad2(date.getUTCSeconds())
+    ].join('') + '-' + pad3(date.getUTCMilliseconds());
+}
+
+function createUniqueInstallBackupRoot(bundleRoot) {
+    const backupsRoot = path.join(bundleRoot, 'runtime', 'backups');
+    const baseTimestamp = formatInstallBackupTimestamp(new Date());
+    let candidateTimestamp = baseTimestamp;
+    let suffix = 1;
+
+    while (pathExists(path.join(backupsRoot, candidateTimestamp))) {
+        candidateTimestamp = `${baseTimestamp}-${String(suffix).padStart(2, '0')}`;
+        suffix += 1;
+    }
+
+    return {
+        timestamp: candidateTimestamp,
+        backupRoot: path.join(backupsRoot, candidateTimestamp)
+    };
+}
+
 /**
  * Runs the install materialization pipeline.
  * Main entry point for the Node install lifecycle.
@@ -143,8 +174,9 @@ function runInstall(options) {
     const providerBridgePaths = providerOrchestratorProfiles.map((p) => p.orchestratorRelativePath);
 
     // Setup
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15).replace('T', '-');
-    const backupRoot = path.join(bundleRoot, 'runtime', 'backups', timestamp);
+    const backupLocation = createUniqueInstallBackupRoot(bundleRoot);
+    const timestamp = backupLocation.timestamp;
+    const backupRoot = backupLocation.backupRoot;
     const deploymentDate = new Date().toISOString().slice(0, 10);
     const bundleVersionPath = path.join(bundleRoot, 'VERSION');
     const liveVersionPath = path.join(bundleRoot, 'live', 'version.json');
@@ -405,12 +437,16 @@ function runInstall(options) {
     let gitignoreAdded = 0;
     const gitignorePath = path.join(targetRoot, '.gitignore');
     if (!dryRun) {
-        if (!pathExists(gitignorePath)) {
+        const gitignoreExisted = pathExists(gitignorePath);
+        if (!gitignoreExisted) {
             fs.writeFileSync(gitignorePath, '', 'utf8');
         }
         const existingLines = readTextFile(gitignorePath).split(/\r?\n/);
         const appendLines = gitignoreEntryList.filter((e) => !existingLines.includes(e));
         if (appendLines.length > 0) {
+            if (gitignoreExisted) {
+                backupFile(gitignorePath, '.gitignore');
+            }
             const appendContent = '\n# Octopus-agent-orchestrator managed ignores\n' + appendLines.join('\n') + '\n';
             fs.appendFileSync(gitignorePath, appendContent, 'utf8');
             gitignoreAdded = appendLines.length;

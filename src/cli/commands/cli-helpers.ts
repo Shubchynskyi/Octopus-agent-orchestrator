@@ -607,12 +607,14 @@ function printStatus(snapshot, options) {
     console.log(`  ${getStageBadge(snapshot.primaryInitializationComplete, { warning: snapshot.bundlePresent && !snapshot.primaryInitializationComplete })} Primary initialization`);
     console.log(`  ${getStageBadge(snapshot.agentInitializationComplete, { warning: snapshot.primaryInitializationComplete && !snapshot.agentInitializationComplete })} Agent initialization`);
     console.log(`  ${getStageBadge(snapshot.readyForTasks, { warning: snapshot.agentInitializationComplete && !snapshot.readyForTasks })} Ready for task execution`);
-    if (snapshot.primaryInitializationComplete && !snapshot.agentInitializationComplete) {
+    if (snapshot.agentInitializationPendingReason === 'AGENT_HANDOFF_REQUIRED') {
+        printHighlightedPair('NextStage:', 'Launch your agent with AGENT_INIT_PROMPT.md');
+    } else if (snapshot.agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING') {
         console.log(`  Missing project commands: ${snapshot.missingProjectCommands.length}`);
     }
     if (snapshot.initAnswersError) console.log(`InitAnswersStatus: INVALID (${snapshot.initAnswersError})`);
     if (snapshot.liveVersionError) console.log(`LiveVersionStatus: INVALID (${snapshot.liveVersionError})`);
-    if (snapshot.missingProjectCommands.length > 0 && snapshot.primaryInitializationComplete) {
+    if (snapshot.agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING') {
         console.log(`CommandsRule: ${snapshot.commandsRulePath}`);
         printHighlightedPair('CommandsStatus:', 'PENDING_AGENT_CONTEXT');
     }

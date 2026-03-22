@@ -26,6 +26,10 @@ pester_output.txt
 testResults.xml
 node_modules/
 .node-build/
+dist/
 .tmp_rtk_bin_*/
 /Octopus-agent-orchestrator/
 /TASK.md
+
+# Test results
+scripts/test

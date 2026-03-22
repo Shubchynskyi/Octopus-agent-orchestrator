@@ -467,7 +467,11 @@ function buildGitignoreEntries(activeEntryFiles, providerOrchestratorProfiles, e
 }
 
 /**
- * Synchronizes a managed block into a file's content, replacing existing or appending.
+ * Synchronizes a managed block into a file's content.
+ * If the file already contains a managed block, replace it in place.
+ * If the file has unrelated legacy content and no managed block, replace the file
+ * entirely so the previous content lives only in install backups instead of being
+ * merged with the new orchestrator contract.
  */
 function syncManagedBlockInContent(content, managedBlock) {
     const pattern = new RegExp(
@@ -480,7 +484,7 @@ function syncManagedBlockInContent(content, managedBlock) {
     } else if (!content || !content.trim()) {
         newContent = managedBlock + '\r\n';
     } else {
-        newContent = content.trimEnd() + '\r\n\r\n' + managedBlock + '\r\n';
+        newContent = managedBlock + '\r\n';
     }
 
     return { content: newContent, changed: newContent !== (content || '') };

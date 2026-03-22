@@ -54,6 +54,37 @@ function copyFileToBuildRoot(filePath, repoRoot, buildRoot) {
     return outputRelativePath.split(path.sep).join('/');
 }
 
+function resetBuildRoot(buildRoot) {
+    fs.mkdirSync(buildRoot, { recursive: true });
+
+    for (const entry of fs.readdirSync(buildRoot, { withFileTypes: true })) {
+        fs.rmSync(path.join(buildRoot, entry.name), {
+            recursive: true,
+            force: true,
+            maxRetries: 5,
+            retryDelay: 50
+        });
+    }
+}
+
+function buildSourceRoots(repoRoot, buildRoot, sourceRoots, options = {}) {
+    const copiedFiles = [];
+    const validateSourceFiles = new Set((options.validateSourceFiles || []).map(p => path.resolve(p)));
+
+    resetBuildRoot(buildRoot);
+
+    for (const sourceRoot of sourceRoots) {
+        for (const filePath of collectFiles(sourceRoot, '.ts')) {
+            if (validateSourceFiles.has(path.resolve(sourceRoot))) {
+                validateSourceModule(filePath);
+            }
+            copiedFiles.push(copyFileToBuildRoot(filePath, repoRoot, buildRoot));
+        }
+    }
+
+    return copiedFiles;
+}
+
 function buildNodeFoundation() {
     const repoRoot = getRepoRoot();
     const buildRoot = path.join(repoRoot, '.node-build');
@@ -61,18 +92,9 @@ function buildNodeFoundation() {
         path.join(repoRoot, 'src'),
         path.join(repoRoot, 'tests', 'node')
     ];
-    const copiedFiles = [];
-
-    fs.rmSync(buildRoot, { recursive: true, force: true });
-
-    for (const sourceRoot of sourceRoots) {
-        for (const filePath of collectFiles(sourceRoot, '.ts')) {
-            if (sourceRoot.endsWith(path.join('src'))) {
-                validateSourceModule(filePath);
-            }
-            copiedFiles.push(copyFileToBuildRoot(filePath, repoRoot, buildRoot));
-        }
-    }
+    const copiedFiles = buildSourceRoots(repoRoot, buildRoot, sourceRoots, {
+        validateSourceFiles: [path.join(repoRoot, 'src')]
+    });
 
     const manifestPath = path.join(buildRoot, 'node-foundation-manifest.json');
     fs.writeFileSync(
@@ -80,6 +102,35 @@ function buildNodeFoundation() {
         JSON.stringify({
             nodeEngineRange: NODE_ENGINE_RANGE,
             sourceRoots: ['src', 'tests/node'],
+            files: copiedFiles
+        }, null, 2) + '\n',
+        'utf8'
+    );
+
+    return {
+        buildRoot,
+        copiedFiles,
+        manifestPath,
+        repoRoot
+    };
+}
+
+function buildPublishRuntime() {
+    const repoRoot = getRepoRoot();
+    const buildRoot = path.join(repoRoot, 'dist');
+    const sourceRoots = [
+        path.join(repoRoot, 'src')
+    ];
+    const copiedFiles = buildSourceRoots(repoRoot, buildRoot, sourceRoots, {
+        validateSourceFiles: sourceRoots
+    });
+
+    const manifestPath = path.join(buildRoot, 'publish-runtime-manifest.json');
+    fs.writeFileSync(
+        manifestPath,
+        JSON.stringify({
+            nodeEngineRange: NODE_ENGINE_RANGE,
+            sourceRoots: ['src'],
             files: copiedFiles
         }, null, 2) + '\n',
         'utf8'
@@ -102,13 +153,24 @@ function runNodeFoundationBuild() {
     return result;
 }
 
+function runPublishRuntimeBuild() {
+    const result = buildPublishRuntime();
+    console.log('PUBLISH_RUNTIME_BUILD_OK');
+    console.log(`OutputRoot: ${path.relative(result.repoRoot, result.buildRoot).split(path.sep).join('/')}`);
+    console.log(`ManifestPath: ${path.relative(result.repoRoot, result.manifestPath).split(path.sep).join('/')}`);
+    console.log(`Files: ${result.copiedFiles.length}`);
+    return result;
+}
+
 if (require.main === module) {
     runNodeFoundationBuild();
 }
 
 module.exports = {
+    buildPublishRuntime,
     buildNodeFoundation,
     collectFiles,
     getRepoRoot,
+    runPublishRuntimeBuild,
     runNodeFoundationBuild
 };

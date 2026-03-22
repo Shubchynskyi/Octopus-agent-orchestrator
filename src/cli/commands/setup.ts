@@ -66,6 +66,13 @@ const SETUP_DEFINITIONS = {
 // Setup answer defaults & interactive collection
 // ---------------------------------------------------------------------------
 
+function resolveSetupActiveAgentFiles(sourceOfTruth, explicitActiveAgentFiles) {
+    if (explicitActiveAgentFiles === undefined) {
+        return normalizeActiveAgentFiles(null, sourceOfTruth);
+    }
+    return normalizeActiveAgentFiles(explicitActiveAgentFiles, sourceOfTruth);
+}
+
 function getSetupAnswerDefaults(targetRoot, initAnswersPath, options) {
     const resolvedInitAnswersPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
     const existingAnswers = readOptionalJsonFile(resolvedInitAnswersPath) || {};
@@ -73,10 +80,7 @@ function getSetupAnswerDefaults(targetRoot, initAnswersPath, options) {
         options.sourceOfTruth ?? getInitAnswerValue(existingAnswers, 'SourceOfTruth'),
         'Claude'
     );
-    const activeAgentFiles = normalizeActiveAgentFiles(
-        options.activeAgentFiles ?? getInitAnswerValue(existingAnswers, 'ActiveAgentFiles'),
-        sourceOfTruth
-    );
+    const activeAgentFiles = resolveSetupActiveAgentFiles(sourceOfTruth, options.activeAgentFiles);
 
     return {
         assistantLanguage:
@@ -151,7 +155,7 @@ async function collectSetupAnswersInteractively(targetRoot, initAnswersPath, opt
         ]
     });
 
-    const activeAgentFiles = normalizeActiveAgentFiles(defaults.activeAgentFiles, sourceOfTruth);
+    const activeAgentFiles = resolveSetupActiveAgentFiles(sourceOfTruth, options.activeAgentFiles);
 
     return {
         assistantLanguage,
@@ -172,6 +176,8 @@ function printSetupHandoff(snapshot) {
     const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
     console.log('');
     console.log(bold('Agent Initialization'));
+    console.log('  Primary setup is complete.');
+    console.log('  Next stage: launch your agent and give it the init prompt.');
     if (snapshot.activeAgentFiles) {
         console.log(`  Active agent files: ${snapshot.activeAgentFiles}`);
     }
@@ -179,7 +185,7 @@ function printSetupHandoff(snapshot) {
     console.log('  2. The prompt already tells the agent to reuse existing init answers,');
     console.log('     validate/normalize language, fill project context, replace placeholders,');
     console.log('     and run the final doctor check.');
-    console.log('  3. After that you can execute tasks, for example:');
+    console.log('  3. After agent initialization you can execute tasks, for example:');
     console.log(`     ${green('Execute task T-001 depth=2')}`);
 }
 
@@ -188,6 +194,8 @@ function buildSetupHandoffText(snapshot) {
     const lines = [];
     lines.push('');
     lines.push('Agent Initialization');
+    lines.push('  Primary setup is complete.');
+    lines.push('  Next stage: launch your agent and give it the init prompt.');
     if (snapshot.activeAgentFiles) {
         lines.push(`  Active agent files: ${snapshot.activeAgentFiles}`);
     }
@@ -195,7 +203,7 @@ function buildSetupHandoffText(snapshot) {
     lines.push('  2. The prompt already tells the agent to reuse existing init answers,');
     lines.push('     validate/normalize language, fill project context, replace placeholders,');
     lines.push('     and run the final doctor check.');
-    lines.push('  3. After that you can execute tasks, for example:');
+    lines.push('  3. After agent initialization you can execute tasks, for example:');
     lines.push('     Execute task T-001 depth=2');
     return lines.join('\n');
 }
@@ -305,8 +313,12 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
         const tokenEconomyEnabled = resolvedAnswers.tokenEconomyEnabled !== undefined
             ? (String(resolvedAnswers.tokenEconomyEnabled) === 'true')
             : (options.tokenEconomyEnabled !== undefined ? parseBooleanText(options.tokenEconomyEnabled, 'TokenEconomyEnabled') : true);
-        const rawActiveAgentFiles = resolvedAnswers.activeAgentFiles || options.activeAgentFiles || null;
-        const activeAgentFiles = normalizeActiveAgentFiles(rawActiveAgentFiles, sourceOfTruth) || [];
+        const activeAgentFiles = resolveSetupActiveAgentFiles(
+            sourceOfTruth,
+            resolvedAnswers.activeAgentFiles !== undefined
+                ? resolvedAnswers.activeAgentFiles
+                : options.activeAgentFiles
+        ) || [];
         const collectedVia = canUseInteractivePrompts ? 'CLI_INTERACTIVE' : 'CLI_NONINTERACTIVE';
         const resolvedInitAnswersPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
 
@@ -383,7 +395,7 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
             'Setup complete',
             snapshot.readyForTasks
                 ? 'Workspace is ready.'
-                : 'Primary setup finished. Agent handoff is still required.'
+                : 'Primary setup finished. Next stage: agent initialization.'
         );
         printStatus(snapshot, { heading: 'OCTOPUS_SETUP_STATUS' });
         if (!snapshot.agentInitializationComplete) {

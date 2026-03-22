@@ -367,4 +367,118 @@ describe('runInstall', () => {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }
     });
+
+    it('backs up and fully replaces conflicting legacy entrypoint files', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const legacyEntrypointPath = path.join(projectRoot, 'AGENTS.md');
+            fs.writeFileSync(
+                legacyEntrypointPath,
+                '# Legacy agent instructions\n\nDo not overwrite this file in place.\n',
+                'utf8'
+            );
+
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Codex',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            const result = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Codex',
+                initAnswersPath: answersPath
+            });
+
+            const installedContent = fs.readFileSync(legacyEntrypointPath, 'utf8');
+            assert.ok(installedContent.includes('Octopus-agent-orchestrator:managed-start'));
+            assert.ok(!installedContent.includes('Legacy agent instructions'));
+
+            const backupPath = path.join(result.backupRoot, 'AGENTS.md');
+            assert.ok(fs.existsSync(backupPath));
+            assert.ok(fs.readFileSync(backupPath, 'utf8').includes('Legacy agent instructions'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('creates unique backup roots when multiple installs happen in the same timestamp window', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        const RealDate = Date;
+        const fixedNow = new RealDate('2026-03-22T12:00:00.123Z');
+
+        class MockDate extends RealDate {
+            constructor(...args) {
+                if (args.length > 0) {
+                    super(...args);
+                    return;
+                }
+                super(fixedNow.getTime());
+            }
+
+            static now() {
+                return fixedNow.getTime();
+            }
+
+            static parse(value) {
+                return RealDate.parse(value);
+            }
+
+            static UTC(...args) {
+                return RealDate.UTC(...args);
+            }
+        }
+
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Codex',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            global.Date = MockDate;
+
+            const legacyEntrypointPath = path.join(projectRoot, 'AGENTS.md');
+            fs.writeFileSync(legacyEntrypointPath, '# First legacy instructions\n', 'utf8');
+            const firstInstall = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Codex',
+                initAnswersPath: answersPath
+            });
+
+            fs.writeFileSync(legacyEntrypointPath, '# Second legacy instructions\n', 'utf8');
+            const secondInstall = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Codex',
+                initAnswersPath: answersPath
+            });
+
+            assert.notEqual(firstInstall.backupRoot, secondInstall.backupRoot);
+            assert.ok(fs.readFileSync(path.join(firstInstall.backupRoot, 'AGENTS.md'), 'utf8').includes('First legacy instructions'));
+            assert.ok(fs.readFileSync(path.join(secondInstall.backupRoot, 'AGENTS.md'), 'utf8').includes('Second legacy instructions'));
+        } finally {
+            global.Date = RealDate;
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
 });

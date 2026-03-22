@@ -61,6 +61,7 @@ function getStatusSnapshot(targetRoot, initAnswersPath) {
     var answersResult = initAnswersPresent ? readInitAnswersSafe(resolvedTargetRoot, initAnswersResolvedPath) : { answers: null, error: null };
     var answers = answersResult.answers;
     var initAnswersError = answersResult.error;
+    var collectedVia = answers ? (answers.CollectedVia || null) : null;
     var liveVersionPath = path.join(livePath, 'version.json');
     var liveVersion = null;
     var liveVersionError = null;
@@ -75,11 +76,22 @@ function getStatusSnapshot(targetRoot, initAnswersPath) {
     var taskPresent = pathExists(taskPath) && fs.lstatSync(taskPath).isFile();
     var usagePresent = pathExists(usagePath) && fs.lstatSync(usagePath).isFile();
     var primaryInitializationComplete = bundlePresent && initAnswersPresent && !initAnswersError && livePresent && taskPresent && usagePresent;
-    var agentInitializationComplete = primaryInitializationComplete && missingProjectCommands.length === 0;
+    var agentInitializationPendingReason = null;
+    if (primaryInitializationComplete) {
+        if (collectedVia !== 'AGENT_INIT_PROMPT.md') {
+            agentInitializationPendingReason = 'AGENT_HANDOFF_REQUIRED';
+        } else if (missingProjectCommands.length > 0) {
+            agentInitializationPendingReason = 'PROJECT_COMMANDS_PENDING';
+        }
+    }
+    var agentInitializationComplete = primaryInitializationComplete && agentInitializationPendingReason === null;
     var readyForTasks = agentInitializationComplete;
     var recommendedNextCommand = 'npx octopus-agent-orchestrator setup';
     if (readyForTasks) recommendedNextCommand = 'Execute task T-001 depth=2';
-    else if (primaryInitializationComplete) recommendedNextCommand = 'Give your agent "'+path.join(bundlePath,'AGENT_INIT_PROMPT.md')+'" and then run npx octopus-agent-orchestrator doctor';
+    else if (primaryInitializationComplete && agentInitializationPendingReason === 'AGENT_HANDOFF_REQUIRED')
+        recommendedNextCommand = 'Give your agent "'+path.join(bundlePath,'AGENT_INIT_PROMPT.md')+'" and then run npx octopus-agent-orchestrator doctor';
+    else if (primaryInitializationComplete && agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING')
+        recommendedNextCommand = 'Complete project commands in "'+commandsRulePath+'" and then run npx octopus-agent-orchestrator doctor';
     else if (bundlePresent && (!initAnswersPresent || initAnswersError)) recommendedNextCommand = 'npx octopus-agent-orchestrator setup --target-root "'+resolvedTargetRoot+'"';
     else if (bundlePresent) recommendedNextCommand = 'npx octopus-agent-orchestrator install --target-root "'+resolvedTargetRoot+'" --init-answers-path "'+initAnswersPath+'"';
     var activeAgentFilesValue = null;
@@ -92,9 +104,10 @@ function getStatusSnapshot(targetRoot, initAnswersPath) {
         initAnswersError: initAnswersError, taskPresent: taskPresent, livePresent: livePresent, usagePresent: usagePresent,
         commandsRulePath: commandsRulePath, missingProjectCommands: missingProjectCommands,
         sourceOfTruth: sourceOfTruth, canonicalEntrypoint: canonicalEntrypoint,
-        collectedVia: answers ? (answers.CollectedVia || null) : null,
+        collectedVia: collectedVia,
         activeAgentFiles: activeAgentFilesValue, liveVersionError: liveVersionError,
         primaryInitializationComplete: primaryInitializationComplete,
+        agentInitializationPendingReason: agentInitializationPendingReason,
         agentInitializationComplete: agentInitializationComplete,
         readyForTasks: readyForTasks, recommendedNextCommand: recommendedNextCommand
     };
@@ -123,7 +136,9 @@ function formatStatusSnapshot(snapshot, options) {
     lines.push('  '+badge(snapshot.primaryInitializationComplete)+' Primary initialization');
     lines.push('  '+badge(snapshot.agentInitializationComplete)+' Agent initialization');
     lines.push('  '+badge(snapshot.readyForTasks)+' Ready for task execution');
-    if (snapshot.primaryInitializationComplete && !snapshot.agentInitializationComplete)
+    if (snapshot.agentInitializationPendingReason === 'AGENT_HANDOFF_REQUIRED')
+        lines.push('  Next stage: Launch your agent with AGENT_INIT_PROMPT.md');
+    else if (snapshot.agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING')
         lines.push('  Missing project commands: '+snapshot.missingProjectCommands.length);
     if (snapshot.initAnswersError) lines.push('InitAnswersStatus: INVALID ('+snapshot.initAnswersError+')');
     if (snapshot.liveVersionError) lines.push('LiveVersionStatus: INVALID ('+snapshot.liveVersionError+')');

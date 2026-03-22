@@ -257,10 +257,10 @@ describe('syncManagedBlockInContent', () => {
         assert.ok(result.content.includes(MANAGED_START));
     });
 
-    it('appends to non-empty content without block', () => {
+    it('replaces non-empty legacy content without block', () => {
         const result = syncManagedBlockInContent('existing content', `${MANAGED_START}\ncontent\n${MANAGED_END}`);
         assert.ok(result.changed);
-        assert.ok(result.content.includes('existing content'));
         assert.ok(result.content.includes(MANAGED_START));
+        assert.ok(!result.content.includes('existing content'));
     });
 });

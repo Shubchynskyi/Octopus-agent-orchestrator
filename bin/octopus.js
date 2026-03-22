@@ -6,12 +6,24 @@ const os = require('os');
 const path = require('path');
 const readline = require('readline');
 
-// Enable .ts extension support — src/ uses CJS-compatible .ts files
-if (!require.extensions['.ts']) {
+const PACKAGE_ROOT = path.resolve(__dirname, '..');
+const SOURCE_RUNTIME_ROOT = path.join(PACKAGE_ROOT, 'src');
+const COMPILED_RUNTIME_ROOT = path.join(PACKAGE_ROOT, 'dist', 'src');
+const RUNNING_FROM_NODE_MODULES = PACKAGE_ROOT.split(path.sep).includes('node_modules');
+const USE_COMPILED_RUNTIME = RUNNING_FROM_NODE_MODULES && fs.existsSync(path.join(COMPILED_RUNTIME_ROOT, 'index.js'));
+
+// In the source repository we execute JS-compatible .ts files directly.
+// In packaged installs under node_modules we must use compiled .js output.
+if (!USE_COMPILED_RUNTIME && !require.extensions['.ts']) {
     require.extensions['.ts'] = require.extensions['.js'];
 }
 
-const PACKAGE_ROOT = path.resolve(__dirname, '..');
+function runtimeModulePath(...segments) {
+    const runtimeRoot = USE_COMPILED_RUNTIME ? COMPILED_RUNTIME_ROOT : SOURCE_RUNTIME_ROOT;
+    const runtimeExtension = USE_COMPILED_RUNTIME ? '.js' : '.ts';
+    return path.join(runtimeRoot, ...segments) + runtimeExtension;
+}
+
 const DEFAULT_BUNDLE_NAME = 'Octopus-agent-orchestrator';
 const DEFAULT_INIT_ANSWERS_RELATIVE_PATH = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json');
 const DEFAULT_REPO_URL = 'https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git';
@@ -1394,7 +1406,7 @@ async function handleSetup(commandArgv, packageJson) {
         const initAnswersDir = path.dirname(resolvedInitAnswersPath);
         if (!options.dryRun) {
             if (!fs.existsSync(initAnswersDir)) { fs.mkdirSync(initAnswersDir, { recursive: true }); }
-            const { serializeInitAnswers } = require(path.join(PACKAGE_ROOT, 'src', 'schemas', 'init-answers.ts'));
+            const { serializeInitAnswers } = require(runtimeModulePath('schemas', 'init-answers'));
             const serialized = serializeInitAnswers({
                 AssistantLanguage: assistantLanguage,
                 AssistantBrevity: assistantBrevity,
@@ -1411,7 +1423,7 @@ async function handleSetup(commandArgv, packageJson) {
         }
 
         // Run install
-        const { runInstall } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'install.ts'));
+        const { runInstall } = require(runtimeModulePath('materialization', 'install'));
         runInstall({
             targetRoot,
             bundleRoot: effectiveBundlePath,
@@ -1423,7 +1435,7 @@ async function handleSetup(commandArgv, packageJson) {
         });
 
         // Run init
-        const { runInit } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'init.ts'));
+        const { runInit } = require(runtimeModulePath('materialization', 'init'));
         runInit({
             targetRoot,
             bundleRoot: effectiveBundlePath,
@@ -1442,7 +1454,7 @@ async function handleSetup(commandArgv, packageJson) {
         try {
             const manifestPath = path.join(effectiveBundlePath, 'MANIFEST.md');
             if (fs.existsSync(manifestPath)) {
-                const { validateManifest } = require(path.join(PACKAGE_ROOT, 'src', 'validators', 'validate-manifest.ts'));
+                const { validateManifest } = require(runtimeModulePath('validators', 'validate-manifest'));
                 const manifestResult = validateManifest(manifestPath);
                 manifestStatus = manifestResult.passed ? 'PASS' : 'FAIL';
             }
@@ -1452,7 +1464,7 @@ async function handleSetup(commandArgv, packageJson) {
         let verifyStatus = 'PENDING_AGENT_CONTEXT';
         try {
             if (snapshot.readyForTasks) {
-                const { runVerify } = require(path.join(PACKAGE_ROOT, 'src', 'validators', 'verify.ts'));
+                const { runVerify } = require(runtimeModulePath('validators', 'verify'));
                 const verifyResult = runVerify({
                     targetRoot,
                     sourceOfTruth,
@@ -1515,8 +1527,8 @@ async function handleInstall(commandArgv, packageJson) {
         const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
         const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, getBundlePath(targetRoot), 'install');
 
-        const { runInstall } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'install.ts'));
-        const { runInit: initRunner } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'init.ts'));
+        const { runInstall } = require(runtimeModulePath('materialization', 'install'));
+        const { runInit: initRunner } = require(runtimeModulePath('materialization', 'init'));
         const installResult = runInstall({
             targetRoot,
             bundleRoot: effectiveBundlePath,
@@ -1563,7 +1575,7 @@ async function handleInit(commandArgv, packageJson) {
     const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
     const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'init');
 
-    const { runInit } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'init.ts'));
+    const { runInit } = require(runtimeModulePath('materialization', 'init'));
     const initResult = runInit({
         targetRoot,
         bundleRoot: bundlePath,
@@ -1628,7 +1640,7 @@ async function handleDoctor(commandArgv, packageJson) {
     const manifestPath = path.join(bundlePath, 'MANIFEST.md');
 
     // T-074: call TS implementations directly instead of PowerShell
-    const { runVerify, formatVerifyResult } = require(path.join(PACKAGE_ROOT, 'src', 'validators', 'verify.ts'));
+    const { runVerify, formatVerifyResult } = require(runtimeModulePath('validators', 'verify'));
     const verifyResult = runVerify({
         targetRoot,
         sourceOfTruth: answers.sourceOfTruth,
@@ -1639,7 +1651,7 @@ async function handleDoctor(commandArgv, packageJson) {
         throw new Error('Workspace verification failed with ' + verifyResult.totalViolationCount + ' violation(s).');
     }
 
-    const { validateManifest } = require(path.join(PACKAGE_ROOT, 'src', 'validators', 'validate-manifest.ts'));
+    const { validateManifest } = require(runtimeModulePath('validators', 'validate-manifest'));
     const manifestResult = validateManifest(manifestPath);
     if (!manifestResult.passed) {
         throw new Error('Manifest validation failed: ' + manifestResult.duplicates.length + ' duplicate(s) found.');
@@ -1688,7 +1700,7 @@ async function handleReinit(commandArgv, packageJson) {
     if (options.claudeOrchestratorFullAccess !== undefined) overrides.ClaudeOrchestratorFullAccess = String(parseBooleanText(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess'));
     if (options.tokenEconomyEnabled !== undefined) overrides.TokenEconomyEnabled = String(parseBooleanText(options.tokenEconomyEnabled, 'TokenEconomyEnabled'));
 
-    const { runReinit } = require(path.join(PACKAGE_ROOT, 'src', 'materialization', 'reinit.ts'));
+    const { runReinit } = require(runtimeModulePath('materialization', 'reinit'));
     const reinitResult = runReinit({
         targetRoot,
         bundleRoot: bundlePath,
@@ -1733,7 +1745,7 @@ async function handleUpdate(commandArgv, packageJson) {
     const bundlePath = ensureBundleExists(targetRoot, 'update');
 
     // T-075: call TS implementation directly — Node-only runtime
-    const { runCheckUpdate } = require(path.join(PACKAGE_ROOT, 'src', 'lifecycle', 'check-update.ts'));
+    const { runCheckUpdate } = require(runtimeModulePath('lifecycle', 'check-update'));
     const updateResult = runCheckUpdate({
         targetRoot,
         bundleRoot: bundlePath,
@@ -1780,7 +1792,7 @@ async function handleUninstall(commandArgv, packageJson) {
     const bundlePath = ensureBundleExists(targetRoot, 'uninstall');
 
     // T-075: Node-only runtime
-    const { runUninstall } = require(path.join(PACKAGE_ROOT, 'src', 'lifecycle', 'uninstall.ts'));
+    const { runUninstall } = require(runtimeModulePath('lifecycle', 'uninstall'));
     const uninstallResult = runUninstall({
         targetRoot,
         bundleRoot: bundlePath,
@@ -1826,7 +1838,7 @@ function handleVerify(commandArgv, packageJson) {
     const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'verify');
     const sot = options.sourceOfTruth ? normalizeSourceOfTruth(options.sourceOfTruth) : answers.sourceOfTruth;
 
-    const { runVerify, formatVerifyResult } = require(path.join(PACKAGE_ROOT, 'src', 'validators', 'verify.ts'));
+    const { runVerify, formatVerifyResult } = require(runtimeModulePath('validators', 'verify'));
     const result = runVerify({
         targetRoot,
         sourceOfTruth: sot,
@@ -1863,7 +1875,7 @@ function handleCheckUpdate(commandArgv, packageJson) {
     ensureDirectoryExists(targetRoot, 'Target root');
     const bundlePath = ensureBundleExists(targetRoot, 'check-update');
 
-    const { runCheckUpdate } = require(path.join(PACKAGE_ROOT, 'src', 'lifecycle', 'check-update.ts'));
+    const { runCheckUpdate } = require(runtimeModulePath('lifecycle', 'check-update'));
     const checkResult = runCheckUpdate({
         targetRoot,
         bundleRoot: bundlePath,
@@ -1889,7 +1901,7 @@ function handleCheckUpdate(commandArgv, packageJson) {
 
 function handleGate(commandArgv) {
     if (commandArgv.length === 0 || commandArgv[0] === '-h' || commandArgv[0] === '--help') {
-        const { getAllShimmedGateNames } = require(path.join(PACKAGE_ROOT, 'src', 'compat', 'shim-registry.ts'));
+        const { getAllShimmedGateNames } = require(runtimeModulePath('compat', 'shim-registry'));
         console.log(bold('Available gates:'));
         getAllShimmedGateNames().forEach(function (name) { console.log('  ' + name); });
         return;
@@ -1899,8 +1911,8 @@ function handleGate(commandArgv) {
     const gateArgv = commandArgv.slice(1);
 
     // Adapt PS-style args if present
-    const { adaptPsArgs } = require(path.join(PACKAGE_ROOT, 'src', 'compat', 'ps-arg-adapter.ts'));
-    const gateHelpers = require(path.join(PACKAGE_ROOT, 'src', 'gates', 'helpers.ts'));
+    const { adaptPsArgs } = require(runtimeModulePath('compat', 'ps-arg-adapter'));
+    const gateHelpers = require(runtimeModulePath('gates', 'helpers'));
     const adaptedArgv = adaptPsArgs(gateArgv);
 
     switch (gateName) {
@@ -1908,7 +1920,7 @@ function handleGate(commandArgv) {
             const defs = { '--manifest-path': { key: 'manifestPath', type: 'string' } };
             const { options } = parseOptions(adaptedArgv, defs);
             const manifestPath = options.manifestPath || path.join('Octopus-agent-orchestrator', 'MANIFEST.md');
-            const { validateManifest, formatManifestResult } = require(path.join(PACKAGE_ROOT, 'src', 'validators', 'validate-manifest.ts'));
+            const { validateManifest, formatManifestResult } = require(runtimeModulePath('validators', 'validate-manifest'));
             const result = validateManifest(manifestPath);
             if (typeof formatManifestResult === 'function') console.log(formatManifestResult(result));
             if (!result.passed) throw new Error('Manifest validation failed.');
@@ -1931,7 +1943,7 @@ function handleGate(commandArgv) {
                 '--emit-metrics': { key: 'emitMetrics', type: 'boolean' }
             };
             const { options } = parseOptions(adaptedArgv, defs);
-            const { runClassifyChangeCommand } = require(path.join(PACKAGE_ROOT, 'src', 'cli', 'commands', 'gates.ts'));
+            const { runClassifyChangeCommand } = require(runtimeModulePath('cli', 'commands', 'gates'));
             const result = runClassifyChangeCommand(options);
             process.stdout.write(result.outputText);
             return;
@@ -1950,7 +1962,7 @@ function handleGate(commandArgv) {
                 '--repo-root': { key: 'repoRoot', type: 'string' }
             };
             const { options } = parseOptions(adaptedArgv, defs);
-            const { runCompileGateCommand } = require(path.join(PACKAGE_ROOT, 'src', 'cli', 'commands', 'gates.ts'));
+            const { runCompileGateCommand } = require(runtimeModulePath('cli', 'commands', 'gates'));
             const result = runCompileGateCommand(options);
             process.stdout.write(`${result.outputLines.join('\n')}\n`);
             if (result.exitCode !== 0) {
@@ -1974,7 +1986,7 @@ function handleGate(commandArgv) {
             ensureDirectoryExists(repoRoot, 'Repo root');
             const reviewType = parseRequiredText(options.reviewType, 'ReviewType');
             const preflightPath = gateHelpers.resolvePathInsideRepo(parseRequiredText(options.preflightPath, 'PreflightPath'), repoRoot);
-            const { buildScopedDiff, resolveMetadataPath, resolveOutputPath } = require(path.join(PACKAGE_ROOT, 'src', 'gates', 'build-scoped-diff.ts'));
+            const { buildScopedDiff, resolveMetadataPath, resolveOutputPath } = require(runtimeModulePath('gates', 'build-scoped-diff'));
             const pathsConfigPath = options.pathsConfigPath
                 ? gateHelpers.resolvePathInsideRepo(options.pathsConfigPath, repoRoot)
                 : gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'config', 'paths.json'));
@@ -2020,7 +2032,7 @@ function handleGate(commandArgv) {
                 throw new Error('Depth must be an integer between 1 and 3.');
             }
             const preflightPath = gateHelpers.resolvePathInsideRepo(parseRequiredText(options.preflightPath, 'PreflightPath'), repoRoot);
-            const { buildReviewContext, resolveContextOutputPath, resolveScopedDiffMetadataPath } = require(path.join(PACKAGE_ROOT, 'src', 'gates', 'build-review-context.ts'));
+            const { buildReviewContext, resolveContextOutputPath, resolveScopedDiffMetadataPath } = require(runtimeModulePath('gates', 'build-review-context'));
             const tokenEconomyConfigPath = options.tokenEconomyConfigPath
                 ? gateHelpers.resolvePathInsideRepo(options.tokenEconomyConfigPath, repoRoot, { allowMissing: true })
                 : gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
@@ -2054,7 +2066,7 @@ function handleGate(commandArgv) {
             const { options } = parseOptions(adaptedArgv, defs);
             const repoRoot = normalizePathValue(options.repoRoot || '.');
             ensureDirectoryExists(repoRoot, 'Repo root');
-            const { buildTaskEventsSummary, formatTaskEventsSummaryText } = require(path.join(PACKAGE_ROOT, 'src', 'gates', 'task-events-summary.ts'));
+            const { buildTaskEventsSummary, formatTaskEventsSummaryText } = require(runtimeModulePath('gates', 'task-events-summary'));
             const eventsRoot = options.eventsRoot
                 ? gateHelpers.resolvePathInsideRepo(options.eventsRoot, repoRoot, { allowMissing: true })
                 : gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
@@ -2088,7 +2100,7 @@ function handleGate(commandArgv) {
                 '--events-root': { key: 'eventsRoot', type: 'string' }
             };
             const { options } = parseOptions(adaptedArgv, defs);
-            const { runLogTaskEventCommand } = require(path.join(PACKAGE_ROOT, 'src', 'cli', 'commands', 'gates.ts'));
+            const { runLogTaskEventCommand } = require(runtimeModulePath('cli', 'commands', 'gates'));
             const result = runLogTaskEventCommand(options);
             process.stdout.write(result.outputText);
             if (result.exitCode !== 0) {
@@ -2121,7 +2133,7 @@ function handleGate(commandArgv) {
                 '--repo-root': { key: 'repoRoot', type: 'string' }
             };
             const { options } = parseOptions(adaptedArgv, defs);
-            const { runRequiredReviewsCheckCommand } = require(path.join(PACKAGE_ROOT, 'src', 'cli', 'commands', 'gates.ts'));
+            const { runRequiredReviewsCheckCommand } = require(runtimeModulePath('cli', 'commands', 'gates'));
             const result = runRequiredReviewsCheckCommand(options);
             process.stdout.write(`${result.outputLines.join('\n')}\n`);
             if (result.exitCode !== 0) {
@@ -2146,7 +2158,7 @@ function handleGate(commandArgv) {
                 '--repo-root': { key: 'repoRoot', type: 'string' }
             };
             const { options } = parseOptions(adaptedArgv, defs);
-            const { runDocImpactGateCommand } = require(path.join(PACKAGE_ROOT, 'src', 'cli', 'commands', 'gates.ts'));
+            const { runDocImpactGateCommand } = require(runtimeModulePath('cli', 'commands', 'gates'));
             const result = runDocImpactGateCommand(options);
             process.stdout.write(`${result.outputLines.join('\n')}\n`);
             if (result.exitCode !== 0) {
@@ -2168,7 +2180,7 @@ function handleGate(commandArgv) {
             const { options } = parseOptions(adaptedArgv, defs);
             const repoRoot = normalizePathValue(options.repoRoot || '.');
             ensureDirectoryExists(repoRoot, 'Repo root');
-            const { formatCompletionGateResult, runCompletionGate } = require(path.join(PACKAGE_ROOT, 'src', 'gates', 'completion.ts'));
+            const { formatCompletionGateResult, runCompletionGate } = require(runtimeModulePath('gates', 'completion'));
             const result = runCompletionGate({
                 repoRoot,
                 preflightPath: parseRequiredText(options.preflightPath, 'PreflightPath'),
@@ -2186,7 +2198,7 @@ function handleGate(commandArgv) {
             return;
         }
         case 'human-commit': {
-            const { runHumanCommitCommand } = require(path.join(PACKAGE_ROOT, 'src', 'cli', 'commands', 'gates.ts'));
+            const { runHumanCommitCommand } = require(runtimeModulePath('cli', 'commands', 'gates'));
             const exitCode = runHumanCommitCommand(adaptedArgv, { cwd: process.cwd() });
             if (exitCode !== 0) {
                 process.exitCode = exitCode;
