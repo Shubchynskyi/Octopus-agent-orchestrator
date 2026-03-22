@@ -1,6 +1,6 @@
 # Operating Rules
 
-Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
+Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## General
 1. Always read the file before editing.
@@ -42,7 +42,5 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 1. Do not commit secrets.
 2. Use `.env` for local setup.
 3. Validate deployment or infrastructure changes using project-native tooling before commit.
-
-
 
 

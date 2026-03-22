@@ -1,6 +1,6 @@
 # Security
 
-Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
+Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Forbidden
 - Committing `.env` files, secret dumps, or private keys.
@@ -44,4 +44,3 @@ Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
 - Emit security-relevant audit logs (auth failures, privilege changes, payment/webhook rejects).
 - Avoid sensitive payload logging; log correlation ids and security decision outcomes.
 - Document incident-impacting security changes in changelog/release notes.
-

@@ -1,6 +1,6 @@
 # Core Rules
 
-Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
+Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Language
 Respond in {{ASSISTANT_RESPONSE_LANGUAGE}} for explanations and assistance.
@@ -50,4 +50,3 @@ Good example:
 // Skip first element due to API limitation that always returns a duplicate
 items.stream().skip(1)...
 ```
-

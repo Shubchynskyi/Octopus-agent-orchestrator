@@ -1,6 +1,6 @@
 # Architecture
 
-Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
+Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Purpose
 Describe actual runtime architecture and boundaries for this repository.
@@ -36,4 +36,3 @@ Use real folders from this repository; replace the placeholder tree below.
 ## References
 - Project discovery report: `Octopus-agent-orchestrator/live/project-discovery.md`
 - Architecture decision records (if any): `TODO`
-

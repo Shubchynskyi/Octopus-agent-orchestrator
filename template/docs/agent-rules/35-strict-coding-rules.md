@@ -1,6 +1,6 @@
 # Strict Coding Rules
 
-Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
+Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Purpose
 These rules define mandatory quality gates for production code.
@@ -133,7 +133,5 @@ Any exception to these rules must be documented in a review artifact (PR descrip
 - Automated checks should be used where available (for example: Checkstyle and CI workflows).
 - Rules without automation must be enforced through explicit reviewer checklist items in independent review, each with auditable evidence.
 - Non-automated rule review must include coverage declaration: `applicable_rule_ids`, `not_applicable_rule_ids`, and reason for each skipped rule id.
-
-
 
 

@@ -1,6 +1,6 @@
 # Project Context
 
-Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
+Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Purpose
 Define project-specific context for this repository. This file must describe the real project, not a template example.
@@ -35,4 +35,3 @@ Fill only what is true for this repository.
 ## Open Questions
 - `TODO`
 - `TODO`
-

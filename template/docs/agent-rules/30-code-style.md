@@ -1,6 +1,6 @@
 # Code Style
 
-Primary entry point: [CLAUDE.md](../../../../CLAUDE.md)
+Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Purpose
 Define style rules for languages that actually exist in this repository.
@@ -39,4 +39,3 @@ Define style rules for languages that actually exist in this repository.
 ## Definition of Done for Style
 - Rules above must match actual stack from `live/project-discovery.md`.
 - Outdated language sections must be removed or explicitly marked as not applicable.
-
