@@ -5,6 +5,12 @@ const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
 const { readJsonFile, writeJsonFile } = require('../core/json.ts');
 const { validateInitAnswers, serializeInitAnswers } = require('../schemas/init-answers.ts');
 const {
+    createAgentInitState,
+    doesAgentInitStateMatchAnswers,
+    readAgentInitStateSafe,
+    writeAgentInitState
+} = require('../runtime/agent-init-state.ts');
+const {
     getCanonicalEntrypointFile,
     getActiveAgentEntrypointFiles,
     convertActiveAgentEntrypointFilesToString
@@ -53,6 +59,8 @@ function runReinit(options) {
     const resolvedInitPath = path.isAbsolute(initAnswersPath)
         ? initAnswersPath
         : path.resolve(targetRoot, initAnswersPath);
+    const previousAgentInitStateResult = readAgentInitStateSafe(normalizedTarget);
+    const previousAgentInitState = previousAgentInitStateResult.state;
 
     // Load existing answers if present
     let existingAnswers = null;
@@ -164,6 +172,33 @@ function runReinit(options) {
         sourceOfTruth: resolvedSourceOfTruth,
         initAnswersPath: resolvedInitPath
     });
+
+    const preserveExistingCheckpoints = doesAgentInitStateMatchAnswers(previousAgentInitState, {
+        AssistantLanguage: resolvedLanguage,
+        SourceOfTruth: resolvedSourceOfTruth,
+        ActiveAgentFiles: resolvedActiveFiles
+    });
+    writeAgentInitState(normalizedTarget, createAgentInitState({
+        AssistantLanguage: resolvedLanguage,
+        SourceOfTruth: resolvedSourceOfTruth,
+        AssistantLanguageConfirmed: true,
+        ActiveAgentFilesConfirmed: preserveExistingCheckpoints && previousAgentInitState
+            ? previousAgentInitState.ActiveAgentFilesConfirmed
+            : false,
+        ProjectRulesUpdated: preserveExistingCheckpoints && previousAgentInitState
+            ? previousAgentInitState.ProjectRulesUpdated
+            : false,
+        SkillsPromptCompleted: preserveExistingCheckpoints && previousAgentInitState
+            ? previousAgentInitState.SkillsPromptCompleted
+            : false,
+        VerificationPassed: preserveExistingCheckpoints && previousAgentInitState
+            ? previousAgentInitState.VerificationPassed
+            : false,
+        ManifestValidationPassed: preserveExistingCheckpoints && previousAgentInitState
+            ? previousAgentInitState.ManifestValidationPassed
+            : false,
+        ActiveAgentFiles: resolvedActiveFiles
+    }));
 
     const canonicalEntrypoint = getCanonicalEntrypointFile(resolvedSourceOfTruth);
 

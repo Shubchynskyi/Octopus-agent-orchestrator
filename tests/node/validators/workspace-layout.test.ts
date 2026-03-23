@@ -27,6 +27,9 @@ test('BASE_REQUIRED_PATHS is a frozen non-empty array', () => {
     assert.ok(BASE_REQUIRED_PATHS.length > 25);
     assert.ok(Object.isFrozen(BASE_REQUIRED_PATHS));
     assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/src'));
+    assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/live/config/skills-index.json'));
+    assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/live/skills/orchestration/skill.json'));
+    assert.ok(!BASE_REQUIRED_PATHS.includes('.qwen/settings.json'));
 });
 
 test('RULE_FILES contains all 11 standard rule files', () => {

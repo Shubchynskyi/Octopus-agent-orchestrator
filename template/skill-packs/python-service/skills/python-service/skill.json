@@ -1,0 +1,15 @@
+{
+  "id": "python-service",
+  "name": "Python Service",
+  "pack": "python-service",
+  "summary": "Python web/service delivery, typing, packaging, testing, and operations guidance.",
+  "tags": ["python", "backend", "api"],
+  "aliases": ["python-api", "python-service"],
+  "stack_signals": ["pyproject.toml", "requirements.txt", "uv.lock"],
+  "task_signals": ["endpoint", "async", "worker", "schema"],
+  "changed_path_signals": ["app/", "api/", "src/"],
+  "references": ["checklist.md"],
+  "cost_hint": "medium",
+  "priority": 90,
+  "autoload": "suggest"
+}

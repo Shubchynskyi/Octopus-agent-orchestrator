@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { execSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
 
 const { buildScopedDiffMetadata, convertToGitPathspecs } = require('../gate-runtime/scoped-diff.ts');
 const { matchAnyRegex } = require('../gate-runtime/text-utils.ts');
@@ -34,15 +34,19 @@ function resolveMetadataPath(explicitMetadataPath, preflightPath, reviewType, re
  * Run git diff and return stdout text.
  */
 function runGitDiff(gitRoot, useStaged, pathspecs) {
-    const args = ['git', '-C', String(gitRoot), 'diff', '--no-color'];
-    if (useStaged) args.push('--staged');
-    else args.push('HEAD');
+    const gitArgs = ['-C', String(gitRoot), 'diff', '--no-color'];
+    if (useStaged) gitArgs.push('--staged');
+    else gitArgs.push('HEAD');
     if (pathspecs && pathspecs.length > 0) {
-        args.push('--');
-        args.push(...pathspecs);
+        gitArgs.push('--');
+        gitArgs.push(...pathspecs);
     }
     try {
-        let stdout = execSync(args.join(' '), { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 50 * 1024 * 1024 });
+        let stdout = execFileSync('git', gitArgs, {
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+            maxBuffer: 50 * 1024 * 1024
+        });
         return stdout || '';
     } catch (err) {
         throw new Error(`git diff exited with error: ${err.message || err}`);

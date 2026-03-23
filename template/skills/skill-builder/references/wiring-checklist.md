@@ -2,7 +2,7 @@
 
 For every new live-only specialist skill:
 
-1. Create skill files under `Octopus-agent-orchestrator/live/skills/<skill-name>/`.
+1. Create skill files under `Octopus-agent-orchestrator/live/skills/<skill-name>/`, including `skill.json` and `SKILL.md`.
 2. Add skill path to `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md`.
 3. Add trigger semantics to `Octopus-agent-orchestrator/live/skills/orchestration/references/review-trigger-matrix.md`.
 4. If supported key (`api|test|performance|infra|dependency`), set flag in:

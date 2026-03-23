@@ -10,6 +10,8 @@ All configuration files live in `Octopus-agent-orchestrator/live/config/`.
 | `output-filters.json` | Gate output compaction profiles (compile, test, lint, review) | Yes |
 | `review-capabilities.json` | Which specialist reviews are enabled | Yes |
 | `paths.json` | Preflight classification roots and trigger regexes | Yes |
+| `skill-packs.json` | Installed built-in domain packs | Yes, through `octopus skills add/remove` |
+| `skills-index.json` | Compact optional-skill discovery index | No, generated from pack manifests |
 
 ## Token Economy
 
@@ -97,6 +99,36 @@ Controls which specialist reviews are enabled for the project.
 ```
 
 Mandatory reviews are always required when preflight detects their triggers. Optional reviews can be enabled per-project.
+
+## Skill Packs
+
+Tracks which built-in domain packs are currently installed in the workspace.
+
+**File:** `live/config/skill-packs.json`
+
+Manage it through the CLI:
+- `octopus skills list`
+- `octopus skills add <pack-id>`
+- `octopus skills remove <pack-id>`
+- `octopus skills validate`
+
+This file is runtime state and should normally be changed through the CLI rather than by hand.
+
+## Skills Index
+
+Compact discovery metadata for optional skills.
+
+**File:** `live/config/skills-index.json`
+
+Used by:
+- `octopus skills suggest`
+- the agent-init specialist-skills recommendation flow
+
+Contract:
+- this index is the only file that should be read for first-pass optional-skill discovery;
+- after the user selects a pack, installation should only materialize files into `live/skills/**` and must not require reading the full optional `SKILL.md`;
+- full optional `SKILL.md` files must stay unopened until a selected skill is actually activated for a task or a hard activation rule requires it;
+- the index is generated from pack manifests and should not be edited manually in deployed workspaces.
 
 ## Paths Configuration
 

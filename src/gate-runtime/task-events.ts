@@ -1,4 +1,106 @@
 const { stringSha256 } = require('./hash.ts');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const DEFAULT_LOCK_TIMEOUT_MS = 5000;
+const DEFAULT_LOCK_RETRY_MS = 25;
+const DEFAULT_LOCK_STALE_MS = 30000;
+const LOCK_SLEEP_ARRAY = new Int32Array(new SharedArrayBuffer(4));
+
+function toPositiveInteger(value, fallback) {
+    const parsed = Number.parseInt(String(value), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function sleepMs(milliseconds) {
+    if (!milliseconds || milliseconds <= 0) {
+        return;
+    }
+    Atomics.wait(LOCK_SLEEP_ARRAY, 0, 0, milliseconds);
+}
+
+function writeLockMetadata(lockPath) {
+    const metadataPath = path.join(lockPath, 'owner.json');
+    const payload = {
+        pid: process.pid,
+        hostname: os.hostname(),
+        created_at_utc: new Date().toISOString()
+    };
+    fs.writeFileSync(metadataPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+}
+
+function removeLockPath(lockPath) {
+    fs.rmSync(lockPath, { recursive: true, force: true });
+}
+
+function tryRemoveStaleLock(lockPath, staleMs) {
+    if (!staleMs || staleMs <= 0) {
+        return false;
+    }
+
+    try {
+        const stats = fs.statSync(lockPath);
+        const ageMs = Date.now() - stats.mtimeMs;
+        if (ageMs < staleMs) {
+            return false;
+        }
+    } catch {
+        return false;
+    }
+
+    try {
+        removeLockPath(lockPath);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function acquireFilesystemLock(lockPath, options = {}) {
+    const timeoutMs = toPositiveInteger(options.timeoutMs, DEFAULT_LOCK_TIMEOUT_MS);
+    const retryMs = toPositiveInteger(options.retryMs, DEFAULT_LOCK_RETRY_MS);
+    const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
+    const startedAt = Date.now();
+
+    while (true) {
+        try {
+            fs.mkdirSync(lockPath);
+            writeLockMetadata(lockPath);
+            return { lockPath };
+        } catch (error) {
+            if (!error || error.code !== 'EEXIST') {
+                throw error;
+            }
+
+            if (tryRemoveStaleLock(lockPath, staleMs)) {
+                continue;
+            }
+
+            if ((Date.now() - startedAt) >= timeoutMs) {
+                throw new Error(`Timed out acquiring file lock: ${lockPath}`);
+            }
+
+            sleepMs(retryMs);
+        }
+    }
+}
+
+function releaseFilesystemLock(lockHandle) {
+    if (!lockHandle || !lockHandle.lockPath) {
+        return;
+    }
+    removeLockPath(lockHandle.lockPath);
+}
+
+function withFilesystemLock(lockPath, options, callback) {
+    const lockHandle = acquireFilesystemLock(lockPath, options);
+    try {
+        return callback();
+    } finally {
+        releaseFilesystemLock(lockHandle);
+    }
+}
 
 /**
  * Normalize a value for integrity hashing.
@@ -383,12 +485,9 @@ function inspectTaskEventFile(taskEventFile, taskId) {
 
 /**
  * Append a task event with integrity chain, matching Python append_task_event.
- * Simplified: uses synchronous file locking via rename-based lock files.
+ * Uses filesystem lock directories to serialize per-task chain writes.
  */
 function appendTaskEvent(repoRoot, taskId, eventType, outcome, message, details, options = {}) {
-    const fs = require('node:fs');
-    const path = require('node:path');
-
     const actor = options.actor || 'gate';
     const passThru = options.passThru || false;
     const eventsRoot = options.eventsRoot
@@ -402,6 +501,13 @@ function appendTaskEvent(repoRoot, taskId, eventType, outcome, message, details,
     const safeTaskId = assertValidTaskId(taskId);
     const taskFilePath = path.join(eventsRoot, `${safeTaskId}.jsonl`);
     const allTasksPath = path.join(eventsRoot, 'all-tasks.jsonl');
+    const taskLockPath = path.join(eventsRoot, `.${safeTaskId}.lock`);
+    const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
+    const lockOptions = {
+        timeoutMs: options.lockTimeoutMs,
+        retryMs: options.lockRetryMs,
+        staleMs: options.lockStaleMs
+    };
 
     const event = {
         timestamp_utc: new Date().toISOString(),
@@ -424,23 +530,30 @@ function appendTaskEvent(repoRoot, taskId, eventType, outcome, message, details,
     try {
         fs.mkdirSync(eventsRoot, { recursive: true });
 
-        const appendState = readTaskEventAppendState(taskFilePath, safeTaskId);
-        const previousSequence = appendState.last_integrity_sequence;
-        const previousHash = appendState.last_event_sha256;
-        const nextSequence = (typeof previousSequence === 'number')
-            ? (previousSequence + 1)
-            : (appendState.matching_events + 1);
+        withFilesystemLock(taskLockPath, lockOptions, function () {
+            const appendState = readTaskEventAppendState(taskFilePath, safeTaskId);
+            const previousSequence = appendState.last_integrity_sequence;
+            const previousHash = appendState.last_event_sha256;
+            const nextSequence = (typeof previousSequence === 'number')
+                ? (previousSequence + 1)
+                : (appendState.matching_events + 1);
 
-        event.integrity = {
-            schema_version: 1,
-            task_sequence: nextSequence,
-            prev_event_sha256: previousHash
-        };
-        event.integrity.event_sha256 = buildEventIntegrityHash(event);
-        line = JSON.stringify(event);
+            event.integrity = {
+                schema_version: 1,
+                task_sequence: nextSequence,
+                prev_event_sha256: previousHash
+            };
+            event.integrity.event_sha256 = buildEventIntegrityHash(event);
+            line = JSON.stringify(event);
 
-        fs.appendFileSync(taskFilePath, line + '\n', 'utf8');
-        result.integrity = Object.assign({}, event.integrity);
+            const preWriteDelayMs = toPositiveInteger(options.preWriteDelayMs, 0);
+            if (preWriteDelayMs > 0) {
+                sleepMs(preWriteDelayMs);
+            }
+
+            fs.appendFileSync(taskFilePath, line + '\n', 'utf8');
+            result.integrity = Object.assign({}, event.integrity);
+        });
     } catch (err) {
         const warning = `task-event append failed: ${err.message || err}`;
         result.warnings.push(warning);
@@ -449,7 +562,9 @@ function appendTaskEvent(repoRoot, taskId, eventType, outcome, message, details,
     }
 
     try {
-        fs.appendFileSync(allTasksPath, (line || '') + '\n', 'utf8');
+        withFilesystemLock(aggregateLockPath, lockOptions, function () {
+            fs.appendFileSync(allTasksPath, (line || '') + '\n', 'utf8');
+        });
     } catch (err) {
         const warning = `task-event aggregate append failed: ${err.message || err}`;
         result.warnings.push(warning);

@@ -1,0 +1,7 @@
+{
+  "id": "security-review",
+  "label": "Security Review Pack",
+  "description": "Optional application and infrastructure security hardening skills.",
+  "tags": ["security", "review"],
+  "recommended_for": ["Auth work", "hardening", "sensitive changes"]
+}

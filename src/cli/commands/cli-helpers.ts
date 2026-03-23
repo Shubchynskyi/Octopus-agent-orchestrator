@@ -10,9 +10,12 @@ const {
     BOOLEAN_TRUE_VALUES,
     BREVITY_VALUES,
     DEFAULT_BUNDLE_NAME,
-    SOURCE_OF_TRUTH_VALUES,
-    SOURCE_TO_ENTRYPOINT_MAP
+    SOURCE_OF_TRUTH_VALUES
 } = require('../../core/constants.ts');
+const {
+    getCanonicalEntrypointFile,
+    normalizeAgentEntrypointToken: normalizeCommonAgentEntrypointToken
+} = require('../../materialization/common.ts');
 
 const { isPathInsideRoot } = require('../../core/paths.ts');
 
@@ -50,12 +53,17 @@ const DEPLOY_ITEMS = Object.freeze([
 
 const COMMAND_SUMMARY = Object.freeze([
     ['setup', 'First-run onboarding'],
+    ['agent-init', 'Finalize mandatory agent onboarding'],
     ['status', 'Show workspace status'],
     ['doctor', 'Run verify + manifest validation'],
     ['bootstrap', 'Deploy bundle only'],
     ['reinit', 'Change init answers'],
     ['update', 'Check/apply updates'],
-    ['uninstall', 'Remove orchestrator']
+    ['uninstall', 'Remove orchestrator'],
+    ['verify', 'Verify workspace layout'],
+    ['check-update', 'Check for available updates'],
+    ['skills', 'List, suggest, and manage optional skill packs'],
+    ['gate', 'Run an agent gate (gate <name>)']
 ]);
 
 // ---------------------------------------------------------------------------
@@ -186,7 +194,14 @@ function parseOptions(argv, definitions, config) {
             resolvedValue = argv[index + 1];
             index += 1;
         }
-        options[definition.key] = resolvedValue;
+        if (definition.type === 'string[]') {
+            if (!Array.isArray(options[definition.key])) {
+                options[definition.key] = [];
+            }
+            options[definition.key].push(resolvedValue);
+        } else {
+            options[definition.key] = resolvedValue;
+        }
     }
 
     return { options, positionals };
@@ -277,27 +292,18 @@ function tryNormalizeAssistantBrevity(value, fallback) {
 }
 
 function convertSourceOfTruthToEntrypoint(sourceOfTruth) {
-    const sourceKey = String(sourceOfTruth || '').trim();
-    const match = SOURCE_OF_TRUTH_VALUES.find(function (c) { return c.toLowerCase() === sourceKey.toLowerCase(); });
-    return match ? SOURCE_TO_ENTRYPOINT_MAP[match] : null;
+    try {
+        return getCanonicalEntrypointFile(sourceOfTruth);
+    } catch (_error) {
+        return null;
+    }
 }
 
 function normalizeAgentEntrypointToken(value) {
-    const trimmed = String(value || '').trim().replace(/^or\s+/i, '');
-    if (!trimmed) return null;
-    const normalized = trimmed.toLowerCase().replace(/\\/g, '/');
-    switch (normalized) {
-        case 'claude': case 'claude.md': return 'CLAUDE.md';
-        case 'codex': case 'agents': case 'agents.md': return 'AGENTS.md';
-        case 'gemini': case 'gemini.md': return 'GEMINI.md';
-        case 'githubcopilot': case 'copilot': case '.github/copilot-instructions.md': return '.github/copilot-instructions.md';
-        case 'windsurf': case '.windsurf/rules/rules.md': return '.windsurf/rules/rules.md';
-        case 'junie': case '.junie/guidelines.md': return '.junie/guidelines.md';
-        case 'antigravity': case '.antigravity/rules.md': return '.antigravity/rules.md';
-        default: {
-            const match = ALL_AGENT_ENTRYPOINT_FILES.find(function (c) { return c.toLowerCase() === normalized; });
-            return match || null;
-        }
+    try {
+        return normalizeCommonAgentEntrypointToken(value);
+    } catch (_error) {
+        return null;
     }
 }
 
@@ -609,11 +615,26 @@ function printStatus(snapshot, options) {
     console.log(`  ${getStageBadge(snapshot.readyForTasks, { warning: snapshot.agentInitializationComplete && !snapshot.readyForTasks })} Ready for task execution`);
     if (snapshot.agentInitializationPendingReason === 'AGENT_HANDOFF_REQUIRED') {
         printHighlightedPair('NextStage:', 'Launch your agent with AGENT_INIT_PROMPT.md');
+    } else if (snapshot.agentInitializationPendingReason === 'LANGUAGE_CONFIRMATION_PENDING') {
+        console.log('  Pending checkpoint: Confirm assistant language during AGENT_INIT_PROMPT flow');
+    } else if (snapshot.agentInitializationPendingReason === 'ACTIVE_AGENT_FILES_PENDING') {
+        console.log('  Pending checkpoint: Confirm active agent files during AGENT_INIT_PROMPT flow');
+    } else if (snapshot.agentInitializationPendingReason === 'AGENT_STATE_STALE') {
+        console.log('  Pending checkpoint: Agent-init state no longer matches current init answers');
+    } else if (snapshot.agentInitializationPendingReason === 'PROJECT_RULES_PENDING') {
+        console.log('  Pending checkpoint: Update project-specific live rules before finalizing agent init');
+    } else if (snapshot.agentInitializationPendingReason === 'SKILLS_PROMPT_PENDING') {
+        console.log('  Pending checkpoint: Ask the built-in specialist skills question before finalizing agent init');
+    } else if (snapshot.agentInitializationPendingReason === 'VALIDATION_PENDING') {
+        console.log('  Pending checkpoint: Final agent-init validation has not passed yet');
+    } else if (snapshot.agentInitializationPendingReason === 'AGENT_STATE_INVALID') {
+        console.log('  Pending checkpoint: Repair invalid agent-init state file');
     } else if (snapshot.agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING') {
         console.log(`  Missing project commands: ${snapshot.missingProjectCommands.length}`);
     }
     if (snapshot.initAnswersError) console.log(`InitAnswersStatus: INVALID (${snapshot.initAnswersError})`);
     if (snapshot.liveVersionError) console.log(`LiveVersionStatus: INVALID (${snapshot.liveVersionError})`);
+    if (snapshot.agentInitStateError) console.log(`AgentInitStateStatus: INVALID (${snapshot.agentInitStateError})`);
     if (snapshot.agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING') {
         console.log(`CommandsRule: ${snapshot.commandsRulePath}`);
         printHighlightedPair('CommandsStatus:', 'PENDING_AGENT_CONTEXT');
@@ -643,6 +664,7 @@ function printHelp(packageJson) {
         [
             'Commands:',
             '  setup         First-run onboarding: deploy/refresh bundle, collect init answers, run install, and validate manifest.',
+            '  agent-init    Finalize mandatory agent onboarding after AGENT_INIT_PROMPT work is complete.',
             '  status        Show current project status without changing files.',
             '  doctor        Run verify + manifest validation using existing init answers.',
             '  bootstrap     Deploy the bundle only.',
@@ -650,7 +672,11 @@ function printHelp(packageJson) {
             '  init          Re-materialize live/ from an existing deployed bundle.',
             '  reinit        Re-ask or override init answers for an existing deployed bundle.',
             '  update        Check for updates and optionally apply them.',
-            '  uninstall     Remove the deployed orchestrator bundle and managed files.'
+            '  uninstall     Remove the deployed orchestrator bundle and managed files.',
+            '  verify        Validate deployment consistency and rule contracts.',
+            '  check-update  Compare current deployment with a newer package or branch.',
+            '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
+            '  gate          Run an agent gate or helper command.'
         ],
         [
             'Global options:',
@@ -671,8 +697,9 @@ function printHelp(packageJson) {
             'Notes:',
             `  - The default deployed bundle path is ${DEFAULT_BUNDLE_NAME}.`,
             '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
-            '  - setup can collect init answers itself; install/init/doctor use an existing init-answers.json.',
-            '  - setup skips full verify by default because project-specific command placeholders are usually filled later by the setup agent.',
+            '  - setup collects the 6 mandatory init answers, writes init-answers.json, and leaves final agent onboarding to AGENT_INIT_PROMPT.md.',
+            '  - agent-init is the hard code-level gate that records active agent files, project-rule completion, skills prompt completion, and final verify/manifest PASS.',
+            '  - skills manages optional built-in domain packs and code-driven recommendations from Octopus-agent-orchestrator/live/config/skills-index.json.',
             '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
         ]
     ];
@@ -692,6 +719,7 @@ function buildHelpText(packageJson) {
         [
             'Commands:',
             '  setup         First-run onboarding: deploy/refresh bundle, collect init answers, run install, and validate manifest.',
+            '  agent-init    Finalize mandatory agent onboarding after AGENT_INIT_PROMPT work is complete.',
             '  status        Show current project status without changing files.',
             '  doctor        Run verify + manifest validation using existing init answers.',
             '  bootstrap     Deploy the bundle only.',
@@ -699,7 +727,11 @@ function buildHelpText(packageJson) {
             '  init          Re-materialize live/ from an existing deployed bundle.',
             '  reinit        Re-ask or override init answers for an existing deployed bundle.',
             '  update        Check for updates and optionally apply them.',
-            '  uninstall     Remove the deployed orchestrator bundle and managed files.'
+            '  uninstall     Remove the deployed orchestrator bundle and managed files.',
+            '  verify        Validate deployment consistency and rule contracts.',
+            '  check-update  Compare current deployment with a newer package or branch.',
+            '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
+            '  gate          Run an agent gate or helper command.'
         ],
         [
             'Global options:',
@@ -720,8 +752,9 @@ function buildHelpText(packageJson) {
             'Notes:',
             `  - The default deployed bundle path is ${DEFAULT_BUNDLE_NAME}.`,
             '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
-            '  - setup can collect init answers itself; install/init/doctor use an existing init-answers.json.',
-            '  - setup skips full verify by default because project-specific command placeholders are usually filled later by the setup agent.',
+            '  - setup collects the 6 mandatory init answers, writes init-answers.json, and leaves final agent onboarding to AGENT_INIT_PROMPT.md.',
+            '  - agent-init is the hard code-level gate that records active agent files, project-rule completion, skills prompt completion, and final verify/manifest PASS.',
+            '  - skills manages optional built-in domain packs and code-driven recommendations from Octopus-agent-orchestrator/live/config/skills-index.json.',
             '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
         ]
     ];

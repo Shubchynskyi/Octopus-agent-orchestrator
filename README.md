@@ -14,10 +14,10 @@ Deploys canonical rules, mandatory quality gates, and token-usage optimization i
 npx -y octopus-agent-orchestrator setup
 
 # 2. Then give AGENT_INIT_PROMPT.md to your coding agent
-#    Agent reuses existing init answers, only normalizes language if needed,
-#    fills project context, and reruns checks
+#    Agent reuses existing init answers, explicitly confirms active agent files,
+#    fills project context, offers optional skill packs, and finishes with octopus agent-init
 
-# 3. Start working
+# 3. After octopus agent-init passes, start working
 #    "Execute task T-001 depth=2"
 ```
 
@@ -51,14 +51,17 @@ npx -y octopus-agent-orchestrator setup
 |---|---|
 | `octopus` | Safe overview: help + current project status |
 | `octopus setup` | First-run CLI onboarding without requiring an agent for the 6 answers |
+| `octopus agent-init` | Hard code-level gate that finalizes agent onboarding |
 | `octopus status` | Short project status snapshot |
 | `octopus doctor` | Run verify + manifest validation from existing answers |
 | `octopus bootstrap` | Bundle-only deploy without install |
 | `octopus install` | Deploy/refresh orchestrator (requires init-answers.json) |
 | `octopus init` | Re-materialize `live/` from existing answers |
 | `octopus reinit` | Change init answers without full reinstall |
-| `octopus update` | Check for updates and optionally apply |
+| `octopus check-update` | Compare current deployment with a newer package or branch |
+| `octopus update` | Apply the update workflow directly (`--dry-run` for preview) |
 | `octopus uninstall` | Remove orchestrator with keep/delete choices |
+| `octopus skills` | List, suggest, add, remove, and validate optional built-in skill packs |
 
 Aliases: `octopus`, `oao`, `octopus-agent-orchestrator`
 
@@ -67,7 +70,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 ## Version
 
 - Package: `octopus-agent-orchestrator`
-- Current: `1.0.8` (source: `VERSION`)
+- Current: `2.0.0` (source: `VERSION`)
 - npm: `npm install octopus-agent-orchestrator`
 
 ## Runtime Baseline
@@ -106,7 +109,8 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 ## Important Notes
 
 - `octopus setup` can collect the 6 init answers itself and write `runtime/init-answers.json` without an agent.
-- After CLI setup, use `AGENT_INIT_PROMPT.md` so the agent reuses existing init answers, only clarifies language when it cannot recognize it confidently, fills project-specific context, and finishes project-level verification.
+- After CLI setup, use `AGENT_INIT_PROMPT.md` so the agent reuses existing init answers, clarifies language when it cannot recognize it confidently, explicitly confirms which agent entrypoint files are actively used, fills project-specific context, optionally manages built-in skill packs, and finishes with the hard `octopus agent-init` gate.
+- Optional skills are discovered from the compact `live/config/skills-index.json` index. After the user selects a built-in pack, it should be installed into `live/skills/**` without reading the full optional `SKILL.md` immediately. Full optional skill files should be opened only later, when the selected skill is actually activated for a task or a hard activation rule requires it.
 - `octopus` without arguments is now non-destructive and only prints overview/help.
 - The public CLI owns the validated runtime surface for lifecycle commands and gate routes.
 - Root `tsconfig.json` is the editor-facing entrypoint and simply extends `tsconfig.node-foundation.json`.

@@ -1,0 +1,15 @@
+{
+  "id": "security-hardening",
+  "name": "Security Hardening",
+  "pack": "security-review",
+  "summary": "Extended application and infrastructure security hardening guidance beyond the core security review skill.",
+  "tags": ["security", "hardening"],
+  "aliases": ["security-hardening"],
+  "stack_signals": ["auth", "security"],
+  "task_signals": ["security", "hardening", "secrets", "permissions"],
+  "changed_path_signals": ["auth/", "security/", "infra/"],
+  "references": ["checklist.md"],
+  "cost_hint": "medium",
+  "priority": 95,
+  "autoload": "suggest"
+}

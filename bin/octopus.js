@@ -29,6 +29,7 @@ const DEFAULT_INIT_ANSWERS_RELATIVE_PATH = path.join(DEFAULT_BUNDLE_NAME, 'runti
 const DEFAULT_REPO_URL = 'https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git';
 const LIFECYCLE_COMMANDS = new Set([
     'setup',
+    'agent-init',
     'status',
     'doctor',
     'bootstrap',
@@ -39,6 +40,7 @@ const LIFECYCLE_COMMANDS = new Set([
     'update',
     'verify',
     'check-update',
+    'skills',
     'gate'
 ]);
 const SOURCE_OF_TRUTH_VALUES = new Set([
@@ -113,6 +115,7 @@ const PROJECT_COMMAND_PLACEHOLDERS = Object.freeze([
 ]);
 const COMMAND_SUMMARY = Object.freeze([
     ['setup', 'First-run onboarding'],
+    ['agent-init', 'Finalize mandatory agent onboarding'],
     ['status', 'Show workspace status'],
     ['doctor', 'Run verify + manifest validation'],
     ['bootstrap', 'Deploy bundle only'],
@@ -121,6 +124,7 @@ const COMMAND_SUMMARY = Object.freeze([
     ['uninstall', 'Remove orchestrator'],
     ['verify', 'Verify workspace layout'],
     ['check-update', 'Check for available updates'],
+    ['skills', 'List, suggest, and manage optional skill packs'],
     ['gate', 'Run an agent gate (gate <name>)']
 ]);
 const ALL_AGENT_ENTRYPOINT_FILES = Object.freeze([...SOURCE_TO_ENTRYPOINT_MAP.values()]);
@@ -473,14 +477,19 @@ function readOptionalJsonFile(filePath) {
     }
 }
 
+function resolveSetupActiveAgentFiles(sourceOfTruth, explicitActiveAgentFiles) {
+    if (explicitActiveAgentFiles === undefined) {
+        return normalizeActiveAgentFiles(null, sourceOfTruth);
+    }
+
+    return normalizeActiveAgentFiles(explicitActiveAgentFiles, sourceOfTruth);
+}
+
 function getSetupAnswerDefaults(targetRoot, initAnswersPath, options) {
     const resolvedInitAnswersPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
     const existingAnswers = readOptionalJsonFile(resolvedInitAnswersPath) || {};
     const sourceOfTruth = tryNormalizeSourceOfTruth(options.sourceOfTruth ?? getInitAnswerValue(existingAnswers, 'SourceOfTruth'), 'Claude');
-    const activeAgentFiles = normalizeActiveAgentFiles(
-        options.activeAgentFiles ?? getInitAnswerValue(existingAnswers, 'ActiveAgentFiles'),
-        sourceOfTruth
-    );
+    const activeAgentFiles = resolveSetupActiveAgentFiles(sourceOfTruth, options.activeAgentFiles);
 
     return {
         assistantLanguage: parseOptionalText(options.assistantLanguage) || parseOptionalText(getInitAnswerValue(existingAnswers, 'AssistantLanguage')) || 'English',
@@ -539,7 +548,7 @@ async function collectSetupAnswersInteractively(targetRoot, initAnswersPath, opt
         ]
     });
 
-    const activeAgentFiles = normalizeActiveAgentFiles(defaults.activeAgentFiles, sourceOfTruth);
+    const activeAgentFiles = resolveSetupActiveAgentFiles(sourceOfTruth, options.activeAgentFiles);
 
     return {
         assistantLanguage,
@@ -1065,6 +1074,8 @@ function printSetupHandoff(snapshot) {
 
     console.log('');
     console.log(bold('Agent Initialization'));
+    console.log('  Primary setup is complete.');
+    console.log('  Next stage: launch your agent and give it the init prompt.');
     if (snapshot.activeAgentFiles) {
         console.log(`  Active agent files: ${snapshot.activeAgentFiles}`);
     }
@@ -1072,7 +1083,7 @@ function printSetupHandoff(snapshot) {
     console.log('  2. The prompt already tells the agent to reuse existing init answers,');
     console.log('     validate/normalize language, fill project context, replace placeholders,');
     console.log('     and run the final doctor check.');
-    console.log('  3. After that you can execute tasks, for example:');
+    console.log('  3. After agent initialization you can execute tasks, for example:');
     console.log(`     ${green('Execute task T-001 depth=2')}`);
 }
 
@@ -1118,14 +1129,24 @@ function getStatusSnapshot(targetRoot, initAnswersPath = DEFAULT_INIT_ANSWERS_RE
     const taskPresent = fs.existsSync(taskPath) && fs.lstatSync(taskPath).isFile();
     const usagePresent = fs.existsSync(usagePath) && fs.lstatSync(usagePath).isFile();
     const primaryInitializationComplete = bundlePresent && initAnswersPresent && !initAnswersError && livePresent && taskPresent && usagePresent;
-    const agentInitializationComplete = primaryInitializationComplete && missingProjectCommands.length === 0;
+    let agentInitializationPendingReason = null;
+    if (primaryInitializationComplete) {
+        if ((answers ? answers.collectedVia : null) !== 'AGENT_INIT_PROMPT.md') {
+            agentInitializationPendingReason = 'AGENT_HANDOFF_REQUIRED';
+        } else if (missingProjectCommands.length > 0) {
+            agentInitializationPendingReason = 'PROJECT_COMMANDS_PENDING';
+        }
+    }
+    const agentInitializationComplete = primaryInitializationComplete && agentInitializationPendingReason === null;
     const readyForTasks = agentInitializationComplete;
 
     let recommendedNextCommand = 'npx octopus-agent-orchestrator setup';
     if (readyForTasks) {
         recommendedNextCommand = 'Execute task T-001 depth=2';
-    } else if (primaryInitializationComplete) {
+    } else if (primaryInitializationComplete && agentInitializationPendingReason === 'AGENT_HANDOFF_REQUIRED') {
         recommendedNextCommand = `Give your agent "${getAgentInitPromptPath(bundlePath)}" and then run npx octopus-agent-orchestrator doctor`;
+    } else if (primaryInitializationComplete && agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING') {
+        recommendedNextCommand = `Complete project commands in "${commandsRulePath}" and then run npx octopus-agent-orchestrator doctor`;
     } else if (bundlePresent && (!initAnswersPresent || initAnswersError)) {
         recommendedNextCommand = `npx octopus-agent-orchestrator setup --target-root "${targetRoot}"`;
     } else if (bundlePresent) {
@@ -1151,6 +1172,7 @@ function getStatusSnapshot(targetRoot, initAnswersPath = DEFAULT_INIT_ANSWERS_RE
         activeAgentFiles: answers ? answers.activeAgentFiles : null,
         liveVersionError,
         primaryInitializationComplete,
+        agentInitializationPendingReason,
         agentInitializationComplete,
         readyForTasks,
         recommendedNextCommand
@@ -1174,7 +1196,9 @@ function printStatus(snapshot, { heading = 'OCTOPUS_STATUS' } = {}) {
     console.log(`  ${getStageBadge(snapshot.primaryInitializationComplete, { warning: snapshot.bundlePresent && !snapshot.primaryInitializationComplete })} Primary initialization`);
     console.log(`  ${getStageBadge(snapshot.agentInitializationComplete, { warning: snapshot.primaryInitializationComplete && !snapshot.agentInitializationComplete })} Agent initialization`);
     console.log(`  ${getStageBadge(snapshot.readyForTasks, { warning: snapshot.agentInitializationComplete && !snapshot.readyForTasks })} Ready for task execution`);
-    if (snapshot.primaryInitializationComplete && !snapshot.agentInitializationComplete) {
+    if (snapshot.agentInitializationPendingReason === 'AGENT_HANDOFF_REQUIRED') {
+        printHighlightedPair('NextStage:', 'Launch your agent with AGENT_INIT_PROMPT.md');
+    } else if (snapshot.agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING') {
         console.log(`  Missing project commands: ${snapshot.missingProjectCommands.length}`);
     }
     if (snapshot.initAnswersError) {
@@ -1183,7 +1207,7 @@ function printStatus(snapshot, { heading = 'OCTOPUS_STATUS' } = {}) {
     if (snapshot.liveVersionError) {
         console.log(`LiveVersionStatus: INVALID (${snapshot.liveVersionError})`);
     }
-    if (snapshot.missingProjectCommands.length > 0 && snapshot.primaryInitializationComplete) {
+    if (snapshot.agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING') {
         console.log(`CommandsRule: ${snapshot.commandsRulePath}`);
         printHighlightedPair('CommandsStatus:', 'PENDING_AGENT_CONTEXT');
     }
@@ -1205,6 +1229,7 @@ function printHelp(packageJson) {
         [
             'Commands:',
             '  setup         First-run onboarding: deploy/refresh bundle, collect init answers, run install, and validate manifest.',
+            '  agent-init    Finalize mandatory agent onboarding after AGENT_INIT_PROMPT work is complete.',
             '  status        Show current project status without changing files.',
             '  doctor        Run verify + manifest validation using existing init answers.',
             '  bootstrap     Deploy the bundle only.',
@@ -1212,7 +1237,11 @@ function printHelp(packageJson) {
             '  init          Re-materialize live/ from an existing deployed bundle.',
             '  reinit        Re-ask or override init answers for an existing deployed bundle.',
             '  update        Check for updates and optionally apply them.',
-            '  uninstall     Remove the deployed orchestrator bundle and managed files.'
+            '  uninstall     Remove the deployed orchestrator bundle and managed files.',
+            '  verify        Validate deployment consistency and rule contracts.',
+            '  check-update  Compare current deployment with a newer package or branch.',
+            '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
+            '  gate          Run an agent gate or helper command.'
         ],
         [
             'Global options:',
@@ -1233,8 +1262,9 @@ function printHelp(packageJson) {
             'Notes:',
             `  - The default deployed bundle path is ${DEFAULT_BUNDLE_NAME}.`,
             '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
-            '  - setup can collect init answers itself; install/init/doctor use an existing init-answers.json.',
-            '  - setup skips full verify by default because project-specific command placeholders are usually filled later by the setup agent.',
+            '  - setup collects the 6 mandatory init answers, writes init-answers.json, and leaves final agent onboarding to AGENT_INIT_PROMPT.md.',
+            '  - agent-init is the hard code-level gate that records active agent files, project-rule completion, skills prompt completion, and final verify/manifest PASS.',
+            '  - skills manages optional built-in domain packs and code-driven recommendations from Octopus-agent-orchestrator/live/config/skills-index.json.',
             '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
         ]
     ];
@@ -1307,185 +1337,26 @@ async function handleBootstrap(commandArgv, packageJson) {
 }
 
 async function handleSetup(commandArgv, packageJson) {
-    const setupDefinitions = {
-        '--target-root': { key: 'targetRoot', type: 'string' },
-        '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
-        '--repo-url': { key: 'repoUrl', type: 'string' },
-        '--branch': { key: 'branch', type: 'string' },
-        '--dry-run': { key: 'dryRun', type: 'boolean' },
-        '--verify': { key: 'runVerify', type: 'boolean' },
-        '--no-prompt': { key: 'noPrompt', type: 'boolean' },
-        '--skip-verify': { key: 'skipVerify', type: 'boolean' },
-        '--skip-manifest-validation': { key: 'skipManifestValidation', type: 'boolean' },
-        '--assistant-language': { key: 'assistantLanguage', type: 'string' },
-        '--assistant-brevity': { key: 'assistantBrevity', type: 'string' },
-        '--active-agent-files': { key: 'activeAgentFiles', type: 'string' },
-        '--source-of-truth': { key: 'sourceOfTruth', type: 'string' },
-        '--enforce-no-auto-commit': { key: 'enforceNoAutoCommit', type: 'string' },
-        '--claude-orchestrator-full-access': { key: 'claudeOrchestratorFullAccess', type: 'string' },
-        '--claude-full-access': { key: 'claudeOrchestratorFullAccess', type: 'string' },
-        '--token-economy-enabled': { key: 'tokenEconomyEnabled', type: 'string' }
-    };
-    const { options } = parseOptions(commandArgv, setupDefinitions);
+    const { handleSetup: handleSetupSource } = require(runtimeModulePath('cli', 'commands', 'setup'));
+    return handleSetupSource(commandArgv, packageJson, PACKAGE_ROOT);
+}
 
-    if (options.help) {
-        printHelp(packageJson);
-        return;
+function handleAgentInit(commandArgv, packageJson) {
+    const { handleAgentInit: handleAgentInitSource } = require(runtimeModulePath('cli', 'commands', 'agent-init'));
+    const result = handleAgentInitSource(commandArgv, packageJson);
+    if (result && result.readyForTasks === false) {
+        process.exitCode = 1;
     }
-    if (options.version) {
-        console.log(packageJson.version);
-        return;
+    return result;
+}
+
+function handleSkills(commandArgv, packageJson) {
+    const { handleSkills: handleSkillsSource } = require(runtimeModulePath('cli', 'commands', 'skills'));
+    const result = handleSkillsSource(commandArgv, packageJson);
+    if (result && result.passed === false) {
+        process.exitCode = 1;
     }
-
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    ensureDirectoryExists(targetRoot, 'Target root');
-    const interactiveSetup = !options.noPrompt;
-    const canUseInteractivePrompts = interactiveSetup && supportsInteractivePrompts();
-
-    console.log('OCTOPUS_SETUP');
-    printBanner(
-        packageJson,
-        'Primary setup',
-        canUseInteractivePrompts
-            ? 'You will be asked 6 control questions.'
-            : interactiveSetup
-                ? 'Interactive prompts are unavailable in this terminal. Falling back to script-managed setup.'
-                : 'Running in non-interactive mode with provided/default answers.'
-    );
-    console.log(`Project: ${targetRoot}`);
-    console.log(`BundlePath: ${getBundlePath(targetRoot)}`);
-    console.log('');
-    console.log(bold('Setup Steps'));
-    console.log(`  ${green('[1/3]')} Deploy bundle`);
-    console.log(`  ${green('[2/3]')} Collect or reuse init answers`);
-    console.log(`  ${green('[3/3]')} Run install and prepare agent handoff`);
-    console.log('');
-
-    const source = await acquireSourceRoot(options.repoUrl, options.branch);
-    try {
-        const promptedAnswers = canUseInteractivePrompts
-            ? await collectSetupAnswersInteractively(targetRoot, options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH, options)
-            : null;
-        const bundlePath = getBundlePath(targetRoot);
-        const sourceResolvedSetup = path.resolve(source.sourceRoot);
-        const bundleResolvedSetup = path.resolve(bundlePath);
-        if (sourceResolvedSetup.toLowerCase() !== bundleResolvedSetup.toLowerCase()) {
-            if (fs.existsSync(bundlePath) && fs.lstatSync(bundlePath).isDirectory()) {
-                syncBundleItems(source.sourceRoot, bundlePath);
-            } else if (!options.dryRun) {
-                syncBundleItems(source.sourceRoot, bundlePath);
-            }
-        }
-
-        const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
-        const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
-
-        // T-074: build and save init answers, then call TS install+init directly
-        const resolvedAnswers = promptedAnswers || {};
-        const assistantLanguage = resolvedAnswers.assistantLanguage || options.assistantLanguage || 'English';
-        const assistantBrevity = resolvedAnswers.assistantBrevity
-            || (options.assistantBrevity !== undefined ? normalizeAssistantBrevity(options.assistantBrevity) : 'concise');
-        const sourceOfTruth = resolvedAnswers.sourceOfTruth
-            || (options.sourceOfTruth !== undefined ? normalizeSourceOfTruth(options.sourceOfTruth) : 'Claude');
-        const enforceNoAutoCommit = resolvedAnswers.enforceNoAutoCommit !== undefined
-            ? (String(resolvedAnswers.enforceNoAutoCommit) === 'true')
-            : (options.enforceNoAutoCommit !== undefined ? parseBooleanText(options.enforceNoAutoCommit, 'EnforceNoAutoCommit') : true);
-        const claudeOrchestratorFullAccess = resolvedAnswers.claudeOrchestratorFullAccess !== undefined
-            ? (String(resolvedAnswers.claudeOrchestratorFullAccess) === 'true')
-            : (options.claudeOrchestratorFullAccess !== undefined ? parseBooleanText(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess') : false);
-        const tokenEconomyEnabled = resolvedAnswers.tokenEconomyEnabled !== undefined
-            ? (String(resolvedAnswers.tokenEconomyEnabled) === 'true')
-            : (options.tokenEconomyEnabled !== undefined ? parseBooleanText(options.tokenEconomyEnabled, 'TokenEconomyEnabled') : true);
-        const rawActiveAgentFiles = resolvedAnswers.activeAgentFiles || options.activeAgentFiles || null;
-        const activeAgentFiles = normalizeActiveAgentFiles(rawActiveAgentFiles, sourceOfTruth) || '';
-
-        const collectedVia = canUseInteractivePrompts ? 'CLI_INTERACTIVE' : 'CLI_NONINTERACTIVE';
-
-        // Save init answers
-        const resolvedInitAnswersPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
-        const initAnswersDir = path.dirname(resolvedInitAnswersPath);
-        if (!options.dryRun) {
-            if (!fs.existsSync(initAnswersDir)) { fs.mkdirSync(initAnswersDir, { recursive: true }); }
-            const { serializeInitAnswers } = require(runtimeModulePath('schemas', 'init-answers'));
-            const serialized = serializeInitAnswers({
-                AssistantLanguage: assistantLanguage,
-                AssistantBrevity: assistantBrevity,
-                SourceOfTruth: sourceOfTruth,
-                EnforceNoAutoCommit: enforceNoAutoCommit,
-                ClaudeOrchestratorFullAccess: claudeOrchestratorFullAccess,
-                TokenEconomyEnabled: tokenEconomyEnabled,
-                CollectedVia: collectedVia,
-                ActiveAgentFiles: activeAgentFiles
-                    ? activeAgentFiles.split(',').map(function (s) { return s.trim(); }).filter(Boolean)
-                    : []
-            });
-            fs.writeFileSync(resolvedInitAnswersPath, JSON.stringify(serialized, null, 2), 'utf8');
-        }
-
-        // Run install
-        const { runInstall } = require(runtimeModulePath('materialization', 'install'));
-        runInstall({
-            targetRoot,
-            bundleRoot: effectiveBundlePath,
-            assistantLanguage,
-            assistantBrevity,
-            sourceOfTruth,
-            initAnswersPath: resolvedInitAnswersPath,
-            dryRun: options.dryRun
-        });
-
-        // Run init
-        const { runInit } = require(runtimeModulePath('materialization', 'init'));
-        runInit({
-            targetRoot,
-            bundleRoot: effectiveBundlePath,
-            assistantLanguage,
-            assistantBrevity,
-            sourceOfTruth,
-            enforceNoAutoCommit,
-            tokenEconomyEnabled,
-            dryRun: options.dryRun
-        });
-
-        const snapshot = getStatusSnapshot(targetRoot, initAnswersPath);
-
-        // Run manifest validation
-        let manifestStatus = 'SKIPPED';
-        try {
-            const manifestPath = path.join(effectiveBundlePath, 'MANIFEST.md');
-            if (fs.existsSync(manifestPath)) {
-                const { validateManifest } = require(runtimeModulePath('validators', 'validate-manifest'));
-                const manifestResult = validateManifest(manifestPath);
-                manifestStatus = manifestResult.passed ? 'PASS' : 'FAIL';
-            }
-        } catch { manifestStatus = 'ERROR'; }
-
-        // Run verify if possible
-        let verifyStatus = 'PENDING_AGENT_CONTEXT';
-        try {
-            if (snapshot.readyForTasks) {
-                const { runVerify } = require(runtimeModulePath('validators', 'verify'));
-                const verifyResult = runVerify({
-                    targetRoot,
-                    sourceOfTruth,
-                    initAnswersPath: resolvedInitAnswersPath
-                });
-                verifyStatus = (verifyResult.totalViolationCount > 0) ? 'FAIL' : 'PASS';
-            }
-        } catch { verifyStatus = 'PENDING_AGENT_CONTEXT'; }
-
-        console.log('Setup: PASS');
-        console.log('Verify: ' + verifyStatus);
-        console.log('ManifestValidation: ' + manifestStatus);
-        console.log('');
-        printBanner(packageJson, 'Setup complete', snapshot.readyForTasks ? 'Workspace is ready.' : 'Primary setup finished. Agent handoff is still required.');
-        printStatus(snapshot, { heading: 'OCTOPUS_SETUP_STATUS' });
-        if (!snapshot.agentInitializationComplete) {
-            printSetupHandoff(snapshot);
-        }
-    } finally {
-        source.cleanup();
-    }
+    return result;
 }
 
 async function handleInstall(commandArgv, packageJson) {
@@ -1611,8 +1482,10 @@ function handleStatus(commandArgv, packageJson) {
 
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
+    const { getStatusSnapshot: getStatusSnapshotSource } = require(runtimeModulePath('validators', 'status'));
+    const { printStatus: printStatusSource } = require(runtimeModulePath('cli', 'commands', 'cli-helpers'));
     printBanner(packageJson, 'Workspace status', targetRoot);
-    printStatus(getStatusSnapshot(targetRoot, options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH));
+    printStatusSource(getStatusSnapshotSource(targetRoot, options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH));
 }
 
 async function handleDoctor(commandArgv, packageJson) {
@@ -1811,9 +1684,42 @@ async function handleUninstall(commandArgv, packageJson) {
         'targetRoot', 'keepPrimaryEntrypoint', 'keepTaskFile',
         'keepRuntimeArtifacts', 'dryRun', 'backupRoot',
         'preservedRuntimePath', 'filesDeleted', 'directoriesDeleted',
+        'filesRestored', 'itemsBackedUp',
         'warningsCount'
     ]);
     console.log('Result: ' + (uninstallResult.result || 'SUCCESS'));
+    console.log(green('Uninstall complete.'));
+    if (uninstallResult.filesRestored > 0) {
+        printHighlightedPair('Restored user files:', String(uninstallResult.filesRestored), {
+            labelColor: cyan,
+            valueColor: green
+        });
+    }
+    if (uninstallResult.backupRoot && uninstallResult.backupRoot !== '<none>' && uninstallResult.itemsBackedUp > 0) {
+        console.log(yellow('Backup files were created.'));
+        printHighlightedPair('Backup path:', uninstallResult.backupRoot, {
+            labelColor: yellow,
+            valueColor: cyan
+        });
+        printHighlightedPair('Backed up items:', String(uninstallResult.itemsBackedUp), {
+            labelColor: yellow,
+            valueColor: green
+        });
+        if (uninstallResult.preservedRuntimePath && uninstallResult.preservedRuntimePath !== '<none>') {
+            printHighlightedPair('Preserved runtime:', uninstallResult.preservedRuntimePath, {
+                labelColor: yellow,
+                valueColor: cyan
+            });
+        }
+    } else {
+        console.log(dim('No backup files were created during uninstall.'));
+    }
+    if (Array.isArray(uninstallResult.warnings) && uninstallResult.warnings.length > 0) {
+        console.log(yellow('Warnings:'));
+        for (const warning of uninstallResult.warnings) {
+            console.log(`  - ${warning}`);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2214,7 +2120,8 @@ async function main() {
     const packageJson = readPackageJson();
     const argv = process.argv.slice(2);
     if (argv.length === 0) {
-        printOverview(packageJson);
+        const { handleOverview } = require(runtimeModulePath('cli', 'commands', 'overview'));
+        handleOverview(packageJson, normalizePathValue('.'));
         return;
     }
     const commandName = getCommandName(argv);
@@ -2228,6 +2135,9 @@ async function main() {
     switch (commandName) {
         case 'setup':
             await handleSetup(commandArgv, packageJson);
+            return;
+        case 'agent-init':
+            handleAgentInit(commandArgv, packageJson);
             return;
         case 'status':
             handleStatus(commandArgv, packageJson);
@@ -2258,6 +2168,9 @@ async function main() {
             return;
         case 'check-update':
             handleCheckUpdate(commandArgv, packageJson);
+            return;
+        case 'skills':
+            handleSkills(commandArgv, packageJson);
             return;
         case 'gate':
             handleGate(commandArgv);

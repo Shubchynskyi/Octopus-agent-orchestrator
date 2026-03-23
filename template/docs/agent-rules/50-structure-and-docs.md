@@ -9,7 +9,7 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 ├── CLAUDE.md                     # Claude entrypoint; canonical only when source-of-truth=Claude
 ├── GEMINI.md                     # Gemini entrypoint; canonical only when source-of-truth=Gemini
 ├── .claude/settings.local.json   # Optional (when ClaudeOrchestratorFullAccess=true): Claude Code local permission allowlist for the Node CLI
-├── .qwen/settings.json           # Qwen context bootstrap (`AGENTS.md` + `TASK.md`)
+├── .qwen/settings.json           # Optional (only when already present): Qwen context bootstrap (`AGENTS.md` + `TASK.md`)
 ├── TASK.md                       # Task queue for orchestration (recommended gitignore)
 ├── .antigravity/rules.md         # Platform instruction file (recommended gitignore)
 ├── .github/copilot-instructions.md
@@ -31,20 +31,25 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 ├── .antigravity/agents/orchestrator.md # Antigravity agent bridge profile
 └── Octopus-agent-orchestrator/
     ├── template/                 # Immutable deployment template
+    │   ├── skills/**             # Core-skill templates (skill.json + SKILL.md + optional references/agents)
+    │   └── skill-packs/**        # Optional-skill pack scaffolds (pack.json + skill.json + SKILL.md)
     ├── live/                     # Active rule and skill set for this project
     │   ├── config/review-capabilities.json # Optional specialist-review capability flags
     │   ├── config/paths.json     # Runtime roots and preflight trigger regexes
     │   ├── config/output-filters.json # Shared gate-output filter profiles
+    │   ├── config/skill-packs.json # Installed built-in domain skill packs
+    │   ├── config/skills-index.json # Compact optional-skill discovery index
     │   ├── docs/agent-rules/**   # Canonical rule set used by selected source-of-truth routing
     │   ├── docs/changes/CHANGELOG.md
     │   ├── docs/reviews/TEMPLATE.md
     │   ├── docs/tasks/TASKS.md
-    │   ├── skills/**             # Orchestration and review skills
+    │   ├── skills/**             # Skills in a common format: skill.json + SKILL.md + optional references/agents
     │   ├── USAGE.md              # Post-init usage instructions for the selected assistant language
     │   ├── project-discovery.md  # Auto-detected stack and command signals
     │   ├── init-report.md        # Init execution report
     │   └── source-inventory.md   # Discovered legacy docs and agent files
     ├── runtime/
+    │   ├── agent-init-state.json # Hard onboarding gate artifact written by `octopus agent-init`
     │   ├── reviews/**            # Generated preflight and review artifacts
     │   └── task-events/**        # Task timeline logs by task id
     ├── bin/octopus.js            # Public Node CLI entrypoint
@@ -57,7 +62,7 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 - Source-of-truth entrypoint file (selected at install): canonical routing index for agent rules.
 - `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` - supported root entrypoint files; only the selected source-of-truth file is canonical.
 - `.claude/settings.local.json` - optional (when `ClaudeOrchestratorFullAccess=true`): Claude Code local permission allowlist for the Node CLI.
-- `.qwen/settings.json` - Qwen context bootstrap (loads `AGENTS.md` and `TASK.md`).
+- `.qwen/settings.json` - optional Qwen context bootstrap (only updated when the file already exists).
 - `TASK.md` - canonical task list for agent execution workflow.
 - `.github/agents/orchestrator.md` - mandatory orchestration profile for GitHub Agents task execution.
 - `.github/agents/reviewer.md` and `.github/agents/*-review.md` - GitHub review-profile bridges to canonical `live/skills/*`.
@@ -70,7 +75,9 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 - `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md` - mandatory skill invocation policy.
 - `Octopus-agent-orchestrator/live/config/paths.json` - configurable preflight path roots and trigger regexes.
 - `Octopus-agent-orchestrator/live/config/output-filters.json` - shared compile/review output filter profiles for gate compaction.
+- `Octopus-agent-orchestrator/live/config/skill-packs.json` - installed built-in domain packs managed by `octopus skills`.
 - `Octopus-agent-orchestrator/live/USAGE.md` - post-init usage instructions rendered in the selected assistant language.
+- `node Octopus-agent-orchestrator/bin/octopus.js agent-init` - hard code-level onboarding gate that records active agent files and final validation state.
 - `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change` - path mode and required review preflight gate.
 - `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate` - mandatory compile gate before review phase.
 - `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check` - mandatory post-review gate checker.
@@ -80,6 +87,7 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 - `node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context` - reviewer context artifact builder for token economy rule-pack selection.
 - `node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest` - manifest duplicate-entry validator.
 - `Octopus-agent-orchestrator/live/project-discovery.md` - auto-detected stack signals and suggested command baselines.
+- `Octopus-agent-orchestrator/live/skills/README.md` - common skill format reference.
 - `Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md` - orchestration skill.
 - `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md` - optional live-only specialist skill generator and wiring workflow.
 - `Octopus-agent-orchestrator/live/skills/code-review/SKILL.md` - code review skill.

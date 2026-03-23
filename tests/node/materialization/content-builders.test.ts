@@ -222,6 +222,11 @@ describe('buildGitignoreEntries', () => {
         const entries = buildGitignoreEntries(['CLAUDE.md'], [], false);
         assert.ok(entries.includes('Octopus-agent-orchestrator/'));
         assert.ok(entries.includes('TASK.md'));
+        assert.ok(!entries.includes('.qwen/'));
+    });
+
+    it('includes .qwen/ only when qwen integration is already present', () => {
+        const entries = buildGitignoreEntries(['CLAUDE.md'], [], false, true);
         assert.ok(entries.includes('.qwen/'));
     });
 

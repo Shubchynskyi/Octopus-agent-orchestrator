@@ -1,0 +1,15 @@
+{
+  "id": "java-spring",
+  "name": "Java Spring",
+  "pack": "java-spring",
+  "summary": "Spring Boot, layered Java services, persistence, security, and testing guidance.",
+  "tags": ["java", "spring", "backend"],
+  "aliases": ["spring", "spring-boot"],
+  "stack_signals": ["pom.xml", "build.gradle", "spring-boot"],
+  "task_signals": ["controller", "service", "repository", "transaction"],
+  "changed_path_signals": ["src/main/java/", "src/test/java/"],
+  "references": ["checklist.md"],
+  "cost_hint": "medium",
+  "priority": 90,
+  "autoload": "suggest"
+}

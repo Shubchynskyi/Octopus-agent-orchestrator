@@ -1,0 +1,15 @@
+{
+  "id": "devops-k8s",
+  "name": "DevOps K8s",
+  "pack": "devops-k8s",
+  "summary": "Docker, Kubernetes, CI/CD, rollout safety, observability, and infrastructure workflows.",
+  "tags": ["devops", "docker", "kubernetes"],
+  "aliases": ["k8s", "devops"],
+  "stack_signals": ["Dockerfile", "k8s/", "helm/", ".github/workflows/"],
+  "task_signals": ["deployment", "rollout", "helm", "pipeline"],
+  "changed_path_signals": ["k8s/", "helm/", ".github/workflows/"],
+  "references": ["checklist.md"],
+  "cost_hint": "medium",
+  "priority": 85,
+  "autoload": "suggest"
+}

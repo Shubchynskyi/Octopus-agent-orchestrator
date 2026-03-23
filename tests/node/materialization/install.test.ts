@@ -135,7 +135,7 @@ describe('runInstall', () => {
         }
     });
 
-    it('creates .qwen/settings.json', () => {
+    it('does not create .qwen/settings.json when qwen is not already configured', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const answersPath = writeInitAnswers(bundleRoot, {
@@ -158,8 +158,43 @@ describe('runInstall', () => {
                 initAnswersPath: answersPath
             });
 
-            assert.ok(fs.existsSync(path.join(projectRoot, '.qwen', 'settings.json')));
+            assert.ok(!fs.existsSync(path.join(projectRoot, '.qwen', 'settings.json')));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('updates existing .qwen/settings.json in place', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            fs.mkdirSync(path.join(projectRoot, '.qwen'), { recursive: true });
+            fs.writeFileSync(
+                path.join(projectRoot, '.qwen', 'settings.json'),
+                JSON.stringify({ context: { fileName: ['README.md'] } }, null, 2)
+            );
+
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            });
+
             const settings = JSON.parse(fs.readFileSync(path.join(projectRoot, '.qwen', 'settings.json'), 'utf8'));
+            assert.ok(settings.context.fileName.includes('README.md'));
             assert.ok(settings.context.fileName.includes('TASK.md'));
             assert.ok(settings.context.fileName.includes('CLAUDE.md'));
         } finally {

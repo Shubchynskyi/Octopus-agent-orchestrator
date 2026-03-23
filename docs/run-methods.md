@@ -2,7 +2,7 @@
 
 Copy-paste command reference for all common Octopus Agent Orchestrator launch methods.
 
-Current package version in this repository: `1.0.8`.
+Current package version in this repository: `2.0.0`.
 
 ## 1. Run Directly From Source Tree
 
@@ -13,9 +13,10 @@ cd D:\Projects\Octopus-agent-orchestrator
 
 node .\bin\octopus.js
 node .\bin\octopus.js --help
-node .\bin\octopus.js setup --target-root . --no-prompt --assistant-language English --assistant-brevity concise --active-agent-files "AGENTS.md, CLAUDE.md" --source-of-truth Codex --enforce-no-auto-commit false --claude-orchestrator-full-access false --token-economy-enabled true
+node .\bin\octopus.js setup --target-root . --no-prompt --assistant-language English --assistant-brevity concise --source-of-truth Codex --enforce-no-auto-commit false --claude-orchestrator-full-access false --token-economy-enabled true
 node .\bin\octopus.js status --target-root .
-node .\bin\octopus.js doctor --target-root .
+node .\bin\octopus.js agent-init --target-root . --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --active-agent-files "AGENTS.md" --project-rules-updated yes --skills-prompted yes
+node .\bin\octopus.js doctor --target-root . --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
 ## 2. Run Through `npx` From Published npm Package
@@ -26,7 +27,6 @@ Use this after `npm publish`.
 npx -y octopus-agent-orchestrator
 npx -y octopus-agent-orchestrator setup
 npx -y octopus-agent-orchestrator status --target-root .
-npx -y octopus-agent-orchestrator doctor --target-root .
 ```
 
 ## 3. Install From Local Repository Folder
@@ -42,7 +42,7 @@ git init
 npm install D:\Projects\Octopus-agent-orchestrator
 
 npx octopus-agent-orchestrator
-npx octopus-agent-orchestrator setup --target-root . --no-prompt --assistant-language English --assistant-brevity concise --active-agent-files "AGENTS.md, CLAUDE.md" --source-of-truth Codex --enforce-no-auto-commit false --claude-orchestrator-full-access false --token-economy-enabled true
+npx octopus-agent-orchestrator setup --target-root . --no-prompt --assistant-language English --assistant-brevity concise --source-of-truth Codex --enforce-no-auto-commit false --claude-orchestrator-full-access false --token-economy-enabled true
 npx octopus-agent-orchestrator status --target-root .
 ```
 
@@ -60,12 +60,11 @@ cd C:\Temp\octopus-npm-test
 npm init -y
 git init
 
-npm install D:\Projects\Octopus-agent-orchestrator\octopus-agent-orchestrator-1.0.8.tgz
+npm install D:\Projects\Octopus-agent-orchestrator\octopus-agent-orchestrator-2.0.0.tgz
 
 npx octopus-agent-orchestrator
-npx octopus-agent-orchestrator setup --target-root . --no-prompt --assistant-language English --assistant-brevity concise --active-agent-files "AGENTS.md, CLAUDE.md" --source-of-truth Codex --enforce-no-auto-commit false --claude-orchestrator-full-access false --token-economy-enabled true
+npx octopus-agent-orchestrator setup --target-root . --no-prompt --assistant-language English --assistant-brevity concise --source-of-truth Codex --enforce-no-auto-commit false --claude-orchestrator-full-access false --token-economy-enabled true
 npx octopus-agent-orchestrator status --target-root .
-npx octopus-agent-orchestrator doctor --target-root .
 ```
 
 ## 5. Run Local Binary After `npm install`
@@ -88,7 +87,6 @@ npm install -g octopus-agent-orchestrator
 octopus
 octopus setup
 octopus status --target-root .
-octopus doctor --target-root .
 
 oao
 octopus-agent-orchestrator
@@ -101,12 +99,11 @@ Use this to test the global CLI before publish.
 ```powershell
 cd D:\Projects\Octopus-agent-orchestrator
 npm pack
-npm install -g .\octopus-agent-orchestrator-1.0.8.tgz
+npm install -g .\octopus-agent-orchestrator-2.0.0.tgz
 
 octopus
 octopus setup
 octopus status --target-root .
-octopus doctor --target-root .
 ```
 
 ## 8. Recommended Local Validation Before Publish
@@ -131,5 +128,7 @@ After primary setup, give the agent:
 The agent should then:
 - validate and normalize `AssistantLanguage`;
 - fill project context files;
+- optionally use `octopus skills suggest --target-root .` to recommend built-in packs from the compact skills index;
 - replace placeholders in `live/docs/agent-rules/40-commands.md`;
-- run `octopus doctor --target-root .`.
+- run `octopus agent-init --target-root . --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --active-agent-files "<active-agent-files>" --project-rules-updated yes --skills-prompted yes`;
+- only after `agent-init` passes, run `octopus doctor --target-root . --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"`.

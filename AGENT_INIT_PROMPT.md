@@ -15,10 +15,10 @@ Create a fully working agent orchestration workspace where canonical rules live 
      - if the language answer is ambiguous, typo-heavy, contradictory, or you cannot confidently map it to a single language, ask the user to clarify the language before proceeding;
      - if the language answer is ambiguous, typo-heavy, contradictory, or you cannot confidently map it to a single language, ask the user for a language clarification and do not ask the other setup questions again;
      - write the normalized language value back into `Octopus-agent-orchestrator/runtime/init-answers.json`.
-   - If `ActiveAgentFiles` is missing, empty, or contains only the canonical source-of-truth entrypoint after CLI setup, decide yourself whether additional managed entrypoint files are actually needed for this repository.
-     - inspect existing agent files already present in the repo and the tools/workflows actually used here;
-     - choose the smallest practical set of active agent files;
-     - ask the user only if real usage is ambiguous and you cannot infer it confidently.
+   - If `ActiveAgentFiles` is missing, empty, or contains only the canonical source-of-truth entrypoint after CLI setup, you must ask the user which agent entrypoint files are actively used in this repository.
+     - do not silently infer or expand `ActiveAgentFiles` on the user's behalf;
+     - let the user explicitly confirm either canonical-only usage or a broader set such as `CLAUDE.md, AGENTS.md`;
+     - treat this active-agent-files confirmation as a required agent-initialization question before the workspace can be considered fully initialized.
    - If the file is missing, invalid, or incomplete, ask only the missing mandatory answers in the exact sequence below while preserving every already valid answer.
 3. When questions are required, ask missing mandatory first-run questions in this exact sequence:
    - Ask: `Which language should be used for assistant explanations and help in this project?`
@@ -28,8 +28,8 @@ Create a fully working agent orchestration workspace where canonical rules live 
    - Immediately switch all subsequent user-facing messages to `<assistant-language>`, starting with the next question.
    - In `<assistant-language>`, ask: `What response brevity should be default: concise or detailed?`
    - Wait for answer and store as `<assistant-brevity>`.
-   - In `<assistant-language>`, optionally ask: `Which agent entrypoint files do you actively use in this project? You may select multiple from CLAUDE.md, AGENTS.md, GEMINI.md, .github/copilot-instructions.md, .windsurf/rules/rules.md, .junie/guidelines.md, and .antigravity/rules.md. Recommendation: include the agent files you work with most often.`
-   - If the user provides a value, store it as `<active-agent-files>`.
+   - In `<assistant-language>`, ask: `Which agent entrypoint files do you actively use in this project? You may select multiple from CLAUDE.md, AGENTS.md, GEMINI.md, .github/copilot-instructions.md, .windsurf/rules/rules.md, .junie/guidelines.md, and .antigravity/rules.md. Recommendation: include the agent files you work with most often.`
+   - Store the answer as `<active-agent-files>`. If the user wants canonical-only usage, save exactly that canonical entrypoint as the explicit answer.
    - In `<assistant-language>`, ask: `Which source-of-truth file should be canonical for rules: Claude (CLAUDE.md), Codex (AGENTS.md), Gemini (GEMINI.md), GitHubCopilot (.github/copilot-instructions.md), Windsurf (.windsurf/rules/rules.md), Junie (.junie/guidelines.md), or Antigravity (.antigravity/rules.md)? All non-selected entrypoint files will redirect to this selected file. Recommendation: choose the agent file you work with most often, ideally from the active files you just selected.`
    - Wait for answer and store as `<source-of-truth>`.
    - In `<assistant-language>`, ask (4th mandatory question): a localized equivalent of `Should the no-auto-commit guard be strengthened? (yes/no)`
@@ -52,15 +52,15 @@ Create a fully working agent orchestration workspace where canonical rules live 
   "CollectedVia": "AGENT_INIT_PROMPT.md"
 }
 ```
-If `<active-agent-files>` was collected or inferred, also include:
+If `<active-agent-files>` was collected or explicitly confirmed, also include:
 ```json
 {
   "ActiveAgentFiles": "<active-agent-files>"
 }
 ```
 Additional rules for saving:
-- if you only reused answers created by CLI setup and normalized `AssistantLanguage` and/or inferred `ActiveAgentFiles`, preserve the existing `CollectedVia` value (`CLI_INTERACTIVE` or `CLI_NONINTERACTIVE`);
-- set `CollectedVia` to `AGENT_INIT_PROMPT.md` only if the agent actually had to collect one or more missing mandatory answers.
+- if you only reused answers created by CLI setup and made no user-facing clarifications or confirmations at all, preserve the existing `CollectedVia` value (`CLI_INTERACTIVE` or `CLI_NONINTERACTIVE`);
+- set `CollectedVia` to `AGENT_INIT_PROMPT.md` if the agent had to collect one or more missing mandatory answers, clarify `AssistantLanguage`, or ask/confirm `ActiveAgentFiles`.
 5. Decide whether reinstall is actually needed.
    - If `octopus setup` already completed primary initialization and `Octopus-agent-orchestrator/live/` plus root entrypoints already exist, **do not repeat the 6 questions and do not rerun install just to reapply the same answers**.
    - Run installer only when primary initialization is incomplete, or when missing answers had to be collected and answer-dependent files still need to be materialized/refreshed.
@@ -73,37 +73,42 @@ node Octopus-agent-orchestrator/bin/octopus.js install --target-root "." --init-
    - `Octopus-agent-orchestrator/live/project-discovery.md`
    - update `10-project-context.md`, `20-architecture.md`, `30-code-style.md`, `40-commands.md`, `60-operating-rules.md` with repository-specific facts.
    - tune `Octopus-agent-orchestrator/live/config/paths.json` when default path roots or trigger regexes do not fit this repository.
-8. Run the final doctor check yourself as part of agent initialization:
+8. Finalize agent initialization through the hard code-level gate:
 ```powershell
-npx octopus-agent-orchestrator doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+node Octopus-agent-orchestrator/bin/octopus.js agent-init --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --active-agent-files "<active-agent-files>" --project-rules-updated yes --skills-prompted yes
 ```
-If `npx octopus-agent-orchestrator` is unavailable in the current environment, run the equivalent canonical checks directly:
-```powershell
-node Octopus-agent-orchestrator/bin/octopus.js verify --target-root "." --source-of-truth "<source-of-truth>" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
-node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest --manifest-path "Octopus-agent-orchestrator/MANIFEST.md"
-```
+This command is mandatory. It reruns answer-dependent install materialization, runs `verify`, runs manifest validation, and writes `Octopus-agent-orchestrator/runtime/agent-init-state.json`.
+If the command fails, fix the reported issue and rerun it until it prints PASS.
 9. Confirm task execution contract supports depth:
    - accepted command shape: `Execute task <task-id> depth=<1|2|3>`
    - default depth when omitted: `2`
 10. Optional post-init specialization:
    - before the yes/no question, provide in `<assistant-language>`:
      - `Already configured specialist skills`:
-       - read `Octopus-agent-orchestrator/live/config/review-capabilities.json` and list enabled specialist keys (`api`, `test`, `performance`, `infra`, `dependency`);
+       - run `node Octopus-agent-orchestrator/bin/octopus.js skills list --target-root "."`;
+       - run `node Octopus-agent-orchestrator/bin/octopus.js skills suggest --target-root "."`;
+       - list installed built-in domain packs from `Octopus-agent-orchestrator/live/config/skill-packs.json`;
        - list existing specialist skill directories under `Octopus-agent-orchestrator/live/skills/**` beyond baseline (`orchestration`, `code-review`, `db-review`, `security-review`, `refactor-review`, `skill-builder`).
      - `Available specialist skills to enable/create now`:
-       - predefined: `api-review`, `test-review`, `performance-review`, `infra-review`, `dependency-review`;
+       - read only `Octopus-agent-orchestrator/live/config/skills-index.json` for optional skill discovery;
+       - do not open a full optional `SKILL.md` just to decide whether it is relevant;
+       - recommend built-in packs from `skills list` and optional skills from `skills-index.json` based on the detected stack, task wording, and changed paths;
        - custom specialist skills that can be created via skill-builder.
      - `Recommendation for this project`:
-       - provide a short recommended set (for example `api-review`/`test-review` for backend APIs, `performance-review` for latency-sensitive services, `infra-review` for deployment/terraform changes), based on discovered stack and repository structure.
+       - provide a short recommended set of built-in packs based on the discovered stack and repository structure.
    - then ask user: `Do you want to add additional specialist skills now? (yes/no)`
    - if `yes`, ask:
-     - `Which skills should be added now? (api-review, test-review, performance-review, infra-review, dependency-review, or custom names)`
-     - `For each selected skill, should it be mandatory gate or optional review?`
-   - execute creation workflow via:
+     - `Which built-in packs should be added now?`
+     - `Do you also want any custom project-specific skills created now?`
+   - install built-in packs only through:
+     - `node Octopus-agent-orchestrator/bin/octopus.js skills add <pack-id> --target-root "."`
+   - after the user selects a built-in pack, install it first; do not read the full optional `SKILL.md` only because the pack was selected;
+   - open a full optional `SKILL.md` only later, when the selected skill is actually activated for a task, or when a hard auto-activation rule says it is required;
+   - create custom specialist skills only under `Octopus-agent-orchestrator/live/skills/**` via:
      - `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md`
-   - create specialist skills only under `Octopus-agent-orchestrator/live/skills/**` (never under `template/**`)
-   - if any skill is configured as mandatory and supported (`api|test|performance|infra|dependency`), set corresponding flag in `Octopus-agent-orchestrator/live/config/review-capabilities.json`
-   - rerun verification and manifest validation after skill creation.
+   - after any built-in or custom skill change, run:
+     - `node Octopus-agent-orchestrator/bin/octopus.js skills validate --target-root "."`
+     - `node Octopus-agent-orchestrator/bin/octopus.js agent-init --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --active-agent-files "<active-agent-files>" --project-rules-updated yes --skills-prompted yes`
 
 ## Expected State After Success
 - Selected source-of-truth entrypoint exists and routes to `Octopus-agent-orchestrator/live/docs/agent-rules/*`.
@@ -119,7 +124,9 @@ node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest --manifest
 - if `<enforce-no-auto-commit>` is true: `.git/hooks/pre-commit` contains Octopus managed commit guard block.
 - `Octopus-agent-orchestrator/live/config/review-capabilities.json` exists.
 - `Octopus-agent-orchestrator/live/config/paths.json` exists.
+- `Octopus-agent-orchestrator/live/config/skill-packs.json` exists.
 - `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md` exists.
+- `Octopus-agent-orchestrator/runtime/agent-init-state.json` exists and matches the finalized onboarding answers.
 - `Octopus-agent-orchestrator/live/USAGE.md` exists with usage instructions in `<assistant-language>`.
 - Root `TASK.md` contains `Depth` column in active queue.
 - Provider-native bridge profiles exist and map back to canonical skills (`.github/agents/*.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`).
@@ -133,11 +140,13 @@ node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest --manifest
 - Keep changes minimal and deterministic.
 - If `runtime/init-answers.json` already exists and is complete, reuse it instead of forcing the user through all 6 questions again.
 - After `octopus setup`, treat the 6 answers as already collected; the agent must not repeat them unless the file is missing, invalid, incomplete, or `AssistantLanguage` cannot be confidently recognized.
+- After `octopus setup`, if `ActiveAgentFiles` is still missing, empty, or canonical-only, the agent must explicitly ask the user to confirm which agent entrypoint files are actively used before declaring the workspace ready.
 - Always validate and normalize `AssistantLanguage` into a clear agent-readable label before saving or re-saving init answers.
 - If `AssistantLanguage` cannot be confidently recognized, ask the user for clarification before continuing.
+- Never silently infer or expand `ActiveAgentFiles`.
 - Never run install before writing `Octopus-agent-orchestrator/runtime/init-answers.json` with all 6 required answers.
 - Do not overwrite `CollectedVia=CLI_INTERACTIVE` or `CLI_NONINTERACTIVE` when you are only reusing CLI-collected answers and normalizing the language field.
-- Run the final doctor check yourself; do not ask the user to run `doctor`, `verify`, or `validate-manifest` manually.
+- Never declare the workspace ready until `node Octopus-agent-orchestrator/bin/octopus.js agent-init ...` exits PASS.
 - Do not modify `Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md` during project onboarding.
 - Update `Octopus-agent-orchestrator/live/USAGE.md` as part of successful onboarding; that file is expected to become project-specific.
 - Never bypass the Node CLI install flow outside this prompt.
@@ -158,18 +167,18 @@ node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest --manifest
   - where tasks are defined: tasks are managed in the root `TASK.md` file.
   - updating orchestrator workspace:
     - `node Octopus-agent-orchestrator/bin/octopus.js check-update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"`
-    - manual apply: `node Octopus-agent-orchestrator/bin/octopus.js update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --apply --no-prompt`
+    - manual apply: `node Octopus-agent-orchestrator/bin/octopus.js update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"`
 - Explicit orchestration note:
   - orchestrator mode starts when the agent executes a task from `TASK.md`;
   - if needed, the agent may create new tasks from user requests and then execute them through the orchestrator workflow.
 - Save the full `Usage Instructions` section to `Octopus-agent-orchestrator/live/USAGE.md` so the user can reference it later.
 - If optional specialist skills were requested:
-  - list newly created `Octopus-agent-orchestrator/live/skills/*` paths;
-  - list changed capability flags in `review-capabilities.json`;
-  - list whether each added skill is `mandatory` or `optional`.
+  - list added built-in packs and newly created `Octopus-agent-orchestrator/live/skills/*` paths;
+  - list the result of `skills validate`;
+  - list any changed capability flags in `review-capabilities.json`.
 - If optional specialist skills were not requested:
   - still include the presented `already configured` list, `available` list, and recommendation in the report for traceability.
-- Confirmation line: `Workspace ready for task execution`.
+- Confirmation line: `Workspace ready for task execution` only after `agent-init` passes.
 
 ## Constraints
 - Do not commit.

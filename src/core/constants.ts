@@ -4,9 +4,11 @@ const NODE_ENGINE_RANGE = '>=20.0.0';
 const NODE_BASELINE_LABEL = 'Node 20 LTS';
 const DEFAULT_BUNDLE_NAME = 'Octopus-agent-orchestrator';
 const DEFAULT_INIT_ANSWERS_RELATIVE_PATH = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json');
+const DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'agent-init-state.json');
 
 const LIFECYCLE_COMMANDS = Object.freeze([
     'setup',
+    'agent-init',
     'status',
     'doctor',
     'bootstrap',
@@ -16,7 +18,8 @@ const LIFECYCLE_COMMANDS = Object.freeze([
     'verify',
     'check-update',
     'uninstall',
-    'update'
+    'update',
+    'skills'
 ]);
 
 const SOURCE_OF_TRUTH_VALUES = Object.freeze([
@@ -74,7 +77,8 @@ const MANAGED_CONFIG_NAMES = Object.freeze([
     'review-capabilities',
     'paths',
     'token-economy',
-    'output-filters'
+    'output-filters',
+    'skill-packs'
 ]);
 
 module.exports = {
@@ -83,6 +87,7 @@ module.exports = {
     BOOLEAN_TRUE_VALUES,
     BREVITY_VALUES,
     COLLECTED_VIA_VALUES,
+    DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH,
     DEFAULT_BUNDLE_NAME,
     DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
     LIFECYCLE_COMMANDS,

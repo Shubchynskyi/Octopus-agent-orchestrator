@@ -6,6 +6,7 @@ const {
 } = require('../core/constants.ts');
 const { pathExists, readTextFile } = require('../core/fs.ts');
 const { isPathInsideRoot } = require('../core/paths.ts');
+const { validateSkillPacks, validateSkillsIndex } = require('../runtime/skills.ts');
 
 const {
     PROJECT_COMMAND_PLACEHOLDERS,
@@ -248,13 +249,20 @@ function runVerify(options) {
     var pv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/paths.json');
     var tev = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/token-economy.json');
     var ofv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/output-filters.json');
+    var spv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/skill-packs.json');
+    var six = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/skills-index.json');
     var rfr = detectRuleFileViolations(targetRoot);
     var cv = detectCommandsViolations(targetRoot);
     var crv = detectCoreRuleViolations(targetRoot, iar.assistantLanguage, iar.assistantBrevity);
     var tv = detectTaskViolations(targetRoot, canonicalEntrypoint);
     var ev = detectEntrypointViolations(targetRoot, canonicalEntrypoint);
     var qv = detectQwenSettingsViolations(targetRoot, canonicalEntrypoint);
-    var ge = ['Octopus-agent-orchestrator/','TASK.md','.qwen/'];
+    var skillPackValidation = validateSkillPacks(path.join(targetRoot, 'Octopus-agent-orchestrator'));
+    var skillsIndexValidation = validateSkillsIndex(path.join(targetRoot, 'Octopus-agent-orchestrator'));
+    var ge = ['Octopus-agent-orchestrator/','TASK.md'];
+    if (pathExists(path.join(targetRoot, '.qwen/settings.json'))) {
+        ge.push('.qwen/');
+    }
     var gm = detectGitignoreViolations(targetRoot, ge);
     var mv = detectManifestContractViolations(targetRoot);
 
@@ -266,6 +274,8 @@ function runVerify(options) {
         pathsContractViolations: pv,
         tokenEconomyContractViolations: tev,
         outputFiltersContractViolations: ofv,
+        skillPacksConfigContractViolations: spv,
+        skillsIndexConfigContractViolations: six,
         ruleFileViolations: rfr.ruleFileViolations,
         templatePlaceholderViolations: rfr.templatePlaceholderViolations,
         commandsContractViolations: cv,
@@ -274,6 +284,8 @@ function runVerify(options) {
         entrypointContractViolations: ev,
         taskContractViolations: tv,
         qwenSettingsViolations: qv,
+        skillsIndexContractViolations: skillsIndexValidation.issues,
+        skillPackContractViolations: skillPackValidation.issues,
         gitignoreMissing: gm
     };
 
@@ -304,6 +316,8 @@ function formatVerifyResult(result) {
     lines.push('PathsContractViolationCount: '+result.violations.pathsContractViolations.length);
     lines.push('TokenEconomyContractViolationCount: '+result.violations.tokenEconomyContractViolations.length);
     lines.push('OutputFiltersContractViolationCount: '+result.violations.outputFiltersContractViolations.length);
+    lines.push('SkillPacksConfigContractViolationCount: '+result.violations.skillPacksConfigContractViolations.length);
+    lines.push('SkillsIndexConfigContractViolationCount: '+result.violations.skillsIndexConfigContractViolations.length);
     lines.push('BundleVersion: '+(result.bundleVersion||'n/a'));
     lines.push('VersionContractViolationCount: '+result.violations.versionContractViolations.length);
     lines.push('RuleFileViolationCount: '+result.violations.ruleFileViolations.length);
@@ -315,6 +329,8 @@ function formatVerifyResult(result) {
     lines.push('EntrypointContractViolationCount: '+result.violations.entrypointContractViolations.length);
     lines.push('TaskContractViolationCount: '+result.violations.taskContractViolations.length);
     lines.push('QwenSettingsViolationCount: '+result.violations.qwenSettingsViolations.length);
+    lines.push('SkillsIndexContractViolationCount: '+result.violations.skillsIndexContractViolations.length);
+    lines.push('SkillPackContractViolationCount: '+result.violations.skillPackContractViolations.length);
     var keys = Object.keys(result.violations);
     for (var i=0;i<keys.length;i++) {
         var items = result.violations[keys[i]];

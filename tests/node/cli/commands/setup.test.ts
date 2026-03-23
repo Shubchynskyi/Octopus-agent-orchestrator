@@ -167,6 +167,19 @@ test('getSetupAnswerDefaults CLI options override existing init answers', () => 
     }
 });
 
+test('getSetupAnswerDefaults normalizes numbered active agent file selections', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-defaults-'));
+    try {
+        const defaults = getSetupAnswerDefaults(tmpDir, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {
+            sourceOfTruth: 'Claude',
+            activeAgentFiles: '1, 2, 7'
+        });
+        assert.equal(defaults.activeAgentFiles, 'CLAUDE.md, AGENTS.md, .antigravity/rules.md');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('getSetupAnswerDefaults does not silently reuse old extra active agent files', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-defaults-'));
     const answersDir = path.join(tmpDir, DEFAULT_BUNDLE_NAME, 'runtime');

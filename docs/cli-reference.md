@@ -28,7 +28,7 @@ First-run onboarding. Recommended entrypoint for end users.
 
 ```powershell
 octopus setup
-octopus setup --target-root "." --no-prompt --assistant-language "English" --assistant-brevity concise --active-agent-files "AGENTS.md, CLAUDE.md" --source-of-truth Codex --enforce-no-auto-commit no --claude-orchestrator-full-access no --token-economy-enabled yes
+octopus setup --target-root "." --no-prompt --assistant-language "English" --assistant-brevity concise --source-of-truth Codex --enforce-no-auto-commit no --claude-orchestrator-full-access no --token-economy-enabled yes
 ```
 
 What it does:
@@ -37,7 +37,19 @@ What it does:
 - writes `runtime/init-answers.json`
 - runs install
 - validates `MANIFEST.md`
-- leaves full project-specific verification for the setup agent or later `octopus doctor`
+- leaves final agent onboarding for `AGENT_INIT_PROMPT.md` and `octopus agent-init`
+
+Notes:
+- `setup` supports `--active-agent-files` for fully scripted flows, but ordinary onboarding leaves explicit active-agent-file confirmation to `octopus agent-init`.
+- After CLI setup the workspace is still in agent handoff state, not ready for task execution.
+
+### `octopus agent-init`
+
+Hard code-level onboarding gate. This command writes `runtime/agent-init-state.json` and blocks `Workspace ready` until it passes.
+
+```powershell
+octopus agent-init --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --active-agent-files "AGENTS.md, CLAUDE.md" --project-rules-updated yes --skills-prompted yes
+```
 
 ### `octopus status`
 
@@ -99,7 +111,7 @@ Provider values: `Claude`, `Codex`, `Gemini`, `GitHubCopilot`, `Windsurf`, `Juni
 
 ### `octopus check-update`
 
-Check for updates without applying them.
+Compare the current deployment with a newer package or branch. By default this only checks; `--apply` performs the update immediately.
 
 ```powershell
 octopus check-update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
@@ -113,10 +125,13 @@ Apply the update workflow directly.
 
 ```powershell
 octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
-octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --apply --no-prompt
-octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --repo-url "<git-url>" --branch "<branch>" --apply
+octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --repo-url "<git-url>" --branch "<branch>"
 octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --dry-run
 ```
+
+Notes:
+- `update` always applies the update workflow unless `--dry-run` is used.
+- Use `octopus check-update --apply` when you want a compare-first flow with optional apply.
 
 ### `octopus uninstall`
 
@@ -127,6 +142,23 @@ octopus uninstall --target-root "."
 octopus uninstall --target-root "." --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts yes
 octopus uninstall --target-root "." --dry-run --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts no
 ```
+
+### `octopus skills`
+
+Manage optional built-in domain packs and generate code-driven recommendations from the compact skills index.
+
+```powershell
+octopus skills list --target-root "."
+octopus skills suggest --target-root "." --task-text "Fix slow API endpoint" --changed-path "src/api/users.ts"
+octopus skills add java-spring --target-root "."
+octopus skills remove java-spring --target-root "."
+octopus skills validate --target-root "."
+```
+
+Rules:
+- `skills suggest` reads only `live/config/skills-index.json` to score optional skills.
+- After user selection, the chosen pack is installed into `live/skills/**` without reading its full optional `SKILL.md` immediately.
+- Full optional `SKILL.md` files are loaded only when a selected skill is actually activated for a task or a hard activation rule requires it.
 
 ---
 

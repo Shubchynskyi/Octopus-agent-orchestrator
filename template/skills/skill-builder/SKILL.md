@@ -18,6 +18,7 @@ metadata:
 
 Use this skill to create project-specific specialist skills in `Octopus-agent-orchestrator/live/skills/**` only.
 Never write generated specialist skills into `Octopus-agent-orchestrator/template/**`.
+Generated live skills must follow the same per-skill format as core skills and optional pack skills: `skill.json` + `SKILL.md` + optional `README.md` / `references/*` / `agents/*`.
 
 ## Inputs
 - User-approved skill list (for example: `api-review`, `test-review`, `performance-review`, `infra-review`, `dependency-review`, or custom).
@@ -35,7 +36,9 @@ Never write generated specialist skills into `Octopus-agent-orchestrator/templat
    - `references/frontmatter-guide.md`
    - `references/wiring-checklist.md`
 2. For each approved skill, create:
+   - `Octopus-agent-orchestrator/live/skills/<skill-name>/skill.json`
    - `Octopus-agent-orchestrator/live/skills/<skill-name>/SKILL.md`
+   - optional `Octopus-agent-orchestrator/live/skills/<skill-name>/README.md`
    - `Octopus-agent-orchestrator/live/skills/<skill-name>/references/<checklist>.md`
    - optional `Octopus-agent-orchestrator/live/skills/<skill-name>/agents/openai.yaml`
 3. Update catalog:

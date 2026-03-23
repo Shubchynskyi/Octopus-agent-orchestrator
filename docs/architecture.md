@@ -3,7 +3,8 @@
 ## Design Philosophy
 
 - Canonical rules live only in `Octopus-agent-orchestrator/live/docs/agent-rules/*`.
-- The selected source-of-truth entrypoint contains the full routing index; all other entrypoints redirect to it.
+- The selected source-of-truth entrypoint contains the full routing index.
+- Additional active agent files can be materialized as redirects or provider bridges, but unused entrypoints are not created by default.
 - Provider-native agent profiles bridge back to the same `live/skills/*` contracts.
 - The public runtime surface is the Node CLI: `bin/octopus.js`.
 - Existing project docs and legacy agent files are read as input context only.
@@ -40,7 +41,7 @@ bin/octopus.js
 | `.antigravity/rules.md` | Antigravity entrypoint |
 | `TASK.md` | Shared task queue |
 
-One entrypoint is canonical. All others redirect to it.
+One entrypoint is canonical. Additional entrypoints are created only when they were explicitly confirmed as active during agent initialization.
 
 ### Provider Bridge Profiles
 
@@ -58,7 +59,7 @@ One entrypoint is canonical. All others redirect to it.
 | File | Condition |
 |---|---|
 | `.claude/settings.local.json` | `ClaudeOrchestratorFullAccess=true` |
-| `.qwen/settings.json` | Always |
+| `.qwen/settings.json` | Only when the project already contains this file |
 | `.git/hooks/pre-commit` | `EnforceNoAutoCommit=true` |
 | `.gitignore` | Managed entries for agent artifacts |
 
@@ -74,11 +75,14 @@ One entrypoint is canonical. All others redirect to it.
 | `live/config/paths.json` | Preflight roots and trigger regexes |
 | `live/config/token-economy.json` | Token economy settings |
 | `live/config/output-filters.json` | Gate output compaction profiles |
+| `live/config/skill-packs.json` | Installed built-in domain packs |
+| `live/config/skills-index.json` | Compact optional-skill discovery index |
 | `live/skills/**` | Orchestration and review skills |
 | `live/project-discovery.md` | Project context discovered during setup |
 | `live/source-inventory.md` | Source inventory |
 | `live/USAGE.md` | Generated usage guide |
 | `live/version.json` | Deployment metadata |
+| `runtime/agent-init-state.json` | Hard onboarding state written by `octopus agent-init` |
 
 ## Task Lifecycle
 

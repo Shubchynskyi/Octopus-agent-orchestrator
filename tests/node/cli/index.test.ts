@@ -12,6 +12,7 @@ test('describeFoundation exposes the staged Node-only runtime', () => {
     assert.equal(foundation.runtimeMode, 'node-only-router');
     assert.deepEqual(foundation.lifecycleCommands, [
         'setup',
+        'agent-init',
         'status',
         'doctor',
         'bootstrap',
@@ -21,6 +22,7 @@ test('describeFoundation exposes the staged Node-only runtime', () => {
         'verify',
         'check-update',
         'uninstall',
-        'update'
+        'update',
+        'skills'
     ]);
 });

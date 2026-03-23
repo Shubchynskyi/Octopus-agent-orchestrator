@@ -236,8 +236,9 @@ Describe 'bin/octopus.js' {
         $outputText | Should -Match 'ManifestValidation: PASS'
         $outputText | Should -Match 'OCTOPUS_SETUP_STATUS'
         $outputText | Should -Match 'ActiveAgentFiles: CLAUDE\.md, AGENTS\.md'
-        $outputText | Should -Match 'Workspace ready'
-        $outputText | Should -Match 'RecommendedNextCommand: Execute task T-001 depth=2'
+        $outputText | Should -Match 'Agent setup required'
+        $outputText | Should -Match 'Primary setup finished\. Next stage: agent initialization\.'
+        $outputText | Should -Match 'RecommendedNextCommand: Give your agent ".+AGENT_INIT_PROMPT\.md".+complete the agent-init flow'
         [string]$initAnswers.ActiveAgentFiles | Should -Be 'CLAUDE.md, AGENTS.md'
         [string]$initAnswers.CollectedVia | Should -Be 'CLI_NONINTERACTIVE'
         Test-Path -LiteralPath (Join-Path $workspace 'TASK.md') | Should -BeTrue

@@ -1,0 +1,15 @@
+{
+  "id": "node-backend",
+  "name": "Node Backend",
+  "pack": "node-backend",
+  "summary": "Node.js service architecture, validation, runtime safety, persistence, and tests.",
+  "tags": ["node", "typescript", "backend"],
+  "aliases": ["node", "node-service"],
+  "stack_signals": ["package.json", "tsconfig.json", "src/"],
+  "task_signals": ["endpoint", "service", "validation", "middleware"],
+  "changed_path_signals": ["src/", "test/", "tests/"],
+  "references": ["checklist.md"],
+  "cost_hint": "medium",
+  "priority": 90,
+  "autoload": "suggest"
+}

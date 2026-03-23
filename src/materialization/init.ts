@@ -3,6 +3,7 @@ const path = require('node:path');
 
 const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
 const { readJsonFile } = require('../core/json.ts');
+const { writeSkillsIndex } = require('../runtime/skills.ts');
 const {
     getCanonicalEntrypointFile
 } = require('./common.ts');
@@ -144,7 +145,7 @@ function runInit(options) {
     }
 
     // Handle managed config merge (token-economy enabled flag)
-    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters'];
+    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs'];
     const configMergeStatuses = {};
 
     for (const configName of managedConfigNames) {
@@ -195,6 +196,7 @@ function runInit(options) {
     const initReportPath = path.join(liveRoot, 'init-report.md');
     const projectDiscoveryPath = path.join(liveRoot, 'project-discovery.md');
     const usagePath = path.join(liveRoot, 'USAGE.md');
+    const skillsIndexPath = path.join(liveRoot, 'config', 'skills-index.json');
 
     if (!dryRun) {
         // Source inventory
@@ -220,6 +222,8 @@ function runInit(options) {
             });
             fs.writeFileSync(usagePath, usageLines.join('\r\n'), 'utf8');
         }
+
+        writeSkillsIndex(bundleRoot);
     }
 
     return {
@@ -237,6 +241,8 @@ function runInit(options) {
         pathsConfigMergeStatus: configMergeStatuses['paths'] || 'n/a',
         tokenEconomyConfigMergeStatus: configMergeStatuses['token-economy'] || 'n/a',
         outputFiltersConfigMergeStatus: configMergeStatuses['output-filters'] || 'n/a',
+        skillPacksConfigMergeStatus: configMergeStatuses['skill-packs'] || 'n/a',
+        skillsIndexPath,
         ruleSourceMap,
         sourceInventoryPath,
         initReportPath,
@@ -339,6 +345,8 @@ function buildInitReportLines(opts) {
         `- Token economy config merge status: ${configMergeStatuses['token-economy'] || 'n/a'}`,
         '- Output filters config sync policy: preserve existing live values, normalize legacy keys/shapes, and fill missing keys from template.',
         `- Output filters config merge status: ${configMergeStatuses['output-filters'] || 'n/a'}`,
+        '- Skill packs config sync policy: preserve existing live values, normalize legacy keys/shapes, and fill missing keys from template.',
+        `- Skill packs config merge status: ${configMergeStatuses['skill-packs'] || 'n/a'}`,
         `- Assistant response language: ${lang}`,
         `- Assistant response brevity: ${brevity}`,
         `- Source of truth entrypoint: ${trimmedSoT}`,

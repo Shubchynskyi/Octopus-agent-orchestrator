@@ -261,6 +261,7 @@ test('runVerify returns failed result for empty workspace', () => {
         assert.ok(result.totalViolationCount > 0);
         assert.equal(result.sourceOfTruth, 'Claude');
         assert.equal(result.canonicalEntrypoint, 'CLAUDE.md');
+        assert.ok(!result.violations.gitignoreMissing.includes('.qwen/'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -300,6 +301,8 @@ test('formatVerifyResult shows PASS when all checks pass', () => {
             pathsContractViolations: [],
             tokenEconomyContractViolations: [],
             outputFiltersContractViolations: [],
+            skillPacksConfigContractViolations: [],
+            skillsIndexConfigContractViolations: [],
             ruleFileViolations: [],
             templatePlaceholderViolations: [],
             commandsContractViolations: [],
@@ -308,6 +311,8 @@ test('formatVerifyResult shows PASS when all checks pass', () => {
             entrypointContractViolations: [],
             taskContractViolations: [],
             qwenSettingsViolations: [],
+            skillsIndexContractViolations: [],
+            skillPackContractViolations: [],
             gitignoreMissing: []
         },
         totalViolationCount: 0

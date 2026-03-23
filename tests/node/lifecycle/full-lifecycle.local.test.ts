@@ -19,9 +19,11 @@ const {
     MANAGED_START,
     MANAGED_END
 } = require(resolveRuntimeModule('../../../src/materialization/content-builders'));
+const { runAgentInit } = require(resolveRuntimeModule('../../../src/lifecycle/agent-init'));
 const { runReinit } = require(resolveRuntimeModule('../../../src/materialization/reinit'));
 const { runUpdate } = require(resolveRuntimeModule('../../../src/lifecycle/update'));
 const { runUninstall } = require(resolveRuntimeModule('../../../src/lifecycle/uninstall'));
+const { getStatusSnapshot } = require(resolveRuntimeModule('../../../src/validators/status'));
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -47,6 +49,33 @@ function writeTextFile(filePath, content) {
 
 function readJson(filePath) {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function materializeProjectCommands(bundleRoot) {
+    const commandsPath = path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md');
+    let content = fs.readFileSync(commandsPath, 'utf8');
+    const replacements = new Map([
+        ['<install dependencies command>', 'npm install --prefer-offline --no-fund --no-audit'],
+        ['<local environment bootstrap command>', 'npm run bootstrap'],
+        ['<start backend command>', 'npm run dev:backend'],
+        ['<start frontend command>', 'npm run dev:frontend'],
+        ['<start worker or background job command>', 'npm run dev:worker'],
+        ['<unit test command>', 'npm test'],
+        ['<integration test command>', 'npm run test:integration'],
+        ['<e2e test command>', 'npm run test:e2e'],
+        ['<lint command>', 'npm run lint'],
+        ['<type-check command>', 'npx tsc --noEmit --pretty false'],
+        ['<format check command>', 'npm run format:check'],
+        ['<compile command>', 'npm run build'],
+        ['<build command>', 'npm run build'],
+        ['<container or artifact packaging command>', 'docker build .']
+    ]);
+
+    for (const [placeholder, replacement] of replacements) {
+        content = content.replaceAll(placeholder, replacement);
+    }
+
+    fs.writeFileSync(commandsPath, content, 'utf8');
 }
 
 function listChildDirectories(parentDir) {
@@ -201,6 +230,21 @@ describe('full local lifecycle', () => {
             assert.ok(setupOutput.includes('Agent Initialization'));
             assert.ok(setupOutput.includes('Give your agent:'));
             assert.ok(!setupOutput.includes('Workspace is ready.'));
+
+            materializeProjectCommands(bundleRoot);
+            const agentInitResult = runAgentInit({
+                targetRoot: workspaceRoot,
+                bundleRoot,
+                initAnswersPath: 'Octopus-agent-orchestrator/runtime/init-answers.json',
+                activeAgentFiles: 'AGENTS.md, CLAUDE.md',
+                projectRulesUpdated: 'yes',
+                skillsPrompted: 'yes'
+            });
+
+            assert.equal(agentInitResult.readyForTasks, true);
+            assert.ok(fs.existsSync(path.join(workspaceRoot, 'CLAUDE.md')));
+            const readySnapshot = getStatusSnapshot(workspaceRoot, 'Octopus-agent-orchestrator/runtime/init-answers.json');
+            assert.equal(readySnapshot.readyForTasks, true);
 
             const installedAgents = fs.readFileSync(path.join(workspaceRoot, 'AGENTS.md'), 'utf8');
             const installedTask = fs.readFileSync(path.join(workspaceRoot, 'TASK.md'), 'utf8');

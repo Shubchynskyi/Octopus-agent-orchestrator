@@ -120,6 +120,7 @@ describe('runUninstall', () => {
             assert.ok(!fs.existsSync(path.join(projectRoot, 'CLAUDE.md')));
             assert.ok(!fs.existsSync(path.join(projectRoot, 'TASK.md')));
             assert.ok(result.itemsBackedUp >= 1);
+            assert.ok(!fs.existsSync(path.join(result.backupRoot, 'Octopus-agent-orchestrator')));
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -302,6 +303,8 @@ describe('runUninstall', () => {
             assert.equal(result.result, 'SUCCESS');
             assert.equal(result.keepRuntimeArtifacts, true);
             assert.ok(result.preservedRuntimePath !== '<none>');
+            assert.ok(fs.existsSync(path.join(result.backupRoot, 'Octopus-agent-orchestrator', 'runtime')));
+            assert.ok(!fs.existsSync(path.join(result.backupRoot, 'Octopus-agent-orchestrator', 'template')));
         } finally {
             removePathRecursive(projectRoot);
         }

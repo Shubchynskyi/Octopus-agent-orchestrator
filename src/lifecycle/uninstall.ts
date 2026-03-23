@@ -584,18 +584,11 @@ function runUninstall(options) {
         if (!fs.existsSync(orchestratorRoot) || !fs.lstatSync(orchestratorRoot).isDirectory()) return;
 
         const keepRuntime = keepRuntimeArtifactsValue;
+        const runtimePath = path.join(orchestratorRoot, 'runtime');
 
-        if (!skipBackups) {
-            backupItem(orchestratorRoot, DEFAULT_BUNDLE_NAME, true, false);
-            if (keepRuntime) {
-                preservedRuntimePath = path.join(getBackupRoot(), DEFAULT_BUNDLE_NAME, 'runtime');
-            }
-        } else if (keepRuntime) {
-            const runtimePath = path.join(orchestratorRoot, 'runtime');
-            if (fs.existsSync(runtimePath) && fs.lstatSync(runtimePath).isDirectory()) {
-                backupItem(runtimePath, path.join(DEFAULT_BUNDLE_NAME, 'runtime'), true, true);
-                preservedRuntimePath = path.join(getBackupRoot(), DEFAULT_BUNDLE_NAME, 'runtime');
-            }
+        if (keepRuntime && fs.existsSync(runtimePath) && fs.lstatSync(runtimePath).isDirectory()) {
+            backupItem(runtimePath, path.join(DEFAULT_BUNDLE_NAME, 'runtime'), true, true);
+            preservedRuntimePath = path.join(getBackupRoot(), DEFAULT_BUNDLE_NAME, 'runtime');
         }
 
         if (!dryRun) {

@@ -134,6 +134,8 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
                 pathsContractViolations: [],
                 tokenEconomyContractViolations: [],
                 outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [],
+                skillsIndexConfigContractViolations: [],
                 ruleFileViolations: [],
                 templatePlaceholderViolations: [],
                 commandsContractViolations: [],
@@ -142,6 +144,8 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
                 entrypointContractViolations: [],
                 taskContractViolations: [],
                 qwenSettingsViolations: [],
+                skillsIndexContractViolations: [],
+                skillPackContractViolations: [],
                 gitignoreMissing: []
             },
             totalViolationCount: 0

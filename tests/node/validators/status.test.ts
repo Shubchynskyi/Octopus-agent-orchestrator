@@ -15,10 +15,11 @@ function writeStatusFixtureFile(filePath, content) {
     fs.writeFileSync(filePath, content, 'utf8');
 }
 
-function seedInitializedWorkspace(tmpDir, collectedVia) {
+function seedInitializedWorkspace(tmpDir, collectedVia, options = {}) {
     const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
     const runtimePath = path.join(bundlePath, 'runtime');
     const liveRulesPath = path.join(bundlePath, 'live', 'docs', 'agent-rules');
+    const activeAgentFiles = options.activeAgentFiles || 'AGENTS.md';
     writeStatusFixtureFile(path.join(runtimePath, 'init-answers.json'), JSON.stringify({
         AssistantLanguage: 'English',
         AssistantBrevity: 'concise',
@@ -27,11 +28,18 @@ function seedInitializedWorkspace(tmpDir, collectedVia) {
         ClaudeOrchestratorFullAccess: 'false',
         TokenEconomyEnabled: 'true',
         CollectedVia: collectedVia,
-        ActiveAgentFiles: 'AGENTS.md'
+        ActiveAgentFiles: activeAgentFiles
     }));
     writeStatusFixtureFile(path.join(bundlePath, 'live', 'USAGE.md'), '# Usage\n');
     writeStatusFixtureFile(path.join(tmpDir, 'TASK.md'), '# Tasks\n');
     writeStatusFixtureFile(path.join(liveRulesPath, '40-commands.md'), 'npm install\nnpm test\nnpm run lint\n');
+
+    if (options.agentInitState) {
+        writeStatusFixtureFile(
+            path.join(runtimePath, 'agent-init-state.json'),
+            JSON.stringify(options.agentInitState)
+        );
+    }
 }
 
 test('resolveInitAnswersPath resolves relative path inside root', () => {
@@ -162,13 +170,52 @@ test('getStatusSnapshot keeps CLI-collected setup in agent handoff state even wh
 test('getStatusSnapshot marks workspace ready only after AGENT_INIT_PROMPT initialization with commands filled', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
     try {
-        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md');
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
         const snapshot = getStatusSnapshot(tmpDir);
         assert.equal(snapshot.primaryInitializationComplete, true);
         assert.equal(snapshot.agentInitializationComplete, true);
         assert.equal(snapshot.readyForTasks, true);
         assert.equal(snapshot.agentInitializationPendingReason, null);
         assert.equal(snapshot.recommendedNextCommand, 'Execute task T-001 depth=2');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot flags stale agent-init state when active agent files no longer match answers', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            activeAgentFiles: 'AGENTS.md, CLAUDE.md',
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.readyForTasks, false);
+        assert.equal(snapshot.agentInitializationPendingReason, 'AGENT_STATE_STALE');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -1,5 +1,7 @@
 # Frontmatter Guide
 
+`SKILL.md` frontmatter is still recommended for client compatibility, but every new skill must also have a sibling `skill.json` manifest with the compact structured metadata.
+
 Minimum fields:
 - `name`
 - `description`

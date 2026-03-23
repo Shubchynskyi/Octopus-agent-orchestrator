@@ -5,6 +5,7 @@ const {
     DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
     SOURCE_OF_TRUTH_VALUES
 } = require('../../core/constants.ts');
+const { getActiveAgentEntrypointFiles } = require('../../materialization/common.ts');
 
 const { getStatusSnapshot } = require('../../validators/status.ts');
 
@@ -182,10 +183,10 @@ function printSetupHandoff(snapshot) {
         console.log(`  Active agent files: ${snapshot.activeAgentFiles}`);
     }
     printHighlightedPair('1. Give your agent:', `"${initPromptPath}"`, { indent: '  ' });
-    console.log('  2. The prompt already tells the agent to reuse existing init answers,');
-    console.log('     validate/normalize language, fill project context, replace placeholders,');
-    console.log('     and run the final doctor check.');
-    console.log('  3. After agent initialization you can execute tasks, for example:');
+    console.log('  2. The prompt already tells the agent to validate language,');
+    console.log('     explicitly confirm active agent files, update live project rules,');
+    console.log('     ask about specialist skills, and then run the code-level agent-init gate.');
+    console.log('  3. After the agent-init gate passes, you can execute tasks, for example:');
     console.log(`     ${green('Execute task T-001 depth=2')}`);
 }
 
@@ -200,10 +201,10 @@ function buildSetupHandoffText(snapshot) {
         lines.push(`  Active agent files: ${snapshot.activeAgentFiles}`);
     }
     lines.push(`  1. Give your agent: "${initPromptPath}"`);
-    lines.push('  2. The prompt already tells the agent to reuse existing init answers,');
-    lines.push('     validate/normalize language, fill project context, replace placeholders,');
-    lines.push('     and run the final doctor check.');
-    lines.push('  3. After agent initialization you can execute tasks, for example:');
+    lines.push('  2. The prompt already tells the agent to validate language,');
+    lines.push('     explicitly confirm active agent files, update live project rules,');
+    lines.push('     ask about specialist skills, and then run the code-level agent-init gate.');
+    lines.push('  3. After the agent-init gate passes, you can execute tasks, for example:');
     lines.push('     Execute task T-001 depth=2');
     return lines.join('\n');
 }
@@ -321,6 +322,20 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
         ) || [];
         const collectedVia = canUseInteractivePrompts ? 'CLI_INTERACTIVE' : 'CLI_NONINTERACTIVE';
         const resolvedInitAnswersPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
+        const normalizedActiveAgentFiles = getActiveAgentEntrypointFiles(activeAgentFiles, sourceOfTruth);
+        const {
+            createAgentInitState,
+            doesAgentInitStateMatchAnswers,
+            readAgentInitStateSafe,
+            writeAgentInitState
+        } = require('../../runtime/agent-init-state.ts');
+        const previousAgentInitStateResult = readAgentInitStateSafe(targetRoot);
+        const previousAgentInitState = previousAgentInitStateResult.state;
+        const preserveExistingCheckpoints = doesAgentInitStateMatchAnswers(previousAgentInitState, {
+            AssistantLanguage: assistantLanguage,
+            SourceOfTruth: sourceOfTruth,
+            ActiveAgentFiles: normalizedActiveAgentFiles
+        });
 
         if (!options.dryRun) {
             const initAnswersDir = path.dirname(resolvedInitAnswersPath);
@@ -339,6 +354,30 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
                 ActiveAgentFiles: activeAgentFiles
             });
             fs.writeFileSync(resolvedInitAnswersPath, JSON.stringify(serialized, null, 2), 'utf8');
+            writeAgentInitState(targetRoot, createAgentInitState({
+                AssistantLanguage: assistantLanguage,
+                SourceOfTruth: sourceOfTruth,
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: options.activeAgentFiles !== undefined
+                    || (
+                        preserveExistingCheckpoints
+                        && previousAgentInitState
+                        && previousAgentInitState.ActiveAgentFilesConfirmed
+                    ),
+                ProjectRulesUpdated: preserveExistingCheckpoints && previousAgentInitState
+                    ? previousAgentInitState.ProjectRulesUpdated
+                    : false,
+                SkillsPromptCompleted: preserveExistingCheckpoints && previousAgentInitState
+                    ? previousAgentInitState.SkillsPromptCompleted
+                    : false,
+                VerificationPassed: preserveExistingCheckpoints && previousAgentInitState
+                    ? previousAgentInitState.VerificationPassed
+                    : false,
+                ManifestValidationPassed: preserveExistingCheckpoints && previousAgentInitState
+                    ? previousAgentInitState.ManifestValidationPassed
+                    : false,
+                ActiveAgentFiles: normalizedActiveAgentFiles
+            }));
         }
 
         const { runInstall } = require('../../materialization/install.ts');

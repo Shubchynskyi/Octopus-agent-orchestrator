@@ -3,11 +3,16 @@ const path = require('node:path');
 
 const {
     DEFAULT_BUNDLE_NAME,
+    DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH,
     DEFAULT_INIT_ANSWERS_RELATIVE_PATH
 } = require('../core/constants.ts');
 const { pathExists, readTextFile } = require('../core/fs.ts');
 const { isPathInsideRoot } = require('../core/paths.ts');
 const { validateInitAnswers } = require('../schemas/init-answers.ts');
+const {
+    doesAgentInitStateMatchAnswers,
+    readAgentInitStateSafe
+} = require('../runtime/agent-init-state.ts');
 
 const {
     getBundlePath,
@@ -54,6 +59,9 @@ function getStatusSnapshot(targetRoot, initAnswersPath) {
     var commandsRulePath = getCommandsRulePath(bundlePath);
     var commandsContent = readUtf8IfExists(commandsRulePath);
     var missingProjectCommands = getMissingProjectCommands(commandsContent);
+    var agentInitStateResult = bundlePresent
+        ? readAgentInitStateSafe(resolvedTargetRoot, DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH)
+        : { statePath: path.join(bundlePath, 'runtime', 'agent-init-state.json'), state: null, error: null };
     var initAnswersResolvedPath;
     try { initAnswersResolvedPath = resolveInitAnswersPath(resolvedTargetRoot, initAnswersPath); }
     catch(e) { initAnswersResolvedPath = path.resolve(resolvedTargetRoot, initAnswersPath); }
@@ -77,26 +85,50 @@ function getStatusSnapshot(targetRoot, initAnswersPath) {
     var usagePresent = pathExists(usagePath) && fs.lstatSync(usagePath).isFile();
     var primaryInitializationComplete = bundlePresent && initAnswersPresent && !initAnswersError && livePresent && taskPresent && usagePresent;
     var agentInitializationPendingReason = null;
+    var currentActiveAgentFiles = [];
+    if (answers && answers.ActiveAgentFiles) {
+        currentActiveAgentFiles = Array.isArray(answers.ActiveAgentFiles)
+            ? answers.ActiveAgentFiles.slice()
+            : String(answers.ActiveAgentFiles).split(/[;,]/g).map(function (item) { return item.trim(); }).filter(Boolean);
+    } else if (canonicalEntrypoint) {
+        currentActiveAgentFiles = [canonicalEntrypoint];
+    }
     if (primaryInitializationComplete) {
-        if (collectedVia !== 'AGENT_INIT_PROMPT.md') {
+        if (agentInitStateResult.error) {
+            agentInitializationPendingReason = 'AGENT_STATE_INVALID';
+        } else if (!agentInitStateResult.state) {
             agentInitializationPendingReason = 'AGENT_HANDOFF_REQUIRED';
+        } else if (!doesAgentInitStateMatchAnswers(agentInitStateResult.state, {
+            AssistantLanguage: answers && answers.AssistantLanguage,
+            SourceOfTruth: sourceOfTruth,
+            ActiveAgentFiles: currentActiveAgentFiles
+        })) {
+            agentInitializationPendingReason = 'AGENT_STATE_STALE';
+        } else if (!agentInitStateResult.state.AssistantLanguageConfirmed) {
+            agentInitializationPendingReason = 'LANGUAGE_CONFIRMATION_PENDING';
+        } else if (!agentInitStateResult.state.ActiveAgentFilesConfirmed) {
+            agentInitializationPendingReason = 'ACTIVE_AGENT_FILES_PENDING';
+        } else if (!agentInitStateResult.state.ProjectRulesUpdated) {
+            agentInitializationPendingReason = 'PROJECT_RULES_PENDING';
+        } else if (!agentInitStateResult.state.SkillsPromptCompleted) {
+            agentInitializationPendingReason = 'SKILLS_PROMPT_PENDING';
         } else if (missingProjectCommands.length > 0) {
             agentInitializationPendingReason = 'PROJECT_COMMANDS_PENDING';
+        } else if (!agentInitStateResult.state.VerificationPassed || !agentInitStateResult.state.ManifestValidationPassed) {
+            agentInitializationPendingReason = 'VALIDATION_PENDING';
         }
     }
     var agentInitializationComplete = primaryInitializationComplete && agentInitializationPendingReason === null;
     var readyForTasks = agentInitializationComplete;
     var recommendedNextCommand = 'npx octopus-agent-orchestrator setup';
     if (readyForTasks) recommendedNextCommand = 'Execute task T-001 depth=2';
-    else if (primaryInitializationComplete && agentInitializationPendingReason === 'AGENT_HANDOFF_REQUIRED')
-        recommendedNextCommand = 'Give your agent "'+path.join(bundlePath,'AGENT_INIT_PROMPT.md')+'" and then run npx octopus-agent-orchestrator doctor';
-    else if (primaryInitializationComplete && agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING')
-        recommendedNextCommand = 'Complete project commands in "'+commandsRulePath+'" and then run npx octopus-agent-orchestrator doctor';
+    else if (primaryInitializationComplete && agentInitializationPendingReason !== null)
+        recommendedNextCommand = 'Give your agent "'+path.join(bundlePath,'AGENT_INIT_PROMPT.md')+'" and complete the agent-init flow';
     else if (bundlePresent && (!initAnswersPresent || initAnswersError)) recommendedNextCommand = 'npx octopus-agent-orchestrator setup --target-root "'+resolvedTargetRoot+'"';
     else if (bundlePresent) recommendedNextCommand = 'npx octopus-agent-orchestrator install --target-root "'+resolvedTargetRoot+'" --init-answers-path "'+initAnswersPath+'"';
     var activeAgentFilesValue = null;
-    if (answers && answers.ActiveAgentFiles) {
-        activeAgentFilesValue = Array.isArray(answers.ActiveAgentFiles) ? answers.ActiveAgentFiles.join(', ') : String(answers.ActiveAgentFiles);
+    if (currentActiveAgentFiles.length > 0) {
+        activeAgentFilesValue = currentActiveAgentFiles.join(', ');
     }
     return {
         targetRoot: resolvedTargetRoot, bundlePath: bundlePath, initAnswersResolvedPath: initAnswersResolvedPath,
@@ -105,6 +137,9 @@ function getStatusSnapshot(targetRoot, initAnswersPath) {
         commandsRulePath: commandsRulePath, missingProjectCommands: missingProjectCommands,
         sourceOfTruth: sourceOfTruth, canonicalEntrypoint: canonicalEntrypoint,
         collectedVia: collectedVia,
+        agentInitStatePath: agentInitStateResult.statePath,
+        agentInitStateError: agentInitStateResult.error,
+        agentInitState: agentInitStateResult.state,
         activeAgentFiles: activeAgentFilesValue, liveVersionError: liveVersionError,
         primaryInitializationComplete: primaryInitializationComplete,
         agentInitializationPendingReason: agentInitializationPendingReason,
@@ -138,10 +173,25 @@ function formatStatusSnapshot(snapshot, options) {
     lines.push('  '+badge(snapshot.readyForTasks)+' Ready for task execution');
     if (snapshot.agentInitializationPendingReason === 'AGENT_HANDOFF_REQUIRED')
         lines.push('  Next stage: Launch your agent with AGENT_INIT_PROMPT.md');
+    else if (snapshot.agentInitializationPendingReason === 'LANGUAGE_CONFIRMATION_PENDING')
+        lines.push('  Pending checkpoint: Confirm assistant language during AGENT_INIT_PROMPT flow');
+    else if (snapshot.agentInitializationPendingReason === 'ACTIVE_AGENT_FILES_PENDING')
+        lines.push('  Pending checkpoint: Confirm active agent files during AGENT_INIT_PROMPT flow');
+    else if (snapshot.agentInitializationPendingReason === 'AGENT_STATE_STALE')
+        lines.push('  Pending checkpoint: Agent-init state no longer matches current init answers; rerun AGENT_INIT_PROMPT flow');
+    else if (snapshot.agentInitializationPendingReason === 'PROJECT_RULES_PENDING')
+        lines.push('  Pending checkpoint: Update project-specific live rules before finalizing agent init');
+    else if (snapshot.agentInitializationPendingReason === 'SKILLS_PROMPT_PENDING')
+        lines.push('  Pending checkpoint: Ask the built-in specialist skills question before finalizing agent init');
     else if (snapshot.agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING')
         lines.push('  Missing project commands: '+snapshot.missingProjectCommands.length);
+    else if (snapshot.agentInitializationPendingReason === 'VALIDATION_PENDING')
+        lines.push('  Pending checkpoint: Run agent-init validation to get verify + manifest PASS');
+    else if (snapshot.agentInitializationPendingReason === 'AGENT_STATE_INVALID')
+        lines.push('  Pending checkpoint: Repair invalid agent-init state file');
     if (snapshot.initAnswersError) lines.push('InitAnswersStatus: INVALID ('+snapshot.initAnswersError+')');
     if (snapshot.liveVersionError) lines.push('LiveVersionStatus: INVALID ('+snapshot.liveVersionError+')');
+    if (snapshot.agentInitStateError) lines.push('AgentInitStateStatus: INVALID ('+snapshot.agentInitStateError+')');
     lines.push('RecommendedNextCommand: '+snapshot.recommendedNextCommand);
     return lines.join('\n');
 }

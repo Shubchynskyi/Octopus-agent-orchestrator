@@ -2,6 +2,24 @@
 
 Use this skeleton for each new specialist skill.
 
+## `skill.json`
+
+```json
+{
+  "id": "<skill-id>",
+  "name": "<Skill Name>",
+  "summary": "<what it does in one compact sentence>",
+  "tags": ["<domain>", "<area>"],
+  "aliases": ["<trigger phrase 1>", "<trigger phrase 2>"],
+  "references": ["<checklist>.md"],
+  "cost_hint": "low",
+  "priority": 50,
+  "autoload": "manual"
+}
+```
+
+## `SKILL.md`
+
 ```md
 ---
 name: <skill-name>

@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { execSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
 
 const { stringSha256, fileSha256, normalizePath, toPosix, joinOrchestratorPath, resolvePathInsideRepo, toStringArray } = require('./helpers.ts');
 const { assertValidTaskId, appendTaskEvent } = require('../gate-runtime/task-events.ts');
@@ -145,10 +145,14 @@ function getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, expli
 
     function gitLines(args, failMsg) {
         try {
-            const output = execSync(`git -C "${repoRoot}" ${args.join(' ')}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+            const output = execFileSync('git', ['-C', String(repoRoot), ...args], {
+                encoding: 'utf8',
+                stdio: ['pipe', 'pipe', 'pipe'],
+                maxBuffer: 50 * 1024 * 1024
+            });
             return (output || '').split('\n').filter(l => l.trim());
-        } catch {
-            throw new Error(failMsg);
+        } catch (err) {
+            throw new Error(`${failMsg} ${err.message || err}`);
         }
     }
 

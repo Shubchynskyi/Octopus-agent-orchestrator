@@ -4,11 +4,11 @@ Bundle root: `Octopus-agent-orchestrator`
 Template root: `Octopus-agent-orchestrator/template`
 Live root: `Octopus-agent-orchestrator/live`
 
-Installed to project root by `node Octopus-agent-orchestrator/bin/octopus.js install`:
+Managed in project root by `node Octopus-agent-orchestrator/bin/octopus.js install`, depending on source-of-truth, active agent files, and provider bridges:
 - CLAUDE.md
 - AGENTS.md
 - GEMINI.md
-- .qwen/settings.json
+- .qwen/settings.json (only when already present in the project)
 - TASK.md
 - .antigravity/rules.md
 - .github/agents/orchestrator.md
@@ -29,11 +29,15 @@ Installed to project root by `node Octopus-agent-orchestrator/bin/octopus.js ins
 - .windsurf/agents/orchestrator.md
 - .antigravity/agents/orchestrator.md
 
+Unused entrypoints are not created by default. Extra redirect entrypoints appear only after the user explicitly confirms them during `agent-init`.
+
 Materialized inside `Octopus-agent-orchestrator/live` by `node Octopus-agent-orchestrator/bin/octopus.js init`:
 - live/config/review-capabilities.json
 - live/config/paths.json
 - live/config/token-economy.json
 - live/config/output-filters.json
+- live/config/skill-packs.json
+- live/config/skills-index.json
 - live/docs/agent-rules/**
 - live/docs/changes/**
 - live/docs/reviews/**
@@ -48,6 +52,7 @@ Materialized inside `Octopus-agent-orchestrator/live` by `node Octopus-agent-orc
 Generated during task execution:
 - runtime/reviews/**
 - runtime/task-events/**
+- runtime/agent-init-state.json
 
 Generated during updates:
 - runtime/update-reports/**

@@ -84,4 +84,4 @@ After init, ask your agent:
 - `Create a test-review agent`
 - `Add performance-review as optional`
 
-The agent uses `live/skills/skill-builder/SKILL.md` to create specialist skill files, wire triggers, and enable capabilities.
+The agent uses `live/skills/skill-builder/SKILL.md` to create specialist skill files (`skill.json` + `SKILL.md`), wire triggers, and enable capabilities.

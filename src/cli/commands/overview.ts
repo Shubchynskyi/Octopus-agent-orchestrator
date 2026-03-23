@@ -9,6 +9,7 @@ const {
     normalizePathValue,
     padRight,
     printBanner,
+    printCommandSummary,
     printStatus
 } = require('./cli-helpers.ts');
 
@@ -53,6 +54,7 @@ function printOverview(packageJson, targetRoot) {
     console.log('OCTOPUS_OVERVIEW');
     printBanner(packageJson, 'Workspace overview', targetRoot);
     printStatus(snapshot, { heading: 'OCTOPUS_STATUS' });
+    printCommandSummary();
 }
 
 /**

@@ -1,8 +1,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { ALL_AGENT_ENTRYPOINT_FILES } = require('../core/constants.ts');
 const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
 const { readJsonFile, writeJsonFile } = require('../core/json.ts');
+const { removeManagedBlock } = require('../core/managed-blocks.ts');
 const { normalizeLineEndings } = require('../core/line-endings.ts');
 const { resolvePathInsideRoot } = require('../core/paths.ts');
 const { validateInitAnswers } = require('../schemas/init-answers.ts');
@@ -241,6 +243,67 @@ function runInstall(options) {
         return true;
     }
 
+    function cleanupEmptyParentDirectories(startPath) {
+        let currentPath = path.dirname(startPath);
+        const stopPath = path.resolve(targetRoot);
+        while (currentPath.startsWith(stopPath) && currentPath !== stopPath) {
+            if (!pathExists(currentPath)) {
+                currentPath = path.dirname(currentPath);
+                continue;
+            }
+            const stats = fs.lstatSync(currentPath);
+            if (!stats.isDirectory()) {
+                break;
+            }
+            if (fs.readdirSync(currentPath).length > 0) {
+                break;
+            }
+            fs.rmdirSync(currentPath);
+            currentPath = path.dirname(currentPath);
+        }
+    }
+
+    function removeObsoleteManagedFile(relativePath) {
+        const destPath = path.join(targetRoot, relativePath);
+        if (!pathExists(destPath)) {
+            return false;
+        }
+
+        const stats = fs.lstatSync(destPath);
+        if (!stats.isFile()) {
+            return false;
+        }
+
+        const existingContent = readTextFile(destPath);
+        if (!existingContent.includes(MANAGED_START) || !existingContent.includes(MANAGED_END)) {
+            return false;
+        }
+
+        const newline = existingContent.includes('\r\n') ? '\r\n' : '\n';
+        const cleanedContent = removeManagedBlock(existingContent, {
+            startMarker: MANAGED_START,
+            endMarker: MANAGED_END,
+            newline
+        });
+
+        if (cleanedContent === existingContent) {
+            return false;
+        }
+
+        backupFile(destPath, relativePath);
+        if (!dryRun) {
+            if (cleanedContent.trim()) {
+                fs.writeFileSync(destPath, cleanedContent, 'utf8');
+            } else {
+                fs.rmSync(destPath, { force: true });
+                cleanupEmptyParentDirectories(destPath);
+            }
+        }
+
+        aligned++;
+        return true;
+    }
+
     // Apply entrypoint managed block
     function applyEntrypointManagedBlock(relativePath, managedBlock) {
         const destPath = path.join(targetRoot, relativePath);
@@ -349,14 +412,17 @@ function runInstall(options) {
     // Qwen settings
     const qwenRelPath = '.qwen/settings.json';
     const qwenPath = path.join(targetRoot, qwenRelPath);
+    const qwenExists = pathExists(qwenPath);
     let qwenExisting = null;
-    if (pathExists(qwenPath)) {
+    if (qwenExists) {
         qwenExisting = readTextFile(qwenPath);
     }
-    const qwenPlan = buildQwenSettingsContent(qwenExisting, ['TASK.md', canonicalEntryFile]);
+    const qwenPlan = qwenExists
+        ? buildQwenSettingsContent(qwenExisting, ['TASK.md', canonicalEntryFile])
+        : { content: null, needsUpdate: false, parseMode: 'not-present' };
     let qwenUpdated = false;
 
-    if (pathExists(qwenPath)) {
+    if (qwenExists) {
         if (!preserveExisting || qwenPlan.needsUpdate) {
             backupFile(qwenPath, qwenRelPath);
             if (!dryRun) {
@@ -367,13 +433,6 @@ function runInstall(options) {
             if (preserveExisting) aligned++;
             else deployed++;
         }
-    } else {
-        if (!dryRun) {
-            ensureDirectory(path.dirname(qwenPath));
-            fs.writeFileSync(qwenPath, qwenPlan.content, 'utf8');
-        }
-        qwenUpdated = true;
-        deployed++;
     }
 
     // Claude local settings
@@ -430,9 +489,26 @@ function runInstall(options) {
         applyEntrypointManagedBlock(profile.relativePath, block);
     }
 
+    const desiredManagedFileSet = new Set([
+        canonicalEntryFile,
+        ...redirectEntryFiles,
+        ...providerOrchestratorProfiles.map((profile) => profile.orchestratorRelativePath),
+        ...githubSkillBridgeProfiles.map((profile) => profile.relativePath)
+    ]);
+    const allManagedFileCandidates = [
+        ...ALL_AGENT_ENTRYPOINT_FILES,
+        ...getProviderOrchestratorProfileDefinitions().map((profile) => profile.orchestratorRelativePath),
+        ...getGitHubSkillBridgeProfileDefinitions().map((profile) => profile.relativePath)
+    ];
+    for (const relativePath of allManagedFileCandidates) {
+        if (!desiredManagedFileSet.has(relativePath)) {
+            removeObsoleteManagedFile(relativePath);
+        }
+    }
+
     // Gitignore
     const gitignoreEntryList = buildGitignoreEntries(
-        activeEntryFiles, providerOrchestratorProfiles, enableClaudeOrchestratorFullAccess
+        activeEntryFiles, providerOrchestratorProfiles, enableClaudeOrchestratorFullAccess, qwenExists
     );
     let gitignoreAdded = 0;
     const gitignorePath = path.join(targetRoot, '.gitignore');

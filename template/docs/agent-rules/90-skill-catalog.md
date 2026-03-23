@@ -21,6 +21,22 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Template must stay generic; project-specific specialists are not written back into `template/`.
 - Capability flags for optional specialists are managed in:
   `Octopus-agent-orchestrator/live/config/review-capabilities.json`.
+- Compact optional-skill discovery metadata is managed in:
+  `Octopus-agent-orchestrator/live/config/skills-index.json`.
+- Built-in domain packs are managed through:
+  - `node Octopus-agent-orchestrator/bin/octopus.js skills list --target-root "."`
+  - `node Octopus-agent-orchestrator/bin/octopus.js skills suggest --target-root "." --task-text "<task summary>" --changed-path "<path>"`
+  - `node Octopus-agent-orchestrator/bin/octopus.js skills add <pack-id> --target-root "."`
+  - `node Octopus-agent-orchestrator/bin/octopus.js skills remove <pack-id> --target-root "."`
+  - `node Octopus-agent-orchestrator/bin/octopus.js skills validate --target-root "."`
+- Installed built-in packs are recorded in:
+  `Octopus-agent-orchestrator/live/config/skill-packs.json`.
+- Built-in pack ids come from `skills list`; do not hardcode the list in downstream prompts.
+- Optional skill selection contract:
+  - read only `live/config/skills-index.json` when deciding what to suggest;
+  - after the user selects a pack, install/copy it into `Octopus-agent-orchestrator/live/skills/**` without reading the full optional `SKILL.md`;
+  - do not open a full optional `SKILL.md` unless that selected skill is actually being activated for a task or a hard activation rule requires it;
+  - after a pack is installed, full optional skills live under `Octopus-agent-orchestrator/live/skills/**`.
 
 ## Preflight Gate (Mandatory)
 - Run before review stage:

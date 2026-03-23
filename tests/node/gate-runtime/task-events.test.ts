@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 
 const {
     assertValidTaskId,
@@ -13,6 +14,60 @@ const {
     readTaskEventAppendState
 } = require('../../../src/gate-runtime/task-events.ts');
 const { stringSha256 } = require('../../../src/gate-runtime/hash.ts');
+
+function resolveTaskEventsModulePath() {
+    const tsPath = path.resolve(__dirname, '../../../src/gate-runtime/task-events.ts');
+    if (fs.existsSync(tsPath)) {
+        return tsPath;
+    }
+    return path.resolve(__dirname, '../../../src/gate-runtime/task-events.js');
+}
+
+function runConcurrentAppendWorker(modulePath, orchestratorRoot, startSignalPath, attempts, delayMs) {
+    return new Promise((resolve, reject) => {
+        const workerScript = [
+            "const fs = require('node:fs');",
+            "require.extensions['.ts'] = require.extensions['.js'];",
+            "const { appendTaskEvent } = require(process.argv[1]);",
+            "const orchestratorRoot = process.argv[2];",
+            "const startSignalPath = process.argv[3];",
+            "const attempts = Number.parseInt(process.argv[4], 10);",
+            "const delayMs = Number.parseInt(process.argv[5], 10);",
+            "const sleepArray = new Int32Array(new SharedArrayBuffer(4));",
+            "while (!fs.existsSync(startSignalPath)) { Atomics.wait(sleepArray, 0, 0, 10); }",
+            "for (let index = 0; index < attempts; index += 1) {",
+            "  appendTaskEvent(orchestratorRoot, 'T-CONCURRENT', 'test', 'PASS', `Event ${index + 1}`, { worker: process.pid, attempt: index }, { passThru: true, lockTimeoutMs: 10000, lockRetryMs: 5, preWriteDelayMs: delayMs });",
+            "}"
+        ].join('\n');
+
+        const child = spawn(process.execPath, [
+            '--input-type=commonjs',
+            '--eval',
+            workerScript,
+            modulePath,
+            orchestratorRoot,
+            startSignalPath,
+            String(attempts),
+            String(delayMs)
+        ], {
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        let stderr = '';
+        child.stderr.on('data', (chunk) => {
+            stderr += String(chunk);
+        });
+
+        child.on('error', reject);
+        child.on('exit', (code) => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+            reject(new Error(stderr || `append worker exited with code ${code}`));
+        });
+    });
+}
 
 // --- assertValidTaskId ---
 
@@ -338,6 +393,47 @@ test('appendTaskEvent creates chain with correct integrity', () => {
 
 test('appendTaskEvent returns null for empty taskId', () => {
     assert.equal(appendTaskEvent('/tmp', '', 'test', 'PASS', 'msg', null), null);
+});
+
+test('appendTaskEvent preserves integrity under concurrent process writes', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-append-concurrent-'));
+    const modulePath = resolveTaskEventsModulePath();
+    const startSignalPath = path.join(tempDir, 'start.signal');
+    const workerCount = 6;
+    const attemptsPerWorker = 4;
+
+    try {
+        const workers = [];
+        for (let index = 0; index < workerCount; index += 1) {
+            workers.push(
+                runConcurrentAppendWorker(
+                    modulePath,
+                    tempDir,
+                    startSignalPath,
+                    attemptsPerWorker,
+                    40
+                )
+            );
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        fs.writeFileSync(startSignalPath, 'go\n', 'utf8');
+        await Promise.all(workers);
+
+        const expectedCount = workerCount * attemptsPerWorker;
+        const eventFile = path.join(tempDir, 'runtime', 'task-events', 'T-CONCURRENT.jsonl');
+        const allTasksFile = path.join(tempDir, 'runtime', 'task-events', 'all-tasks.jsonl');
+        const result = inspectTaskEventFile(eventFile, 'T-CONCURRENT');
+        const aggregateLines = fs.readFileSync(allTasksFile, 'utf8').split('\n').filter((line) => line.trim());
+
+        assert.equal(result.status, 'PASS');
+        assert.equal(result.matching_events, expectedCount);
+        assert.equal(result.integrity_event_count, expectedCount);
+        assert.equal(result.violations.length, 0);
+        assert.equal(aggregateLines.length, expectedCount);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
 });
 
 // --- readTaskEventAppendState ---

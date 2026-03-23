@@ -1,6 +1,6 @@
 {
   "name": "octopus-agent-orchestrator",
-  "version": "1.0.8",
+  "version": "2.0.0",
   "description": "Bootstrap package for deploying the Octopus Agent Orchestrator bundle into a workspace.",
   "license": "MIT",
   "type": "commonjs",

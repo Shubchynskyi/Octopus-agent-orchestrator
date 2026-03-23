@@ -1,6 +1,6 @@
 # Node Runtime Contract
 
-Version: 1.0.8
+Version: 2.0.0
 Frozen: 2026-03-22
 
 This document captures the current Node-only runtime surface.
@@ -16,7 +16,7 @@ This document captures the current Node-only runtime surface.
 Lifecycle commands:
 
 ```text
-setup, status, doctor, bootstrap, install, init, reinit, verify, check-update, update, uninstall
+setup, agent-init, status, doctor, bootstrap, install, init, reinit, verify, check-update, update, uninstall, skills
 ```
 
 Additional public route:
@@ -26,6 +26,8 @@ gate <name>
 ```
 
 Zero-argument invocation prints the safe overview. Unknown first positional falls through to `bootstrap`.
+
+`Workspace ready` is blocked by `runtime/agent-init-state.json` until the hard `agent-init` gate passes.
 
 ## Source-of-Truth Values
 

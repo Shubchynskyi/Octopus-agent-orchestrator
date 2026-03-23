@@ -18,8 +18,17 @@ npx octopus-agent-orchestrator setup
 ### Run
 ```bash
 npx octopus-agent-orchestrator status --target-root "."
+npx octopus-agent-orchestrator agent-init --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --active-agent-files "AGENTS.md" --project-rules-updated yes --skills-prompted yes
 npx octopus-agent-orchestrator doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 npx octopus-agent-orchestrator --help
+```
+
+### Skill Packs
+```bash
+npx octopus-agent-orchestrator skills list --target-root "."
+npx octopus-agent-orchestrator skills suggest --target-root "." --task-text "<task summary>" --changed-path "<path>"
+npx octopus-agent-orchestrator skills add node-backend --target-root "."
+npx octopus-agent-orchestrator skills validate --target-root "."
 ```
 
 ### Test

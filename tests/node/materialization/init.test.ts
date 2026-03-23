@@ -101,6 +101,7 @@ describe('runInit', () => {
             assert.ok(result.supportDirectoriesSynced > 0);
             assert.ok(fs.existsSync(path.join(bundleRoot, 'live/config')));
             assert.ok(fs.existsSync(path.join(bundleRoot, 'live/skills')));
+            assert.ok(fs.existsSync(path.join(bundleRoot, 'live/skills/orchestration/skill.json')));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

@@ -1,7 +1,13 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 
-const { getCompileCommandProfile, getCompileCommands, getOutputStats } = require('../../../src/gates/compile-gate.ts');
+const {
+    getCompileCommandProfile,
+    getCompileCommands,
+    getOutputStats,
+    getWorkspaceSnapshot
+} = require('../../../src/gates/compile-gate.ts');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -153,6 +159,34 @@ describe('gates/compile-gate', () => {
             const { warningLines, errorLines } = getOutputStats(['OK', 'Done']);
             assert.equal(warningLines, 0);
             assert.equal(errorLines, 0);
+        });
+    });
+
+    describe('getWorkspaceSnapshot', () => {
+        it('collects changed files when repo root and file paths contain spaces', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-gate-'));
+            const repoRoot = path.join(tempDir, 'repo with spaces');
+            const srcDir = path.join(repoRoot, 'src');
+            const changedFilePath = path.join(srcDir, 'app with spaces.ts');
+
+            try {
+                fs.mkdirSync(srcDir, { recursive: true });
+                execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
+                execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Octopus Test'], { stdio: 'ignore' });
+                execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'octopus@example.com'], { stdio: 'ignore' });
+
+                fs.writeFileSync(changedFilePath, 'export const value = 1;\n', 'utf8');
+                execFileSync('git', ['-C', repoRoot, 'add', '.'], { stdio: 'ignore' });
+                execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'initial'], { stdio: 'ignore' });
+
+                fs.writeFileSync(changedFilePath, 'export const value = 2;\n', 'utf8');
+
+                const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', false, []);
+                assert.ok(snapshot.changed_files.includes('src/app with spaces.ts'));
+                assert.equal(snapshot.changed_files_count, 1);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
         });
     });
 });

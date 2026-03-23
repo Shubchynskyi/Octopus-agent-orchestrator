@@ -1,0 +1,15 @@
+{
+  "id": "frontend-react",
+  "name": "Frontend React",
+  "pack": "frontend-react",
+  "summary": "React and TypeScript delivery, accessibility, state management, and frontend testing.",
+  "tags": ["react", "frontend", "typescript"],
+  "aliases": ["react", "react-app"],
+  "stack_signals": ["package.json", "react", "src/components/"],
+  "task_signals": ["component", "hook", "form", "state"],
+  "changed_path_signals": ["src/components/", "src/pages/", "src/hooks/"],
+  "references": ["checklist.md"],
+  "cost_hint": "medium",
+  "priority": 90,
+  "autoload": "suggest"
+}

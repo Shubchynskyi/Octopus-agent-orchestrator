@@ -118,6 +118,7 @@ function getProjectDiscovery(targetRoot) {
         detectedStacks: [...new Set(detectedStacks)].sort(),
         topLevelDirectories: [...new Set(topLevelDirectories)].sort(),
         suggestedCommands: [...new Set(suggestedCommands)].sort(),
+        relativeFiles: uniqueFiles,
         sampleFiles: uniqueFiles.slice(0, 40)
     };
 }

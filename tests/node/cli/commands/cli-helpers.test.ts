@@ -72,6 +72,12 @@ test('parseOptions parses inline equals values', () => {
     assert.equal(options.targetRoot, '/tmp/test');
 });
 
+test('parseOptions accumulates repeated string-array flags', () => {
+    const defs = { '--changed-path': { key: 'changedPaths', type: 'string[]' } };
+    const { options } = parseOptions(['--changed-path', 'src/app.ts', '--changed-path=tests/app.test.ts'], defs);
+    assert.deepEqual(options.changedPaths, ['src/app.ts', 'tests/app.test.ts']);
+});
+
 test('parseOptions recognizes --help and --version', () => {
     const { options } = parseOptions(['-h', '-v'], {});
     assert.equal(options.help, true);
@@ -220,8 +226,15 @@ test('normalizeAgentEntrypointToken strips "or" prefix', () => {
     assert.equal(normalizeAgentEntrypointToken('or CLAUDE.md'), 'CLAUDE.md');
 });
 
+test('normalizeAgentEntrypointToken resolves numbered selections', () => {
+    assert.equal(normalizeAgentEntrypointToken('1'), 'CLAUDE.md');
+    assert.equal(normalizeAgentEntrypointToken('2'), 'AGENTS.md');
+    assert.equal(normalizeAgentEntrypointToken('7'), '.antigravity/rules.md');
+});
+
 test('normalizeAgentEntrypointToken returns null for unknown', () => {
     assert.equal(normalizeAgentEntrypointToken('unknown.md'), null);
+    assert.equal(normalizeAgentEntrypointToken('99'), null);
 });
 
 test('convertSourceOfTruthToEntrypoint maps known values', () => {
@@ -245,6 +258,11 @@ test('normalizeActiveAgentFiles merges comma-separated inputs with canonical', (
     assert.ok(result.includes('CLAUDE.md'));
     assert.ok(result.includes('AGENTS.md'));
     assert.ok(result.includes('GEMINI.md'));
+});
+
+test('normalizeActiveAgentFiles supports numbered selections in non-interactive setup input', () => {
+    const result = normalizeActiveAgentFiles('1, 2, 7', 'Claude');
+    assert.equal(result, 'CLAUDE.md, AGENTS.md, .antigravity/rules.md');
 });
 
 test('normalizeActiveAgentFiles returns null for empty input and unknown source', () => {
@@ -696,8 +714,11 @@ test('buildHelpText includes all command descriptions', () => {
     const pkg = { version: '1.0.8', name: 'octopus-agent-orchestrator' };
     const text = buildHelpText(pkg);
     assert.ok(text.includes('setup'));
+    assert.ok(text.includes('agent-init'));
     assert.ok(text.includes('bootstrap'));
     assert.ok(text.includes('doctor'));
+    assert.ok(text.includes('skills'));
+    assert.ok(text.includes('suggest'));
     assert.ok(text.includes('--help'));
     assert.ok(text.includes('--version'));
     assert.ok(text.includes('--target-root'));
@@ -707,7 +728,11 @@ test('buildHelpText includes all command descriptions', () => {
 test('COMMAND_SUMMARY has expected commands', () => {
     const names = COMMAND_SUMMARY.map(function (c) { return c[0]; });
     assert.ok(names.includes('setup'));
+    assert.ok(names.includes('agent-init'));
     assert.ok(names.includes('bootstrap'));
     assert.ok(names.includes('doctor'));
     assert.ok(names.includes('status'));
+    assert.ok(names.includes('skills'));
+    assert.ok(names.includes('gate'));
+    assert.equal(COMMAND_SUMMARY.find(function (c) { return c[0] === 'skills'; })[1], 'List, suggest, and manage optional skill packs');
 });

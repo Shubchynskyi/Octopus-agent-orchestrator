@@ -443,8 +443,12 @@ function buildClaudeLocalSettingsContent(existingContent, enableOrchestratorAcce
 /**
  * Computes the set of .gitignore entries needed for a given configuration.
  */
-function buildGitignoreEntries(activeEntryFiles, providerOrchestratorProfiles, enableClaudeOrchestratorFullAccess) {
-    const entries = ['Octopus-agent-orchestrator/', 'TASK.md', '.qwen/'];
+function buildGitignoreEntries(activeEntryFiles, providerOrchestratorProfiles, enableClaudeOrchestratorFullAccess, includeQwenDirectory = false) {
+    const entries = ['Octopus-agent-orchestrator/', 'TASK.md'];
+
+    if (includeQwenDirectory) {
+        entries.push('.qwen/');
+    }
 
     for (const entryFile of activeEntryFiles) {
         const normalized = entryFile.replace(/\\/g, '/');
