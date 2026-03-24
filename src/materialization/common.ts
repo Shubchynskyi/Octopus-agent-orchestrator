@@ -206,14 +206,14 @@ function getGitHubSkillBridgeProfileDefinitions() {
         {
             relativePath: '.github/agents/api-review.md',
             profileTitle: 'API Review Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/api-review/SKILL.md',
+            skillPath: 'Octopus-agent-orchestrator/live/skills/api-contract-review/SKILL.md (or custom Octopus-agent-orchestrator/live/skills/api-review/SKILL.md when present)',
             reviewRequirement: 'required_reviews.api=true',
             capabilityFlag: 'review-capabilities.api=true'
         },
         {
             relativePath: '.github/agents/test-review.md',
             profileTitle: 'Test Review Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/test-review/SKILL.md',
+            skillPath: 'Octopus-agent-orchestrator/live/skills/testing-strategy/SKILL.md (or custom Octopus-agent-orchestrator/live/skills/test-review/SKILL.md when present)',
             reviewRequirement: 'required_reviews.test=true',
             capabilityFlag: 'review-capabilities.test=true'
         },
@@ -227,7 +227,7 @@ function getGitHubSkillBridgeProfileDefinitions() {
         {
             relativePath: '.github/agents/infra-review.md',
             profileTitle: 'Infra Review Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/infra-review/SKILL.md',
+            skillPath: 'Octopus-agent-orchestrator/live/skills/devops-k8s/SKILL.md (or custom Octopus-agent-orchestrator/live/skills/infra-review/SKILL.md when present)',
             reviewRequirement: 'required_reviews.infra=true',
             capabilityFlag: 'review-capabilities.infra=true'
         },

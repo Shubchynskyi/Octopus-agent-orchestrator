@@ -37,17 +37,16 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 | Mandatory skill catalog and invocation policy | `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md` |
 
 ## Rule Files
-- [Core Rules](Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md)
-- [Project Context](Octopus-agent-orchestrator/live/docs/agent-rules/10-project-context.md)
-- [Architecture](Octopus-agent-orchestrator/live/docs/agent-rules/20-architecture.md)
-- [Code Style](Octopus-agent-orchestrator/live/docs/agent-rules/30-code-style.md)
-- [Strict Coding Rules](Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md)
-- [Commands](Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md)
-- [Structure and Documentation](Octopus-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md)
-- [Operating Rules](Octopus-agent-orchestrator/live/docs/agent-rules/60-operating-rules.md)
-- [Security](Octopus-agent-orchestrator/live/docs/agent-rules/70-security.md)
-- [Task Workflow](Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md)
-- [Skill Catalog](Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md)
+- `Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md`
+- `Octopus-agent-orchestrator/live/docs/agent-rules/10-project-context.md`
+- `Octopus-agent-orchestrator/live/docs/agent-rules/20-architecture.md`
+- `Octopus-agent-orchestrator/live/docs/agent-rules/30-code-style.md`
+- `Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md`
+- `Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md`
+- `Octopus-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md`
+- `Octopus-agent-orchestrator/live/docs/agent-rules/60-operating-rules.md`
+- `Octopus-agent-orchestrator/live/docs/agent-rules/70-security.md`
+- `Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md`
+- `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md`
 <!-- Octopus-agent-orchestrator:managed-end -->
-
 

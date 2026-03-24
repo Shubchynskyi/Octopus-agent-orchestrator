@@ -3,9 +3,12 @@ const path = require('node:path');
 
 const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
 const { readJsonFile } = require('../core/json.ts');
-const { writeSkillsIndex } = require('../runtime/skills.ts');
+const { ALL_AGENT_ENTRYPOINT_FILES } = require('../core/constants.ts');
+const { syncReviewCapabilities, writeSkillsIndex } = require('../runtime/skills.ts');
 const {
-    getCanonicalEntrypointFile
+    getCanonicalEntrypointFile,
+    getGitHubSkillBridgeProfileDefinitions,
+    getProviderOrchestratorProfileDefinitions
 } = require('./common.ts');
 const {
     getProjectDiscovery,
@@ -197,10 +200,12 @@ function runInit(options) {
     const projectDiscoveryPath = path.join(liveRoot, 'project-discovery.md');
     const usagePath = path.join(liveRoot, 'USAGE.md');
     const skillsIndexPath = path.join(liveRoot, 'config', 'skills-index.json');
+    const sourceInventory = collectSourceInventory(targetRoot);
+    const reviewCapabilitiesSync = dryRun ? null : syncReviewCapabilities(bundleRoot);
 
     if (!dryRun) {
         // Source inventory
-        const inventoryLines = buildSourceInventoryLines(targetRoot, timestampIso);
+        const inventoryLines = buildSourceInventoryLines(sourceInventory, timestampIso);
         fs.writeFileSync(sourceInventoryPath, inventoryLines.join('\r\n'), 'utf8');
 
         // Init report
@@ -208,7 +213,9 @@ function runInit(options) {
             timestampIso, projectName, targetRoot, ruleSourceMap,
             ruleFiles: RULE_FILES, copiedSupportDirs,
             configMergeStatuses, lang, brevity, trimmedSoT,
-            enforceNoAutoCommit, tokenEconomyEnabled, discovery
+            enforceNoAutoCommit, tokenEconomyEnabled, discovery,
+            sourceInventory,
+            reviewCapabilitiesSync
         });
         fs.writeFileSync(initReportPath, initReportLines.join('\r\n'), 'utf8');
 
@@ -242,6 +249,7 @@ function runInit(options) {
         tokenEconomyConfigMergeStatus: configMergeStatuses['token-economy'] || 'n/a',
         outputFiltersConfigMergeStatus: configMergeStatuses['output-filters'] || 'n/a',
         skillPacksConfigMergeStatus: configMergeStatuses['skill-packs'] || 'n/a',
+        reviewCapabilitiesSync,
         skillsIndexPath,
         ruleSourceMap,
         sourceInventoryPath,
@@ -303,31 +311,104 @@ function copyDirectoryRecursive(srcDir, destDir) {
     }
 }
 
-function buildSourceInventoryLines(targetRoot, timestampIso) {
-    const normalized = targetRoot.replace(/\\/g, '/');
+function collectMarkdownFiles(rootPath, targetRoot) {
+    if (!pathExists(rootPath)) {
+        return [];
+    }
+
+    const discovered = [];
+    const stack = [rootPath];
+
+    while (stack.length > 0) {
+        const currentPath = stack.pop();
+        const entries = fs.readdirSync(currentPath, { withFileTypes: true });
+
+        for (const entry of entries) {
+            const fullPath = path.join(currentPath, entry.name);
+            if (entry.isDirectory()) {
+                stack.push(fullPath);
+                continue;
+            }
+
+            if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.md') {
+                continue;
+            }
+
+            discovered.push(path.relative(targetRoot, fullPath).replace(/\\/g, '/'));
+        }
+    }
+
+    return discovered.sort();
+}
+
+function collectSourceInventory(targetRoot) {
+    const entrypointCandidates = new Set([
+        ...ALL_AGENT_ENTRYPOINT_FILES,
+        'TASK.md',
+        '.qwen/settings.json',
+        '.antigravity/rules.md',
+        '.junie/guidelines.md',
+        '.windsurf/rules/rules.md'
+    ]);
+
+    for (const profile of getProviderOrchestratorProfileDefinitions()) {
+        entrypointCandidates.add(profile.orchestratorRelativePath);
+    }
+    for (const profile of getGitHubSkillBridgeProfileDefinitions()) {
+        entrypointCandidates.add(profile.relativePath);
+    }
+
+    const sortedEntrypoints = [...entrypointCandidates].sort();
+    const legacyRuleRoot = path.join(targetRoot, 'docs', 'agent-rules');
+    const docsRoot = path.join(targetRoot, 'docs');
+
+    return {
+        projectRoot: targetRoot.replace(/\\/g, '/'),
+        legacyEntrypoints: sortedEntrypoints.map((relativePath) => ({
+            path: relativePath.replace(/\\/g, '/'),
+            exists: pathExists(path.join(targetRoot, relativePath))
+        })),
+        legacyRuleRoot: 'docs/agent-rules',
+        legacyRuleFiles: collectMarkdownFiles(legacyRuleRoot, targetRoot),
+        docsMarkdownFiles: collectMarkdownFiles(docsRoot, targetRoot)
+    };
+}
+
+function buildSourceInventoryLines(inventory, timestampIso) {
     return [
         '# Source Inventory', '',
         `Generated at: ${timestampIso}`,
-        `Project root: ${normalized}`, '',
+        `Project root: ${inventory.projectRoot}`, '',
         '## Legacy Entrypoints',
-        '- Check discovery artifacts for legacy entrypoint details.', '',
+        ...inventory.legacyEntrypoints.map((entry) => `- \`${entry.path}\` : ${entry.exists ? 'FOUND' : 'MISSING'}`),
+        '',
         '## Legacy Rule Sources',
-        '- Check discovery artifacts for legacy rule source details.', '',
+        `- \`${inventory.legacyRuleRoot}\` : ${inventory.legacyRuleFiles.length > 0 ? 'FOUND' : 'MISSING'} (files=${inventory.legacyRuleFiles.length})`,
+        ...inventory.legacyRuleFiles.slice(0, 20).map((filePath) => `- \`${filePath}\``),
+        '',
         '## Documentation Snapshot',
-        '- Check discovery artifacts for documentation snapshot details.'
+        `- Markdown files in \`docs/\`: ${inventory.docsMarkdownFiles.length}`,
+        ...inventory.docsMarkdownFiles.slice(0, 20).map((filePath) => `- \`${filePath}\``)
     ];
 }
 
 function buildInitReportLines(opts) {
     const { timestampIso, projectName, targetRoot, ruleSourceMap, ruleFiles,
         copiedSupportDirs, configMergeStatuses, lang, brevity, trimmedSoT,
-        enforceNoAutoCommit, tokenEconomyEnabled, discovery } = opts;
+        enforceNoAutoCommit, tokenEconomyEnabled, discovery,
+        sourceInventory, reviewCapabilitiesSync } = opts;
     const normalized = targetRoot.replace ? targetRoot.replace(/\\/g, '/') : String(targetRoot);
     const tick = '`';
     const stackSummary = discovery.detectedStacks.length > 0
         ? discovery.detectedStacks.join(', ') : 'none detected';
     const dirSummary = discovery.topLevelDirectories.length > 0
         ? discovery.topLevelDirectories.slice(0, 10).join(', ') : 'none detected';
+    const enabledOptionalReviews = reviewCapabilitiesSync
+        ? Object.entries(reviewCapabilitiesSync.capabilities)
+            .filter(([key, enabled]) => !['code', 'db', 'security', 'refactor'].includes(key) && enabled)
+            .map(([key]) => key)
+            .sort()
+        : [];
 
     const lines = [
         '# Init Report', '',
@@ -355,6 +436,9 @@ function buildInitReportLines(opts) {
         `- Project discovery source: ${discovery.source}`,
         `- Project discovery stack signals: ${stackSummary}`,
         `- Project discovery top-level directories: ${dirSummary}`,
+        `- Legacy docs discovered in \`docs/agent-rules\`: ${sourceInventory.legacyRuleFiles.length} files`,
+        `- Optional review capabilities enabled from live skills: ${enabledOptionalReviews.length > 0 ? enabledOptionalReviews.join(', ') : 'none'}`,
+        '- Contract migration snippets auto-applied: 0',
         '- No files were moved or deleted; discovery sources were read-only.', '',
         '## Rule Source Mapping',
         '| Rule file | Source | Origin | Destination |',
@@ -405,6 +489,7 @@ function buildUsageLines(opts) {
 }
 
 module.exports = {
+    collectSourceInventory,
     mergeConfig,
     runInit
 };

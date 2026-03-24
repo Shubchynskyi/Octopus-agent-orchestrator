@@ -83,7 +83,10 @@ describe('buildProjectDiscoveryLines', () => {
             source: 'filesystem_scan',
             fileCount: 5,
             detectedStacks: ['Node.js or JavaScript'],
+            stackEvidence: [{ name: 'Node.js or JavaScript', matches: ['package.json'] }],
             topLevelDirectories: ['src', 'docs'],
+            rootFiles: ['package.json', 'README.md'],
+            runtimePathHints: ['src/'],
             suggestedCommands: ['npm run test'],
             sampleFiles: ['package.json', 'src/index.js']
         };
@@ -93,6 +96,9 @@ describe('buildProjectDiscoveryLines', () => {
         assert.ok(text.includes('## Detected Stack Signals'));
         assert.ok(text.includes('Node.js or JavaScript'));
         assert.ok(text.includes('## Top-Level Directories'));
+        assert.ok(text.includes('## Stack Evidence'));
+        assert.ok(text.includes('## Root Files'));
+        assert.ok(text.includes('## Runtime Path Hints'));
         assert.ok(text.includes('## Suggested Local Commands'));
         assert.ok(text.includes('## Sample Files Used'));
     });

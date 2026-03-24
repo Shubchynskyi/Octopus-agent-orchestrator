@@ -187,10 +187,10 @@ Canonical gate surface is `node Octopus-agent-orchestrator/bin/octopus.js gate <
   - `required_reviews.db=true` => skill `Octopus-agent-orchestrator/live/skills/db-review/SKILL.md` => pass token `DB REVIEW PASSED` => gate parameter `-DbReviewVerdict`
   - `required_reviews.security=true` => skill `Octopus-agent-orchestrator/live/skills/security-review/SKILL.md` => pass token `SECURITY REVIEW PASSED` => gate parameter `-SecurityReviewVerdict`
   - `required_reviews.refactor=true` => skill `Octopus-agent-orchestrator/live/skills/refactor-review/SKILL.md` => pass token `REFACTOR REVIEW PASSED` => gate parameter `-RefactorReviewVerdict`
-  - `required_reviews.api=true` => skill `Octopus-agent-orchestrator/live/skills/api-review/SKILL.md` => pass token `API REVIEW PASSED` => gate parameter `-ApiReviewVerdict`
-  - `required_reviews.test=true` => skill `Octopus-agent-orchestrator/live/skills/test-review/SKILL.md` => pass token `TEST REVIEW PASSED` => gate parameter `-TestReviewVerdict`
+  - `required_reviews.api=true` => skill `Octopus-agent-orchestrator/live/skills/api-contract-review/SKILL.md` (or custom `.../api-review/SKILL.md`) => pass token `API REVIEW PASSED` => gate parameter `-ApiReviewVerdict`
+  - `required_reviews.test=true` => skill `Octopus-agent-orchestrator/live/skills/testing-strategy/SKILL.md` (or custom `.../test-review/SKILL.md`) => pass token `TEST REVIEW PASSED` => gate parameter `-TestReviewVerdict`
   - `required_reviews.performance=true` => skill `Octopus-agent-orchestrator/live/skills/performance-review/SKILL.md` => pass token `PERFORMANCE REVIEW PASSED` => gate parameter `-PerformanceReviewVerdict`
-  - `required_reviews.infra=true` => skill `Octopus-agent-orchestrator/live/skills/infra-review/SKILL.md` => pass token `INFRA REVIEW PASSED` => gate parameter `-InfraReviewVerdict`
+  - `required_reviews.infra=true` => skill `Octopus-agent-orchestrator/live/skills/devops-k8s/SKILL.md` (or custom `.../infra-review/SKILL.md`) => pass token `INFRA REVIEW PASSED` => gate parameter `-InfraReviewVerdict`
   - `required_reviews.dependency=true` => skill `Octopus-agent-orchestrator/live/skills/dependency-review/SKILL.md` => pass token `DEPENDENCY REVIEW PASSED` => gate parameter `-DependencyReviewVerdict`
 - After all required verdicts are collected, run gate script with all verdict parameters:
   - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check --preflight-path "<path>" --task-id "<task-id>" --code-review-verdict "<...>" --db-review-verdict "<...>" --security-review-verdict "<...>" --refactor-review-verdict "<...>" --api-review-verdict "<...>" --test-review-verdict "<...>" --performance-review-verdict "<...>" --infra-review-verdict "<...>" --dependency-review-verdict "<...>"`

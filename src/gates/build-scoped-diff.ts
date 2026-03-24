@@ -83,7 +83,11 @@ function buildScopedDiff(options) {
     }
 
     const matchedFiles = changedFiles.filter(
-        p => matchAnyRegex(p, triggerRegexes, { skipInvalidRegex: true, invalidRegexContext: `review '${reviewType}'` })
+        p => matchAnyRegex(p, triggerRegexes, {
+            skipInvalidRegex: true,
+            invalidRegexContext: `review '${reviewType}'`,
+            caseInsensitive: true
+        })
     );
 
     let scopedDiffText = '';

@@ -7,5 +7,5 @@
   "test": false,
   "performance": false,
   "infra": false,
-  "dependency": false
+  "dependency": true
 }

@@ -3,6 +3,7 @@ const path = require('node:path');
 
 const { matchAnyRegex } = require('../gate-runtime/text-utils.ts');
 const {
+    normalizePath,
     joinOrchestratorPath,
     normalizeRootPrefixes,
     orchestratorRelativePath,
@@ -20,7 +21,7 @@ function getDefaultClassificationConfig(repoRoot) {
         runtime_roots: ['src/', 'app/', 'apps/', 'backend/', 'frontend/', 'web/', 'api/', 'services/', 'packages/'],
         fast_path_roots: ['frontend/', 'web/', 'ui/', 'mobile/', 'apps/'],
         fast_path_allowed_regexes: [
-            '^.+\\.(tsx|jsx|vue|svelte|css|scss|sass|less|html)$',
+            '^.+\\.(ts|tsx|js|jsx|vue|svelte|css|scss|sass|less|html)$',
             '^.+\\.(svg|png|jpg|jpeg|webp|ico)$'
         ],
         fast_path_sensitive_regexes: [
@@ -152,6 +153,65 @@ function getReviewCapabilities(repoRoot) {
     return capabilities;
 }
 
+const GROUPED_PACKAGE_ROOTS = Object.freeze(['apps', 'packages', 'services', 'workspaces', 'projects']);
+
+function escapeRegex(text) {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getRootTokens(roots) {
+    return normalizeRootPrefixes(toStringArray(roots))
+        .map((root) => root.replace(/\/+$/, '').toLowerCase())
+        .filter(Boolean);
+}
+
+function matchesSemanticRoot(segment, rootTokens) {
+    const normalizedSegment = String(segment || '').trim().toLowerCase();
+    if (!normalizedSegment) {
+        return false;
+    }
+
+    return rootTokens.some((token) => {
+        if (!token || token === 'src') {
+            return false;
+        }
+        const pattern = new RegExp(`(^|[-_.])${escapeRegex(token)}($|[-_.])`, 'i');
+        return pattern.test(normalizedSegment);
+    });
+}
+
+function matchesConfiguredRoot(pathValue, roots, options = {}) {
+    const normalizedPath = normalizePath(pathValue).toLowerCase();
+    if (!normalizedPath) {
+        return false;
+    }
+
+    if (testPathPrefix(normalizedPath, roots)) {
+        return true;
+    }
+
+    const segments = normalizedPath.split('/').filter(Boolean);
+    if (segments.length < 2) {
+        return false;
+    }
+
+    const rootTokens = getRootTokens(roots);
+    if (options.allowNestedRoot && rootTokens.includes(segments[1])) {
+        return true;
+    }
+
+    if (!options.semanticPackageMatch) {
+        return false;
+    }
+
+    const semanticCandidates = [segments[0]];
+    if (GROUPED_PACKAGE_ROOTS.includes(segments[0]) && segments[1]) {
+        semanticCandidates.push(segments[1]);
+    }
+
+    return semanticCandidates.some((candidate) => matchesSemanticRoot(candidate, rootTokens));
+}
+
 /**
  * Pure-logic classification of changed files.
  * Produces the canonical classify-change output shape.
@@ -177,9 +237,14 @@ function classifyChange(options) {
     const sqlOrMigration = classificationConfig.sql_or_migration_regexes;
     const codeLike = classificationConfig.code_like_regexes;
 
-    const testMatch = (p, regexes) => matchAnyRegex(p, regexes, { skipInvalidRegex: true });
+    const testMatch = (p, regexes) => matchAnyRegex(p, regexes, {
+        skipInvalidRegex: true,
+        caseInsensitive: true
+    });
 
-    const runtimeChanged = normalizedFiles.some(p => testPathPrefix(p, runtimeRoots));
+    const runtimeChanged = normalizedFiles.some((p) => matchesConfiguredRoot(p, runtimeRoots, {
+        allowNestedRoot: true
+    }));
     const dbTriggered = normalizedFiles.some(p => testMatch(p, classificationConfig.db_trigger_regexes));
     const securityTriggered = normalizedFiles.some(p => testMatch(p, classificationConfig.security_trigger_regexes));
     const apiTriggered = normalizedFiles.some(p => testMatch(p, classificationConfig.api_trigger_regexes));
@@ -193,7 +258,7 @@ function classifyChange(options) {
     const refactorIntentTriggered = /\b(refactor|cleanup|restructure|extract|rename|modularization|simplify)\b/i.test(taskIntent);
     const codeLikeCount = normalizedFiles.filter(p => testMatch(p, codeLike)).length;
     const runtimeCodeLikeCount = normalizedFiles.filter(
-        p => testPathPrefix(p, runtimeRoots) && testMatch(p, codeLike)
+        (p) => matchesConfiguredRoot(p, runtimeRoots, { allowNestedRoot: true }) && testMatch(p, codeLike)
     ).length;
     const runtimeCodeChanged = runtimeCodeLikeCount > 0;
 
@@ -221,7 +286,9 @@ function classifyChange(options) {
     );
     const performanceTriggered = performancePathTriggered || performanceHeuristicTriggered;
 
-    const allUnderFastRoots = normalizedFiles.length > 0 && normalizedFiles.every(p => testPathPrefix(p, fastPathRoots));
+    const allUnderFastRoots = normalizedFiles.length > 0 && normalizedFiles.every((p) => matchesConfiguredRoot(p, fastPathRoots, {
+        semanticPackageMatch: true
+    }));
     const allFastAllowedTypes = normalizedFiles.length > 0 && normalizedFiles.every(p => testMatch(p, fastPathAllowed));
     const hasFastSensitiveMatch = normalizedFiles.some(p => testMatch(p, fastPathSensitive));
 

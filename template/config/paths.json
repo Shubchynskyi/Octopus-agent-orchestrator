@@ -19,7 +19,7 @@
     "apps/"
   ],
   "fast_path_allowed_regexes": [
-    "^.+\\.(tsx|jsx|vue|svelte|css|scss|sass|less|html)$",
+    "^.+\\.(ts|tsx|js|jsx|vue|svelte|css|scss|sass|less|html)$",
     "^.+\\.(svg|png|jpg|jpeg|webp|ico)$"
   ],
   "fast_path_sensitive_regexes": [

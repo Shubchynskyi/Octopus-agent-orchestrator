@@ -249,6 +249,50 @@ function escapeRegex(text) {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function arrayContainsPath(items, relativePath) {
+    const normalizedRelative = String(relativePath || '').replace(/\\/g, '/').toLowerCase();
+    for (const item of items) {
+        if (String(item || '').replace(/\\/g, '/').toLowerCase() === normalizedRelative) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function looksLikeManagedFileWithoutMarkers(relativePath, content) {
+    const text = String(content || '');
+    if (!text.trim()) return false;
+
+    if (arrayContainsPath(ENTRYPOINT_FILES, relativePath)) {
+        if (text.includes('Octopus Agent Orchestrator Rule Index') && text.includes('## Rule Routing')) {
+            return true;
+        }
+        if (text.includes('This file is a redirect.') && text.includes('Canonical source of truth for agent workflow rules:')) {
+            return true;
+        }
+    }
+
+    if (String(relativePath || '').replace(/\\/g, '/').toLowerCase() === 'task.md') {
+        if (text.includes('Single-file task queue for local agent orchestration.') && text.includes('## Active Queue')) {
+            return true;
+        }
+    }
+
+    if (arrayContainsPath(PROVIDER_AGENT_FILES, relativePath)) {
+        if (text.includes('Canonical source of truth for agent workflow rules:') && text.includes('## Required Execution Contract')) {
+            return true;
+        }
+    }
+
+    if (arrayContainsPath(GITHUB_SKILL_BRIDGE_FILES, relativePath)) {
+        if (text.includes('Canonical source of truth for agent workflow rules:') && text.includes('## Skill Bridge Contract')) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // ---------------------------------------------------------------------------
 // Main uninstall function
 // ---------------------------------------------------------------------------
@@ -370,6 +414,10 @@ function runUninstall(options) {
         );
 
         if (!pattern.test(content)) {
+            if (looksLikeManagedFileWithoutMarkers(relativePath, content)) {
+                updateOrRemoveFile(filePath, relativePath, '');
+                return;
+            }
             addWarning(`Skipping '${relativePath}' because it no longer contains Octopus managed block markers.`);
             return;
         }

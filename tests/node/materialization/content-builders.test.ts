@@ -104,6 +104,19 @@ describe('buildCanonicalManagedBlock', () => {
         assert.ok(!result.includes('# CLAUDE.md'));
     });
 
+    it('restores clickable rule links in deployed canonical entrypoints', () => {
+        const templateClaudeContent = `${MANAGED_START}
+# CLAUDE.md
+## Rule Files
+- \`Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md\`
+- \`Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md\`
+${MANAGED_END}`;
+        const result = buildCanonicalManagedBlock('CLAUDE.md', templateClaudeContent);
+        assert.ok(result.includes('- [Core Rules](./Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md)'));
+        assert.ok(result.includes('- [Commands](./Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md)'));
+        assert.ok(!result.includes('- `Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md`'));
+    });
+
     it('throws for missing managed block', () => {
         assert.throws(
             () => buildCanonicalManagedBlock('AGENTS.md', 'no managed block'),

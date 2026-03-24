@@ -99,3 +99,7 @@ test('matchAnyRegex throws on invalid regex by default', () => {
 test('matchAnyRegex skips invalid regex when option set', () => {
     assert.equal(matchAnyRegex('test', ['[invalid', 'test'], { skipInvalidRegex: true }), true);
 });
+
+test('matchAnyRegex supports case-insensitive matching when requested', () => {
+    assert.equal(matchAnyRegex('src/SecurityConfig.java', ['securityconfig\\.java$'], { caseInsensitive: true }), true);
+});

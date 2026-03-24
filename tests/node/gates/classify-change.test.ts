@@ -114,6 +114,39 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.security, true);
         });
 
+        it('matches security triggers case-insensitively for java config paths', () => {
+            const result = classifyChange({
+                normalizedFiles: ['api-gateway/src/main/java/com/acme/security/SecurityConfig.java'],
+                taskIntent: 'Tighten security rules',
+                changedLinesTotal: 18,
+                additionsTotal: 12,
+                deletionsTotal: 6,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+            assert.equal(result.triggers.security, true);
+            assert.equal(result.required_reviews.security, true);
+        });
+
+        it('allows small frontend package state updates to stay on fast path', () => {
+            const result = classifyChange({
+                normalizedFiles: ['store-frontend/src/store/cart-store.ts'],
+                taskIntent: 'Adjust cart store labels',
+                changedLinesTotal: 12,
+                additionsTotal: 8,
+                deletionsTotal: 4,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+            assert.equal(result.mode, 'FAST_PATH');
+            assert.equal(result.triggers.fast_path_eligible, true);
+            assert.equal(result.required_reviews.code, false);
+        });
+
         it('triggers refactor review from task intent', () => {
             const result = classifyChange({
                 normalizedFiles: ['src/utils.ts'],

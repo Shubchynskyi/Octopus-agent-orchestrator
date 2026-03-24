@@ -57,13 +57,14 @@ function countTextChars(lines) {
 function matchAnyRegex(pathValue, regexes, options = {}) {
     const skipInvalid = options.skipInvalidRegex || false;
     const context = options.invalidRegexContext || '';
+    const flags = options.caseInsensitive ? 'i' : '';
 
     for (const pattern of regexes) {
         if (!pattern) {
             continue;
         }
         try {
-            if (new RegExp(pattern).test(pathValue)) {
+            if (new RegExp(pattern, flags).test(pathValue)) {
                 return true;
             }
         } catch (err) {

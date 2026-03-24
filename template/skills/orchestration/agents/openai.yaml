@@ -1,7 +1,0 @@
-interface:
-  display_name: "Orchestration"
-  short_description: "Task orchestration with preflight path modes and hard stop gates"
-  default_prompt: "Use $orchestration to execute one task with preflight FAST_PATH/FULL_PATH classification, mandatory checks, independent reviews when required, and strict pass/fail gates."
-policy:
-  allow_implicit_invocation: false
-

@@ -38,6 +38,8 @@ const BASE_REQUIRED_PATHS = Object.freeze([
     'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
     'Octopus-agent-orchestrator/live/skills/code-review/skill.json',
     'Octopus-agent-orchestrator/live/skills/db-review/skill.json',
+    'Octopus-agent-orchestrator/live/skills/dependency-review/SKILL.md',
+    'Octopus-agent-orchestrator/live/skills/dependency-review/skill.json',
     'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md',
     'Octopus-agent-orchestrator/live/skills/orchestration/skill.json',
     'Octopus-agent-orchestrator/live/skills/orchestration-depth1/skill.json',

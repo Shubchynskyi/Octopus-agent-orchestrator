@@ -16,6 +16,8 @@ const {
     getGitHubSkillBridgeProfileDefinitions
 } = require('./common.ts');
 const {
+    MANAGED_START,
+    MANAGED_END,
     COMMIT_GUARD_START,
     COMMIT_GUARD_END,
     INSTALL_BACKUP_CANDIDATE_PATHS,

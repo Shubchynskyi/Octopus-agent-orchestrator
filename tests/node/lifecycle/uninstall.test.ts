@@ -344,6 +344,49 @@ describe('runUninstall', () => {
         }
     });
 
+    it('removes drifted managed entrypoints without marker warnings when signatures still match orchestrator content', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            fs.writeFileSync(
+                path.join(projectRoot, 'CLAUDE.md'),
+                [
+                    '# CLAUDE.md',
+                    '',
+                    '# Octopus Agent Orchestrator Rule Index',
+                    '',
+                    '## Rule Routing',
+                    'Some project-specific notes'
+                ].join('\n')
+            );
+            fs.writeFileSync(
+                path.join(projectRoot, 'AGENTS.md'),
+                [
+                    '# AGENTS.md',
+                    '',
+                    'This file is a redirect.',
+                    'Canonical source of truth for agent workflow rules: `CLAUDE.md`.'
+                ].join('\n')
+            );
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.ok(!fs.existsSync(path.join(projectRoot, 'CLAUDE.md')));
+            assert.ok(!fs.existsSync(path.join(projectRoot, 'AGENTS.md')));
+            assert.ok(!result.warnings.some((warning) => warning.includes("CLAUDE.md")));
+            assert.ok(!result.warnings.some((warning) => warning.includes("AGENTS.md")));
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('supports skip-backups flag', () => {
         const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
         try {

@@ -45,8 +45,31 @@ const CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES = Object.freeze([
     'Bash(cd * && grep -n * | head * && echo * && grep -n * | head *:*)'
 ]);
 
+const ENTRYPOINT_RULE_LINKS = Object.freeze([
+    ['Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md', 'Core Rules'],
+    ['Octopus-agent-orchestrator/live/docs/agent-rules/10-project-context.md', 'Project Context'],
+    ['Octopus-agent-orchestrator/live/docs/agent-rules/20-architecture.md', 'Architecture'],
+    ['Octopus-agent-orchestrator/live/docs/agent-rules/30-code-style.md', 'Code Style'],
+    ['Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md', 'Strict Coding Rules'],
+    ['Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md', 'Commands'],
+    ['Octopus-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md', 'Structure and Documentation'],
+    ['Octopus-agent-orchestrator/live/docs/agent-rules/60-operating-rules.md', 'Operating Rules'],
+    ['Octopus-agent-orchestrator/live/docs/agent-rules/70-security.md', 'Security'],
+    ['Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md', 'Task Workflow'],
+    ['Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md', 'Skill Catalog']
+]);
+
 function escapeRegex(text) {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function restoreEntrypointRuleLinks(content) {
+    let restored = String(content || '');
+    for (const [rulePath, label] of ENTRYPOINT_RULE_LINKS) {
+        const plainBullet = new RegExp('^\\- \\`' + escapeRegex(rulePath) + '\\`$', 'gm');
+        restored = restored.replace(plainBullet, `- [${label}](./${rulePath})`);
+    }
+    return restored;
 }
 
 /**
@@ -153,7 +176,7 @@ function buildCanonicalManagedBlock(canonicalFile, templateClaudeContent) {
     if (!baseBlock) {
         throw new Error('Template CLAUDE.md managed block is missing; cannot build canonical entrypoint.');
     }
-    return baseBlock.replace(/^# CLAUDE\.md$/m, `# ${canonicalFile}`);
+    return restoreEntrypointRuleLinks(baseBlock).replace(/^# CLAUDE\.md$/m, `# ${canonicalFile}`);
 }
 
 /**

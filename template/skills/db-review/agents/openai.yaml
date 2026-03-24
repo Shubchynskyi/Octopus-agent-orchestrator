@@ -1,7 +1,0 @@
-interface:
-  display_name: "DB Review"
-  short_description: "DB review for migrations, queries, and indexes"
-  default_prompt: "Use $db-review to analyze DB-impacting changes and return findings, DB checklist evidence, and a pass/fail verdict."
-policy:
-  allow_implicit_invocation: false
-

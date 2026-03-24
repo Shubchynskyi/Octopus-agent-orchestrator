@@ -29,6 +29,7 @@ test('BASE_REQUIRED_PATHS is a frozen non-empty array', () => {
     assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/src'));
     assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/live/config/skills-index.json'));
     assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/live/skills/orchestration/skill.json'));
+    assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/live/skills/dependency-review/skill.json'));
     assert.ok(!BASE_REQUIRED_PATHS.includes('.qwen/settings.json'));
 });
 

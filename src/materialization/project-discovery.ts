@@ -73,9 +73,15 @@ function getProjectDiscovery(targetRoot) {
 
     // Detect stacks
     const detectedStacks = [];
+    const stackEvidence = [];
     for (const signal of STACK_SIGNALS) {
-        if (uniqueFiles.some((f) => signal.pattern.test(f))) {
+        const matches = uniqueFiles.filter((f) => signal.pattern.test(f)).slice(0, 8);
+        if (matches.length > 0) {
             detectedStacks.push(signal.name);
+            stackEvidence.push({
+                name: signal.name,
+                matches
+            });
         }
     }
 
@@ -112,15 +118,55 @@ function getProjectDiscovery(targetRoot) {
         suggestedCommands.push('dotnet test');
     }
 
+    const rootFiles = uniqueFiles.filter((filePath) => !filePath.includes('/')).slice(0, 20);
+    const runtimePathHints = collectRuntimePathHints(uniqueFiles);
+
     return {
         source: discoverySource,
         fileCount: uniqueFiles.length,
         detectedStacks: [...new Set(detectedStacks)].sort(),
+        stackEvidence,
         topLevelDirectories: [...new Set(topLevelDirectories)].sort(),
+        rootFiles,
+        runtimePathHints,
         suggestedCommands: [...new Set(suggestedCommands)].sort(),
         relativeFiles: uniqueFiles,
         sampleFiles: uniqueFiles.slice(0, 40)
     };
+}
+
+function collectRuntimePathHints(relativeFiles) {
+    const runtimeRootTokens = new Set(['src', 'app', 'apps', 'backend', 'frontend', 'web', 'api', 'services', 'packages']);
+    const hints = [];
+    const seen = new Set();
+
+    for (const filePath of relativeFiles) {
+        const segments = String(filePath || '').split('/').filter(Boolean);
+        if (segments.length < 2) {
+            continue;
+        }
+
+        let hint = null;
+        const first = segments[0].toLowerCase();
+        const second = segments[1].toLowerCase();
+
+        if (runtimeRootTokens.has(first)) {
+            hint = `${segments[0]}/`;
+        } else if (runtimeRootTokens.has(second)) {
+            hint = `${segments[0]}/${segments[1]}/`;
+        }
+
+        if (hint && !seen.has(hint)) {
+            seen.add(hint);
+            hints.push(hint);
+        }
+
+        if (hints.length >= 20) {
+            break;
+        }
+    }
+
+    return hints;
 }
 
 function collectFilesRecursive(rootPath, basePath) {
@@ -171,6 +217,36 @@ function buildProjectDiscoveryLines(discovery, timestampIso) {
         }
     }
 
+    lines.push('', '## Stack Evidence');
+    if (!Array.isArray(discovery.stackEvidence) || discovery.stackEvidence.length === 0) {
+        lines.push('- No stack evidence captured.');
+    } else {
+        for (const evidence of discovery.stackEvidence) {
+            const matches = Array.isArray(evidence.matches) && evidence.matches.length > 0
+                ? evidence.matches.map((item) => `${tick}${item}${tick}`).join(', ')
+                : 'none';
+            lines.push(`- ${evidence.name}: ${matches}`);
+        }
+    }
+
+    lines.push('', '## Root Files');
+    if (!Array.isArray(discovery.rootFiles) || discovery.rootFiles.length === 0) {
+        lines.push('- No root files captured.');
+    } else {
+        for (const filePath of discovery.rootFiles) {
+            lines.push(`- ${tick}${filePath}${tick}`);
+        }
+    }
+
+    lines.push('', '## Runtime Path Hints');
+    if (!Array.isArray(discovery.runtimePathHints) || discovery.runtimePathHints.length === 0) {
+        lines.push('- No runtime path hints detected.');
+    } else {
+        for (const hint of discovery.runtimePathHints) {
+            lines.push(`- ${tick}${hint}${tick}`);
+        }
+    }
+
     lines.push('', '## Suggested Local Commands (Heuristic)');
     if (discovery.suggestedCommands.length === 0) {
         lines.push('- No command suggestions from discovery. Populate `40-commands.md` manually.');
@@ -216,6 +292,7 @@ function buildDiscoveryOverlaySection(discovery) {
 module.exports = {
     buildDiscoveryOverlaySection,
     buildProjectDiscoveryLines,
+    collectRuntimePathHints,
     EXCLUDED_PATH_FRAGMENTS,
     EXCLUDED_TOP_LEVEL_DIRS,
     getProjectDiscovery,

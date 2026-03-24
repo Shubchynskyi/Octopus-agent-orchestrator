@@ -110,6 +110,11 @@ describe('runInit', () => {
     it('creates reporting files', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
+            fs.mkdirSync(path.join(projectRoot, 'docs', 'agent-rules'), { recursive: true });
+            fs.writeFileSync(path.join(projectRoot, 'AGENTS.md'), '# Legacy\n', 'utf8');
+            fs.writeFileSync(path.join(projectRoot, 'docs', 'agent-rules', '10-context.md'), '# Context\n', 'utf8');
+            fs.writeFileSync(path.join(projectRoot, 'docs', 'overview.md'), '# Overview\n', 'utf8');
+
             const result = runInit({
                 targetRoot: projectRoot,
                 bundleRoot,
@@ -119,12 +124,20 @@ describe('runInit', () => {
             });
 
             assert.ok(fs.existsSync(result.initReportPath));
+            assert.ok(fs.existsSync(result.sourceInventoryPath));
             assert.ok(fs.existsSync(result.projectDiscoveryPath));
             assert.ok(fs.existsSync(result.usagePath));
 
             const report = fs.readFileSync(result.initReportPath, 'utf8');
+            const inventory = fs.readFileSync(result.sourceInventoryPath, 'utf8');
+            const discovery = fs.readFileSync(result.projectDiscoveryPath, 'utf8');
             assert.ok(report.includes('# Init Report'));
             assert.ok(report.includes('Rule Source Mapping'));
+            assert.ok(report.includes('Legacy docs discovered in `docs/agent-rules`: 1 files'));
+            assert.ok(inventory.includes('`AGENTS.md` : FOUND'));
+            assert.ok(inventory.includes('`docs/agent-rules` : FOUND (files=1)'));
+            assert.ok(discovery.includes('## Stack Evidence'));
+            assert.ok(discovery.includes('## Runtime Path Hints'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }
@@ -177,6 +190,32 @@ describe('runInit', () => {
 
             const usage = fs.readFileSync(path.join(bundleRoot, 'live/USAGE.md'), 'utf8');
             assert.ok(usage.includes('AGENTS.md'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('synchronizes optional review capabilities from live specialist skills', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            fs.mkdirSync(path.join(bundleRoot, 'live', 'skills', 'api-contract-review'), { recursive: true });
+            fs.mkdirSync(path.join(bundleRoot, 'live', 'skills', 'testing-strategy'), { recursive: true });
+
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const capabilities = JSON.parse(fs.readFileSync(
+                path.join(bundleRoot, 'live', 'config', 'review-capabilities.json'),
+                'utf8'
+            ));
+            assert.equal(capabilities.api, true);
+            assert.equal(capabilities.test, true);
+            assert.equal(capabilities.dependency, true);
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

@@ -398,6 +398,10 @@ describe('runInstall', () => {
             assert.ok(fs.existsSync(path.join(projectRoot, '.github', 'agents', 'orchestrator.md')));
             assert.ok(fs.existsSync(path.join(projectRoot, '.github', 'agents', 'code-review.md')));
             assert.ok(fs.existsSync(path.join(projectRoot, '.github', 'agents', 'reviewer.md')));
+            const apiBridge = fs.readFileSync(path.join(projectRoot, '.github', 'agents', 'api-review.md'), 'utf8');
+            const infraBridge = fs.readFileSync(path.join(projectRoot, '.github', 'agents', 'infra-review.md'), 'utf8');
+            assert.ok(apiBridge.includes('api-contract-review'));
+            assert.ok(infraBridge.includes('devops-k8s'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

@@ -1,7 +1,0 @@
-interface:
-  display_name: "Refactor Review"
-  short_description: "Refactor safety review for behavior-preserving changes"
-  default_prompt: "Use $refactor-review to analyze refactor-impacting changes and return findings, refactor checklist evidence, and a pass/fail verdict."
-policy:
-  allow_implicit_invocation: false
-

@@ -34,7 +34,11 @@ function buildScopedDiffMetadata(options) {
     )];
 
     const matchedFiles = normalizedChangedFiles.filter(
-        filePath => matchAnyRegex(filePath, triggerRegexes, { skipInvalidRegex: true, invalidRegexContext: `review '${reviewType}'` })
+        filePath => matchAnyRegex(filePath, triggerRegexes, {
+            skipInvalidRegex: true,
+            invalidRegexContext: `review '${reviewType}'`,
+            caseInsensitive: true
+        })
     ).sort();
 
     let fallbackToFullDiff = false;

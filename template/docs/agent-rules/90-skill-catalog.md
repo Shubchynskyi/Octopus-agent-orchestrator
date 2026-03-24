@@ -75,10 +75,10 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - `security-review` for `required_reviews.security=true`
   - `refactor-review` for `required_reviews.refactor=true`
   - optional specialist skills when enabled and required:
-    - `api-review` for `required_reviews.api=true`
-    - `test-review` for `required_reviews.test=true`
+    - `api-contract-review` (or custom `api-review`) for `required_reviews.api=true`
+    - `testing-strategy` (or custom `test-review`) for `required_reviews.test=true`
     - `performance-review` for `required_reviews.performance=true`
-    - `infra-review` for `required_reviews.infra=true`
+    - `devops-k8s` (or custom `infra-review`) for `required_reviews.infra=true`
     - `dependency-review` for `required_reviews.dependency=true`
 - Before `DONE`, run:
   `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" ...`
