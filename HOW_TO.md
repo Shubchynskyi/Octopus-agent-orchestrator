@@ -73,8 +73,9 @@ After handoff, the agent:
 4. Fills project context from `live/project-discovery.md`.
 5. Explicitly confirms active agent files and then runs `octopus agent-init`.
 6. Returns `Usage Instructions` in your selected language.
-7. Offers to add optional built-in skill packs or custom skills.
-8. Uses `octopus skills suggest` / `octopus skills list` for discovery first, installs selected packs without reading their full skill bodies, and opens full optional skill files only when they are actually activated for a task.
+7. Asks a mandatory code-style policy question and records the answer in `30-code-style.md`: accept the default of explicit rules + tooling + common best practices, or provide custom project-specific rules now.
+8. Offers to add optional built-in skill packs or custom skills.
+9. Uses `octopus skills suggest` / `octopus skills list` for discovery first, installs selected packs without reading their full skill bodies, and opens full optional skill files only when they are actually activated for a task.
 
 ## 4. Expected Result
 
@@ -187,7 +188,11 @@ octopus skills remove java-spring --target-root "."
 octopus skills validate --target-root "."
 ```
 
-`skills suggest` uses only the compact `live/config/skills-index.json` index for discovery. After selection, the pack should just be installed into `live/skills/**`; full optional skill files should be read only later, when a selected skill is actually activated for task execution.
+`skills list` and `skills suggest` should be read as two different layers:
+- optional pack = installable bundle;
+- skill = concrete directory under `live/skills/**` after install.
+
+The agent should first show what is already available now: baseline skills, installed optional packs, and installed optional skill directories. Only after that should it suggest additional optional packs to add. `skills suggest` uses only the compact `live/config/skills-index.json` index for discovery and should not recommend baseline skills or already installed optional skills as new additions. After selection, the pack should just be installed into `live/skills/**`; full optional skill files should be read only later, when a selected skill is actually activated for task execution.
 
 Custom project-specific skills still live under `Octopus-agent-orchestrator/live/skills/**` and can be created via `live/skills/skill-builder/SKILL.md`.
 

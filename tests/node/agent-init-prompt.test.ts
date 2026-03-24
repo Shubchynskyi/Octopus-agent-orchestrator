@@ -33,3 +33,17 @@ test('AGENT_INIT_PROMPT requires the hard agent-init command before declaring re
     assert.match(content, /node Octopus-agent-orchestrator\/bin\/octopus\.js agent-init/);
     assert.match(content, /Never declare the workspace ready until `node Octopus-agent-orchestrator\/bin\/octopus\.js agent-init/i);
 });
+
+test('AGENT_INIT_PROMPT requires explicit code-style policy for empty repositories', () => {
+    const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
+    assert.match(content, /ask the user a mandatory code-style policy question/i);
+    assert.match(content, /use common best practices instead of copying weak, inconsistent, or legacy code patterns/i);
+    assert.match(content, /do not treat inconsistent or obviously low-quality existing code as automatic style source of truth/i);
+});
+
+test('AGENT_INIT_PROMPT distinguishes optional packs from already available skills', () => {
+    const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
+    assert.match(content, /built-in pack = installable bundle of optional skills/i);
+    assert.match(content, /explicitly list baseline skills already available now/i);
+    assert.match(content, /recommend only optional packs and optional skills that are not already available/i);
+});

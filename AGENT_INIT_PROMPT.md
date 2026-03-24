@@ -82,6 +82,12 @@ node Octopus-agent-orchestrator/bin/octopus.js install --target-root "." --init-
 7. Read discovery artifact and update project-context rules for this real project:
    - `Octopus-agent-orchestrator/live/project-discovery.md`
    - update `10-project-context.md`, `20-architecture.md`, `30-code-style.md`, `40-commands.md`, `60-operating-rules.md` with repository-specific facts.
+   - ask the user a mandatory code-style policy question before finalizing `30-code-style.md`:
+     - recommended default policy: agents follow explicit project rules first, formatter/linter/static-analysis rules second, and otherwise use common best practices instead of copying weak, inconsistent, or legacy code patterns;
+     - ask whether the user accepts that default policy or wants custom project-specific style rules recorded now.
+   - if the user accepts the default policy, write it explicitly into `30-code-style.md`.
+   - if the user wants custom style rules, capture those rules explicitly in `30-code-style.md` before broad implementation starts.
+   - do not treat inconsistent or obviously low-quality existing code as automatic style source of truth.
    - tune `Octopus-agent-orchestrator/live/config/paths.json` when default path roots or trigger regexes do not fit this repository.
 8. Finalize agent initialization through the hard code-level gate:
 ```powershell
@@ -94,14 +100,20 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
    - default depth when omitted: `2`
 10. Optional post-init specialization:
    - before the yes/no question, provide in `<assistant-language>`:
+     - one-sentence clarification:
+       - built-in pack = installable bundle of optional skills;
+       - skill = actual `Octopus-agent-orchestrator/live/skills/<skill-id>/` directory used after installation.
      - `Already configured specialist skills`:
        - run `node Octopus-agent-orchestrator/bin/octopus.js skills list --target-root "."`;
+       - explicitly list baseline skills already available now;
+       - explicitly list installed built-in optional packs from `Octopus-agent-orchestrator/live/config/skill-packs.json`;
+       - explicitly list installed optional skill directories under `Octopus-agent-orchestrator/live/skills/**` separately from baseline skills;
        - run `node Octopus-agent-orchestrator/bin/octopus.js skills suggest --target-root "."`;
-       - list installed built-in domain packs from `Octopus-agent-orchestrator/live/config/skill-packs.json`;
-       - list existing specialist skill directories under `Octopus-agent-orchestrator/live/skills/**` beyond baseline (`orchestration`, `code-review`, `db-review`, `security-review`, `refactor-review`, `skill-builder`).
      - `Available specialist skills to enable/create now`:
        - read only `Octopus-agent-orchestrator/live/config/skills-index.json` for optional skill discovery;
        - do not open a full optional `SKILL.md` just to decide whether it is relevant;
+       - recommend only optional packs and optional skills that are not already available in baseline or already installed;
+       - if a pack id overlaps a baseline skill name (for example `security-review`), explicitly label it as an optional pack and state which extra skill directory it would install;
        - recommend built-in packs from `skills list` and optional skills from `skills-index.json` based on the detected stack, task wording, and changed paths;
        - custom specialist skills that can be created via skill-builder.
      - `Recommendation for this project`:

@@ -699,7 +699,7 @@ function printHelp(packageJson) {
             '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
             '  - setup collects the 6 mandatory init answers, writes init-answers.json, and leaves final agent onboarding to AGENT_INIT_PROMPT.md.',
             '  - agent-init is the hard code-level gate that records active agent files, project-rule completion, skills prompt completion, and final verify/manifest PASS.',
-            '  - skills manages optional built-in domain packs and code-driven recommendations from Octopus-agent-orchestrator/live/config/skills-index.json.',
+            '  - skills manages optional built-in packs (installable bundles) and skill recommendations (concrete live/skills directories) from Octopus-agent-orchestrator/live/config/skills-index.json.',
             '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
         ]
     ];
@@ -754,7 +754,7 @@ function buildHelpText(packageJson) {
             '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
             '  - setup collects the 6 mandatory init answers, writes init-answers.json, and leaves final agent onboarding to AGENT_INIT_PROMPT.md.',
             '  - agent-init is the hard code-level gate that records active agent files, project-rule completion, skills prompt completion, and final verify/manifest PASS.',
-            '  - skills manages optional built-in domain packs and code-driven recommendations from Octopus-agent-orchestrator/live/config/skills-index.json.',
+            '  - skills manages optional built-in packs (installable bundles) and skill recommendations (concrete live/skills directories) from Octopus-agent-orchestrator/live/config/skills-index.json.',
             '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
         ]
     ];

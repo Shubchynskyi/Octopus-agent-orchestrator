@@ -45,13 +45,33 @@ function buildSkillsListOutput(listing, bundleRoot) {
     lines.push(`Bundle: ${bundleRoot}`);
     lines.push(`ConfigPath: ${listing.configPath}`);
     lines.push(`IndexPath: ${listing.indexPath}`);
+    lines.push('PackVsSkill: optional pack = installable bundle; skill = live/skills/<skill-id>/ after install');
+    lines.push(`BaselineSkills: ${listing.baselineSkillDirectories.length > 0 ? listing.baselineSkillDirectories.join(', ') : 'none'}`);
     lines.push(`InstalledPacks: ${listing.installedPackIds.length > 0 ? listing.installedPackIds.join(', ') : 'none'}`);
+    lines.push(`InstalledOptionalSkills: ${listing.installedOptionalSkillDirectories.length > 0 ? listing.installedOptionalSkillDirectories.join(', ') : 'none'}`);
+    lines.push(`AvailableLiveSkills: ${listing.liveSkillDirectories.length > 0 ? listing.liveSkillDirectories.join(', ') : 'none'}`);
     lines.push(`CustomSkillDirectories: ${listing.customSkillDirectories.length > 0 ? listing.customSkillDirectories.join(', ') : 'none'}`);
     lines.push('');
-    lines.push('Built-in Packs');
-    for (const pack of listing.builtinPacks) {
-        const countLabel = `${pack.skillCount} skill${pack.skillCount === 1 ? '' : 's'}`;
-        lines.push(`  ${pack.installed ? '[x]' : '[ ]'} ${padRight(pack.id, 20)} ${pack.description} (${countLabel})`);
+    lines.push('Ready Optional Packs');
+    const readyPacks = listing.builtinPacks.filter((pack) => pack.implemented !== false);
+    if (readyPacks.length === 0) {
+        lines.push('  none');
+    } else {
+        for (const pack of readyPacks) {
+            const readySkillLabel = pack.readySkillDirectories.length > 0 ? pack.readySkillDirectories.join(', ') : 'none';
+            const collisionNote = pack.collidesWithBaseline ? ` [extends baseline skill ${pack.id}]` : '';
+            lines.push(`  ${pack.installed ? '[x]' : '[ ]'} ${padRight(pack.id, 20)} ${pack.label} -> skills=${readySkillLabel}${collisionNote}`);
+            lines.push(`      ${pack.description}`);
+        }
+    }
+    const stubPacks = listing.builtinPacks.filter((pack) => pack.implemented === false);
+    if (stubPacks.length > 0) {
+        lines.push('');
+        lines.push('Optional Pack Stubs (Not Recommended Yet)');
+        for (const pack of stubPacks) {
+            lines.push(`  [ ] ${padRight(pack.id, 20)} ${pack.label} -> placeholder skills=${pack.placeholderSkillDirectories.join(', ') || 'none'}`);
+            lines.push(`      ${pack.description}`);
+        }
     }
     return lines.join('\n');
 }
@@ -99,22 +119,56 @@ function buildSkillsSuggestOutput(result) {
     lines.push(`Bundle: ${result.bundleRoot}`);
     lines.push(`TargetRoot: ${result.targetRoot}`);
     lines.push(`IndexPath: ${result.indexPath}`);
+    lines.push('PackVsSkill: optional pack = installable bundle; skill = concrete live/skills/<skill-id>/ directory');
+    lines.push(`BaselineSkills: ${result.baselineSkillDirectories.length > 0 ? result.baselineSkillDirectories.join(', ') : 'none'}`);
     lines.push(`InstalledPacks: ${result.installedPackIds.length > 0 ? result.installedPackIds.join(', ') : 'none'}`);
+    lines.push(`InstalledOptionalSkills: ${result.installedOptionalSkillDirectories.length > 0 ? result.installedOptionalSkillDirectories.join(', ') : 'none'}`);
+    lines.push(`AvailableLiveSkills: ${result.liveSkillDirectories.length > 0 ? result.liveSkillDirectories.join(', ') : 'none'}`);
+    lines.push(`CustomSkillDirectories: ${result.customSkillDirectories.length > 0 ? result.customSkillDirectories.join(', ') : 'none'}`);
     lines.push(`DetectedStacks: ${result.discovery.detectedStacks.length > 0 ? result.discovery.detectedStacks.join(', ') : 'none'}`);
     lines.push(`TopLevelDirectories: ${result.discovery.topLevelDirectories.length > 0 ? result.discovery.topLevelDirectories.join(', ') : 'none'}`);
     lines.push(`TaskText: ${result.taskText || 'n/a'}`);
     lines.push(`ChangedPaths: ${result.changedPaths.length > 0 ? result.changedPaths.join(', ') : 'none'}`);
     lines.push('');
-    lines.push('Suggested Packs');
+    lines.push('Relevant Skills Already Available');
+    if (result.availableRelevantSkills.length === 0) {
+        lines.push('  none');
+    } else {
+        for (const skill of result.availableRelevantSkills) {
+            const reasons = [
+                skill.matches.stack_signals.length > 0 ? `stack=${skill.matches.stack_signals.join('|')}` : null,
+                skill.matches.task_signals.length > 0 ? `task=${skill.matches.task_signals.join('|')}` : null,
+                skill.matches.changed_path_signals.length > 0 ? `changed=${skill.matches.changed_path_signals.join('|')}` : null,
+                skill.matches.project_path_signals.length > 0 ? `project=${skill.matches.project_path_signals.join('|')}` : null,
+                skill.matches.aliases_or_tags.length > 0 ? `alias=${skill.matches.aliases_or_tags.join('|')}` : null
+            ].filter(Boolean).join('; ');
+            lines.push(`  ${padRight(skill.id, 28)} already-available pack=${skill.pack}${reasons ? ` ${reasons}` : ''}`);
+        }
+    }
+    lines.push('');
+    lines.push('Relevant Optional Packs Already Installed');
+    if (result.availableRelevantPacks.length === 0) {
+        lines.push('  none');
+    } else {
+        for (const pack of result.availableRelevantPacks) {
+            const collisionNote = pack.collidesWithBaseline ? ` [extends baseline skill ${pack.id}]` : '';
+            lines.push(`  [x] ${padRight(pack.id, 22)} ${pack.label} score=${pack.score.toFixed(2)} skills=${pack.skillIds.join(', ')}${collisionNote}`);
+            lines.push(`      ${pack.description}`);
+        }
+    }
+    lines.push('');
+    lines.push('Suggested Optional Packs To Add');
     if (result.suggestedPacks.length === 0) {
         lines.push('  none');
     } else {
         for (const pack of result.suggestedPacks) {
-            lines.push(`  ${pack.installed ? '[x]' : '[ ]'} ${padRight(pack.id, 22)} score=${pack.score.toFixed(2)} skills=${pack.skillIds.join(', ')}`);
+            const collisionNote = pack.collidesWithBaseline ? ` [extends baseline skill ${pack.id}]` : '';
+            lines.push(`  [ ] ${padRight(pack.id, 22)} ${pack.label} score=${pack.score.toFixed(2)} skills=${pack.skillIds.join(', ')}${collisionNote}`);
+            lines.push(`      ${pack.description}`);
         }
     }
     lines.push('');
-    lines.push('Suggested Skills');
+    lines.push('Suggested Skills To Add');
     if (result.suggestedSkills.length === 0) {
         lines.push('  none');
     } else {
@@ -126,7 +180,7 @@ function buildSkillsSuggestOutput(result) {
                 skill.matches.project_path_signals.length > 0 ? `project=${skill.matches.project_path_signals.join('|')}` : null,
                 skill.matches.aliases_or_tags.length > 0 ? `alias=${skill.matches.aliases_or_tags.join('|')}` : null
             ].filter(Boolean).join('; ');
-            lines.push(`  ${padRight(skill.id, 28)} score=${skill.score.toFixed(2)} pack=${skill.pack}${reasons ? ` ${reasons}` : ''}`);
+            lines.push(`  ${padRight(skill.id, 28)} score=${skill.score.toFixed(2)} pack=${skill.pack} summary=${skill.summary}${reasons ? ` ${reasons}` : ''}`);
         }
     }
     return lines.join('\n');

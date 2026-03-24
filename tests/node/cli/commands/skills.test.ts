@@ -55,8 +55,10 @@ test('handleSkills suggest prints deterministic recommendation output', () => {
         const output = lines.join('\n');
         assert.match(output, /OCTOPUS_SKILLS/);
         assert.match(output, /Action: suggest/);
-        assert.match(output, /Suggested Packs/);
-        assert.match(output, /Suggested Skills/);
+        assert.match(output, /PackVsSkill:/);
+        assert.match(output, /BaselineSkills:/);
+        assert.match(output, /Suggested Optional Packs To Add/);
+        assert.match(output, /Suggested Skills To Add/);
     } finally {
         console.log = originalLog;
         fs.rmSync(bundleRoot, { recursive: true, force: true });
