@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const childProcess = require('node:child_process');
 
@@ -16,7 +17,200 @@ const {
     validateTargetRoot
 } = require('./common.ts');
 
-const DEFAULT_REPO_URL = 'https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git';
+const DEFAULT_PACKAGE_NAME = 'octopus-agent-orchestrator';
+let resolvedNpmInvocation = null;
+
+function resolveNpmInvocation() {
+    if (resolvedNpmInvocation) {
+        return resolvedNpmInvocation;
+    }
+
+    const npmExecPath = String(process.env.npm_execpath || '').trim();
+    if (npmExecPath && pathExists(npmExecPath)) {
+        resolvedNpmInvocation = {
+            command: process.execPath,
+            prefixArgs: [npmExecPath]
+        };
+        return resolvedNpmInvocation;
+    }
+
+    const bundledCandidates = [
+        path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        path.join(path.dirname(process.execPath), '..', 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    ];
+
+    for (const candidate of bundledCandidates) {
+        const resolvedCandidate = path.resolve(candidate);
+        if (pathExists(resolvedCandidate)) {
+            resolvedNpmInvocation = {
+                command: process.execPath,
+                prefixArgs: [resolvedCandidate]
+            };
+            return resolvedNpmInvocation;
+        }
+    }
+
+    resolvedNpmInvocation = {
+        command: 'npm',
+        prefixArgs: []
+    };
+    return resolvedNpmInvocation;
+}
+
+function runNpmSync(args, options = {}) {
+    const {
+        encoding = 'utf8',
+        stdio = 'pipe'
+    } = options;
+
+    const invocation = resolveNpmInvocation();
+
+    return childProcess.spawnSync(invocation.command, [...invocation.prefixArgs, ...args], {
+        ...options,
+        encoding,
+        stdio,
+        windowsHide: true
+    });
+}
+
+function readPackageNameFromDirectory(directoryPath, fallbackValue = null) {
+    const packageJsonPath = path.join(directoryPath, 'package.json');
+    if (!pathExists(packageJsonPath)) {
+        return fallbackValue;
+    }
+
+    try {
+        const parsed = JSON.parse(readTextFile(packageJsonPath));
+        const name = String(parsed && parsed.name ? parsed.name : '').trim();
+        return name || fallbackValue;
+    } catch (_error) {
+        return fallbackValue;
+    }
+}
+
+function resolveNodeModulesPackageRoot(nodeModulesRoot, packageName) {
+    return path.join(nodeModulesRoot, ...packageName.split('/'));
+}
+
+function resolveInstalledPackageRoot(tempInstallRoot) {
+    const listResult = runNpmSync([
+        'ls',
+        '--json',
+        '--depth=0',
+        '--prefix',
+        tempInstallRoot
+    ]);
+
+    const stdout = String(listResult.stdout || '').trim();
+    if (!stdout) {
+        throw new Error('Failed to resolve installed update package metadata.');
+    }
+
+    let parsed;
+    try {
+        parsed = JSON.parse(stdout);
+    } catch (_error) {
+        throw new Error('Failed to parse installed update package metadata.');
+    }
+
+    const dependencyNames = Object.keys(parsed && parsed.dependencies ? parsed.dependencies : {});
+    if (dependencyNames.length === 0) {
+        throw new Error('Installed update package metadata did not contain any top-level dependencies.');
+    }
+
+    const packageName = dependencyNames[0];
+    const packageRoot = resolveNodeModulesPackageRoot(path.join(tempInstallRoot, 'node_modules'), packageName);
+    if (!pathExists(packageRoot)) {
+        throw new Error(`Installed update package root not found: ${packageRoot}`);
+    }
+
+    return {
+        packageName,
+        packageRoot
+    };
+}
+
+function acquireUpdateSource(options) {
+    const {
+        deployedBundleRoot,
+        packageSpec,
+        sourcePath
+    } = options;
+
+    if (packageSpec && sourcePath) {
+        throw new Error('Provide either packageSpec or sourcePath for check-update, not both.');
+    }
+
+    if (sourcePath) {
+        const resolvedSourcePath = path.resolve(String(sourcePath).trim());
+        if (!pathExists(resolvedSourcePath)) {
+            throw new Error(`Update source path not found: ${resolvedSourcePath}`);
+        }
+
+        const stats = fs.lstatSync(resolvedSourcePath);
+        if (!stats.isDirectory()) {
+            throw new Error(`Update source path must be a directory: ${resolvedSourcePath}`);
+        }
+
+        return {
+            sourceType: 'path',
+            sourceReference: resolvedSourcePath,
+            packageSpec: null,
+            packageName: readPackageNameFromDirectory(resolvedSourcePath),
+            sourceRoot: resolvedSourcePath,
+            cleanup() {}
+        };
+    }
+
+    try {
+        const versionResult = runNpmSync(['--version'], { stdio: 'pipe' });
+        if (versionResult.status !== 0) {
+            throw new Error(String(versionResult.stderr || versionResult.stdout || '').trim() || 'npm version probe failed.');
+        }
+    } catch (_error) {
+        throw new Error('npm is required for npm-based check-update workflow.');
+    }
+
+    const deployedPackageName = readPackageNameFromDirectory(deployedBundleRoot, DEFAULT_PACKAGE_NAME);
+    const effectivePackageSpec = String(packageSpec || `${deployedPackageName}@latest`).trim();
+    const tempInstallRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-update-npm-'));
+
+    try {
+        const installArgs = [
+            'install',
+            '--prefix',
+            tempInstallRoot,
+            '--no-save',
+            '--ignore-scripts',
+            '--package-lock=false',
+            '--fund=false',
+            '--audit=false',
+            effectivePackageSpec
+        ];
+        const installResult = runNpmSync(installArgs);
+
+        if (installResult.status !== 0) {
+            const errorText = String(installResult.stderr || installResult.stdout || '').trim();
+            const suffix = errorText ? ` ${errorText}` : '';
+            throw new Error(`Failed to install update package '${effectivePackageSpec}'.${suffix}`);
+        }
+
+        const installed = resolveInstalledPackageRoot(tempInstallRoot);
+        return {
+            sourceType: 'npm',
+            sourceReference: effectivePackageSpec,
+            packageSpec: effectivePackageSpec,
+            packageName: installed.packageName,
+            sourceRoot: installed.packageRoot,
+            cleanup() {
+                removePathRecursive(tempInstallRoot);
+            }
+        };
+    } catch (error) {
+        removePathRecursive(tempInstallRoot);
+        throw error;
+    }
+}
 
 /**
  * Runs the check-update pipeline.
@@ -26,8 +220,8 @@ const DEFAULT_REPO_URL = 'https://github.com/Shubchynskyi/Octopus-agent-orchestr
  * @param {string} options.targetRoot - Project root directory
  * @param {string} options.bundleRoot - Orchestrator bundle directory (deployed)
  * @param {string} [options.initAnswersPath]
- * @param {string} [options.repoUrl]
- * @param {string} [options.branch]
+ * @param {string} [options.packageSpec]
+ * @param {string} [options.sourcePath]
  * @param {boolean} [options.apply=false]
  * @param {boolean} [options.noPrompt=false]
  * @param {boolean} [options.dryRun=false]
@@ -42,8 +236,8 @@ function runCheckUpdate(options) {
         targetRoot,
         bundleRoot,
         initAnswersPath = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json'),
-        repoUrl = DEFAULT_REPO_URL,
-        branch,
+        packageSpec = null,
+        sourcePath = null,
         apply = false,
         noPrompt = false,
         dryRun = false,
@@ -59,14 +253,6 @@ function runCheckUpdate(options) {
         throw new Error(`Deployed bundle not found: ${deployedBundleRoot}`);
     }
 
-    // Verify git is available
-    try {
-        childProcess.execFileSync('git', ['--version'], { stdio: 'pipe' });
-    } catch (_e) {
-        throw new Error('git is required for check-update workflow.');
-    }
-
-    // Read current version
     const currentVersionPath = path.join(deployedBundleRoot, 'VERSION');
     if (!pathExists(currentVersionPath)) {
         throw new Error(`Current VERSION file not found: ${currentVersionPath}`);
@@ -77,13 +263,20 @@ function runCheckUpdate(options) {
     }
 
     const timestamp = getTimestamp();
-    const tempRepoPath = path.join(require('node:os').tmpdir(), `octopus-update-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const syncBackupRoot = path.join(deployedBundleRoot, 'runtime', 'bundle-backups', timestamp);
+    const source = acquireUpdateSource({
+        deployedBundleRoot,
+        packageSpec,
+        sourcePath
+    });
 
     const result = {
         targetRoot: normalizedTarget,
-        repoUrl: repoUrl.trim(),
-        branch: branch ? branch.trim() : null,
+        sourceType: source.sourceType,
+        sourceReference: source.sourceReference,
+        packageSpec: source.packageSpec,
+        sourcePath: source.sourceType === 'path' ? source.sourceReference : null,
+        packageName: source.packageName,
         currentVersion,
         latestVersion: null,
         updateAvailable: false,
@@ -101,20 +294,9 @@ function runCheckUpdate(options) {
     };
 
     try {
-        // Clone latest from repo (shallow)
-        const cloneArgs = ['clone', '--depth', '1'];
-        if (branch) cloneArgs.push('--branch', branch.trim());
-        cloneArgs.push(repoUrl.trim(), tempRepoPath);
-
-        const cloneResult = childProcess.spawnSync('git', cloneArgs, { stdio: 'pipe' });
-        if (cloneResult.status !== 0) {
-            throw new Error(`Failed to clone update source: ${repoUrl}`);
-        }
-
-        // Read latest version
-        const latestVersionPath = path.join(tempRepoPath, 'VERSION');
+        const latestVersionPath = path.join(source.sourceRoot, 'VERSION');
         if (!pathExists(latestVersionPath)) {
-            throw new Error(`Latest VERSION file not found in cloned source: ${latestVersionPath}`);
+            throw new Error(`Latest VERSION file not found in update source: ${latestVersionPath}`);
         }
         const latestVersion = readTextFile(latestVersionPath).trim();
         if (!latestVersion) {
@@ -124,22 +306,15 @@ function runCheckUpdate(options) {
 
         const comparison = compareVersionStrings(currentVersion, latestVersion);
         result.updateAvailable = comparison < 0;
+        result.checkUpdateResult = result.updateAvailable ? 'UPDATE_AVAILABLE' : 'UP_TO_DATE';
 
-        if (!result.updateAvailable) {
-            result.checkUpdateResult = 'UP_TO_DATE';
-        } else {
-            result.checkUpdateResult = 'UPDATE_AVAILABLE';
-        }
-
-        let applyNow = apply;
-
-        if (result.updateAvailable && applyNow) {
+        if (result.updateAvailable && apply) {
             const syncPreexistingMap = {};
 
             try {
                 for (const item of BUNDLE_SYNC_ITEMS) {
-                    const sourcePath = path.join(tempRepoPath, item);
-                    if (!fs.existsSync(sourcePath)) continue;
+                    const sourceItemPath = path.join(source.sourceRoot, item);
+                    if (!fs.existsSync(sourceItemPath)) continue;
 
                     result.syncItemsDetected++;
                     const destinationPath = path.join(deployedBundleRoot, item);
@@ -162,7 +337,7 @@ function runCheckUpdate(options) {
                         result.syncBackupRoot = syncBackupRoot;
                     }
 
-                    const sourceIsDirectory = fs.lstatSync(sourcePath).isDirectory();
+                    const sourceIsDirectory = fs.lstatSync(sourceItemPath).isDirectory();
                     const isNodeRuntimeDir = item.toLowerCase() === 'src';
 
                     if (sourceIsDirectory) {
@@ -172,15 +347,15 @@ function runCheckUpdate(options) {
                                 fs.mkdirSync(destinationPath, { recursive: true });
                             }
                             const skipPaths = runningScriptPath ? [path.resolve(runningScriptPath)] : [];
-                            copyDirectoryContentMerge(sourcePath, destinationPath, skipPaths);
+                            copyDirectoryContentMerge(sourceItemPath, destinationPath, skipPaths);
                         } else {
                             removePathRecursive(destinationPath);
-                            copyPathRecursive(sourcePath, destinationPath);
+                            copyPathRecursive(sourceItemPath, destinationPath);
                         }
                     } else {
                         removePathRecursive(destinationPath);
                         fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-                        fs.copyFileSync(sourcePath, destinationPath);
+                        fs.copyFileSync(sourceItemPath, destinationPath);
                     }
 
                     result.syncItemsUpdated++;
@@ -221,17 +396,15 @@ function runCheckUpdate(options) {
                 }
                 throw new Error(`Update apply failed. Error: ${originalError}`);
             }
-        } else if (result.updateAvailable && !applyNow) {
-            // noPrompt or user didn't want to apply — leave as UPDATE_AVAILABLE
         }
     } finally {
-        removePathRecursive(tempRepoPath);
+        source.cleanup();
     }
 
     return result;
 }
 
 module.exports = {
-    DEFAULT_REPO_URL,
+    DEFAULT_PACKAGE_NAME,
     runCheckUpdate
 };

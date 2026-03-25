@@ -5,7 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 
 const { runCheckUpdate } = require('../../../src/lifecycle/check-update.ts');
-const { removePathRecursive, copyPathRecursive } = require('../../../src/lifecycle/common.ts');
+const { removePathRecursive } = require('../../../src/lifecycle/common.ts');
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -43,7 +43,7 @@ describe('runCheckUpdate', () => {
             const result = runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                repoUrl: repoRoot,
+                sourcePath: repoRoot,
                 noPrompt: true,
                 dryRun: true
             });
@@ -62,7 +62,7 @@ describe('runCheckUpdate', () => {
             const result = runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                repoUrl: repoRoot,
+                sourcePath: repoRoot,
                 noPrompt: true,
                 dryRun: false,
                 apply: false
@@ -78,13 +78,34 @@ describe('runCheckUpdate', () => {
         }
     });
 
+    it('can acquire update source from an npm package spec', () => {
+        const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion);
+        try {
+            const result = runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                packageSpec: repoRoot,
+                noPrompt: true,
+                dryRun: true
+            });
+
+            assert.equal(result.checkUpdateResult, 'UP_TO_DATE');
+            assert.equal(result.sourceType, 'npm');
+            assert.equal(result.updateAvailable, false);
+            assert.equal(result.currentVersion, currentVersion);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('reports DRY_RUN_UPDATE_AVAILABLE when apply + dryRun', () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             const result = runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                repoUrl: repoRoot,
+                sourcePath: repoRoot,
                 noPrompt: true,
                 dryRun: true,
                 apply: true
@@ -107,7 +128,7 @@ describe('runCheckUpdate', () => {
             const result = runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                repoUrl: repoRoot,
+                sourcePath: repoRoot,
                 noPrompt: true,
                 apply: true,
                 updateRunner: () => {
@@ -135,7 +156,7 @@ describe('runCheckUpdate', () => {
                 () => runCheckUpdate({
                     targetRoot: projectRoot,
                     bundleRoot,
-                    repoUrl: repoRoot,
+                    sourcePath: repoRoot,
                     noPrompt: true,
                     apply: true,
                     updateRunner: () => {
@@ -161,7 +182,7 @@ describe('runCheckUpdate', () => {
                 () => runCheckUpdate({
                     targetRoot: tmpDir,
                     bundleRoot: fakeBundleRoot,
-                    repoUrl: repoRoot
+                    sourcePath: repoRoot
                 }),
                 /Deployed bundle not found/
             );
@@ -180,12 +201,29 @@ describe('runCheckUpdate', () => {
                 () => runCheckUpdate({
                     targetRoot: tmpDir,
                     bundleRoot: bundle,
-                    repoUrl: repoRoot
+                    sourcePath: repoRoot
                 }),
                 /Current VERSION file not found/
             );
         } finally {
             removePathRecursive(tmpDir);
+        }
+    });
+
+    it('throws when packageSpec and sourcePath are provided together', () => {
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
+        try {
+            assert.throws(
+                () => runCheckUpdate({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    packageSpec: 'octopus-agent-orchestrator@latest',
+                    sourcePath: repoRoot
+                }),
+                /either packageSpec or sourcePath/
+            );
+        } finally {
+            removePathRecursive(projectRoot);
         }
     });
 });

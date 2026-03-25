@@ -160,7 +160,8 @@ octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator
 `check-update` is compare-first and uses `--apply` only when you want it to perform the update.
 `update` applies the update workflow directly unless `--dry-run` is used.
 
-Update checks remote version, syncs bundle, migrates init answers, and runs verification.
+By default update checks the latest npm version for the deployed package name, syncs bundle files, migrates init answers, and runs verification. For local testing you can point `check-update/update` to `--source-path "."` or to a local tarball via `--package-spec`.
+
 See **[docs/cli-reference.md](docs/cli-reference.md#octopus-update)** for full options.
 
 ## 10. Uninstall

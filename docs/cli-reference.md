@@ -111,13 +111,20 @@ Provider values: `Claude`, `Codex`, `Gemini`, `GitHubCopilot`, `Windsurf`, `Juni
 
 ### `octopus check-update`
 
-Compare the current deployment with a newer package or branch. By default this only checks; `--apply` performs the update immediately.
+Compare the current deployment with a newer npm package or a local unpacked bundle root. By default this only checks; `--apply` performs the update immediately.
 
 ```powershell
 octopus check-update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 octopus check-update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --apply --no-prompt
 octopus check-update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --dry-run
+octopus check-update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --package-spec "octopus-agent-orchestrator@latest"
+octopus check-update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --source-path "."
 ```
+
+Notes:
+- By default `check-update` uses the deployed package name from `Octopus-agent-orchestrator/package.json` with the npm `latest` tag.
+- `--package-spec` accepts npm specs such as `octopus-agent-orchestrator@2.0.1`, dist-tags like `@latest`, and local tarballs like `.\octopus-agent-orchestrator-2.0.1.tgz`.
+- `--source-path` is for local testing against an unpacked repo or bundle directory.
 
 ### `octopus update`
 
@@ -125,7 +132,8 @@ Apply the update workflow directly.
 
 ```powershell
 octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
-octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --repo-url "<git-url>" --branch "<branch>"
+octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --package-spec "octopus-agent-orchestrator@latest"
+octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --source-path "."
 octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --dry-run
 ```
 

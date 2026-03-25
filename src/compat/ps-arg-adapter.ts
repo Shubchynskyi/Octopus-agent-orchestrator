@@ -23,6 +23,8 @@ const PS_ARG_MAP = Object.freeze({
     '-TokenEconomyEnabled': '--token-economy-enabled',
     '-RepoUrl': '--repo-url',
     '-Branch': '--branch',
+    '-PackageSpec': '--package-spec',
+    '-SourcePath': '--source-path',
     '-RunVerify': '--verify',
     '-SkipBackups': '--skip-backups',
     '-KeepPrimaryEntrypoint': '--keep-primary-entrypoint',

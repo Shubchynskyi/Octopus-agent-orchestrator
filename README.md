@@ -58,7 +58,7 @@ npx -y octopus-agent-orchestrator setup
 | `octopus install` | Deploy/refresh orchestrator (requires init-answers.json) |
 | `octopus init` | Re-materialize `live/` from existing answers |
 | `octopus reinit` | Change init answers without full reinstall |
-| `octopus check-update` | Compare current deployment with a newer package or branch |
+| `octopus check-update` | Compare current deployment with a newer npm package or local source |
 | `octopus update` | Apply the update workflow directly (`--dry-run` for preview) |
 | `octopus uninstall` | Remove orchestrator with keep/delete choices |
 | `octopus skills` | List, suggest, add, remove, and validate optional built-in skill packs |
@@ -102,7 +102,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 - Token-economy defaults aligned: `enabled=true` with `enabled_depths=[1,2]`.
 - LF line endings enforced for pre-commit hook and bash artifacts on all platforms.
 - Parser-aware gate compaction and review-context artifacts for token-economy mode.
-- Added update workflow with version check and optional auto-apply from git.
+- Added update workflow with version check and npm-based update source resolution.
 - Completed the runtime cutover to a Node-only lifecycle and gate surface.
 - Added npm package CLI with `octopus`, `oao`, `octopus-agent-orchestrator` aliases.
 

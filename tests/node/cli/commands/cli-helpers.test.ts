@@ -723,6 +723,8 @@ test('buildHelpText includes all command descriptions', () => {
     assert.ok(text.includes('--version'));
     assert.ok(text.includes('--target-root'));
     assert.ok(text.includes('--repo-url'));
+    assert.ok(text.includes('--package-spec'));
+    assert.ok(text.includes('--source-path'));
 });
 
 test('COMMAND_SUMMARY has expected commands', () => {

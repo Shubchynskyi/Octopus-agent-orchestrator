@@ -674,7 +674,7 @@ function printHelp(packageJson) {
             '  update        Check for updates and optionally apply them.',
             '  uninstall     Remove the deployed orchestrator bundle and managed files.',
             '  verify        Validate deployment consistency and rule contracts.',
-            '  check-update  Compare current deployment with a newer package or branch.',
+            '  check-update  Compare current deployment with a newer npm package or local source.',
             '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
             '  gate          Run an agent gate or helper command.'
         ],
@@ -694,12 +694,18 @@ function printHelp(packageJson) {
             '      --branch NAME                Clone a specific branch for branch testing.'
         ],
         [
+            'Update source override options:',
+            '      --package-spec SPEC          npm package spec, version tag, or local .tgz for check-update/update.',
+            '      --source-path PATH           Local unpacked bundle root for check-update/update testing.'
+        ],
+        [
             'Notes:',
             `  - The default deployed bundle path is ${DEFAULT_BUNDLE_NAME}.`,
             '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
             '  - setup collects the 6 mandatory init answers, writes init-answers.json, and leaves final agent onboarding to AGENT_INIT_PROMPT.md.',
             '  - agent-init is the hard code-level gate that records active agent files, project-rule completion, skills prompt completion, and final verify/manifest PASS.',
             '  - skills manages optional built-in packs (installable bundles) and skill recommendations (concrete live/skills directories) from Octopus-agent-orchestrator/live/config/skills-index.json.',
+            '  - update/check-update use the deployed package name from package.json with the npm latest tag by default.',
             '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
         ]
     ];
@@ -729,7 +735,7 @@ function buildHelpText(packageJson) {
             '  update        Check for updates and optionally apply them.',
             '  uninstall     Remove the deployed orchestrator bundle and managed files.',
             '  verify        Validate deployment consistency and rule contracts.',
-            '  check-update  Compare current deployment with a newer package or branch.',
+            '  check-update  Compare current deployment with a newer npm package or local source.',
             '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
             '  gate          Run an agent gate or helper command.'
         ],
@@ -749,12 +755,18 @@ function buildHelpText(packageJson) {
             '      --branch NAME                Clone a specific branch for branch testing.'
         ],
         [
+            'Update source override options:',
+            '      --package-spec SPEC          npm package spec, version tag, or local .tgz for check-update/update.',
+            '      --source-path PATH           Local unpacked bundle root for check-update/update testing.'
+        ],
+        [
             'Notes:',
             `  - The default deployed bundle path is ${DEFAULT_BUNDLE_NAME}.`,
             '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
             '  - setup collects the 6 mandatory init answers, writes init-answers.json, and leaves final agent onboarding to AGENT_INIT_PROMPT.md.',
             '  - agent-init is the hard code-level gate that records active agent files, project-rule completion, skills prompt completion, and final verify/manifest PASS.',
             '  - skills manages optional built-in packs (installable bundles) and skill recommendations (concrete live/skills directories) from Octopus-agent-orchestrator/live/config/skills-index.json.',
+            '  - update/check-update use the deployed package name from package.json with the npm latest tag by default.',
             '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
         ]
     ];
