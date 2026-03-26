@@ -30,7 +30,7 @@ function runDoctor(options) {
     var manifestResult = null;
     var manifestError = null;
 
-    try { manifestResult = validateManifest(manifestPath); }
+    try { manifestResult = validateManifest(manifestPath, targetRoot); }
     catch(err) { manifestError = err.message || String(err); }
 
     var manifestPassed = manifestResult ? manifestResult.passed : false;

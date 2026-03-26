@@ -48,6 +48,7 @@ const CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES = Object.freeze([
 const ENTRYPOINT_RULE_LINKS = Object.freeze([
     ['Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md', 'Core Rules'],
     ['Octopus-agent-orchestrator/live/docs/agent-rules/10-project-context.md', 'Project Context'],
+    ['Octopus-agent-orchestrator/live/docs/agent-rules/15-project-memory.md', 'Project Memory Summary'],
     ['Octopus-agent-orchestrator/live/docs/agent-rules/20-architecture.md', 'Architecture'],
     ['Octopus-agent-orchestrator/live/docs/agent-rules/30-code-style.md', 'Code Style'],
     ['Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md', 'Strict Coding Rules'],

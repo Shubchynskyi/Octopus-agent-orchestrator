@@ -31,14 +31,14 @@ Managed in project root by `node Octopus-agent-orchestrator/bin/octopus.js insta
 
 Unused entrypoints are not created by default. Extra redirect entrypoints appear only after the user explicitly confirms them during `agent-init`.
 
-Materialized inside `Octopus-agent-orchestrator/live` by `node Octopus-agent-orchestrator/bin/octopus.js init`:
+Materialized (regenerated on every init, reinit, and update) inside `Octopus-agent-orchestrator/live`:
 - live/config/review-capabilities.json
 - live/config/paths.json
 - live/config/token-economy.json
 - live/config/output-filters.json
 - live/config/skill-packs.json
 - live/config/skills-index.json
-- live/docs/agent-rules/**
+- live/docs/agent-rules/** (template-materialized rules; `15-project-memory.md` is regenerated from `docs/project-memory/` sources)
 - live/docs/changes/**
 - live/docs/reviews/**
 - live/docs/tasks/**
@@ -49,6 +49,9 @@ Materialized inside `Octopus-agent-orchestrator/live` by `node Octopus-agent-orc
 - live/USAGE.md
 - live/version.json
 
+User-owned / durable (seeded once on fresh install, never overwritten by init, reinit, update, or uninstall-with-keep):
+- live/docs/project-memory/** (`README.md`, `context.md`, `architecture.md`, `conventions.md`, `stack.md`, `decisions.md`, plus any user-added files)
+
 Generated during task execution:
 - runtime/reviews/**
 - runtime/task-events/**
@@ -56,6 +59,7 @@ Generated during task execution:
 
 Generated during updates:
 - runtime/update-reports/**
+- runtime/update-rollbacks/**
 - runtime/bundle-backups/**
 
 Removed by `node Octopus-agent-orchestrator/bin/octopus.js uninstall`:
@@ -64,7 +68,7 @@ Removed by `node Octopus-agent-orchestrator/bin/octopus.js uninstall`:
 - the selected primary entrypoint only when the user chooses delete during uninstall
 - `TASK.md` only when the user chooses delete during uninstall
 - orchestrator-only entries from `.qwen/settings.json`, `.claude/settings.local.json`, `.git/hooks/pre-commit`, and `.gitignore`, while preserving unrelated user content outside managed blocks
-- when runtime artifacts are kept, `Octopus-agent-orchestrator/runtime/**` is copied into `Octopus-agent-orchestrator-uninstall-backups/<timestamp>/Octopus-agent-orchestrator/runtime/` before bundle removal
+- when runtime artifacts are kept, `Octopus-agent-orchestrator/runtime/**` is copied into `Octopus-agent-orchestrator-uninstall-backups/<timestamp>/Octopus-agent-orchestrator/runtime/` before bundle removal; `live/docs/project-memory/**` is also preserved alongside runtime artifacts into the same backup tree
 
 Configured when `EnforceNoAutoCommit=true`:
 - .git/hooks/pre-commit (managed guard block)
@@ -73,11 +77,15 @@ Kept inside bundle:
 - `package.json` (npm package metadata shipped with the source bundle and synced into deployed workspaces during update)
 - `bin/octopus.js` (npm bootstrap/lifecycle/gate CLI; exposes `octopus`, `oao`, and `octopus-agent-orchestrator`)
 - `src/**` (canonical Node/TypeScript runtime for lifecycle commands, validators, and gates)
+- `dist/**` (compiled JavaScript output consumed at runtime)
 - template/**
 - .gitattributes
 - README.md
 - CHANGELOG.md
+- HOW_TO.md
 - LICENSE
 - AGENT_INIT_PROMPT.md
 - MANIFEST.md
 - VERSION
+- tsconfig.json
+- tsconfig.node-foundation.json

@@ -10,8 +10,10 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Available Project Skills
 - `Octopus-agent-orchestrator/live/skills/orchestration`
+- `Octopus-agent-orchestrator/live/skills/orchestration-depth1`
 - `Octopus-agent-orchestrator/live/skills/code-review`
 - `Octopus-agent-orchestrator/live/skills/db-review`
+- `Octopus-agent-orchestrator/live/skills/dependency-review`
 - `Octopus-agent-orchestrator/live/skills/security-review`
 - `Octopus-agent-orchestrator/live/skills/refactor-review`
 - `Octopus-agent-orchestrator/live/skills/skill-builder`

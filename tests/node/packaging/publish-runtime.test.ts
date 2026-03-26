@@ -31,21 +31,18 @@ const {
     getRepoRoot
 } = require(path.join(findRepoRoot(__dirname), 'scripts', 'node-foundation', 'build.ts'));
 
-const PACKAGE_SURFACE_ITEMS = Object.freeze([
-    '.gitattributes',
-    'AGENT_INIT_PROMPT.md',
-    'CHANGELOG.md',
-    'HOW_TO.md',
-    'LICENSE',
-    'MANIFEST.md',
-    'README.md',
-    'VERSION',
-    'bin',
-    'dist',
-    'package.json',
-    'src',
-    'template'
-]);
+// Derive published package surface from the package.json files whitelist (single source of truth).
+// npm always includes package.json itself in published packages.
+function loadPackageSurfaceItems(repoRoot) {
+    const pkgJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const items = Array.from(pkgJson.files || []);
+    if (!items.includes('package.json')) {
+        items.push('package.json');
+    }
+    return Object.freeze(items.sort());
+}
+
+const PACKAGE_SURFACE_ITEMS = loadPackageSurfaceItems(findRepoRoot(__dirname));
 
 function copyPublishedPackageSurface(repoRoot, packageRoot) {
     fs.mkdirSync(packageRoot, { recursive: true });

@@ -1,10 +1,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 
 const { buildScopedDiffMetadata, convertToGitPathspecs } = require('../gate-runtime/scoped-diff.ts');
 const { matchAnyRegex } = require('../gate-runtime/text-utils.ts');
 const { normalizePath, resolveGitRoot, resolvePathInsideRepo, toStringArray, toPosix } = require('./helpers.ts');
+const { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } = require('../core/subprocess.ts');
 
 /**
  * Resolve output path for scoped diff.
@@ -41,16 +41,23 @@ function runGitDiff(gitRoot, useStaged, pathspecs) {
         gitArgs.push('--');
         gitArgs.push(...pathspecs);
     }
-    try {
-        let stdout = execFileSync('git', gitArgs, {
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            maxBuffer: 50 * 1024 * 1024
-        });
-        return stdout || '';
-    } catch (err) {
-        throw new Error(`git diff exited with error: ${err.message || err}`);
+    const result = spawnSyncWithTimeout('git', gitArgs, {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        maxBuffer: 50 * 1024 * 1024,
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS
+    });
+    if (result.timedOut) {
+        throw new Error(`git diff timed out after ${DEFAULT_GIT_TIMEOUT_MS} ms.`);
     }
+    if (result.error) {
+        throw new Error(`git diff exited with error: ${result.error.message || result.error}`);
+    }
+    if (result.status !== 0) {
+        const errText = String(result.stderr || '').trim();
+        throw new Error(`git diff exited with code ${result.status}. ${errText}`);
+    }
+    return String(result.stdout || '');
 }
 
 /**

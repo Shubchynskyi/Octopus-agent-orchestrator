@@ -76,7 +76,7 @@ Additional rules for saving:
    - Run installer only when primary initialization is incomplete, or when missing answers had to be collected and answer-dependent files still need to be materialized/refreshed.
    - If you expand `ActiveAgentFiles` beyond the canonical entrypoint, rerun installer so the additional redirect entrypoints and provider bridge files are materialized.
 6. If reinstall is needed, run installer (this also runs init automatically):
-```powershell
+```text
 node Octopus-agent-orchestrator/bin/octopus.js install --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 7. Read discovery artifact and update project-context rules for this real project:
@@ -90,7 +90,7 @@ node Octopus-agent-orchestrator/bin/octopus.js install --target-root "." --init-
    - do not treat inconsistent or obviously low-quality existing code as automatic style source of truth.
    - tune `Octopus-agent-orchestrator/live/config/paths.json` when default path roots or trigger regexes do not fit this repository.
 8. Finalize agent initialization through the hard code-level gate:
-```powershell
+```text
 node Octopus-agent-orchestrator/bin/octopus.js agent-init --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --active-agent-files "<active-agent-files>" --project-rules-updated yes --skills-prompted yes
 ```
 This command is mandatory. It reruns answer-dependent install materialization, runs `verify`, runs manifest validation, and writes `Octopus-agent-orchestrator/runtime/agent-init-state.json`.

@@ -15,6 +15,13 @@ Default response brevity: {{ASSISTANT_RESPONSE_BREVITY}}.
 4. Keep documentation in English (README, docs, file content).
 5. Task completion always ends with: implementation summary, suggested `git commit -m "<message>"`, and explicit `Do you want me to commit now? (yes/no)` question (see `80-task-workflow.md`, Mandatory Gate Contract).
 
+## Project Memory — Storage Directive
+1. Durable project knowledge (architecture, conventions, stack details, domain constraints, design decisions) must be written to `Octopus-agent-orchestrator/live/docs/project-memory/`.
+2. Do not embed durable project knowledge in orchestrator-managed rule files (`agent-rules/*.md`), config JSON, root entrypoints, or `TASK.md`.
+3. The `project-memory/` directory is user-owned; the materializer never overwrites its contents after initial seed.
+4. Canonical files: `context.md`, `architecture.md`, `conventions.md`, `stack.md`, `decisions.md`. Add new files in lowercase kebab-case `.md` format when an existing category does not fit.
+5. Agents may read `project-memory/` at any time for context. Write access requires explicit user approval or a task instruction that authorises the update.
+
 ## Code Quality
 
 ### Cleanliness and Readability

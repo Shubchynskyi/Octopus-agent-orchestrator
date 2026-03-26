@@ -400,7 +400,7 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
             try {
                 const manifestPath = path.join(effectiveBundlePath, 'MANIFEST.md');
                 const { validateManifest } = require('../../validators/validate-manifest.ts');
-                const manifestResult = validateManifest(manifestPath);
+                const manifestResult = validateManifest(manifestPath, targetRoot);
                 manifestStatus = manifestResult.passed ? 'PASS' : 'FAIL';
             } catch (_error) {
                 manifestStatus = 'ERROR';

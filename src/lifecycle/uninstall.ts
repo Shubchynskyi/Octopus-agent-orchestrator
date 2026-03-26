@@ -8,6 +8,7 @@ const {
     DEFAULT_BUNDLE_NAME
 } = require('../core/constants.ts');
 const { pathExists, readTextFile } = require('../core/fs.ts');
+const { detectLineEnding } = require('../core/line-endings.ts');
 const { readJsonFile } = require('../core/json.ts');
 const { getActiveAgentEntrypointFiles, getCanonicalEntrypointFile } = require('../materialization/common.ts');
 const {
@@ -20,9 +21,15 @@ const {
 
 const {
     copyPathRecursive,
+    createRollbackSnapshot,
     getTimestamp,
+    readUninstallSentinel,
     removePathRecursive,
-    validateTargetRoot
+    removeUninstallSentinel,
+    restoreRollbackSnapshot,
+    validateTargetRoot,
+    writeRollbackRecords,
+    writeUninstallSentinel
 } = require('./common.ts');
 
 // ---------------------------------------------------------------------------
@@ -148,11 +155,12 @@ function tryDetectCanonicalEntrypointFromManagedFiles(targetRoot, entrypointFile
 
 function normalizeTextAfterManagedBlockRemoval(content) {
     if (!content) return '';
+    const eol = detectLineEnding(content);
     let normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     normalized = normalized.replace(/\n{3,}/g, '\n\n');
     const trimmed = normalized.trim();
     if (!trimmed) return '';
-    return trimmed.split('\n').join('\r\n');
+    return trimmed.split('\n').join(eol);
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +302,23 @@ function looksLikeManagedFileWithoutMarkers(relativePath, content) {
 }
 
 // ---------------------------------------------------------------------------
+// Rollback item set for journal-based uninstall
+// ---------------------------------------------------------------------------
+
+function getUninstallRollbackItems() {
+    return [
+        'TASK.md',
+        ...ENTRYPOINT_FILES,
+        ...PROVIDER_AGENT_FILES,
+        ...GITHUB_SKILL_BRIDGE_FILES,
+        QWEN_SETTINGS_RELATIVE,
+        CLAUDE_LOCAL_SETTINGS_RELATIVE,
+        PRE_COMMIT_HOOK_RELATIVE,
+        '.gitignore'
+    ];
+}
+
+// ---------------------------------------------------------------------------
 // Main uninstall function
 // ---------------------------------------------------------------------------
 
@@ -348,6 +373,23 @@ function runUninstall(options) {
     let restoredFiles = 0;
     const warnings = [];
     let preservedRuntimePath = null;
+    let preservedProjectMemoryPath = null;
+    let rollbackSnapshotPath = null;
+    let rollbackRecords = [];
+    let rollbackStatus = 'NOT_NEEDED';
+    let currentPhase = 'INIT';
+    const journalRoot = path.join(normalizedTarget, `${DEFAULT_BUNDLE_NAME}-uninstall-journal`);
+
+    // Check for interrupted uninstall from a previous run
+    if (!dryRun) {
+        const existingSentinel = readUninstallSentinel(normalizedTarget);
+        if (existingSentinel) {
+            warnings.push(
+                `Detected interrupted uninstall from ${existingSentinel.startedAt || 'unknown time'}. ` +
+                `Previous journal: ${existingSentinel.rollbackSnapshotPath || 'unknown'}. Proceeding with fresh uninstall.`
+            );
+        }
+    }
 
     // Initialization backup detection
     const initBackupRoot = getInitializationBackupRoot(orchestratorRoot);
@@ -639,6 +681,13 @@ function runUninstall(options) {
             preservedRuntimePath = path.join(getBackupRoot(), DEFAULT_BUNDLE_NAME, 'runtime');
         }
 
+        // Preserve project-memory alongside runtime artifacts when requested
+        const projectMemoryPath = path.join(orchestratorRoot, 'live', 'docs', 'project-memory');
+        if (keepRuntime && fs.existsSync(projectMemoryPath) && fs.lstatSync(projectMemoryPath).isDirectory()) {
+            backupItem(projectMemoryPath, path.join(DEFAULT_BUNDLE_NAME, 'live', 'docs', 'project-memory'), true, true);
+            preservedProjectMemoryPath = path.join(getBackupRoot(), DEFAULT_BUNDLE_NAME, 'live', 'docs', 'project-memory');
+        }
+
         if (!dryRun) {
             removePathRecursive(orchestratorRoot);
         }
@@ -699,52 +748,146 @@ function runUninstall(options) {
     }
 
     // ---------------------------------------------------------------------------
-    // Execute uninstall operations
+    // Skip-backups hardening
     // ---------------------------------------------------------------------------
 
-    // TASK.md
-    if (!keepTaskFileValue) {
-        if (!restoreItemFromInitializationBackup('TASK.md')) {
-            removeManagedFile('TASK.md');
+    if (skipBackups) {
+        warnings.push(
+            '--skip-backups active: no user-facing backup will be created. ' +
+            'Recovery after successful completion is not possible.'
+        );
+        if (!keepRuntimeArtifactsValue) {
+            warnings.push(
+                '--skip-backups with keepRuntimeArtifacts=no: runtime artifacts ' +
+                '(reports, logs, rollback snapshots) will be permanently deleted.'
+            );
         }
     }
 
-    // Entrypoint files
-    for (const rel of ENTRYPOINT_FILES) {
-        if (keepPrimaryEntrypointValue && canonicalEntrypoint && rel.toLowerCase() === canonicalEntrypoint.toLowerCase()) {
-            continue;
-        }
-        if (!restoreItemFromInitializationBackup(rel)) {
-            removeManagedFile(rel);
-        }
+    // ---------------------------------------------------------------------------
+    // Create rollback snapshot and sentinel (journal)
+    // ---------------------------------------------------------------------------
+
+    if (!dryRun) {
+        currentPhase = 'SNAPSHOT';
+        rollbackSnapshotPath = path.join(journalRoot, timestamp);
+        const rollbackItems = getUninstallRollbackItems();
+        rollbackRecords = createRollbackSnapshot(
+            normalizedTarget, rollbackSnapshotPath, rollbackItems
+        );
+        writeRollbackRecords(rollbackSnapshotPath, rollbackRecords);
+
+        currentPhase = 'SENTINEL';
+        writeUninstallSentinel(normalizedTarget, {
+            startedAt: new Date().toISOString(),
+            operation: 'uninstall',
+            rollbackSnapshotPath,
+            timestamp,
+            skipBackups,
+            keepPrimaryEntrypoint: keepPrimaryEntrypointValue,
+            keepTaskFile: keepTaskFileValue,
+            keepRuntimeArtifacts: keepRuntimeArtifactsValue
+        });
     }
 
-    // Provider agent files + skill bridge files
-    for (const rel of [...PROVIDER_AGENT_FILES, ...GITHUB_SKILL_BRIDGE_FILES]) {
-        if (!restoreItemFromInitializationBackup(rel)) {
-            removeManagedFile(rel);
+    // ---------------------------------------------------------------------------
+    // Execute uninstall operations (journaled)
+    // ---------------------------------------------------------------------------
+
+    try {
+        currentPhase = 'CLEANUP_FILES';
+
+        // TASK.md
+        if (!keepTaskFileValue) {
+            if (!restoreItemFromInitializationBackup('TASK.md')) {
+                removeManagedFile('TASK.md');
+            }
         }
+
+        // Entrypoint files
+        for (const rel of ENTRYPOINT_FILES) {
+            if (keepPrimaryEntrypointValue && canonicalEntrypoint && rel.toLowerCase() === canonicalEntrypoint.toLowerCase()) {
+                continue;
+            }
+            if (!restoreItemFromInitializationBackup(rel)) {
+                removeManagedFile(rel);
+            }
+        }
+
+        // Provider agent files + skill bridge files
+        for (const rel of [...PROVIDER_AGENT_FILES, ...GITHUB_SKILL_BRIDGE_FILES]) {
+            if (!restoreItemFromInitializationBackup(rel)) {
+                removeManagedFile(rel);
+            }
+        }
+
+        // Qwen settings
+        if (!restoreItemFromInitializationBackup(QWEN_SETTINGS_RELATIVE)) {
+            cleanupQwenSettings(qwenManagedEntries);
+        }
+        // Claude local settings
+        if (!restoreItemFromInitializationBackup(CLAUDE_LOCAL_SETTINGS_RELATIVE)) {
+            cleanupClaudeLocalSettings();
+        }
+        // Commit guard hook
+        if (!restoreItemFromInitializationBackup(PRE_COMMIT_HOOK_RELATIVE)) {
+            cleanupCommitGuardHook();
+        }
+        // Gitignore
+        if (!restoreItemFromInitializationBackup('.gitignore')) {
+            cleanupGitignore();
+        }
+
+        // Test hook: allow tests to inject a failure between file cleanup and bundle removal
+        if (options._testHooks && typeof options._testHooks.afterFileCleanup === 'function') {
+            options._testHooks.afterFileCleanup();
+        }
+
+        currentPhase = 'CLEANUP_BUNDLE';
+        // Remove bundle directory (with backup and runtime preservation)
+        removeBundleDirectory();
+
+        currentPhase = 'FINALIZE';
+
+    } catch (error) {
+        const errorMessage = error.message || String(error);
+
+        if (!dryRun && rollbackSnapshotPath && rollbackRecords.length > 0) {
+            try {
+                restoreRollbackSnapshot(
+                    normalizedTarget, rollbackSnapshotPath, rollbackRecords
+                );
+                rollbackStatus = 'RESTORED';
+            } catch (rollbackError) {
+                const rollbackMsg = rollbackError.message || String(rollbackError);
+                rollbackStatus = `FAILED: ${rollbackMsg}`;
+                throw new Error(
+                    `Uninstall failed during ${currentPhase}. Original error: ${errorMessage}. ` +
+                    `Rollback also failed: ${rollbackMsg}. ` +
+                    `Journal preserved at: ${rollbackSnapshotPath}`
+                );
+            }
+            // Rollback succeeded — clean up journal artifacts
+            removeUninstallSentinel(normalizedTarget);
+            removePathRecursive(journalRoot);
+
+            throw new Error(
+                `Uninstall failed during ${currentPhase} and workspace was restored to pre-uninstall state. ` +
+                `Error: ${errorMessage}`
+            );
+        }
+        throw error;
     }
 
-    // Qwen settings
-    if (!restoreItemFromInitializationBackup(QWEN_SETTINGS_RELATIVE)) {
-        cleanupQwenSettings(qwenManagedEntries);
-    }
-    // Claude local settings
-    if (!restoreItemFromInitializationBackup(CLAUDE_LOCAL_SETTINGS_RELATIVE)) {
-        cleanupClaudeLocalSettings();
-    }
-    // Commit guard hook
-    if (!restoreItemFromInitializationBackup(PRE_COMMIT_HOOK_RELATIVE)) {
-        cleanupCommitGuardHook();
-    }
-    // Gitignore
-    if (!restoreItemFromInitializationBackup('.gitignore')) {
-        cleanupGitignore();
-    }
+    // ---------------------------------------------------------------------------
+    // Success: clean up journal artifacts
+    // ---------------------------------------------------------------------------
 
-    // Remove bundle directory (with backup and runtime preservation)
-    removeBundleDirectory();
+    if (!dryRun) {
+        removeUninstallSentinel(normalizedTarget);
+        removePathRecursive(journalRoot);
+        rollbackStatus = 'NOT_TRIGGERED';
+    }
 
     return {
         targetRoot: normalizedTarget,
@@ -759,11 +902,13 @@ function runUninstall(options) {
         skipBackups,
         backupRoot: backupRoot || '<none>',
         preservedRuntimePath: preservedRuntimePath || '<none>',
+        preservedProjectMemoryPath: preservedProjectMemoryPath || '<none>',
         filesUpdated: updatedFiles,
         filesDeleted: deletedFiles,
         filesRestored: restoredFiles,
         directoriesDeleted: deletedDirectories,
         itemsBackedUp,
+        rollbackStatus,
         warningsCount: warnings.length,
         warnings,
         result: dryRun ? 'DRY_RUN' : 'SUCCESS'
@@ -779,6 +924,7 @@ module.exports = {
     PRE_COMMIT_HOOK_RELATIVE,
     PROVIDER_AGENT_FILES,
     QWEN_SETTINGS_RELATIVE,
+    getUninstallRollbackItems,
     parseBooleanAnswer,
     runUninstall
 };

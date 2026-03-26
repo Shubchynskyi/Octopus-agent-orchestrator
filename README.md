@@ -1,25 +1,37 @@
-![Octopus Agent Orchestrator](Image.png)
+![Octopus Agent Orchestrator](https://raw.githubusercontent.com/Shubchynskyi/Octopus-agent-orchestrator/master/Image.png)
 
 # Octopus Agent Orchestrator
 
 Deterministic task orchestration for AI coding agents.
 Deploys canonical rules, mandatory quality gates, and token-usage optimization into any project — works with Claude, Codex, Copilot, Gemini, Windsurf, Junie, and Antigravity.
 
-**[Quick Start](#quick-start)** · **[User Guide](HOW_TO.md)** · **[CLI Reference](docs/cli-reference.md)** · **[Architecture](docs/architecture.md)** · **[Configuration](docs/configuration.md)** · **[Work Example](docs/work-example.md)** · **[Changelog](CHANGELOG.md)**
+**[Quick Start](#quick-start)** · **[User Guide](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/HOW_TO.md)** · **[CLI Reference](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md)** · **[Architecture](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/architecture.md)** · **[Configuration](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/configuration.md)** · **[Work Example](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/work-example.md)** · **[Changelog](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/CHANGELOG.md)**
 
 ## Quick Start
 
-```powershell
-# 1. Easiest first-run
-npx -y octopus-agent-orchestrator setup
+```shell
+# 1. Install the CLI once
+npm install -g octopus-agent-orchestrator
 
-# 2. Then give AGENT_INIT_PROMPT.md to your coding agent
+# 2. Run setup through the global command
+octopus setup
+
+# 3. Then give AGENT_INIT_PROMPT.md to your coding agent
 #    Agent reuses existing init answers, explicitly confirms active agent files,
 #    fills project context, offers optional skill packs, and finishes with octopus agent-init
 
-# 3. After octopus agent-init passes, start working
+# 4. After octopus agent-init passes, start working
 #    "Execute task T-001 depth=2"
 ```
+
+Temporary fallback without global install:
+
+```shell
+npx -y octopus-agent-orchestrator setup
+```
+
+`npx` runs the package once and does not keep `octopus` or `oao` in your `PATH`.
+If you want persistent commands, install globally.
 
 ## Key Features
 
@@ -60,18 +72,24 @@ npx -y octopus-agent-orchestrator setup
 | `octopus reinit` | Change init answers without full reinstall |
 | `octopus check-update` | Compare current deployment with a newer npm package or local source |
 | `octopus update` | Apply the update workflow directly (`--dry-run` for preview) |
+| `octopus update git` | Apply or preview an update from a git repo or local clone |
+| `octopus rollback` | Roll back to a specific version or restore from the latest rollback snapshot |
 | `octopus uninstall` | Remove orchestrator with keep/delete choices |
 | `octopus skills` | List, suggest, add, remove, and validate optional built-in skill packs |
 
 Aliases: `octopus`, `oao`, `octopus-agent-orchestrator`
 
-Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
+Full reference: **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md)**
 
 ## Version
 
 - Package: `octopus-agent-orchestrator`
-- Current: `2.0.0` (source: `VERSION`)
-- npm: `npm install octopus-agent-orchestrator`
+- Current version source of truth: `VERSION`
+- Package manifest versions: `package.json`, `package-lock.json`
+- Recommended CLI install: `npm install -g octopus-agent-orchestrator`
+- Recommended first command: `octopus setup`
+- One-off fallback without install: `npx -y octopus-agent-orchestrator setup`
+- Install locally only if you want repo-local binaries in `node_modules/.bin`: `npm install octopus-agent-orchestrator`
 
 ## Runtime Baseline
 
@@ -82,21 +100,21 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 
 | Document | Description |
 |---|---|
-| **[HOW_TO.md](HOW_TO.md)** | Step-by-step user guide |
-| **[docs/cli-reference.md](docs/cli-reference.md)** | Complete CLI command reference |
-| **[docs/architecture.md](docs/architecture.md)** | Design, runtime model, deployed files |
-| **[docs/configuration.md](docs/configuration.md)** | Token economy, output filters, review capabilities |
-| **[docs/node-platform-foundation.md](docs/node-platform-foundation.md)** | Node 20 M1 foundation, validators, and build/test skeleton |
-| **[docs/work-example.md](docs/work-example.md)** | Task lifecycle walkthrough |
-| **[AGENT_INIT_PROMPT.md](AGENT_INIT_PROMPT.md)** | Setup prompt for coding agents |
-| **[CHANGELOG.md](CHANGELOG.md)** | Full changelog |
-| **[MANIFEST.md](MANIFEST.md)** | Bundle file manifest |
+| **[HOW_TO.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/HOW_TO.md)** | Step-by-step user guide |
+| **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md)** | Complete CLI command reference |
+| **[docs/architecture.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/architecture.md)** | Design, runtime model, deployed files |
+| **[docs/configuration.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/configuration.md)** | Token economy, output filters, review capabilities |
+| **[docs/node-platform-foundation.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/node-platform-foundation.md)** | Node 20 M1 foundation, validators, and build/test skeleton |
+| **[docs/work-example.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/work-example.md)** | Task lifecycle walkthrough |
+| **[AGENT_INIT_PROMPT.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/AGENT_INIT_PROMPT.md)** | Setup prompt for coding agents |
+| **[CHANGELOG.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/CHANGELOG.md)** | Full changelog |
+| **[MANIFEST.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/MANIFEST.md)** | Bundle file manifest |
 
 ## Recent Changes
 
 - Stabilized the Node gate router for scoped diff, review-context, task-event summary, and completion flows.
 - Added root `tsconfig.json` for standard editor/IDE TypeScript discovery and included it in the published package surface.
-- Full `template/scripts/tests` baseline now completes cleanly without noisy PowerShell progress output from temp workspace helpers.
+- Full `tests/node/**` baseline now completes cleanly without temp workspace helper noise.
 - Compact Command Hints added to agent rules for token-efficient CLI usage.
 - E2E smoke tests covering full install/reinit/uninstall lifecycle matrix.
 - Token-economy defaults aligned: `enabled=true` with `enabled_depths=[1,2]`.
@@ -120,7 +138,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 
 ## License
 
-MIT License. See `LICENSE`.
+Apache License 2.0. See `LICENSE`.
 
 ## Author
 

@@ -4,6 +4,7 @@ const childProcess = require('node:child_process');
 
 const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
 const { normalizeRelativePath } = require('../core/paths.ts');
+const { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } = require('../core/subprocess.ts');
 
 const EXCLUDED_PATH_FRAGMENTS = Object.freeze([
     '/.git/', '/node_modules/', '/.next/', '/dist/', '/build/',
@@ -38,11 +39,13 @@ function getProjectDiscovery(targetRoot) {
     try {
         const gitDir = path.join(targetRoot, '.git');
         if (pathExists(gitDir)) {
-            const tracked = childProcess.spawnSync('git', ['ls-files'], {
-                cwd: targetRoot, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']
+            const tracked = spawnSyncWithTimeout('git', ['ls-files'], {
+                cwd: targetRoot, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+                timeoutMs: DEFAULT_GIT_TIMEOUT_MS
             });
-            const untracked = childProcess.spawnSync('git', ['ls-files', '--others', '--exclude-standard'], {
-                cwd: targetRoot, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']
+            const untracked = spawnSyncWithTimeout('git', ['ls-files', '--others', '--exclude-standard'], {
+                cwd: targetRoot, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+                timeoutMs: DEFAULT_GIT_TIMEOUT_MS
             });
 
             if (tracked.status === 0 && untracked.status === 0) {

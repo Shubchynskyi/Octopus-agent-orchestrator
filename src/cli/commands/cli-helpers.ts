@@ -18,6 +18,7 @@ const {
 } = require('../../materialization/common.ts');
 
 const { isPathInsideRoot } = require('../../core/paths.ts');
+const { registerTempRoot } = require('../signal-handler.ts');
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -59,6 +60,8 @@ const COMMAND_SUMMARY = Object.freeze([
     ['bootstrap', 'Deploy bundle only'],
     ['reinit', 'Change init answers'],
     ['update', 'Check/apply updates'],
+    ['update git', 'Apply update from git source'],
+    ['rollback', 'Rollback to a specific or previous version'],
     ['uninstall', 'Remove orchestrator'],
     ['verify', 'Verify workspace layout'],
     ['check-update', 'Check for available updates'],
@@ -528,6 +531,7 @@ async function acquireSourceRoot(repoUrl, branch, packageRoot) {
     }
     const effectiveRepoUrl = String(repoUrl || DEFAULT_REPO_URL).trim();
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-source-'));
+    const disposeSignalCleanup = registerTempRoot(tempRoot);
     try {
         const cloneArgs = ['clone', '--quiet', '--depth', '1'];
         if (branch) { cloneArgs.push('--branch', String(branch).trim(), '--single-branch'); }
@@ -536,21 +540,13 @@ async function acquireSourceRoot(repoUrl, branch, packageRoot) {
         return {
             sourceRoot: tempRoot,
             bundleVersion: readBundleVersion(tempRoot),
-            cleanup: function () { fs.rmSync(tempRoot, { recursive: true, force: true }); }
+            cleanup: function () { disposeSignalCleanup(); fs.rmSync(tempRoot, { recursive: true, force: true }); }
         };
     } catch (error) {
+        disposeSignalCleanup();
         fs.rmSync(tempRoot, { recursive: true, force: true });
         throw error;
     }
-}
-
-function addStringArg(args, name, value) {
-    if (value === undefined || value === null || String(value).trim() === '') return;
-    args.push(`-${name}`, String(value));
-}
-
-function addSwitchArg(args, name, enabled) {
-    if (enabled) args.push(`-${name}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -671,7 +667,9 @@ function printHelp(packageJson) {
             '  install       Deploy or refresh the bundle and run the Node install pipeline.',
             '  init          Re-materialize live/ from an existing deployed bundle.',
             '  reinit        Re-ask or override init answers for an existing deployed bundle.',
-            '  update        Check for updates and optionally apply them.',
+            '  update        Check for updates and optionally apply them (npm by default).',
+            '  update git    Apply update from a git repo or local git clone.',
+            '  rollback      Rollback to a specific version or restore from the latest rollback snapshot.',
             '  uninstall     Remove the deployed orchestrator bundle and managed files.',
             '  verify        Validate deployment consistency and rule contracts.',
             '  check-update  Compare current deployment with a newer npm package or local source.',
@@ -696,7 +694,12 @@ function printHelp(packageJson) {
         [
             'Update source override options:',
             '      --package-spec SPEC          npm package spec, version tag, or local .tgz for check-update/update.',
-            '      --source-path PATH           Local unpacked bundle root for check-update/update testing.'
+            '      --source-path PATH           Local unpacked bundle root for check-update/update testing.',
+            '      --repo-url URL               Git source override for `octopus update git`.',
+            '      --branch NAME                Git branch override for `octopus update git`.',
+            '      --check-only                 Compare a git source without applying the update.',
+            '      --snapshot-path PATH         Explicit rollback snapshot path for `octopus rollback`.',
+            '      --to-version VERSION         Rollback to a specific orchestrator version (acquires source, syncs bundle, re-materializes).'
         ],
         [
             'Notes:',
@@ -706,7 +709,10 @@ function printHelp(packageJson) {
             '  - agent-init is the hard code-level gate that records active agent files, project-rule completion, skills prompt completion, and final verify/manifest PASS.',
             '  - skills manages optional built-in packs (installable bundles) and skill recommendations (concrete live/skills directories) from Octopus-agent-orchestrator/live/config/skills-index.json.',
             '  - update/check-update use the deployed package name from package.json with the npm latest tag by default.',
-            '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
+            '  - use `octopus update git` when you explicitly want git-based source acquisition.',
+            '  - update/check-update run the full update lifecycle after bundle sync when an update is applied.',
+            '  - rollback without --to-version restores the latest saved pre-update snapshot; with --to-version it acquires that version, syncs the bundle, and re-materializes the workspace.',
+            '  - older snapshots created before rollback metadata persistence cannot be restored automatically.'
         ]
     ];
     console.log(sections.map(function (s) { return s.join('\n'); }).join('\n\n'));
@@ -732,7 +738,9 @@ function buildHelpText(packageJson) {
             '  install       Deploy or refresh the bundle and run the Node install pipeline.',
             '  init          Re-materialize live/ from an existing deployed bundle.',
             '  reinit        Re-ask or override init answers for an existing deployed bundle.',
-            '  update        Check for updates and optionally apply them.',
+            '  update        Check for updates and optionally apply them (npm by default).',
+            '  update git    Apply update from a git repo or local git clone.',
+            '  rollback      Rollback to a specific version or restore from the latest rollback snapshot.',
             '  uninstall     Remove the deployed orchestrator bundle and managed files.',
             '  verify        Validate deployment consistency and rule contracts.',
             '  check-update  Compare current deployment with a newer npm package or local source.',
@@ -757,7 +765,12 @@ function buildHelpText(packageJson) {
         [
             'Update source override options:',
             '      --package-spec SPEC          npm package spec, version tag, or local .tgz for check-update/update.',
-            '      --source-path PATH           Local unpacked bundle root for check-update/update testing.'
+            '      --source-path PATH           Local unpacked bundle root for check-update/update testing.',
+            '      --repo-url URL               Git source override for `octopus update git`.',
+            '      --branch NAME                Git branch override for `octopus update git`.',
+            '      --check-only                 Compare a git source without applying the update.',
+            '      --snapshot-path PATH         Explicit rollback snapshot path for `octopus rollback`.',
+            '      --to-version VERSION         Rollback to a specific orchestrator version (acquires source, syncs bundle, re-materializes).'
         ],
         [
             'Notes:',
@@ -767,7 +780,10 @@ function buildHelpText(packageJson) {
             '  - agent-init is the hard code-level gate that records active agent files, project-rule completion, skills prompt completion, and final verify/manifest PASS.',
             '  - skills manages optional built-in packs (installable bundles) and skill recommendations (concrete live/skills directories) from Octopus-agent-orchestrator/live/config/skills-index.json.',
             '  - update/check-update use the deployed package name from package.json with the npm latest tag by default.',
-            '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
+            '  - use `octopus update git` when you explicitly want git-based source acquisition.',
+            '  - update/check-update run the full update lifecycle after bundle sync when an update is applied.',
+            '  - rollback without --to-version restores the latest saved pre-update snapshot; with --to-version it acquires that version, syncs the bundle, and re-materializes the workspace.',
+            '  - older snapshots created before rollback metadata persistence cannot be restored automatically.'
         ]
     ];
     return sections.map(function (s) { return s.join('\n'); }).join('\n\n');
@@ -820,8 +836,6 @@ function readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, comman
 
 module.exports = {
     acquireSourceRoot,
-    addStringArg,
-    addSwitchArg,
     bold,
     buildBannerText,
     buildHelpText,

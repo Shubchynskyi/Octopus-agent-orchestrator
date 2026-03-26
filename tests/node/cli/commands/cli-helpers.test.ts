@@ -5,8 +5,6 @@ const path = require('node:path');
 const os = require('node:os');
 
 const {
-    addStringArg,
-    addSwitchArg,
     buildBannerText,
     buildHelpText,
     COMMAND_SUMMARY,
@@ -668,36 +666,6 @@ test('readBundleVersion falls back to package.json', () => {
 });
 
 // ---------------------------------------------------------------------------
-// addStringArg / addSwitchArg
-// ---------------------------------------------------------------------------
-
-test('addStringArg adds name-value pair', () => {
-    const args = [];
-    addStringArg(args, 'TargetRoot', '/tmp');
-    assert.deepEqual(args, ['-TargetRoot', '/tmp']);
-});
-
-test('addStringArg skips null/undefined/empty', () => {
-    const args = [];
-    addStringArg(args, 'Name', null);
-    addStringArg(args, 'Name', undefined);
-    addStringArg(args, 'Name', '');
-    assert.deepEqual(args, []);
-});
-
-test('addSwitchArg adds switch when enabled', () => {
-    const args = [];
-    addSwitchArg(args, 'DryRun', true);
-    assert.deepEqual(args, ['-DryRun']);
-});
-
-test('addSwitchArg skips when disabled', () => {
-    const args = [];
-    addSwitchArg(args, 'DryRun', false);
-    assert.deepEqual(args, []);
-});
-
-// ---------------------------------------------------------------------------
 // Banner / help builders
 // ---------------------------------------------------------------------------
 
@@ -725,6 +693,8 @@ test('buildHelpText includes all command descriptions', () => {
     assert.ok(text.includes('--repo-url'));
     assert.ok(text.includes('--package-spec'));
     assert.ok(text.includes('--source-path'));
+    assert.ok(text.includes('--snapshot-path'));
+    assert.ok(text.includes('rollback'));
 });
 
 test('COMMAND_SUMMARY has expected commands', () => {
@@ -734,6 +704,7 @@ test('COMMAND_SUMMARY has expected commands', () => {
     assert.ok(names.includes('bootstrap'));
     assert.ok(names.includes('doctor'));
     assert.ok(names.includes('status'));
+    assert.ok(names.includes('rollback'));
     assert.ok(names.includes('skills'));
     assert.ok(names.includes('gate'));
     assert.equal(COMMAND_SUMMARY.find(function (c) { return c[0] === 'skills'; })[1], 'List, suggest, and manage optional skill packs');

@@ -24,6 +24,11 @@ function runtimeModulePath(...segments) {
     return path.join(runtimeRoot, ...segments) + runtimeExtension;
 }
 
+const {
+    installSignalHandlers,
+    registerTempRoot
+} = require(runtimeModulePath('cli', 'signal-handler'));
+
 const DEFAULT_BUNDLE_NAME = 'Octopus-agent-orchestrator';
 const DEFAULT_INIT_ANSWERS_RELATIVE_PATH = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json');
 const DEFAULT_REPO_URL = 'https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git';
@@ -38,6 +43,7 @@ const LIFECYCLE_COMMANDS = new Set([
     'reinit',
     'uninstall',
     'update',
+    'rollback',
     'verify',
     'check-update',
     'skills',
@@ -121,6 +127,8 @@ const COMMAND_SUMMARY = Object.freeze([
     ['bootstrap', 'Deploy bundle only'],
     ['reinit', 'Change init answers'],
     ['update', 'Check/apply updates'],
+    ['update git', 'Apply update from git source'],
+    ['rollback', 'Rollback to a specific or previous version'],
     ['uninstall', 'Remove orchestrator'],
     ['verify', 'Verify workspace layout'],
     ['check-update', 'Check for available updates'],
@@ -896,6 +904,7 @@ async function acquireSourceRoot(repoUrl, branch) {
 
     const effectiveRepoUrl = String(repoUrl || DEFAULT_REPO_URL).trim();
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-source-'));
+    const disposeSignalCleanup = registerTempRoot(tempRoot);
 
     try {
         const cloneArgs = ['clone', '--quiet', '--depth', '1'];
@@ -912,10 +921,12 @@ async function acquireSourceRoot(repoUrl, branch) {
             sourceRoot: tempRoot,
             bundleVersion: readBundleVersion(tempRoot),
             cleanup() {
+                disposeSignalCleanup();
                 fs.rmSync(tempRoot, { recursive: true, force: true });
             }
         };
     } catch (error) {
+        disposeSignalCleanup();
         fs.rmSync(tempRoot, { recursive: true, force: true });
         throw error;
     }
@@ -1236,7 +1247,9 @@ function printHelp(packageJson) {
             '  install       Deploy or refresh the bundle and run the Node install pipeline.',
             '  init          Re-materialize live/ from an existing deployed bundle.',
             '  reinit        Re-ask or override init answers for an existing deployed bundle.',
-            '  update        Check for updates and optionally apply them.',
+            '  update        Check for updates and optionally apply them (npm by default).',
+            '  update git    Apply update from a git repo or local git clone.',
+            '  rollback      Rollback to a specific version or restore from the latest rollback snapshot.',
             '  uninstall     Remove the deployed orchestrator bundle and managed files.',
             '  verify        Validate deployment consistency and rule contracts.',
             '  check-update  Compare current deployment with a newer npm package or local source.',
@@ -1261,7 +1274,13 @@ function printHelp(packageJson) {
         [
             'Update source override options:',
             '      --package-spec SPEC          npm package spec, version tag, or local .tgz for check-update/update.',
-            '      --source-path PATH           Local unpacked bundle root for check-update/update testing.'
+            '      --source-path PATH           Local unpacked bundle root for check-update/update testing.',
+            '      --repo-url URL               Git source override for `octopus update git`.',
+            '      --branch NAME                Git branch override for `octopus update git`.',
+            '      --check-only                 Compare a git source without applying the update.',
+            '      --trust-override              Bypass update source trust validation.',
+            '      --snapshot-path PATH         Explicit rollback snapshot path for `octopus rollback`.',
+            '      --to-version VERSION         Rollback to a specific orchestrator version (acquires source, syncs bundle, re-materializes).'
         ],
         [
             'Notes:',
@@ -1271,7 +1290,10 @@ function printHelp(packageJson) {
             '  - agent-init is the hard code-level gate that records active agent files, project-rule completion, skills prompt completion, and final verify/manifest PASS.',
             '  - skills manages optional built-in domain packs and code-driven recommendations from Octopus-agent-orchestrator/live/config/skills-index.json.',
             '  - update/check-update use the deployed package name from package.json with the npm latest tag by default.',
-            '  - update delegates to the built-in check-update flow, so --apply controls immediate update and --no-prompt disables prompts.'
+            '  - use `octopus update git` when you explicitly want git-based source acquisition.',
+            '  - update/check-update run the full update lifecycle after bundle sync when an update is applied.',
+            '  - rollback without --to-version restores the latest saved pre-update snapshot; with --to-version it acquires that version, syncs the bundle, and re-materializes the workspace.',
+            '  - older snapshots created before rollback metadata persistence cannot be restored automatically.'
         ]
     ];
 
@@ -1392,12 +1414,8 @@ async function handleInstall(commandArgv, packageJson) {
         const bundlePath = getBundlePath(targetRoot);
         const sourceResolved = path.resolve(source.sourceRoot);
         const bundleResolved = path.resolve(bundlePath);
-        if (sourceResolved.toLowerCase() !== bundleResolved.toLowerCase()) {
-            if (fs.existsSync(bundlePath) && fs.lstatSync(bundlePath).isDirectory()) {
-                syncBundleItems(source.sourceRoot, bundlePath);
-            } else if (!options.dryRun) {
-                syncBundleItems(source.sourceRoot, bundlePath);
-            }
+        if (sourceResolved.toLowerCase() !== bundleResolved.toLowerCase() && !options.dryRun) {
+            syncBundleItems(source.sourceRoot, bundlePath);
         }
 
         const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
@@ -1518,7 +1536,7 @@ async function handleDoctor(commandArgv, packageJson) {
     const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'doctor');
     const manifestPath = path.join(bundlePath, 'MANIFEST.md');
 
-    // T-074: call TS implementations directly instead of PowerShell
+    // T-074: call TS implementations directly
     const { runVerify, formatVerifyResult } = require(runtimeModulePath('validators', 'verify'));
     const verifyResult = runVerify({
         targetRoot,
@@ -1570,7 +1588,7 @@ async function handleReinit(commandArgv, packageJson) {
     ensureDirectoryExists(targetRoot, 'Target root');
     const bundlePath = ensureBundleExists(targetRoot, 'reinit');
 
-    // T-074: call TS implementation directly instead of PowerShell
+    // T-074: call TS implementation directly
     const overrides = {};
     if (options.assistantLanguage !== undefined) overrides.AssistantLanguage = options.assistantLanguage;
     if (options.assistantBrevity !== undefined) overrides.AssistantBrevity = normalizeAssistantBrevity(options.assistantBrevity);
@@ -1596,17 +1614,51 @@ async function handleReinit(commandArgv, packageJson) {
     ]);
 }
 
+function buildUpdateLifecycleRunner(bundlePath, fallbackDryRun) {
+    return function runLifecycleFromCli(runnerOptions) {
+        const { runUpdate } = require(runtimeModulePath('lifecycle', 'update'));
+        return runUpdate({
+            targetRoot: runnerOptions.targetRoot,
+            bundleRoot: bundlePath,
+            initAnswersPath: runnerOptions.initAnswersPath,
+            dryRun: fallbackDryRun,
+            skipVerify: runnerOptions.skipVerify,
+            skipManifestValidation: runnerOptions.skipManifestValidation
+        });
+    };
+}
+
+function mergeUpdateLifecycleOutput(baseResult, lifecycleResult) {
+    if (!lifecycleResult) {
+        return baseResult;
+    }
+
+    return {
+        ...baseResult,
+        previousVersion: lifecycleResult.previousVersion,
+        updatedVersion: lifecycleResult.updatedVersion,
+        rollbackSnapshotPath: lifecycleResult.rollbackSnapshotPath,
+        rollbackStatus: lifecycleResult.rollbackStatus,
+        updateReportPath: lifecycleResult.updateReportPath
+    };
+}
+
 async function handleUpdate(commandArgv, packageJson) {
+    if (commandArgv.length > 0 && String(commandArgv[0]).trim().toLowerCase() === 'git') {
+        await handleUpdateGit(commandArgv.slice(1), packageJson);
+        return;
+    }
+
     const updateDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
         '--package-spec': { key: 'packageSpec', type: 'string' },
         '--source-path': { key: 'sourcePath', type: 'string' },
-        '--apply': { key: 'apply', type: 'boolean' },
         '--no-prompt': { key: 'noPrompt', type: 'boolean' },
         '--dry-run': { key: 'dryRun', type: 'boolean' },
         '--skip-verify': { key: 'skipVerify', type: 'boolean' },
-        '--skip-manifest-validation': { key: 'skipManifestValidation', type: 'boolean' }
+        '--skip-manifest-validation': { key: 'skipManifestValidation', type: 'boolean' },
+        '--trust-override': { key: 'trustOverride', type: 'boolean' }
     };
     const { options } = parseOptions(commandArgv, updateDefinitions);
 
@@ -1623,9 +1675,9 @@ async function handleUpdate(commandArgv, packageJson) {
     ensureDirectoryExists(targetRoot, 'Target root');
     const bundlePath = ensureBundleExists(targetRoot, 'update');
 
-    // T-075: call TS implementation directly — Node-only runtime
     const { runCheckUpdate } = require(runtimeModulePath('lifecycle', 'check-update'));
-    const updateResult = runCheckUpdate({
+    let lifecycleResult = null;
+    const updateResult = await runCheckUpdate({
         targetRoot,
         bundleRoot: bundlePath,
         initAnswersPath: options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
@@ -1635,12 +1687,73 @@ async function handleUpdate(commandArgv, packageJson) {
         noPrompt: options.noPrompt,
         dryRun: options.dryRun,
         skipVerify: options.skipVerify,
-        skipManifestValidation: options.skipManifestValidation
+        skipManifestValidation: options.skipManifestValidation,
+        trustOverride: options.trustOverride,
+        updateRunner: (runnerOptions) => {
+            lifecycleResult = buildUpdateLifecycleRunner(bundlePath, options.dryRun)(runnerOptions);
+            return lifecycleResult;
+        }
     });
-    formatKeyValueOutput(updateResult, [
+    formatKeyValueOutput(mergeUpdateLifecycleOutput(updateResult, lifecycleResult), [
         'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
         'currentVersion', 'latestVersion', 'updateAvailable',
-        'updateApplied', 'checkUpdateResult'
+        'updateApplied', 'checkUpdateResult', 'trustPolicy',
+        'previousVersion', 'updatedVersion', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
+    ]);
+}
+
+async function handleUpdateGit(commandArgv, packageJson) {
+    const updateGitDefinitions = {
+        '--target-root': { key: 'targetRoot', type: 'string' },
+        '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
+        '--repo-url': { key: 'repoUrl', type: 'string' },
+        '--branch': { key: 'branch', type: 'string' },
+        '--check-only': { key: 'checkOnly', type: 'boolean' },
+        '--no-prompt': { key: 'noPrompt', type: 'boolean' },
+        '--dry-run': { key: 'dryRun', type: 'boolean' },
+        '--skip-verify': { key: 'skipVerify', type: 'boolean' },
+        '--skip-manifest-validation': { key: 'skipManifestValidation', type: 'boolean' },
+        '--trust-override': { key: 'trustOverride', type: 'boolean' }
+    };
+    const { options } = parseOptions(commandArgv, updateGitDefinitions);
+
+    if (options.help) {
+        printHelp(packageJson);
+        return;
+    }
+    if (options.version) {
+        console.log(packageJson.version);
+        return;
+    }
+
+    const targetRoot = normalizePathValue(options.targetRoot || '.');
+    ensureDirectoryExists(targetRoot, 'Target root');
+    const bundlePath = ensureBundleExists(targetRoot, 'update git');
+
+    const { runUpdateFromGit } = require(runtimeModulePath('lifecycle', 'update-git'));
+    let lifecycleResult = null;
+    const updateResult = await runUpdateFromGit({
+        targetRoot,
+        bundleRoot: bundlePath,
+        initAnswersPath: options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+        repoUrl: options.repoUrl,
+        branch: options.branch,
+        checkOnly: options.checkOnly,
+        noPrompt: options.noPrompt,
+        dryRun: options.dryRun,
+        skipVerify: options.skipVerify,
+        skipManifestValidation: options.skipManifestValidation,
+        trustOverride: options.trustOverride,
+        updateRunner: (runnerOptions) => {
+            lifecycleResult = buildUpdateLifecycleRunner(bundlePath, options.dryRun)(runnerOptions);
+            return lifecycleResult;
+        }
+    });
+    formatKeyValueOutput(mergeUpdateLifecycleOutput(updateResult, lifecycleResult), [
+        'targetRoot', 'repoUrl', 'branch', 'sourceType', 'sourceReference',
+        'currentVersion', 'latestVersion', 'updateAvailable',
+        'updateApplied', 'checkUpdateResult', 'trustPolicy',
+        'previousVersion', 'updatedVersion', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
     ]);
 }
 
@@ -1690,7 +1803,7 @@ async function handleUninstall(commandArgv, packageJson) {
         'targetRoot', 'keepPrimaryEntrypoint', 'keepTaskFile',
         'keepRuntimeArtifacts', 'dryRun', 'backupRoot',
         'preservedRuntimePath', 'filesDeleted', 'directoriesDeleted',
-        'filesRestored', 'itemsBackedUp',
+        'filesRestored', 'itemsBackedUp', 'rollbackStatus',
         'warningsCount'
     ]);
     console.log('Result: ' + (uninstallResult.result || 'SUCCESS'));
@@ -1766,7 +1879,7 @@ function handleVerify(commandArgv, packageJson) {
 // check-update command
 // ---------------------------------------------------------------------------
 
-function handleCheckUpdate(commandArgv, packageJson) {
+async function handleCheckUpdate(commandArgv, packageJson) {
     const checkUpdateDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
@@ -1776,7 +1889,8 @@ function handleCheckUpdate(commandArgv, packageJson) {
         '--no-prompt': { key: 'noPrompt', type: 'boolean' },
         '--dry-run': { key: 'dryRun', type: 'boolean' },
         '--skip-verify': { key: 'skipVerify', type: 'boolean' },
-        '--skip-manifest-validation': { key: 'skipManifestValidation', type: 'boolean' }
+        '--skip-manifest-validation': { key: 'skipManifestValidation', type: 'boolean' },
+        '--trust-override': { key: 'trustOverride', type: 'boolean' }
     };
     const { options } = parseOptions(commandArgv, checkUpdateDefinitions);
 
@@ -1788,7 +1902,8 @@ function handleCheckUpdate(commandArgv, packageJson) {
     const bundlePath = ensureBundleExists(targetRoot, 'check-update');
 
     const { runCheckUpdate } = require(runtimeModulePath('lifecycle', 'check-update'));
-    const checkResult = runCheckUpdate({
+    let lifecycleResult = null;
+    const checkResult = await runCheckUpdate({
         targetRoot,
         bundleRoot: bundlePath,
         initAnswersPath: options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
@@ -1798,20 +1913,77 @@ function handleCheckUpdate(commandArgv, packageJson) {
         noPrompt: options.noPrompt,
         dryRun: options.dryRun,
         skipVerify: options.skipVerify,
-        skipManifestValidation: options.skipManifestValidation
+        skipManifestValidation: options.skipManifestValidation,
+        trustOverride: options.trustOverride,
+        updateRunner: (runnerOptions) => {
+            lifecycleResult = buildUpdateLifecycleRunner(bundlePath, options.dryRun)(runnerOptions);
+            return lifecycleResult;
+        }
     });
-    formatKeyValueOutput(checkResult, [
+    formatKeyValueOutput(mergeUpdateLifecycleOutput(checkResult, lifecycleResult), [
         'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
         'currentVersion', 'latestVersion', 'updateAvailable',
-        'checkUpdateResult'
+        'checkUpdateResult', 'trustPolicy', 'previousVersion', 'updatedVersion',
+        'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
     ]);
+}
+
+async function handleRollback(commandArgv, packageJson) {
+    const rollbackDefinitions = {
+        '--target-root': { key: 'targetRoot', type: 'string' },
+        '--snapshot-path': { key: 'snapshotPath', type: 'string' },
+        '--to-version': { key: 'toVersion', type: 'string' },
+        '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
+        '--source-path': { key: 'sourcePath', type: 'string' },
+        '--package-spec': { key: 'packageSpec', type: 'string' },
+        '--dry-run': { key: 'dryRun', type: 'boolean' }
+    };
+    const { options } = parseOptions(commandArgv, rollbackDefinitions);
+
+    if (options.help) { printHelp(packageJson); return; }
+    if (options.version) { console.log(packageJson.version); return; }
+
+    const targetRoot = normalizePathValue(options.targetRoot || '.');
+    ensureDirectoryExists(targetRoot, 'Target root');
+    const bundlePath = ensureBundleExists(targetRoot, 'rollback');
+
+    const { runRollback } = require(runtimeModulePath('lifecycle', 'rollback'));
+    const rollbackResult = await runRollback({
+        targetRoot,
+        bundleRoot: bundlePath,
+        snapshotPath: options.snapshotPath,
+        targetVersion: options.toVersion,
+        sourcePath: options.sourcePath,
+        packageSpec: options.packageSpec,
+        initAnswersPath: options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+        dryRun: options.dryRun
+    });
+
+    if (rollbackResult.rollbackMode === 'version') {
+        formatKeyValueOutput(rollbackResult, [
+            'targetRoot', 'rollbackMode', 'targetVersion',
+            'sourceType', 'sourceReference', 'sourceVersion',
+            'currentVersion', 'rollbackVersion', 'updatedVersion',
+            'restoreStatus', 'syncStatus', 'installStatus', 'materializationStatus',
+            'safetySnapshotPath', 'safetySnapshotRecordsPath', 'safetyRollbackStatus',
+            'bundleSyncBackupPath', 'rollbackReportPath'
+        ]);
+    } else {
+        formatKeyValueOutput(rollbackResult, [
+            'targetRoot', 'rollbackMode', 'snapshotPath', 'rollbackRecordsPath', 'rollbackRecordCount',
+            'currentVersion', 'snapshotVersion', 'rollbackVersion', 'updatedVersion', 'restoreStatus',
+            'bundleBackupPath', 'bundleBackupMetadataPath', 'bundleRestoreStatus',
+            'safetySnapshotPath', 'safetySnapshotRecordsPath', 'safetyRollbackStatus',
+            'rollbackReportPath'
+        ]);
+    }
 }
 
 // ---------------------------------------------------------------------------
 // T-074: gate command family (new CLI entrypoint)
 // ---------------------------------------------------------------------------
 
-function handleGate(commandArgv) {
+async function handleGate(commandArgv) {
     if (commandArgv.length === 0 || commandArgv[0] === '-h' || commandArgv[0] === '--help') {
         const { getAllShimmedGateNames } = require(runtimeModulePath('compat', 'shim-registry'));
         console.log(bold('Available gates:'));
@@ -1823,9 +1995,8 @@ function handleGate(commandArgv) {
     const gateArgv = commandArgv.slice(1);
 
     // Adapt PS-style args if present
-    const { adaptPsArgs } = require(runtimeModulePath('compat', 'ps-arg-adapter'));
     const gateHelpers = require(runtimeModulePath('gates', 'helpers'));
-    const adaptedArgv = adaptPsArgs(gateArgv);
+    const adaptedArgv = gateArgv;
 
     switch (gateName) {
         case 'validate-manifest': {
@@ -1875,7 +2046,7 @@ function handleGate(commandArgv) {
             };
             const { options } = parseOptions(adaptedArgv, defs);
             const { runCompileGateCommand } = require(runtimeModulePath('cli', 'commands', 'gates'));
-            const result = runCompileGateCommand(options);
+            const result = await runCompileGateCommand(options);
             process.stdout.write(`${result.outputLines.join('\n')}\n`);
             if (result.exitCode !== 0) {
                 process.exitCode = result.exitCode;
@@ -2111,7 +2282,7 @@ function handleGate(commandArgv) {
         }
         case 'human-commit': {
             const { runHumanCommitCommand } = require(runtimeModulePath('cli', 'commands', 'gates'));
-            const exitCode = runHumanCommitCommand(adaptedArgv, { cwd: process.cwd() });
+            const exitCode = await runHumanCommitCommand(adaptedArgv, { cwd: process.cwd() });
             if (exitCode !== 0) {
                 process.exitCode = exitCode;
             }
@@ -2122,7 +2293,17 @@ function handleGate(commandArgv) {
     }
 }
 
+let resolvedCommand = null;
+
+function getFailureMarker(command) {
+    if (!command || command === 'bootstrap') {
+        return 'OCTOPUS_BOOTSTRAP_FAILED';
+    }
+    return 'OCTOPUS_CLI_FAILED';
+}
+
 async function main() {
+    installSignalHandlers();
     const packageJson = readPackageJson();
     const argv = process.argv.slice(2);
     if (argv.length === 0) {
@@ -2131,6 +2312,7 @@ async function main() {
         return;
     }
     const commandName = getCommandName(argv);
+    resolvedCommand = commandName;
 
     if (commandName === 'help') {
         printHelp(packageJson);
@@ -2166,6 +2348,9 @@ async function main() {
         case 'update':
             await handleUpdate(commandArgv, packageJson);
             return;
+        case 'rollback':
+            await handleRollback(commandArgv, packageJson);
+            return;
         case 'uninstall':
             await handleUninstall(commandArgv, packageJson);
             return;
@@ -2173,13 +2358,13 @@ async function main() {
             handleVerify(commandArgv, packageJson);
             return;
         case 'check-update':
-            handleCheckUpdate(commandArgv, packageJson);
+            await handleCheckUpdate(commandArgv, packageJson);
             return;
         case 'skills':
             handleSkills(commandArgv, packageJson);
             return;
         case 'gate':
-            handleGate(commandArgv);
+            await handleGate(commandArgv);
             return;
         default:
             throw new Error(`Unsupported command: ${commandName}`);
@@ -2188,12 +2373,12 @@ async function main() {
 
 try {
     Promise.resolve(main()).catch((error) => {
-        console.error('OCTOPUS_BOOTSTRAP_FAILED');
+        console.error(getFailureMarker(resolvedCommand));
         console.error(error instanceof Error ? error.message : String(error));
         process.exit(1);
     });
 } catch (error) {
-    console.error('OCTOPUS_BOOTSTRAP_FAILED');
+    console.error(getFailureMarker(resolvedCommand));
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
 }

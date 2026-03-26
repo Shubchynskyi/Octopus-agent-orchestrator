@@ -123,6 +123,54 @@ test('normalizeIntegrityValue passes through primitives', () => {
     assert.equal(normalizeIntegrityValue(null), null);
 });
 
+test('normalizeIntegrityValue forward-slashes backslash strings', () => {
+    assert.equal(normalizeIntegrityValue('runtime\\task-events\\log.jsonl'), 'runtime/task-events/log.jsonl');
+    assert.equal(normalizeIntegrityValue('C:\\Users\\dev\\project'), 'C:/Users/dev/project');
+    // Already-forward-slashed strings are unchanged
+    assert.equal(normalizeIntegrityValue('runtime/task-events/log.jsonl'), 'runtime/task-events/log.jsonl');
+});
+
+test('normalizeIntegrityValue forward-slashes paths inside nested objects and arrays', () => {
+    const input = {
+        path: 'src\\gate-runtime\\task-events.ts',
+        nested: { deep: 'a\\b\\c' },
+        list: ['x\\y', 'already/fine']
+    };
+    const result = normalizeIntegrityValue(input);
+    assert.equal(result.path, 'src/gate-runtime/task-events.ts');
+    assert.equal(result.nested.deep, 'a/b/c');
+    assert.equal(result.list[0], 'x/y');
+    assert.equal(result.list[1], 'already/fine');
+});
+
+// --- cross-platform integrity hash regression ---
+
+test('buildEventIntegrityHash produces identical hash for Windows and Unix paths', () => {
+    const unixEvent = {
+        timestamp_utc: '2024-06-01T12:00:00.000Z',
+        task_id: 'T-090',
+        event_type: 'gate_pass',
+        outcome: 'PASS',
+        actor: 'verify',
+        message: 'runtime/task-events/T-090.task-event.jsonl',
+        details: { source: 'src/gate-runtime/task-events.ts' },
+        integrity: { schema_version: 1, task_sequence: 1, prev_event_sha256: null }
+    };
+    const windowsEvent = {
+        timestamp_utc: '2024-06-01T12:00:00.000Z',
+        task_id: 'T-090',
+        event_type: 'gate_pass',
+        outcome: 'PASS',
+        actor: 'verify',
+        message: 'runtime\\task-events\\T-090.task-event.jsonl',
+        details: { source: 'src\\gate-runtime\\task-events.ts' },
+        integrity: { schema_version: 1, task_sequence: 1, prev_event_sha256: null }
+    };
+    const unixHash = buildEventIntegrityHash(unixEvent);
+    const windowsHash = buildEventIntegrityHash(windowsEvent);
+    assert.equal(unixHash, windowsHash, 'Windows and Unix path variants must produce the same integrity hash');
+});
+
 // --- buildEventIntegrityHash ---
 
 test('buildEventIntegrityHash produces a 64-char lowercase hex string', () => {

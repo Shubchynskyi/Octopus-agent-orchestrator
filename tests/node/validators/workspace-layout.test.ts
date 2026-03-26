@@ -33,9 +33,10 @@ test('BASE_REQUIRED_PATHS is a frozen non-empty array', () => {
     assert.ok(!BASE_REQUIRED_PATHS.includes('.qwen/settings.json'));
 });
 
-test('RULE_FILES contains all 11 standard rule files', () => {
-    assert.equal(RULE_FILES.length, 11);
+test('RULE_FILES contains all 12 standard rule files', () => {
+    assert.equal(RULE_FILES.length, 12);
     assert.ok(RULE_FILES.includes('00-core.md'));
+    assert.ok(RULE_FILES.includes('15-project-memory.md'));
     assert.ok(RULE_FILES.includes('40-commands.md'));
     assert.ok(RULE_FILES.includes('90-skill-catalog.md'));
 });

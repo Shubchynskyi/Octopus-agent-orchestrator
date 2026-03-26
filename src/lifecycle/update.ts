@@ -7,12 +7,15 @@ const { readJsonFile } = require('../core/json.ts');
 const { isPathInsideRoot } = require('../core/paths.ts');
 const { validateInitAnswers } = require('../schemas/init-answers.ts');
 const { runInstall } = require('../materialization/install.ts');
+const { runInit } = require('../materialization/init.ts');
 
 const {
     createRollbackSnapshot,
     getTimestamp,
+    getRollbackRecordsPath,
     restoreRollbackSnapshot,
-    validateTargetRoot
+    validateTargetRoot,
+    writeRollbackRecords
 } = require('./common.ts');
 
 /**
@@ -40,6 +43,7 @@ function getUpdateRollbackItems(rootPath, initAnswersResolvedPath) {
         'Octopus-agent-orchestrator/.gitattributes',
         'Octopus-agent-orchestrator/bin',
         'Octopus-agent-orchestrator/live',
+        'Octopus-agent-orchestrator/live/docs/project-memory',
         'Octopus-agent-orchestrator/package.json',
         'Octopus-agent-orchestrator/src',
         'Octopus-agent-orchestrator/template',
@@ -73,6 +77,7 @@ function getUpdateRollbackItems(rootPath, initAnswersResolvedPath) {
  * @param {boolean} [options.skipVerify=false]
  * @param {boolean} [options.skipManifestValidation=false]
  * @param {Function} [options.installRunner] - Optional override for install step
+ * @param {Function} [options.materializationRunner] - Optional override for live/ materialization step
  * @param {Function} [options.verifyRunner] - Optional override for verify step
  * @param {Function} [options.manifestRunner] - Optional override for manifest validation step
  * @param {Function} [options.contractMigrationRunner] - Optional override for contract migration step
@@ -87,6 +92,7 @@ function runUpdate(options) {
         skipVerify = false,
         skipManifestValidation = false,
         installRunner = null,
+        materializationRunner = null,
         verifyRunner = null,
         manifestRunner = null,
         contractMigrationRunner = null
@@ -163,6 +169,7 @@ function runUpdate(options) {
     const timestamp = getTimestamp();
     const rollbackSnapshotRelativePath = `${DEFAULT_BUNDLE_NAME}/runtime/update-rollbacks/update-${timestamp}`;
     const rollbackSnapshotPath = path.join(normalizedTarget, rollbackSnapshotRelativePath);
+    const rollbackRecordsRelativePath = `${rollbackSnapshotRelativePath}/${path.basename(getRollbackRecordsPath(rollbackSnapshotPath))}`;
     const updateReportRelativePath = `${DEFAULT_BUNDLE_NAME}/runtime/update-reports/update-${timestamp}.md`;
     const updateReportPath = path.join(normalizedTarget, updateReportRelativePath);
 
@@ -172,6 +179,7 @@ function runUpdate(options) {
     let rollbackRecords = [];
 
     let installStatus = 'NOT_RUN';
+    let materializationStatus = 'NOT_RUN';
     let contractMigrationStatus = 'NOT_RUN';
     let verifyStatus = 'NOT_RUN';
     let manifestStatus = 'NOT_RUN';
@@ -184,6 +192,7 @@ function runUpdate(options) {
         fs.mkdirSync(path.dirname(rollbackSnapshotPath), { recursive: true });
         const rollbackItems = getUpdateRollbackItems(normalizedTarget, initAnswersResolvedPath);
         rollbackRecords = createRollbackSnapshot(normalizedTarget, rollbackSnapshotPath, rollbackItems);
+        writeRollbackRecords(rollbackSnapshotPath, rollbackRecords);
         rollbackRecordCount = rollbackRecords.length;
         rollbackSnapshotCreated = true;
     }
@@ -217,43 +226,72 @@ function runUpdate(options) {
         installStatus = 'PASS';
 
         if (dryRun) {
+            materializationStatus = 'SKIPPED_DRY_RUN';
             contractMigrationStatus = 'SKIPPED_DRY_RUN';
             verifyStatus = 'SKIPPED_DRY_RUN';
             manifestStatus = 'SKIPPED_DRY_RUN';
         } else {
+            // Materialization - rematerialize live/ from updated templates
+            currentStage = 'MATERIALIZATION';
+            if (materializationRunner) {
+                materializationRunner({
+                    targetRoot: normalizedTarget,
+                    bundleRoot,
+                    assistantLanguage,
+                    assistantBrevity,
+                    sourceOfTruth,
+                    enforceNoAutoCommit: validated.EnforceNoAutoCommit,
+                    tokenEconomyEnabled: validated.TokenEconomyEnabled
+                });
+            } else {
+                runInit({
+                    targetRoot: normalizedTarget,
+                    bundleRoot,
+                    dryRun: false,
+                    assistantLanguage,
+                    assistantBrevity,
+                    sourceOfTruth,
+                    enforceNoAutoCommit: validated.EnforceNoAutoCommit,
+                    tokenEconomyEnabled: validated.TokenEconomyEnabled
+                });
+            }
+            materializationStatus = 'PASS';
+
             // Contract migrations
             currentStage = 'CONTRACT_MIGRATIONS';
             if (contractMigrationRunner) {
                 const migResult = contractMigrationRunner({ rootPath: normalizedTarget });
                 contractMigrationCount = migResult.appliedCount || 0;
                 contractMigrationFiles = migResult.appliedFiles || [];
+                contractMigrationStatus = 'PASS';
+            } else {
+                contractMigrationStatus = 'SKIPPED_NO_RUNNER';
             }
-            contractMigrationStatus = 'PASS';
 
             // Verify
             currentStage = 'VERIFY';
             if (skipVerify) {
                 verifyStatus = 'SKIPPED';
-            } else {
-                if (verifyRunner) {
-                    verifyRunner({
-                        targetRoot: normalizedTarget,
-                        sourceOfTruth,
-                        initAnswersPath: initAnswersResolvedPath
-                    });
-                }
+            } else if (verifyRunner) {
+                verifyRunner({
+                    targetRoot: normalizedTarget,
+                    sourceOfTruth,
+                    initAnswersPath: initAnswersResolvedPath
+                });
                 verifyStatus = 'PASS';
+            } else {
+                verifyStatus = 'SKIPPED_NO_RUNNER';
             }
 
             // Manifest validation
             currentStage = 'MANIFEST_VALIDATION';
             if (skipManifestValidation) {
                 manifestStatus = 'SKIPPED';
-            } else {
-                if (manifestRunner) {
-                    manifestRunner({ targetRoot: normalizedTarget });
-                }
+            } else if (manifestRunner) {
+                manifestRunner({ targetRoot: normalizedTarget });
                 manifestStatus = 'PASS';
+            } else {
+                manifestStatus = 'SKIPPED_NO_RUNNER';
             }
 
             // Re-read updated version
@@ -275,6 +313,7 @@ function runUpdate(options) {
         switch (currentStage) {
             case 'INSTALL': installStatus = 'FAIL'; break;
             case 'BUNDLE_SYNC': installStatus = 'FAIL'; break;
+            case 'MATERIALIZATION': materializationStatus = 'FAIL'; break;
             case 'CONTRACT_MIGRATIONS': contractMigrationStatus = 'FAIL'; break;
             case 'VERIFY': verifyStatus = 'FAIL'; break;
             case 'MANIFEST_VALIDATION': manifestStatus = 'FAIL'; break;
@@ -308,6 +347,7 @@ function runUpdate(options) {
             `TargetRoot: ${normalizedTarget}`,
             `InitAnswersPath: ${initAnswersResolvedPath}`,
             `RollbackSnapshotPath: ${rollbackSnapshotRelativePath}`,
+            `RollbackRecordsPath: ${rollbackRecordsRelativePath}`,
             `RollbackSnapshotRecordCount: ${rollbackRecordCount}`,
             `RollbackStatus: ${rollbackStatus}`,
             '',
@@ -319,6 +359,7 @@ function runUpdate(options) {
             '',
             '## CommandStatus',
             `Install: ${installStatus}`,
+            `Materialization: ${materializationStatus}`,
             `ContractMigrations: ${contractMigrationStatus}`,
             `Verify: ${verifyStatus}`,
             `ManifestValidation: ${manifestStatus}`,
@@ -336,6 +377,7 @@ function runUpdate(options) {
         targetRoot: normalizedTarget,
         initAnswersPath: initAnswersResolvedPath,
         rollbackSnapshotPath: rollbackSnapshotRelativePath,
+        rollbackRecordsPath: dryRun ? 'not-generated-in-dry-run' : rollbackRecordsRelativePath,
         rollbackSnapshotCreated,
         rollbackRecordCount,
         rollbackStatus,
@@ -347,6 +389,7 @@ function runUpdate(options) {
         bundleVersion,
         updatedVersion,
         installStatus,
+        materializationStatus,
         contractMigrationStatus,
         contractMigrationCount,
         contractMigrationFiles,

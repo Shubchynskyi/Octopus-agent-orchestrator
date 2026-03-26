@@ -77,7 +77,7 @@ function buildScopedDiffMetadata(options) {
 
 /**
  * Convert pathspecs from repo-root-relative to git-root-relative.
- * Matches PowerShell Convert-ToGitPathspecs.
+ * Mirrors the legacy pathspec normalization contract.
  */
 function convertToGitPathspecs(pathspecs, repoRoot, gitRoot) {
     if (!pathspecs || pathspecs.length === 0) {

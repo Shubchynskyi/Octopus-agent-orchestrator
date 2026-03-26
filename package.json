@@ -1,8 +1,16 @@
 {
   "name": "octopus-agent-orchestrator",
-  "version": "2.0.0",
+  "version": "2.3.0",
   "description": "Bootstrap package for deploying the Octopus Agent Orchestrator bundle into a workspace.",
-  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git"
+  },
+  "homepage": "https://github.com/Shubchynskyi/Octopus-agent-orchestrator#readme",
+  "bugs": {
+    "url": "https://github.com/Shubchynskyi/Octopus-agent-orchestrator/issues"
+  },
+  "license": "Apache-2.0",
   "type": "commonjs",
   "bin": {
     "octopus": "bin/octopus.js",

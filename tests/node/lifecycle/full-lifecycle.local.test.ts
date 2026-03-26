@@ -24,6 +24,8 @@ const { runReinit } = require(resolveRuntimeModule('../../../src/materialization
 const { runUpdate } = require(resolveRuntimeModule('../../../src/lifecycle/update'));
 const { runUninstall } = require(resolveRuntimeModule('../../../src/lifecycle/uninstall'));
 const { getStatusSnapshot } = require(resolveRuntimeModule('../../../src/validators/status'));
+const { runVerify } = require(resolveRuntimeModule('../../../src/validators/verify'));
+const { validateManifest } = require(resolveRuntimeModule('../../../src/validators/validate-manifest'));
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -246,6 +248,22 @@ describe('full local lifecycle', () => {
             const readySnapshot = getStatusSnapshot(workspaceRoot, 'Octopus-agent-orchestrator/runtime/init-answers.json');
             assert.equal(readySnapshot.readyForTasks, true);
 
+            // Verify workspace integrity after full setup + agent-init
+            const verifyResult = runVerify({
+                targetRoot: workspaceRoot,
+                sourceOfTruth: 'Codex',
+                initAnswersPath: 'Octopus-agent-orchestrator/runtime/init-answers.json'
+            });
+            assert.equal(verifyResult.passed, true,
+                `Verify failed with ${verifyResult.totalViolationCount} violation(s): ${JSON.stringify(verifyResult.violations)}`);
+
+            const manifestResult = validateManifest(
+                path.join(bundleRoot, 'MANIFEST.md'),
+                workspaceRoot
+            );
+            assert.equal(manifestResult.passed, true,
+                `Manifest validation failed: ${JSON.stringify(manifestResult.duplicates)}`);
+
             const installedAgents = fs.readFileSync(path.join(workspaceRoot, 'AGENTS.md'), 'utf8');
             const installedTask = fs.readFileSync(path.join(workspaceRoot, 'TASK.md'), 'utf8');
             const installedGitignore = fs.readFileSync(path.join(workspaceRoot, '.gitignore'), 'utf8');
@@ -320,8 +338,20 @@ describe('full local lifecycle', () => {
                 targetRoot: workspaceRoot,
                 bundleRoot,
                 initAnswersPath: 'Octopus-agent-orchestrator/runtime/init-answers.json',
-                skipVerify: true,
-                skipManifestValidation: true
+                skipVerify: false,
+                skipManifestValidation: false,
+                verifyRunner: function (opts) {
+                    const vr = runVerify(opts);
+                    if (!vr.passed) {
+                        throw new Error('Verify failed during update: ' + vr.totalViolationCount + ' violation(s)');
+                    }
+                },
+                manifestRunner: function (opts) {
+                    const mr = validateManifest(path.join(opts.targetRoot, 'Octopus-agent-orchestrator', 'MANIFEST.md'), opts.targetRoot);
+                    if (!mr.passed) {
+                        throw new Error('Manifest validation failed during update: ' + JSON.stringify(mr.duplicates));
+                    }
+                }
             });
 
             assert.equal(updateResult.installStatus, 'PASS');

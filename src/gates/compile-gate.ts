@@ -5,6 +5,7 @@ const { execFileSync } = require('node:child_process');
 const { stringSha256, fileSha256, normalizePath, toPosix, joinOrchestratorPath, resolvePathInsideRepo, toStringArray } = require('./helpers.ts');
 const { assertValidTaskId, appendTaskEvent } = require('../gate-runtime/task-events.ts');
 const { buildOutputTelemetry, formatVisibleSavingsLine } = require('../gate-runtime/token-telemetry.ts');
+const { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } = require('../core/subprocess.ts');
 
 /**
  * Detect the compile command profile (kind/strategy/label/failure/success profiles).
@@ -144,16 +145,23 @@ function getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, expli
     if (source === 'git_staged_only') includeUntracked = false;
 
     function gitLines(args, failMsg) {
-        try {
-            const output = execFileSync('git', ['-C', String(repoRoot), ...args], {
-                encoding: 'utf8',
-                stdio: ['pipe', 'pipe', 'pipe'],
-                maxBuffer: 50 * 1024 * 1024
-            });
-            return (output || '').split('\n').filter(l => l.trim());
-        } catch (err) {
-            throw new Error(`${failMsg} ${err.message || err}`);
+        const result = spawnSyncWithTimeout('git', ['-C', String(repoRoot), ...args], {
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+            timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+            maxBuffer: 50 * 1024 * 1024
+        });
+        if (result.timedOut) {
+            throw new Error(`${failMsg} git timed out after ${DEFAULT_GIT_TIMEOUT_MS} ms.`);
         }
+        if (result.error) {
+            throw new Error(`${failMsg} ${result.error.message || result.error}`);
+        }
+        if (result.status !== 0) {
+            const errText = String(result.stderr || '').trim();
+            throw new Error(`${failMsg} git exited with code ${result.status}. ${errText}`);
+        }
+        return (String(result.stdout || '')).split('\n').filter(l => l.trim());
     }
 
     const normalizedExplicit = [...new Set(

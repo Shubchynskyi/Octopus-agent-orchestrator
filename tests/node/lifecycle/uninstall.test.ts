@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { runUninstall, parseBooleanAnswer } = require('../../../src/lifecycle/uninstall.ts');
+const { runUninstall, parseBooleanAnswer, getUninstallRollbackItems } = require('../../../src/lifecycle/uninstall.ts');
 const { removePathRecursive } = require('../../../src/lifecycle/common.ts');
 const { MANAGED_START, MANAGED_END, COMMIT_GUARD_START, COMMIT_GUARD_END } = require('../../../src/materialization/content-builders.ts');
 
@@ -310,6 +310,62 @@ describe('runUninstall', () => {
         }
     });
 
+    it('preserves project-memory alongside runtime artifacts when keepRuntimeArtifacts is yes (T-072)', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            // Ensure project-memory has user content
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'decisions.md'), '# Decision Log\nKeep this.');
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'yes'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.ok(result.preservedProjectMemoryPath !== '<none>',
+                'preservedProjectMemoryPath should be set');
+            const backedUpPm = path.join(result.backupRoot, 'Octopus-agent-orchestrator', 'live', 'docs', 'project-memory');
+            assert.ok(fs.existsSync(backedUpPm), 'project-memory should be backed up');
+            assert.ok(fs.existsSync(path.join(backedUpPm, 'decisions.md')),
+                'user content in project-memory should be preserved');
+            assert.equal(
+                fs.readFileSync(path.join(backedUpPm, 'decisions.md'), 'utf8'),
+                '# Decision Log\nKeep this.'
+            );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('does not preserve project-memory when keepRuntimeArtifacts is no (T-072)', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'decisions.md'), '# Decision Log');
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.equal(result.preservedProjectMemoryPath, '<none>');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('restores files from initialization backup when available', () => {
         const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
         try {
@@ -437,6 +493,316 @@ describe('runUninstall', () => {
                 assert.ok(!content.includes(COMMIT_GUARD_START));
                 assert.ok(content.includes('user hook'));
             }
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    // -----------------------------------------------------------------------
+    // T-091: Preserve LF line endings when cleaning commit guard hook
+    // -----------------------------------------------------------------------
+
+    it('preserves LF line endings in hook after managed block removal', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const hookPath = path.join(projectRoot, '.git', 'hooks', 'pre-commit');
+            // Build hook content with pure LF endings (as install writes it)
+            const hookContent =
+                '#!/usr/bin/env bash\n' +
+                '\n' +
+                '# User lint check\n' +
+                'npm run lint\n' +
+                '\n' +
+                COMMIT_GUARD_START + '\n' +
+                'echo "guard"\n' +
+                COMMIT_GUARD_END + '\n';
+            fs.writeFileSync(hookPath, hookContent, 'utf8');
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.ok(fs.existsSync(hookPath), 'Hook file should still exist (user content remains)');
+
+            const remaining = fs.readFileSync(hookPath, 'utf8');
+            assert.ok(!remaining.includes(COMMIT_GUARD_START), 'Managed block should be removed');
+            assert.ok(remaining.includes('npm run lint'), 'User hook content should be preserved');
+            assert.ok(!remaining.includes('\r\n'), 'File must not contain CRLF — bash hooks require LF');
+            assert.ok(remaining.includes('\n'), 'File should contain LF line endings');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    // -----------------------------------------------------------------------
+    // T-069: Journal / transaction-like uninstall tests
+    // -----------------------------------------------------------------------
+
+    it('reports rollbackStatus as NOT_TRIGGERED on success', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.equal(result.rollbackStatus, 'NOT_TRIGGERED');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('rolls back workspace on mid-flight failure', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const claudeContentBefore = fs.readFileSync(path.join(projectRoot, 'CLAUDE.md'), 'utf8');
+            const taskContentBefore = fs.readFileSync(path.join(projectRoot, 'TASK.md'), 'utf8');
+            const gitignoreContentBefore = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+
+            assert.throws(() => {
+                runUninstall({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    noPrompt: true,
+                    keepPrimaryEntrypoint: 'no',
+                    keepTaskFile: 'no',
+                    keepRuntimeArtifacts: 'no',
+                    _testHooks: {
+                        afterFileCleanup: () => {
+                            throw new Error('Simulated mid-flight failure');
+                        }
+                    }
+                });
+            }, /restored to pre-uninstall state/);
+
+            // All workspace files should be restored to their pre-uninstall state
+            assert.ok(fs.existsSync(path.join(projectRoot, 'CLAUDE.md')));
+            assert.ok(fs.existsSync(path.join(projectRoot, 'TASK.md')));
+            assert.equal(
+                fs.readFileSync(path.join(projectRoot, 'CLAUDE.md'), 'utf8'),
+                claudeContentBefore
+            );
+            assert.equal(
+                fs.readFileSync(path.join(projectRoot, 'TASK.md'), 'utf8'),
+                taskContentBefore
+            );
+            assert.equal(
+                fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8'),
+                gitignoreContentBefore
+            );
+            // Sentinel should be cleaned up after successful rollback
+            assert.ok(!fs.existsSync(path.join(projectRoot, '.uninstall-in-progress')));
+            // Journal directory should be cleaned up
+            assert.ok(!fs.existsSync(path.join(projectRoot, 'Octopus-agent-orchestrator-uninstall-journal')));
+            // Bundle should still exist (failure happened before bundle removal)
+            assert.ok(fs.existsSync(bundleRoot));
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('writes sentinel during uninstall and removes it on success', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            let sentinelExistedDuringRun = false;
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no',
+                _testHooks: {
+                    afterFileCleanup: () => {
+                        sentinelExistedDuringRun = fs.existsSync(
+                            path.join(projectRoot, '.uninstall-in-progress')
+                        );
+                    }
+                }
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.ok(sentinelExistedDuringRun, 'Sentinel should exist during uninstall execution');
+            assert.ok(
+                !fs.existsSync(path.join(projectRoot, '.uninstall-in-progress')),
+                'Sentinel should be removed after success'
+            );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('emits warnings when --skip-backups is active', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                skipBackups: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.equal(result.skipBackups, true);
+            assert.ok(
+                result.warnings.some((w) => w.includes('--skip-backups active')),
+                'Should warn about skip-backups being active'
+            );
+            assert.ok(
+                result.warnings.some((w) => w.includes('runtime artifacts')),
+                'Should warn about permanent runtime artifact loss'
+            );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('skip-backups does not warn about runtime when keepRuntimeArtifacts is yes', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            fs.writeFileSync(path.join(bundleRoot, 'runtime', 'test-artifact.txt'), 'data');
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                skipBackups: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'yes'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.ok(
+                result.warnings.some((w) => w.includes('--skip-backups active')),
+                'Should warn about skip-backups'
+            );
+            assert.ok(
+                !result.warnings.some((w) => w.includes('runtime artifacts')),
+                'Should NOT warn about runtime when keepRuntimeArtifacts=yes'
+            );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('detects interrupted uninstall from previous run', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            // Write a fake sentinel from a "previous interrupted uninstall"
+            fs.writeFileSync(
+                path.join(projectRoot, '.uninstall-in-progress'),
+                JSON.stringify({
+                    startedAt: '2025-01-01T00:00:00.000Z',
+                    operation: 'uninstall',
+                    rollbackSnapshotPath: '/fake/path'
+                })
+            );
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.ok(
+                result.warnings.some((w) => w.includes('Detected interrupted uninstall')),
+                'Should warn about interrupted previous uninstall'
+            );
+            // Sentinel should be removed after successful completion
+            assert.ok(!fs.existsSync(path.join(projectRoot, '.uninstall-in-progress')));
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('rollback still works with --skip-backups', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const claudeContentBefore = fs.readFileSync(path.join(projectRoot, 'CLAUDE.md'), 'utf8');
+
+            assert.throws(() => {
+                runUninstall({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    noPrompt: true,
+                    skipBackups: true,
+                    keepPrimaryEntrypoint: 'no',
+                    keepTaskFile: 'no',
+                    keepRuntimeArtifacts: 'no',
+                    _testHooks: {
+                        afterFileCleanup: () => {
+                            throw new Error('Simulated failure');
+                        }
+                    }
+                });
+            }, /restored to pre-uninstall state/);
+
+            // Workspace should be restored even with --skip-backups
+            assert.ok(fs.existsSync(path.join(projectRoot, 'CLAUDE.md')));
+            assert.equal(
+                fs.readFileSync(path.join(projectRoot, 'CLAUDE.md'), 'utf8'),
+                claudeContentBefore
+            );
+            // Journal should be cleaned up after successful rollback
+            assert.ok(!fs.existsSync(path.join(projectRoot, '.uninstall-in-progress')));
+            assert.ok(!fs.existsSync(path.join(projectRoot, 'Octopus-agent-orchestrator-uninstall-journal')));
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('getUninstallRollbackItems returns expected item set', () => {
+        const items = getUninstallRollbackItems();
+        assert.ok(Array.isArray(items));
+        assert.ok(items.includes('TASK.md'));
+        assert.ok(items.includes('.gitignore'));
+        assert.ok(items.includes('.qwen/settings.json'));
+        assert.ok(items.includes('.claude/settings.local.json'));
+        assert.ok(items.includes('.git/hooks/pre-commit'));
+        // Should include entrypoint files
+        assert.ok(items.some((i) => i === 'CLAUDE.md' || i === 'AGENTS.md'));
+        // Should include provider agent files
+        assert.ok(items.some((i) => i.includes('.github/agents/orchestrator.md')));
+        // Should include skill bridge files
+        assert.ok(items.some((i) => i.includes('.github/agents/reviewer.md')));
+    });
+
+    it('dry-run does not create journal or sentinel', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                dryRun: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'DRY_RUN');
+            assert.equal(result.rollbackStatus, 'NOT_NEEDED');
+            assert.ok(!fs.existsSync(path.join(projectRoot, '.uninstall-in-progress')));
+            assert.ok(!fs.existsSync(path.join(projectRoot, 'Octopus-agent-orchestrator-uninstall-journal')));
         } finally {
             removePathRecursive(projectRoot);
         }

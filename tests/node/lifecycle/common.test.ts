@@ -6,13 +6,16 @@ const {
     copyDirectoryContentMerge,
     copyPathRecursive,
     createRollbackSnapshot,
+    getRollbackRecordsPath,
     getTimestamp,
+    readRollbackRecords,
     readdirRecursiveFiles,
     removePathRecursive,
     restoreRollbackSnapshot,
     restoreSyncedItemsFromBackup,
     syncWorkingTreeBundleItems,
-    validateTargetRoot
+    validateTargetRoot,
+    writeRollbackRecords
 } = require('../../../src/lifecycle/common.ts');
 
 const fs = require('node:fs');
@@ -49,6 +52,74 @@ describe('compareVersionStrings', () => {
     it('handles major version differences', () => {
         assert.equal(compareVersionStrings('1.9.9', '2.0.0'), -1);
         assert.equal(compareVersionStrings('2.0.0', '1.9.9'), 1);
+    });
+
+    it('treats prerelease as lower than the release version', () => {
+        assert.equal(compareVersionStrings('1.0.0-alpha', '1.0.0'), -1);
+        assert.equal(compareVersionStrings('1.0.0', '1.0.0-alpha'), 1);
+        assert.equal(compareVersionStrings('2.0.0-rc.1', '2.0.0'), -1);
+    });
+
+    it('compares prerelease identifiers lexicographically', () => {
+        assert.equal(compareVersionStrings('1.0.0-alpha', '1.0.0-beta'), -1);
+        assert.equal(compareVersionStrings('1.0.0-beta', '1.0.0-alpha'), 1);
+        assert.equal(compareVersionStrings('1.0.0-alpha', '1.0.0-alpha'), 0);
+    });
+
+    it('compares numeric prerelease identifiers numerically', () => {
+        assert.equal(compareVersionStrings('1.0.0-1', '1.0.0-2'), -1);
+        assert.equal(compareVersionStrings('1.0.0-2', '1.0.0-1'), 1);
+        assert.equal(compareVersionStrings('1.0.0-alpha.1', '1.0.0-alpha.2'), -1);
+        assert.equal(compareVersionStrings('1.0.0-alpha.2', '1.0.0-alpha.1'), 1);
+        assert.equal(compareVersionStrings('1.0.0-beta.11', '1.0.0-beta.2'), 1);
+    });
+
+    it('ranks numeric prerelease identifiers below alphanumeric', () => {
+        assert.equal(compareVersionStrings('1.0.0-1', '1.0.0-alpha'), -1);
+        assert.equal(compareVersionStrings('1.0.0-alpha', '1.0.0-1'), 1);
+    });
+
+    it('longer prerelease set has higher precedence when prefix matches', () => {
+        assert.equal(compareVersionStrings('1.0.0-alpha', '1.0.0-alpha.1'), -1);
+        assert.equal(compareVersionStrings('1.0.0-alpha.1', '1.0.0-alpha'), 1);
+    });
+
+    it('ignores build metadata', () => {
+        assert.equal(compareVersionStrings('1.0.0+build', '1.0.0'), 0);
+        assert.equal(compareVersionStrings('1.0.0', '1.0.0+build'), 0);
+        assert.equal(compareVersionStrings('1.0.0+build1', '1.0.0+build2'), 0);
+    });
+
+    it('handles prerelease combined with build metadata', () => {
+        assert.equal(compareVersionStrings('1.0.0-alpha+build', '1.0.0-alpha'), 0);
+        assert.equal(compareVersionStrings('1.0.0-alpha+build', '1.0.0'), -1);
+    });
+
+    it('follows full SemVer precedence chain', () => {
+        const ordered = [
+            '1.0.0-alpha',
+            '1.0.0-alpha.1',
+            '1.0.0-alpha.beta',
+            '1.0.0-beta',
+            '1.0.0-beta.2',
+            '1.0.0-beta.11',
+            '1.0.0-rc.1',
+            '1.0.0'
+        ];
+        for (let i = 0; i < ordered.length; i++) {
+            for (let j = i + 1; j < ordered.length; j++) {
+                assert.equal(
+                    compareVersionStrings(ordered[i], ordered[j]),
+                    -1,
+                    `Expected ${ordered[i]} < ${ordered[j]}`
+                );
+                assert.equal(
+                    compareVersionStrings(ordered[j], ordered[i]),
+                    1,
+                    `Expected ${ordered[j]} > ${ordered[i]}`
+                );
+            }
+        }
     });
 });
 
@@ -141,6 +212,25 @@ describe('createRollbackSnapshot and restoreRollbackSnapshot', () => {
             assert.equal(fs.readFileSync(path.join(dir, 'file1.txt'), 'utf8'), 'original');
             assert.ok(!fs.existsSync(path.join(dir, 'missing.txt')));
             assert.ok(fs.existsSync(path.join(dir, 'subdir', 'file2.txt')));
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
+    it('writes and reads rollback records metadata', () => {
+        const dir = mkTmpDir();
+        try {
+            const snapshotRoot = path.join(dir, '_snapshot');
+            const records = [
+                { relativePath: 'file1.txt', existed: true, pathType: 'file' },
+                { relativePath: 'missing.txt', existed: false, pathType: 'missing' }
+            ];
+
+            const recordsPath = writeRollbackRecords(snapshotRoot, records);
+            assert.equal(recordsPath, getRollbackRecordsPath(snapshotRoot));
+
+            const loaded = readRollbackRecords(snapshotRoot);
+            assert.deepEqual(loaded, records);
         } finally {
             removePathRecursive(dir);
         }

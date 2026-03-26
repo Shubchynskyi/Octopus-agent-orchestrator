@@ -1,7 +1,7 @@
 # Node Runtime Contract
 
-Version: 2.0.0
-Frozen: 2026-03-22
+Version source: VERSION
+Frozen: 2026-03-26
 
 This document captures the current Node-only runtime surface.
 
@@ -16,12 +16,13 @@ This document captures the current Node-only runtime surface.
 Lifecycle commands:
 
 ```text
-setup, agent-init, status, doctor, bootstrap, install, init, reinit, verify, check-update, update, uninstall, skills
+setup, agent-init, status, doctor, bootstrap, install, init, reinit, verify, check-update, update, rollback, uninstall, skills
 ```
 
-Additional public route:
+Additional public routes:
 
 ```text
+update git
 gate <name>
 ```
 
@@ -133,6 +134,5 @@ Shipped gates:
 
 Contract coverage lives in:
 
-- `template/scripts/tests/node-migration-contract.Tests.ps1`
-- `template/scripts/tests/npm-cli-bootstrap.Tests.ps1`
+- `tests/node/**`
 - `npm run test:node-foundation`

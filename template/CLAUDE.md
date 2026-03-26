@@ -26,6 +26,7 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 |---|---|
 | Language, communication, code quality | `Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md` |
 | Project goals and tech stack | `Octopus-agent-orchestrator/live/docs/agent-rules/10-project-context.md` |
+| Durable project memory summary | `Octopus-agent-orchestrator/live/docs/agent-rules/15-project-memory.md` |
 | System architecture and data or event flow | `Octopus-agent-orchestrator/live/docs/agent-rules/20-architecture.md` |
 | Java, TypeScript, Angular code style | `Octopus-agent-orchestrator/live/docs/agent-rules/30-code-style.md` |
 | Strict SOLID rules and quality gates | `Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md` |
@@ -39,6 +40,7 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 ## Rule Files
 - `Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md`
 - `Octopus-agent-orchestrator/live/docs/agent-rules/10-project-context.md`
+- `Octopus-agent-orchestrator/live/docs/agent-rules/15-project-memory.md`
 - `Octopus-agent-orchestrator/live/docs/agent-rules/20-architecture.md`
 - `Octopus-agent-orchestrator/live/docs/agent-rules/30-code-style.md`
 - `Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md`

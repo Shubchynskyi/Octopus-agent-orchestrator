@@ -83,6 +83,9 @@ One entrypoint is canonical. Additional entrypoints are created only when they w
 | `live/USAGE.md` | Generated usage guide |
 | `live/version.json` | Deployment metadata |
 | `runtime/agent-init-state.json` | Hard onboarding state written by `octopus agent-init` |
+| `runtime/update-rollbacks/**` | Saved pre-update workspace snapshots for rollback |
+| `runtime/bundle-backups/**` | Saved bundle copies created during applied updates |
+| `runtime/update-reports/**` | Update and rollback reports |
 
 ## Task Lifecycle
 

@@ -1,6 +1,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const ROLLBACK_RECORDS_FILE_NAME = 'rollback-records.json';
+const SYNC_BACKUP_METADATA_FILE_NAME = 'sync-backup-metadata.json';
+const UPDATE_SENTINEL_FILE_NAME = '.update-in-progress';
+const UNINSTALL_SENTINEL_FILE_NAME = '.uninstall-in-progress';
+
 // ---------------------------------------------------------------------------
 // Version comparison used by update flows.
 // ---------------------------------------------------------------------------
@@ -10,14 +15,26 @@ function compareVersionStrings(current, latest) {
     const a = normalize(current);
     const b = normalize(latest);
 
+    // Separate core version from prerelease and build metadata.
+    // Build metadata (+…) is always ignored per SemVer §10.
+    const splitVersion = (value) => {
+        const noBuild = value.split('+')[0];
+        const dashIdx = noBuild.indexOf('-');
+        if (dashIdx === -1) return { core: noBuild, prerelease: '' };
+        return { core: noBuild.slice(0, dashIdx), prerelease: noBuild.slice(dashIdx + 1) };
+    };
+
+    const aParts = splitVersion(a);
+    const bParts = splitVersion(b);
+
     const parseSegments = (value) =>
         value.split('.').map((segment) => {
             const match = segment.match(/^(\d+)/);
             return match ? Number(match[1]) : 0;
         });
 
-    const aSegs = parseSegments(a);
-    const bSegs = parseSegments(b);
+    const aSegs = parseSegments(aParts.core);
+    const bSegs = parseSegments(bParts.core);
     const maxLen = Math.max(aSegs.length, bSegs.length);
 
     for (let i = 0; i < maxLen; i++) {
@@ -26,6 +43,40 @@ function compareVersionStrings(current, latest) {
         if (av < bv) return -1;
         if (av > bv) return 1;
     }
+
+    // Core versions equal — compare prerelease per SemVer §11.
+    // A version with prerelease has lower precedence than the release version.
+    const aPre = aParts.prerelease;
+    const bPre = bParts.prerelease;
+    if (aPre && !bPre) return -1;
+    if (!aPre && bPre) return 1;
+    if (aPre && bPre) {
+        const aIds = aPre.split('.');
+        const bIds = bPre.split('.');
+        const len = Math.min(aIds.length, bIds.length);
+        for (let i = 0; i < len; i++) {
+            const ai = aIds[i];
+            const bi = bIds[i];
+            if (ai === bi) continue;
+            const aIsNum = /^\d+$/.test(ai);
+            const bIsNum = /^\d+$/.test(bi);
+            if (aIsNum && bIsNum) {
+                const diff = Number(ai) - Number(bi);
+                if (diff < 0) return -1;
+                if (diff > 0) return 1;
+            } else if (aIsNum) {
+                return -1;
+            } else if (bIsNum) {
+                return 1;
+            } else {
+                if (ai < bi) return -1;
+                if (ai > bi) return 1;
+            }
+        }
+        if (aIds.length < bIds.length) return -1;
+        if (aIds.length > bIds.length) return 1;
+    }
+
     return 0;
 }
 
@@ -135,6 +186,85 @@ function createRollbackSnapshot(rootPath, snapshotRoot, relativePaths) {
     }
 
     return records;
+}
+
+function getRollbackRecordsPath(snapshotRoot) {
+    return path.join(snapshotRoot, ROLLBACK_RECORDS_FILE_NAME);
+}
+
+function writeRollbackRecords(snapshotRoot, records) {
+    const recordsPath = getRollbackRecordsPath(snapshotRoot);
+    fs.mkdirSync(snapshotRoot, { recursive: true });
+    fs.writeFileSync(recordsPath, JSON.stringify(records, null, 2), 'utf8');
+    return recordsPath;
+}
+
+function readRollbackRecords(snapshotRoot) {
+    const recordsPath = getRollbackRecordsPath(snapshotRoot);
+    if (!fs.existsSync(recordsPath)) {
+        throw new Error(`Rollback records file not found: ${recordsPath}`);
+    }
+
+    let parsed;
+    try {
+        parsed = JSON.parse(fs.readFileSync(recordsPath, 'utf8'));
+    } catch (_error) {
+        throw new Error(`Rollback records file is not valid JSON: ${recordsPath}`);
+    }
+
+    if (!Array.isArray(parsed)) {
+        throw new Error(`Rollback records file must contain an array: ${recordsPath}`);
+    }
+
+    return parsed.map((record, index) => {
+        const relativePath = String(record && record.relativePath ? record.relativePath : '').trim();
+        if (!relativePath) {
+            throw new Error(`Rollback record at index ${index} is missing relativePath.`);
+        }
+
+        return {
+            relativePath,
+            existed: Boolean(record && record.existed),
+            pathType: String(record && record.pathType ? record.pathType : 'missing')
+        };
+    });
+}
+
+function getSyncBackupMetadataPath(backupRoot) {
+    return path.join(backupRoot, SYNC_BACKUP_METADATA_FILE_NAME);
+}
+
+function writeSyncBackupMetadata(backupRoot, metadata) {
+    const metadataPath = getSyncBackupMetadataPath(backupRoot);
+    fs.mkdirSync(backupRoot, { recursive: true });
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf8');
+    return metadataPath;
+}
+
+function readSyncBackupMetadata(backupRoot) {
+    const metadataPath = getSyncBackupMetadataPath(backupRoot);
+    if (!fs.existsSync(metadataPath)) {
+        throw new Error(`Sync backup metadata file not found: ${metadataPath}`);
+    }
+
+    let parsed;
+    try {
+        parsed = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+    } catch (_error) {
+        throw new Error(`Sync backup metadata file is not valid JSON: ${metadataPath}`);
+    }
+
+    const preexistingMap = parsed && parsed.preexistingMap && typeof parsed.preexistingMap === 'object'
+        ? parsed.preexistingMap
+        : null;
+    if (!preexistingMap || Array.isArray(preexistingMap)) {
+        throw new Error(`Sync backup metadata is missing preexistingMap: ${metadataPath}`);
+    }
+
+    return {
+        ...parsed,
+        preexistingMap
+    };
 }
 
 function restoreRollbackSnapshot(rootPath, snapshotRoot, records) {
@@ -267,6 +397,76 @@ function syncWorkingTreeBundleItems(sourceBundleRoot, targetBundleRoot, relative
 // Validate target root
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Update sentinel (marks an in-progress update to detect interrupted runs)
+// ---------------------------------------------------------------------------
+
+function getUpdateSentinelPath(bundleRoot) {
+    return path.join(bundleRoot, 'runtime', UPDATE_SENTINEL_FILE_NAME);
+}
+
+function writeUpdateSentinel(bundleRoot, metadata) {
+    const sentinelPath = getUpdateSentinelPath(bundleRoot);
+    fs.mkdirSync(path.dirname(sentinelPath), { recursive: true });
+    fs.writeFileSync(sentinelPath, JSON.stringify(metadata, null, 2), 'utf8');
+    return sentinelPath;
+}
+
+function removeUpdateSentinel(bundleRoot) {
+    const sentinelPath = getUpdateSentinelPath(bundleRoot);
+    if (fs.existsSync(sentinelPath)) {
+        fs.rmSync(sentinelPath, { force: true });
+    }
+}
+
+function readUpdateSentinel(bundleRoot) {
+    const sentinelPath = getUpdateSentinelPath(bundleRoot);
+    if (!fs.existsSync(sentinelPath)) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(fs.readFileSync(sentinelPath, 'utf8'));
+    } catch (_error) {
+        return null;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Uninstall sentinel (marks an in-progress uninstall to detect interrupted runs)
+// ---------------------------------------------------------------------------
+
+function getUninstallSentinelPath(targetRoot) {
+    return path.join(targetRoot, UNINSTALL_SENTINEL_FILE_NAME);
+}
+
+function writeUninstallSentinel(targetRoot, metadata) {
+    const sentinelPath = getUninstallSentinelPath(targetRoot);
+    fs.writeFileSync(sentinelPath, JSON.stringify(metadata, null, 2), 'utf8');
+    return sentinelPath;
+}
+
+function readUninstallSentinel(targetRoot) {
+    const sentinelPath = getUninstallSentinelPath(targetRoot);
+    if (!fs.existsSync(sentinelPath)) return null;
+    try {
+        return JSON.parse(fs.readFileSync(sentinelPath, 'utf8'));
+    } catch (_error) {
+        return null;
+    }
+}
+
+function removeUninstallSentinel(targetRoot) {
+    const sentinelPath = getUninstallSentinelPath(targetRoot);
+    if (fs.existsSync(sentinelPath)) {
+        fs.rmSync(sentinelPath, { force: true });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Validate target root
+// ---------------------------------------------------------------------------
+
 function validateTargetRoot(targetRoot, bundleRoot) {
     const normalizedTarget = path.resolve(targetRoot);
     const normalizedBundle = path.resolve(bundleRoot);
@@ -280,16 +480,34 @@ function validateTargetRoot(targetRoot, bundleRoot) {
 
 module.exports = {
     BUNDLE_SYNC_ITEMS,
+    ROLLBACK_RECORDS_FILE_NAME,
+    SYNC_BACKUP_METADATA_FILE_NAME,
+    UNINSTALL_SENTINEL_FILE_NAME,
+    UPDATE_SENTINEL_FILE_NAME,
     compareVersionStrings,
     copyDirectoryContentMerge,
     copyPathRecursive,
     createRollbackSnapshot,
+    getRollbackRecordsPath,
+    getSyncBackupMetadataPath,
     getTimestamp,
+    getUninstallSentinelPath,
+    getUpdateSentinelPath,
+    readRollbackRecords,
+    readSyncBackupMetadata,
+    readUninstallSentinel,
+    readUpdateSentinel,
     readdirRecursiveDirs,
     readdirRecursiveFiles,
     removePathRecursive,
+    removeUninstallSentinel,
+    removeUpdateSentinel,
     restoreRollbackSnapshot,
     restoreSyncedItemsFromBackup,
     syncWorkingTreeBundleItems,
-    validateTargetRoot
+    validateTargetRoot,
+    writeRollbackRecords,
+    writeSyncBackupMetadata,
+    writeUninstallSentinel,
+    writeUpdateSentinel
 };

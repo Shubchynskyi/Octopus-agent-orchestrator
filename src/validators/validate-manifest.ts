@@ -1,6 +1,7 @@
 const path = require('node:path');
 
 const { pathExists, readTextFile } = require('../core/fs.ts');
+const { isPathInsideRoot } = require('../core/paths.ts');
 
 /**
  * Parse list items from MANIFEST.md content.
@@ -27,10 +28,20 @@ function parseManifestItems(content) {
  * Validate a MANIFEST.md file for duplicate entries.
  * Canonical Node-only manifest validation implementation.
  *
+ * When targetRoot is provided, rejects manifest paths that resolve
+ * outside the repository root before any file read.
+ *
  * Returns { passed, manifestPath, entriesChecked, duplicates }.
  */
-function validateManifest(manifestPath) {
+function validateManifest(manifestPath, targetRoot) {
     const resolvedPath = path.resolve(manifestPath);
+
+    if (targetRoot) {
+        var resolvedRoot = path.resolve(String(targetRoot));
+        if (!isPathInsideRoot(resolvedRoot, resolvedPath)) {
+            throw new Error("ManifestPath must resolve inside TargetRoot '" + resolvedRoot + "'. Resolved path: " + resolvedPath);
+        }
+    }
 
     if (!pathExists(resolvedPath)) {
         throw new Error(`Manifest not found: ${resolvedPath}`);

@@ -134,6 +134,10 @@ function normalizeIntegrityValue(value) {
         return sorted;
     }
 
+    if (typeof value === 'string' && value.includes('\\')) {
+        return value.replace(/\\/g, '/');
+    }
+
     return value;
 }
 

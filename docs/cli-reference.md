@@ -18,7 +18,7 @@ The runtime is Node-only.
 
 Safe overview of the current workspace.
 
-```powershell
+```text
 octopus
 ```
 
@@ -26,7 +26,7 @@ octopus
 
 First-run onboarding. Recommended entrypoint for end users.
 
-```powershell
+```text
 octopus setup
 octopus setup --target-root "." --no-prompt --assistant-language "English" --assistant-brevity concise --source-of-truth Codex --enforce-no-auto-commit no --claude-orchestrator-full-access no --token-economy-enabled yes
 ```
@@ -47,13 +47,13 @@ Notes:
 
 Hard code-level onboarding gate. This command writes `runtime/agent-init-state.json` and blocks `Workspace ready` until it passes.
 
-```powershell
+```text
 octopus agent-init --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --active-agent-files "AGENTS.md, CLAUDE.md" --project-rules-updated yes --skills-prompted yes
 ```
 
 ### `octopus status`
 
-```powershell
+```text
 octopus status --target-root "."
 ```
 
@@ -61,7 +61,7 @@ octopus status --target-root "."
 
 Runs `octopus verify` plus `octopus gate validate-manifest`.
 
-```powershell
+```text
 octopus doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
@@ -69,7 +69,7 @@ octopus doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator
 
 Deploy the bundle without running install.
 
-```powershell
+```text
 octopus bootstrap
 octopus bootstrap --repo-url "<git-url>" --branch "<branch>"
 ```
@@ -78,7 +78,7 @@ octopus bootstrap --repo-url "<git-url>" --branch "<branch>"
 
 Deploy or refresh the orchestrator from prepared init answers.
 
-```powershell
+```text
 octopus install --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 octopus install --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --repo-url "<git-url>" --branch "<branch>"
 ```
@@ -87,7 +87,7 @@ octopus install --target-root "." --init-answers-path "Octopus-agent-orchestrato
 
 Re-materialize `live/` from an existing deployed bundle.
 
-```powershell
+```text
 octopus init --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
@@ -95,7 +95,7 @@ octopus init --target-root "." --init-answers-path "Octopus-agent-orchestrator/r
 
 Change init answers without a full reinstall.
 
-```powershell
+```text
 octopus reinit --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
@@ -103,7 +103,7 @@ octopus reinit --target-root "." --init-answers-path "Octopus-agent-orchestrator
 
 Validate deployment consistency and rule contracts.
 
-```powershell
+```text
 octopus verify --target-root "." --source-of-truth "Codex" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
@@ -113,7 +113,7 @@ Provider values: `Claude`, `Codex`, `Gemini`, `GitHubCopilot`, `Windsurf`, `Juni
 
 Compare the current deployment with a newer npm package or a local unpacked bundle root. By default this only checks; `--apply` performs the update immediately.
 
-```powershell
+```text
 octopus check-update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 octopus check-update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --apply --no-prompt
 octopus check-update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --dry-run
@@ -123,14 +123,15 @@ octopus check-update --target-root "." --init-answers-path "Octopus-agent-orches
 
 Notes:
 - By default `check-update` uses the deployed package name from `Octopus-agent-orchestrator/package.json` with the npm `latest` tag.
-- `--package-spec` accepts npm specs such as `octopus-agent-orchestrator@2.0.1`, dist-tags like `@latest`, and local tarballs like `.\octopus-agent-orchestrator-2.0.1.tgz`.
+- `--package-spec` accepts npm specs such as `octopus-agent-orchestrator@<target-version>`, dist-tags like `@latest`, and local tarballs like `.\octopus-agent-orchestrator-<target-version>.tgz`.
 - `--source-path` is for local testing against an unpacked repo or bundle directory.
+- `--apply` runs the full update lifecycle after bundle sync, re-materializes `live/`, defers `VERSION` until lifecycle success, and creates rollback artifacts for the last applied update.
 
 ### `octopus update`
 
 Apply the update workflow directly.
 
-```powershell
+```text
 octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --package-spec "octopus-agent-orchestrator@latest"
 octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --source-path "."
@@ -139,23 +140,68 @@ octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator
 
 Notes:
 - `update` always applies the update workflow unless `--dry-run` is used.
+- Successful applies sync bundle files, run install, re-materialize `live/`, and only then write the final `VERSION` marker.
+- Successful applies create rollback artifacts under `Octopus-agent-orchestrator/runtime/update-rollbacks/` and `Octopus-agent-orchestrator/runtime/bundle-backups/`.
+- Update reports now reflect actual execution status; steps with no configured runner are reported as skipped rather than pass.
 - Use `octopus check-update --apply` when you want a compare-first flow with optional apply.
+
+### `octopus update git`
+
+Apply the update workflow from a git source explicitly.
+
+```text
+octopus update git --target-root "." --repo-url "https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git"
+octopus update git --target-root "." --repo-url "." --check-only
+octopus update git --target-root "." --repo-url "." --branch "master"
+octopus update git
+```
+
+Notes:
+- `update git` uses `git clone --depth 1` into a temp directory, then runs the same update lifecycle as npm-based `update`.
+- `--check-only` compares the git source without applying it.
+- With no extra flags, `octopus update git` targets the current directory and uses the default GitHub repository URL.
+
+### `octopus rollback`
+
+Rollback to a specific orchestrator version or restore from the latest rollback snapshot.
+
+```text
+octopus rollback --target-root "."
+octopus rollback --target-root "." --dry-run
+octopus rollback --target-root "." --snapshot-path "Octopus-agent-orchestrator/runtime/update-rollbacks/update-20260325-114000"
+octopus rollback --target-root "." --to-version "<target-version>" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+octopus rollback --target-root "." --to-version "<target-version>" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --source-path "."
+octopus rollback --target-root "." --to-version "<target-version>" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --package-spec "octopus-agent-orchestrator@<target-version>"
+```
+
+Notes:
+- Without `--to-version`, `rollback` restores the latest saved pre-update workspace snapshot and, when available, the latest bundle backup created by `update` or `check-update --apply`.
+- With `--to-version`, `rollback` acquires that orchestrator version, syncs the bundle, re-runs install/materialization, and updates `VERSION` only after success.
+- `--init-answers-path` is required for version-based rollback because the workspace is re-materialized for the requested version.
+- `--snapshot-path` applies to snapshot-mode rollback; with no `--snapshot-path`, `rollback` uses the latest saved rollback snapshot automatically.
+- Older updates created before rollback metadata persistence may require manual recovery.
 
 ### `octopus uninstall`
 
 Remove the orchestrator from a project.
 
-```powershell
+```text
 octopus uninstall --target-root "."
 octopus uninstall --target-root "." --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts yes
 octopus uninstall --target-root "." --dry-run --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts no
 ```
 
+Notes:
+- Uninstall removes managed blocks, bridge files, and the deployed bundle while preserving unrelated user content.
+- Before destructive work, uninstall creates an internal journal snapshot and attempts automatic restore if the uninstall flow fails mid-run.
+- `--skip-backups` skips the user-facing recovery backup copies; use it only when you intentionally accept losing those recovery artifacts.
+- `--keep-runtime-artifacts yes` preserves runtime reports, rollback snapshots, and task-event history under `Octopus-agent-orchestrator/runtime/`, along with user-owned `live/docs/project-memory/**`.
+
 ### `octopus skills`
 
 Manage optional built-in domain packs and generate code-driven recommendations from the compact skills index.
 
-```powershell
+```text
 octopus skills list --target-root "."
 octopus skills suggest --target-root "." --task-text "Fix slow API endpoint" --changed-path "src/api/users.ts"
 octopus skills add java-spring --target-root "."

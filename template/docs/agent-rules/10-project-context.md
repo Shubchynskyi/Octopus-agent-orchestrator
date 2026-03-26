@@ -5,33 +5,27 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 ## Purpose
 Define project-specific context for this repository. This file must describe the real project, not a template example.
 
-## Project Summary (Required)
-- Project name: `TODO`
-- Domain and goals: `TODO`
-- Primary users and stakeholders: `TODO`
-- Main success criteria: `TODO`
+## Project Summary
+Canonical project context lives in `Octopus-agent-orchestrator/live/docs/project-memory/context.md`.
+- Project name, domain, goals, users, and success criteria are maintained there.
+- Do not duplicate that content here; read `project-memory/context.md` as the authoritative source.
 
 ## Auto-Detected Snapshot
 - Generated discovery report: `Octopus-agent-orchestrator/live/project-discovery.md`
 - Use discovery as baseline signals only; confirm manually before treating any signal as ground truth.
 
-## Confirmed Technology Baseline (Required)
-Fill only what is true for this repository.
+## Confirmed Technology Baseline
+Canonical stack details live in `Octopus-agent-orchestrator/live/docs/project-memory/stack.md`.
+- Read `project-memory/stack.md` for the confirmed technology baseline.
+- Update `stack.md` (not this file) when stack details change.
 
-| Area | Confirmed stack |
-|---|---|
-| Backend | `TODO` |
-| Frontend | `TODO` |
-| Data and storage | `TODO` |
-| Infrastructure and deployment | `TODO` |
-| Testing and quality tooling | `TODO` |
+## Architecture
+Canonical architecture details live in `Octopus-agent-orchestrator/live/docs/project-memory/architecture.md`.
+- Read `project-memory/architecture.md` for component boundaries, data flow, and integration points.
+- Update `architecture.md` (not this file) when architecture changes.
 
 ## Domain Constraints and Non-Goals
-- Business constraints: `TODO`
-- Security or compliance constraints: `TODO`
-- Performance or SLA constraints: `TODO`
-- Explicit non-goals: `TODO`
+Capture constraints and non-goals in `Octopus-agent-orchestrator/live/docs/project-memory/context.md` under the Scope Boundaries section.
 
 ## Open Questions
-- `TODO`
-- `TODO`
+Track open questions in `Octopus-agent-orchestrator/live/docs/project-memory/decisions.md` until they are resolved.

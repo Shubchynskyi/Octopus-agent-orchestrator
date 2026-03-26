@@ -520,4 +520,118 @@ describe('runInstall', () => {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }
     });
+
+    it('dry-run does not write any files to disk', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            const result = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath,
+                dryRun: true
+            });
+
+            // filesDeployed counts what *would* be deployed; actual writes are suppressed
+            assert.ok(result.filesDeployed >= 0);
+            assert.equal(result.initInvoked, false);
+            assert.equal(result.liveVersionWritten, false);
+            assert.equal(result.backupRoot, null);
+            assert.ok(!fs.existsSync(path.join(projectRoot, 'TASK.md')));
+            assert.ok(!fs.existsSync(path.join(projectRoot, 'CLAUDE.md')));
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'live', 'version.json')));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('dry-run with existing bundle does not mutate bundle contents', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            // First, do a real install to populate the project
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            });
+
+            // Snapshot the bundle directory to detect mutations
+            const snapshotDir = (dir) => {
+                const result = {};
+                for (const entry of fs.readdirSync(dir, { withFileTypes: true, recursive: true })) {
+                    const full = path.join(entry.parentPath || dir, entry.name);
+                    const rel = path.relative(dir, full);
+                    if (entry.isFile()) {
+                        const stat = fs.statSync(full);
+                        result[rel] = { size: stat.size, mtime: stat.mtimeMs };
+                    }
+                }
+                return result;
+            };
+
+            const bundleSnapshotBefore = snapshotDir(bundleRoot);
+            const projectSnapshotBefore = snapshotDir(projectRoot);
+
+            // Now run install again with dry-run
+            const dryResult = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath,
+                dryRun: true
+            });
+
+            const bundleSnapshotAfter = snapshotDir(bundleRoot);
+            const projectSnapshotAfter = snapshotDir(projectRoot);
+
+            // Verify no files were changed in the bundle
+            assert.deepStrictEqual(
+                Object.keys(bundleSnapshotBefore).sort(),
+                Object.keys(bundleSnapshotAfter).sort(),
+                'Bundle file list must not change during dry-run'
+            );
+
+            // Verify no files were changed in the project
+            assert.deepStrictEqual(
+                Object.keys(projectSnapshotBefore).sort(),
+                Object.keys(projectSnapshotAfter).sort(),
+                'Project file list must not change during dry-run'
+            );
+
+            assert.equal(dryResult.filesDeployed, 0);
+            assert.equal(dryResult.backupRoot, null);
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
 });

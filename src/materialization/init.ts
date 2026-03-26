@@ -17,15 +17,21 @@ const {
 } = require('./project-discovery.ts');
 const {
     RULE_FILES,
+    GENERATED_RULE_FILES,
     selectRuleSource,
     applyContextDefaults,
-    applyAssistantDefaults
+    applyAssistantDefaults,
+    generateProjectMemorySummary
 } = require('./rule-materialization.ts');
 const {
     NODE_HUMAN_COMMIT_COMMAND,
     NODE_INTERACTIVE_UPDATE_COMMAND,
     NODE_NON_INTERACTIVE_UPDATE_COMMAND
 } = require('./command-constants.ts');
+const {
+    migrateContextRulesToProjectMemory,
+    buildMigrationReportLines
+} = require('./project-memory-migration.ts');
 
 /**
  * Runs the init materialization pipeline.
@@ -95,9 +101,35 @@ function runInit(options) {
     const discoveryLines = buildProjectDiscoveryLines(discovery, timestampIso);
     const discoveryOverlay = buildDiscoveryOverlaySection(discovery);
 
+    // Seed project-memory from template only when absent (preserve user content on reinit/update)
+    const seedOnlyDirectories = ['docs/project-memory'];
+    let seededDirs = 0;
+
+    for (const relDir of seedOnlyDirectories) {
+        const srcDir = path.join(templateRoot, relDir);
+        if (!pathExists(srcDir)) continue;
+
+        const destDir = path.join(liveRoot, relDir);
+        if (pathExists(destDir)) continue;
+
+        if (!dryRun) {
+            ensureDirectory(destDir);
+            copyDirectoryRecursive(srcDir, destDir);
+        }
+        seededDirs++;
+    }
+
+    // T-075: migrate user-authored content from context rules into project-memory
+    // (runs BEFORE rule materialization so current live/legacy content is still readable)
+    const migrationResult = migrateContextRulesToProjectMemory({
+        bundleRoot, targetRoot, templateRoot, dryRun
+    });
+
     // Materialize rule files
     const ruleSourceMap = [];
     for (const ruleFile of RULE_FILES) {
+        if (GENERATED_RULE_FILES.includes(ruleFile)) continue;
+
         const source = selectRuleSource(ruleFile, { targetRoot, liveRuleRoot, templateRuleRoot });
         if (!source) {
             throw new Error(`No source found for rule file: ${ruleFile}`);
@@ -146,6 +178,20 @@ function runInit(options) {
         }
         copiedSupportDirs++;
     }
+
+    // Generate project-memory summary rule (always regenerated, after migration)
+    const projectMemoryDir = path.join(liveRoot, 'docs/project-memory');
+    const projectMemorySummary = generateProjectMemorySummary(projectMemoryDir, timestampIso);
+    const projectMemorySummaryDest = path.join(liveRuleRoot, '15-project-memory.md');
+    if (!dryRun) {
+        fs.writeFileSync(projectMemorySummaryDest, projectMemorySummary, 'utf8');
+    }
+    ruleSourceMap.push({
+        ruleFile: '15-project-memory.md',
+        source: 'docs/project-memory/*',
+        origin: 'generated',
+        destination: path.relative(targetRoot, projectMemorySummaryDest).replace(/\\/g, '/')
+    });
 
     // Handle managed config merge (token-economy enabled flag)
     const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs'];
@@ -208,7 +254,7 @@ function runInit(options) {
         const inventoryLines = buildSourceInventoryLines(sourceInventory, timestampIso);
         fs.writeFileSync(sourceInventoryPath, inventoryLines.join('\r\n'), 'utf8');
 
-        // Init report
+        // Init report (including T-075 migration details)
         const initReportLines = buildInitReportLines({
             timestampIso, projectName, targetRoot, ruleSourceMap,
             ruleFiles: RULE_FILES, copiedSupportDirs,
@@ -217,6 +263,7 @@ function runInit(options) {
             sourceInventory,
             reviewCapabilitiesSync
         });
+        initReportLines.push(...buildMigrationReportLines(migrationResult));
         fs.writeFileSync(initReportPath, initReportLines.join('\r\n'), 'utf8');
 
         // Project discovery
@@ -244,6 +291,8 @@ function runInit(options) {
         tokenEconomyEnabled,
         ruleFilesMaterialized: RULE_FILES.length,
         supportDirectoriesSynced: copiedSupportDirs,
+        seedOnlyDirectoriesSeeded: seededDirs,
+        projectMemoryMigration: migrationResult,
         reviewCapabilitiesConfigMergeStatus: configMergeStatuses['review-capabilities'] || 'n/a',
         pathsConfigMergeStatus: configMergeStatuses['paths'] || 'n/a',
         tokenEconomyConfigMergeStatus: configMergeStatuses['token-economy'] || 'n/a',

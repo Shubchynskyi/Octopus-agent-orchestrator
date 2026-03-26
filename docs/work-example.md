@@ -80,8 +80,10 @@ Execute task T-001 depth=3
 ### Adding Specialist Skills
 
 After init, ask your agent:
-- `Add api-review skill`
-- `Create a test-review agent`
-- `Add performance-review as optional`
+- `Show which baseline skills are already available`
+- `Suggest optional packs for this task`
+- `Add the java-spring pack`
+- `Add the docs-process pack`
 
-The agent uses `live/skills/skill-builder/SKILL.md` to create specialist skill files (`skill.json` + `SKILL.md`), wire triggers, and enable capabilities.
+For built-in packs, the agent should use `octopus skills list` / `octopus skills suggest` first, then install only the selected optional packs.
+For custom project-specific skills, the agent uses `live/skills/skill-builder/SKILL.md` to create specialist skill files (`skill.json` + `SKILL.md`), wire triggers, and enable capabilities.

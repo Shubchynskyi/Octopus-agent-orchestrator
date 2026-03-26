@@ -284,4 +284,66 @@ describe('runReinit', () => {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }
     });
+
+    it('preserves project-memory user content when init-answers change (T-076)', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+            fs.writeFileSync(answersPath, JSON.stringify({
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            }));
+
+            // First reinit to establish workspace
+            runReinit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            // Simulate pre-existing project-memory with user content
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'context.md'),
+                '# Project Context\n\n## Domain\n\nFintech payment gateway.\n', 'utf8');
+            fs.writeFileSync(path.join(pmDir, 'decisions.md'),
+                '# Decisions\n\n## ADR-001\n\nUse event sourcing.\n', 'utf8');
+
+            // Reinit with changed answers (language, brevity)
+            const result = runReinit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                overrides: { AssistantLanguage: 'German', AssistantBrevity: 'detailed' },
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.assistantLanguage, 'German');
+            assert.equal(result.assistantBrevity, 'detailed');
+
+            // project-memory must survive the reinit with changed answers
+            assert.ok(fs.existsSync(path.join(pmDir, 'context.md')),
+                'context.md must survive reinit with changed answers');
+            assert.ok(
+                fs.readFileSync(path.join(pmDir, 'context.md'), 'utf8')
+                    .includes('Fintech payment gateway'),
+                'user content in context.md must be intact');
+            assert.ok(fs.existsSync(path.join(pmDir, 'decisions.md')),
+                'decisions.md must survive reinit');
+            assert.ok(
+                fs.readFileSync(path.join(pmDir, 'decisions.md'), 'utf8')
+                    .includes('event sourcing'),
+                'user content in decisions.md must be intact');
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
 });

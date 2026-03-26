@@ -1,14 +1,26 @@
 # Octopus Agent Orchestrator: User How-To
 
-Step-by-step guide for project owners. For CLI command details see **[docs/cli-reference.md](docs/cli-reference.md)**.
+Step-by-step guide for project owners. For CLI command details see **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md)**.
 
-## 1. One-Command Setup
+## 1. Recommended Setup
 
-```powershell
+```shell
+npm install -g octopus-agent-orchestrator
+octopus setup
+```
+
+This is the recommended path when you want persistent CLI commands:
+- `octopus`
+- `oao`
+- `octopus-agent-orchestrator`
+
+One-off fallback without global install:
+
+```shell
 npx -y octopus-agent-orchestrator setup
 ```
 
-Equivalent aliases: `oao`, `octopus-agent-orchestrator`.
+`npx` runs the package temporarily and does not keep `octopus` or `oao` in your terminal `PATH`.
 
 Preferred and required runtime surface is the Node CLI.
 
@@ -20,15 +32,9 @@ This path:
 - validates manifest;
 - leaves final agent onboarding for `AGENT_INIT_PROMPT.md` and the hard `octopus agent-init` gate.
 
-If you already installed globally:
-
-```powershell
-octopus setup
-```
-
 ## 2. Optional Bundle-Only Bootstrap
 
-```powershell
+```shell
 octopus bootstrap
 ```
 
@@ -36,7 +42,7 @@ This only deploys `./Octopus-agent-orchestrator/` and prints next steps.
 It does **not** run install.
 
 **Branch testing:**
-```powershell
+```shell
 octopus bootstrap --repo-url "<git-url>" --branch "<branch>"
 ```
 
@@ -90,7 +96,7 @@ After successful setup:
 - ✅ `octopus verify` and `octopus gate validate-manifest` pass.
 - ✅ `TASK.md` exists with task queue.
 
-See **[docs/architecture.md](docs/architecture.md)** for full list of deployed files.
+See **[docs/architecture.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/architecture.md)** for full list of deployed files.
 
 ## 5. Start Working On Tasks
 
@@ -108,7 +114,7 @@ Execute task T-001 depth=3
 | `depth=3` | High-risk, cross-module, security-sensitive work |
 
 Required gates apply at any depth.
-See **[docs/work-example.md](docs/work-example.md)** for a full task lifecycle walkthrough.
+See **[docs/work-example.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/work-example.md)** for a full task lifecycle walkthrough.
 
 ## 6. Existing Project With Existing Docs
 
@@ -116,9 +122,37 @@ See **[docs/work-example.md](docs/work-example.md)** for a full task lifecycle w
 - Canonical rules remain under `Octopus-agent-orchestrator/live/`.
 - Specialist skills are created only in `Octopus-agent-orchestrator/live/skills/**`.
 
-## 7. Post-Init Validation
+## 7. Project Memory (Durable Knowledge)
 
-```powershell
+Durable project knowledge lives in `Octopus-agent-orchestrator/live/docs/project-memory/`.
+
+### What Belongs There
+
+| File | Content |
+|---|---|
+| `context.md` | Business domain, project goals, scope boundaries. |
+| `architecture.md` | Component boundaries, data flow, integration points. |
+| `conventions.md` | Coding standards, naming rules, workflow conventions. |
+| `stack.md` | Languages, frameworks, infrastructure, key dependencies. |
+| `decisions.md` | Architectural and process decisions with rationale. |
+
+Add new files in lowercase kebab-case `.md` format when no existing category fits.
+
+### Ownership and Lifecycle
+
+- `project-memory/` is **user-owned**. The materializer seeds it from templates on fresh install and never overwrites, merges, or deletes its contents on init, reinit, update, or uninstall-with-keep.
+- `live/docs/agent-rules/15-project-memory.md` is a **generated summary** regenerated on every init, reinit, and update from the contents of `project-memory/`. Do not edit it directly; edit the source files in `project-memory/` instead.
+- Context rule files (`10-project-context.md`, `20-architecture.md`, etc.) now redirect agents to `project-memory/` as the authoritative source. Do not embed durable knowledge in those managed rule files.
+
+### How Agents Use It
+
+- Agents read `project-memory/` files for context at any time.
+- Agents write to `project-memory/` only with explicit user approval or a task instruction that authorises the update.
+- Discovered facts (architecture insights, conventions, stack details, domain constraints, design decisions) go into the matching `project-memory/` file, not into managed rules or config.
+
+## 8. Post-Init Validation
+
+```shell
 octopus agent-init --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --active-agent-files "AGENTS.md" --project-rules-updated yes --skills-prompted yes
 octopus doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 octopus verify --target-root "." --source-of-truth "<provider>" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
@@ -129,21 +163,21 @@ octopus gate validate-manifest --manifest-path "Octopus-agent-orchestrator/MANIF
 
 For day-to-day validation, prefer `octopus doctor`, `octopus verify`, and `octopus gate validate-manifest`.
 
-See **[docs/cli-reference.md](docs/cli-reference.md)** for the full low-level script reference.
+See **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md)** for the full low-level script reference.
 
-## 8. Change Init Answers (Reinit)
+## 9. Change Init Answers (Reinit)
 
 Change language, brevity, source-of-truth, or other init answers without reinstalling:
 
-```powershell
+```shell
 octopus reinit --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
-See **[docs/cli-reference.md](docs/cli-reference.md#octopus-reinit)** for details.
+See **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md#octopus-reinit)** for details.
 
-## 9. Update Existing Deployment
+## 10. Update Existing Deployment
 
-```powershell
+```shell
 # Check only
 octopus check-update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 
@@ -153,20 +187,32 @@ octopus check-update --target-root "." --init-answers-path "Octopus-agent-orches
 # Direct apply
 octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 
+# Apply from git explicitly
+octopus update git --target-root "." --repo-url "." --check-only
+octopus update git
+
 # Dry-run preview
 octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --dry-run
+
+# Roll back the last applied update
+octopus rollback --target-root "."
+
+# Roll back to a specific orchestrator version
+octopus rollback --target-root "." --to-version "<target-version>" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
 `check-update` is compare-first and uses `--apply` only when you want it to perform the update.
 `update` applies the update workflow directly unless `--dry-run` is used.
+`update git` uses a git clone source explicitly; without extra flags it uses the default GitHub repository and applies the update to the current workspace.
+`rollback` without `--to-version` restores the latest saved rollback snapshot and bundle backup from the last applied update; with `--to-version` it acquires that version, syncs the bundle, and re-materializes the workspace.
 
-By default update checks the latest npm version for the deployed package name, syncs bundle files, migrates init answers, and runs verification. For local testing you can point `check-update/update` to `--source-path "."` or to a local tarball via `--package-spec`.
+By default `check-update` compares against the deployed package name using the npm `latest` tag. When an update is applied (`check-update --apply` or `update`), the workflow reuses and validates init answers, syncs bundle files, re-materializes `live/`, and only updates `VERSION` after the lifecycle succeeds. For local testing you can point `check-update/update` to `--source-path "."` or to a local tarball via `--package-spec`.
 
-See **[docs/cli-reference.md](docs/cli-reference.md#octopus-update)** for full options.
+See **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md#octopus-update)** for full options.
 
-## 10. Uninstall
+## 11. Uninstall
 
-```powershell
+```shell
 # Interactive — asks what to keep
 octopus uninstall --target-root "."
 
@@ -174,14 +220,14 @@ octopus uninstall --target-root "."
 octopus uninstall --target-root "." --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts yes
 ```
 
-Uninstall removes managed blocks, bridge files, and the bundle directory. User content is preserved.
-See **[docs/cli-reference.md](docs/cli-reference.md#octopus-uninstall)** for full options.
+Uninstall removes managed blocks, bridge files, and the bundle directory while preserving user content outside managed sections. It also creates an internal uninstall journal snapshot and attempts automatic restore on failure. Avoid `--skip-backups` unless you explicitly accept losing the user-facing recovery backup copies.
+See **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md#octopus-uninstall)** for full options.
 
-## 11. Adding Specialist Skills After Init
+## 12. Adding Specialist Skills After Init
 
 Built-in packs:
 
-```powershell
+```shell
 octopus skills list --target-root "."
 octopus skills suggest --target-root "." --task-text "Fix slow API endpoint" --changed-path "src/api/users.ts"
 octopus skills add java-spring --target-root "."
@@ -192,6 +238,7 @@ octopus skills validate --target-root "."
 `skills list` and `skills suggest` should be read as two different layers:
 - optional pack = installable bundle;
 - skill = concrete directory under `live/skills/**` after install.
+- baseline skills are already included and optional packs must not duplicate them.
 
 The agent should first show what is already available now: baseline skills, installed optional packs, and installed optional skill directories. Only after that should it suggest additional optional packs to add. `skills suggest` uses only the compact `live/config/skills-index.json` index for discovery and should not recommend baseline skills or already installed optional skills as new additions. After selection, the pack should just be installed into `live/skills/**`; full optional skill files should be read only later, when a selected skill is actually activated for task execution.
 
@@ -205,10 +252,23 @@ Custom project-specific skills still live under `Octopus-agent-orchestrator/live
 
 If you work on this repository itself in IntelliJ IDEA/WebStorm, open the root `tsconfig.json`; it extends `tsconfig.node-foundation.json` and is the editor-facing project file.
 
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `octopus: command not found` | Global install missing or `PATH` not refreshed | Run `npm install -g octopus-agent-orchestrator` and open a new terminal |
+| `npx` fetches a stale version | npm cache holds an older package | Run `npx --yes --package octopus-agent-orchestrator@latest octopus setup` or clear cache with `npm cache clean --force` |
+| `EACCES` / permission denied on global install | No write access to the global `node_modules` prefix | Use `sudo npm install -g …` (Linux/macOS) or fix the npm prefix directory permissions |
+| `octopus setup` exits with "Node.js >= 20 required" | Active Node version is below 20 LTS | Install Node 20+ via `nvm install 20` / `nvm use 20` or download from nodejs.org |
+| `octopus verify` fails after update | `live/` materialization is out of sync with new templates | Run `octopus init --target-root "."` to re-materialize, then `octopus verify` again |
+| `validate-manifest` reports duplicate keys | MANIFEST.md has repeated file entries | Remove the duplicate lines in `MANIFEST.md` and rerun `octopus gate validate-manifest` |
+| Agent skips init answers and re-asks all 6 questions | `runtime/init-answers.json` missing or unreadable | Verify the file exists and the path passed to the agent matches; rerun `octopus setup` if lost |
+| Rollback fails with "no snapshot found" | No prior update created a rollback snapshot | Use `octopus update --dry-run` first; rollback is only available after a successful `update` or `check-update --apply` |
+
 ## Further Reading
 
-- **[docs/architecture.md](docs/architecture.md)** — Design, runtime model, what gets deployed
-- **[docs/configuration.md](docs/configuration.md)** — Token economy, output filters, review capabilities
-- **[docs/cli-reference.md](docs/cli-reference.md)** — Complete CLI command reference
-- **[docs/work-example.md](docs/work-example.md)** — Task lifecycle walkthrough
+- **[docs/architecture.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/architecture.md)** — Design, runtime model, what gets deployed
+- **[docs/configuration.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/configuration.md)** — Token economy, output filters, review capabilities
+- **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md)** — Complete CLI command reference
+- **[docs/work-example.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/work-example.md)** — Task lifecycle walkthrough
 - **[CHANGELOG.md](CHANGELOG.md)** — Full changelog

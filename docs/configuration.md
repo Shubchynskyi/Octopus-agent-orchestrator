@@ -114,6 +114,9 @@ Manage it through the CLI:
 
 This file is runtime state and should normally be changed through the CLI rather than by hand.
 
+Packs are install/discovery bundles for optional specialist skills.
+They are not a second copy of baseline skills; baseline skills stay available without any pack install.
+
 ## Skills Index
 
 Compact discovery metadata for optional skills.

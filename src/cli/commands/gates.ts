@@ -4,6 +4,13 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
+    DEFAULT_COMPILE_TIMEOUT_MS,
+    DEFAULT_GIT_TIMEOUT_MS,
+    spawnStreamed,
+    spawnSyncWithTimeout
+} = require('../../core/subprocess.ts');
+
+const {
     buildOutputTelemetry,
     formatVisibleSavingsLine
 } = require('../../gate-runtime/token-telemetry.ts');
@@ -408,6 +415,83 @@ function quoteWindowsArgument(argument) {
     return escaped;
 }
 
+/**
+ * Execute a CLI command asynchronously with streamed output, explicit timeout
+ * and AbortController-based cancellation.
+ *
+ * @param {string} commandText  Full command line (parsed via splitCommandLine)
+ * @param {object} [options]
+ * @param {string}       [options.cwd]
+ * @param {string}       [options.envPath]
+ * @param {number}       [options.timeoutMs]  Per-command timeout (default: DEFAULT_COMPILE_TIMEOUT_MS)
+ * @param {AbortSignal}  [options.signal]     External cancellation signal
+ * @returns {Promise<{exitCode: number, outputLines: string[], timedOut: boolean, cancelled: boolean}>}
+ */
+async function executeCommandAsync(commandText, options = {}) {
+    const cwd = options.cwd || process.cwd();
+    const tokens = splitCommandLine(commandText);
+    if (tokens.length === 0) {
+        throw new Error('Command must not be empty.');
+    }
+
+    const executablePath = resolveExecutablePath(tokens[0], cwd, options.envPath);
+    const args = tokens.slice(1);
+    const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_COMPILE_TIMEOUT_MS;
+
+    let spawnCommand;
+    let spawnArgs;
+    if (process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(executablePath)) {
+        const commandLine = [quoteWindowsArgument(executablePath), ...args.map(quoteWindowsArgument)].join(' ');
+        spawnCommand = process.env.ComSpec || 'cmd.exe';
+        spawnArgs = ['/d', '/s', '/c', commandLine];
+    } else {
+        spawnCommand = executablePath;
+        spawnArgs = args;
+    }
+
+    const result = await spawnStreamed(spawnCommand, spawnArgs, {
+        cwd,
+        timeoutMs,
+        signal: options.signal || null
+    });
+
+    if (result.timedOut) {
+        return {
+            exitCode: 1,
+            outputLines: [
+                ...splitOutputLines(result.stdout),
+                ...splitOutputLines(result.stderr),
+                `Process timed out after ${timeoutMs} ms.`
+            ],
+            timedOut: true,
+            cancelled: false
+        };
+    }
+
+    if (result.cancelled) {
+        return {
+            exitCode: 1,
+            outputLines: [
+                ...splitOutputLines(result.stdout),
+                ...splitOutputLines(result.stderr),
+                'Process was cancelled.'
+            ],
+            timedOut: false,
+            cancelled: true
+        };
+    }
+
+    return {
+        exitCode: result.exitCode,
+        outputLines: [
+            ...splitOutputLines(result.stdout),
+            ...splitOutputLines(result.stderr)
+        ],
+        timedOut: false,
+        cancelled: false
+    };
+}
+
 function executeCommand(commandText, options = {}) {
     const cwd = options.cwd || process.cwd();
     const tokens = splitCommandLine(commandText);
@@ -417,22 +501,25 @@ function executeCommand(commandText, options = {}) {
 
     const executablePath = resolveExecutablePath(tokens[0], cwd, options.envPath);
     const args = tokens.slice(1);
+    const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_COMPILE_TIMEOUT_MS;
 
     let result;
     if (process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(executablePath)) {
         const commandLine = [quoteWindowsArgument(executablePath), ...args.map(quoteWindowsArgument)].join(' ');
-        result = childProcess.spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', commandLine], {
+        result = spawnSyncWithTimeout(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', commandLine], {
             cwd,
             windowsHide: true,
             encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'pipe']
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeoutMs
         });
     } else {
-        result = childProcess.spawnSync(executablePath, args, {
+        result = spawnSyncWithTimeout(executablePath, args, {
             cwd,
             windowsHide: true,
             encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'pipe']
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeoutMs
         });
     }
 
@@ -440,6 +527,14 @@ function executeCommand(commandText, options = {}) {
         ...splitOutputLines(result.stdout),
         ...splitOutputLines(result.stderr)
     ];
+
+    if (result.timedOut) {
+        return {
+            exitCode: 1,
+            outputLines: [...outputLines, `Process timed out after ${timeoutMs} ms.`],
+            timedOut: true
+        };
+    }
 
     if (result.error) {
         if (result.error.code === 'ENOENT') {
@@ -450,7 +545,8 @@ function executeCommand(commandText, options = {}) {
 
     return {
         exitCode: result.status == null ? 1 : result.status,
-        outputLines
+        outputLines,
+        timedOut: false
     };
 }
 
@@ -464,11 +560,12 @@ function getRenameCount(repoRoot, detectionSource, explicitChangedFiles) {
     if (detectionSource === 'explicit_changed_files' && explicitChangedFiles.length > 0) {
         args.push('--', ...explicitChangedFiles);
     }
-    const result = childProcess.spawnSync('git', args, {
+    const result = spawnSyncWithTimeout('git', args, {
         cwd: repoRoot,
         windowsHide: true,
         encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore']
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS
     });
     if (result.error || result.status !== 0) {
         return 0;
@@ -580,7 +677,7 @@ function runClassifyChangeCommand(options) {
     };
 }
 
-function runCompileGateCommand(options) {
+async function runCompileGateCommand(options) {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const resolvedTaskId = assertValidTaskId(String(options.taskId || '').trim());
@@ -646,7 +743,7 @@ function runCompileGateCommand(options) {
             for (let index = 0; index < compileCommands.length; index += 1) {
                 const compileCommand = compileCommands[index];
                 const commandProfile = getCompileCommandProfile(compileCommand);
-                const execution = executeCommand(compileCommand, { cwd: repoRoot });
+                const execution = await executeCommandAsync(compileCommand, { cwd: repoRoot });
                 const stats = getOutputStats(execution.outputLines);
 
                 compileOutputLines.push(...execution.outputLines);
@@ -1534,7 +1631,7 @@ function runRequiredReviewsCheckCommand(options) {
     return { outputLines, exitCode: 0 };
 }
 
-function runHumanCommitCommand(gitArgs, options = {}) {
+async function runHumanCommitCommand(gitArgs, options = {}) {
     const finalArgs = toStringArray(gitArgs).filter(function (item) {
         return String(item || '').trim() !== '';
     });
@@ -1542,28 +1639,19 @@ function runHumanCommitCommand(gitArgs, options = {}) {
         throw new Error('Provide git commit arguments, for example: -m "feat: message"');
     }
 
-    const result = childProcess.spawnSync('git', ['commit', ...finalArgs], {
+    const result = await spawnStreamed('git', ['commit', ...finalArgs], {
         cwd: options.cwd || process.cwd(),
-        windowsHide: true,
-        stdio: 'inherit',
-        env: {
-            ...process.env,
-            OCTOPUS_ALLOW_COMMIT: '1'
-        }
+        inheritStdio: true,
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+        env: { OCTOPUS_ALLOW_COMMIT: '1' }
     });
 
-    if (result.error) {
-        if (result.error.code === 'ENOENT') {
-            throw new Error('git is required but was not found in PATH.');
-        }
-        throw result.error;
-    }
-
-    return result.status == null ? 1 : result.status;
+    return result.exitCode;
 }
 
 module.exports = {
     executeCommand,
+    executeCommandAsync,
     resolveExecutablePath,
     runClassifyChangeCommand,
     runCompileGateCommand,

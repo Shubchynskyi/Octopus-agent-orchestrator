@@ -6,8 +6,8 @@
 .claude/
 
 # Generated at install/init time
-live/
-runtime/
+/live/
+/runtime/
 
 # OS
 .DS_Store

@@ -10,7 +10,7 @@ allowed-tools:
   - Write
 metadata:
   author: Octopus-agent-orchestrator
-  version: 1.0.1
+  version: 1.0.2
   runtime_requirement: Node.js 20 LTS for public CLI and gate commands
 ---
 
@@ -19,6 +19,7 @@ metadata:
 Use this skill to create project-specific specialist skills in `Octopus-agent-orchestrator/live/skills/**` only.
 Never write generated specialist skills into `Octopus-agent-orchestrator/template/**`.
 Generated live skills must follow the same per-skill format as core skills and optional pack skills: `skill.json` + `SKILL.md` + optional `README.md` / `references/*`.
+Use `references/authoring-principles.md` to keep new skills narrow, triggerable, and low-noise before writing any manifests or checklists.
 
 ## Inputs
 - User-approved skill list (for example: `api-review`, `test-review`, `performance-review`, `infra-review`, `dependency-review`, or custom).
@@ -32,6 +33,7 @@ Generated live skills must follow the same per-skill format as core skills and o
 
 ## Workflow
 1. Load references:
+   - `references/authoring-principles.md`
    - `references/skill-template.md`
    - `references/frontmatter-guide.md`
    - `references/wiring-checklist.md`

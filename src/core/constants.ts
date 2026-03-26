@@ -19,6 +19,7 @@ const LIFECYCLE_COMMANDS = Object.freeze([
     'check-update',
     'uninstall',
     'update',
+    'rollback',
     'skills'
 ]);
 

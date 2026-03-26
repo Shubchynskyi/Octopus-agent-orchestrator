@@ -7,17 +7,77 @@ const os = require('node:os');
 const {
     RULE_FILES,
     CONTEXT_RULE_FILES,
+    GENERATED_RULE_FILES,
     selectRuleSource,
     applyContextDefaults,
-    applyAssistantDefaults
+    applyAssistantDefaults,
+    generateProjectMemorySummary,
+    extractNonEmptySections,
+    stripHtmlComments
 } = require('../../../src/materialization/rule-materialization.ts');
 
+function findRepoRoot() {
+    let current = __dirname;
+    while (current !== path.dirname(current)) {
+        if (fs.existsSync(path.join(current, 'template')) && fs.existsSync(path.join(current, 'package.json'))) {
+            return current;
+        }
+        current = path.dirname(current);
+    }
+    throw new Error('Cannot resolve repo root.');
+}
+
 describe('RULE_FILES', () => {
-    it('contains all 11 standard rule files', () => {
-        assert.equal(RULE_FILES.length, 11);
+    it('contains all 12 standard rule files', () => {
+        assert.equal(RULE_FILES.length, 12);
         assert.ok(RULE_FILES.includes('00-core.md'));
+        assert.ok(RULE_FILES.includes('15-project-memory.md'));
         assert.ok(RULE_FILES.includes('80-task-workflow.md'));
         assert.ok(RULE_FILES.includes('90-skill-catalog.md'));
+    });
+
+    it('skill catalogs list all baseline skills used by orchestration', () => {
+        const repoRoot = findRepoRoot();
+        const requiredSkills = [
+            'orchestration',
+            'orchestration-depth1',
+            'code-review',
+            'db-review',
+            'dependency-review',
+            'security-review',
+            'refactor-review',
+            'skill-builder'
+        ];
+
+        for (const relativePath of [
+            'template/docs/agent-rules/90-skill-catalog.md',
+            'live/docs/agent-rules/90-skill-catalog.md'
+        ]) {
+            const fullPath = path.join(repoRoot, relativePath);
+            if (!fs.existsSync(fullPath)) {
+                continue;
+            }
+            const content = fs.readFileSync(fullPath, 'utf8');
+            for (const skillId of requiredSkills) {
+                assert.ok(
+                    content.includes(`Octopus-agent-orchestrator/live/skills/${skillId}`),
+                    `${relativePath} should list ${skillId}`
+                );
+            }
+        }
+    });
+});
+
+describe('GENERATED_RULE_FILES', () => {
+    it('contains 15-project-memory.md', () => {
+        assert.equal(GENERATED_RULE_FILES.length, 1);
+        assert.ok(GENERATED_RULE_FILES.includes('15-project-memory.md'));
+    });
+
+    it('is a subset of RULE_FILES', () => {
+        for (const f of GENERATED_RULE_FILES) {
+            assert.ok(RULE_FILES.includes(f), `${f} should be in RULE_FILES`);
+        }
     });
 });
 
@@ -150,5 +210,190 @@ describe('applyAssistantDefaults', () => {
         const content = '{{ASSISTANT_RESPONSE_LANGUAGE}}';
         const result = applyAssistantDefaults(content, '10-project-context.md', 'Russian', 'detailed');
         assert.equal(result, content);
+    });
+});
+
+describe('stripHtmlComments', () => {
+    it('removes single-line comments', () => {
+        assert.equal(stripHtmlComments('before <!-- comment --> after'), 'before  after');
+    });
+
+    it('removes multi-line comments', () => {
+        assert.equal(stripHtmlComments('a\n<!-- line1\nline2 -->\nb').trim(), 'a\n\nb');
+    });
+
+    it('returns text unchanged when no comments', () => {
+        assert.equal(stripHtmlComments('plain text'), 'plain text');
+    });
+});
+
+describe('extractNonEmptySections', () => {
+    it('extracts sections with real content', () => {
+        const md = [
+            '# Title',
+            '',
+            '## Domain',
+            '',
+            'E-commerce platform.',
+            '',
+            '## Goals',
+            '',
+            '<!-- placeholder -->',
+            ''
+        ].join('\n');
+
+        const sections = extractNonEmptySections(md);
+        assert.equal(sections.length, 1);
+        assert.equal(sections[0].heading, 'Domain');
+        assert.equal(sections[0].content, 'E-commerce platform.');
+    });
+
+    it('skips sections with only HTML comments', () => {
+        const md = '## Empty\n\n<!-- just a hint -->\n\n## Also Empty\n<!-- another -->';
+        const sections = extractNonEmptySections(md);
+        assert.equal(sections.length, 0);
+    });
+
+    it('handles multiple populated sections', () => {
+        const md = '## A\nContent A\n## B\nContent B\n';
+        const sections = extractNonEmptySections(md);
+        assert.equal(sections.length, 2);
+        assert.equal(sections[0].heading, 'A');
+        assert.equal(sections[1].heading, 'B');
+    });
+});
+
+describe('generateProjectMemorySummary', () => {
+    it('generates stub when directory does not exist', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-pm-absent-'));
+        try {
+            const result = generateProjectMemorySummary(
+                path.join(tmpDir, 'nonexistent'), '2025-01-01T00:00:00.000Z'
+            );
+            assert.ok(result.includes('DO NOT EDIT'));
+            assert.ok(result.includes('15 · Project Memory Summary'));
+            assert.ok(result.includes('No `docs/project-memory/` directory found'));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('generates stub when directory has no .md files', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-pm-empty-'));
+        try {
+            const pmDir = path.join(tmpDir, 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+
+            const result = generateProjectMemorySummary(pmDir, '2025-01-01T00:00:00.000Z');
+            assert.ok(result.includes('DO NOT EDIT'));
+            assert.ok(result.includes('contains no content files yet'));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('generates stub when all files have only placeholder content', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-pm-placeholders-'));
+        try {
+            const pmDir = path.join(tmpDir, 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'context.md'),
+                '# Context\n\n## Domain\n\n<!-- placeholder -->\n', 'utf8');
+
+            const result = generateProjectMemorySummary(pmDir, '2025-01-01T00:00:00.000Z');
+            assert.ok(result.includes('DO NOT EDIT'));
+            assert.ok(result.includes('only placeholder templates'));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('generates summary with content and provenance table', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-pm-full-'));
+        try {
+            const pmDir = path.join(tmpDir, 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'context.md'),
+                '# Context\n\n## Domain\n\nE-commerce SaaS.\n\n## Goals\n\nScale globally.\n', 'utf8');
+            fs.writeFileSync(path.join(pmDir, 'stack.md'),
+                '# Stack\n\n## Languages\n\nTypeScript 5.x, Python 3.12.\n', 'utf8');
+
+            const result = generateProjectMemorySummary(pmDir, '2025-01-01T00:00:00.000Z');
+            assert.ok(result.includes('DO NOT EDIT'));
+            assert.ok(result.includes('2025-01-01T00:00:00.000Z'));
+            assert.ok(result.includes('From `context.md`'));
+            assert.ok(result.includes('### Domain'));
+            assert.ok(result.includes('E-commerce SaaS.'));
+            assert.ok(result.includes('### Goals'));
+            assert.ok(result.includes('Scale globally.'));
+            assert.ok(result.includes('From `stack.md`'));
+            assert.ok(result.includes('### Languages'));
+            assert.ok(result.includes('TypeScript 5.x'));
+            // Provenance table
+            assert.ok(result.includes('## Provenance'));
+            assert.ok(result.includes('| Domain | `docs/project-memory/context.md` |'));
+            assert.ok(result.includes('| Goals | `docs/project-memory/context.md` |'));
+            assert.ok(result.includes('| Languages | `docs/project-memory/stack.md` |'));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('skips README.md', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-pm-readme-'));
+        try {
+            const pmDir = path.join(tmpDir, 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'README.md'),
+                '# Project Memory\n\n## Ownership Contract\n\nUser-owned.\n', 'utf8');
+
+            const result = generateProjectMemorySummary(pmDir, '2025-01-01T00:00:00.000Z');
+            assert.ok(!result.includes('Ownership Contract'));
+            assert.ok(result.includes('contains no content files yet'));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('regenerates with updated content', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-pm-regen-'));
+        try {
+            const pmDir = path.join(tmpDir, 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'context.md'),
+                '# Context\n\n## Domain\n\nVersion 1.\n', 'utf8');
+
+            const result1 = generateProjectMemorySummary(pmDir, '2025-01-01T00:00:00.000Z');
+            assert.ok(result1.includes('Version 1.'));
+
+            fs.writeFileSync(path.join(pmDir, 'context.md'),
+                '# Context\n\n## Domain\n\nVersion 2.\n', 'utf8');
+
+            const result2 = generateProjectMemorySummary(pmDir, '2025-01-02T00:00:00.000Z');
+            assert.ok(result2.includes('Version 2.'));
+            assert.ok(!result2.includes('Version 1.'));
+            assert.ok(result2.includes('2025-01-02'));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('sorts files alphabetically for deterministic output', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-pm-sort-'));
+        try {
+            const pmDir = path.join(tmpDir, 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'z-last.md'),
+                '# Z\n\n## Z Section\n\nZ content.\n', 'utf8');
+            fs.writeFileSync(path.join(pmDir, 'a-first.md'),
+                '# A\n\n## A Section\n\nA content.\n', 'utf8');
+
+            const result = generateProjectMemorySummary(pmDir, '2025-01-01T00:00:00.000Z');
+            const aIdx = result.indexOf('From `a-first.md`');
+            const zIdx = result.indexOf('From `z-last.md`');
+            assert.ok(aIdx < zIdx, 'a-first.md should appear before z-last.md');
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
     });
 });

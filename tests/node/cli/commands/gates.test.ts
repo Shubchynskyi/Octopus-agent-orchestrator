@@ -11,7 +11,8 @@ const {
     runHumanCommitCommand,
     runLogTaskEventCommand,
     runRequiredReviewsCheckCommand,
-    splitCommandLine
+    splitCommandLine,
+    executeCommand
 } = require('../../../../src/cli/commands/gates.ts');
 
 function createTempRepo() {
@@ -76,7 +77,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('runs compile gate and writes evidence', () => {
+    it('runs compile gate and writes evidence', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901';
         const preflightPath = writePreflight(repoRoot, taskId);
@@ -89,7 +90,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        const result = runCompileGateCommand({
+        const result = await runCompileGateCommand({
             repoRoot,
             taskId,
             preflightPath,
@@ -133,7 +134,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('passes required reviews gate with compile evidence and review artifact', () => {
+    it('passes required reviews gate with compile evidence and review artifact', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903';
         const preflightPath = writePreflight(repoRoot, taskId);
@@ -146,7 +147,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runCompileGateCommand({
+        await runCompileGateCommand({
             repoRoot,
             taskId,
             preflightPath,
@@ -227,7 +228,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('runs human commit through git with commit guard override', () => {
+    it('runs human commit through git with commit guard override', async () => {
         const repoRoot = createTempRepo();
         const childProcess = require('node:child_process');
 
@@ -236,7 +237,7 @@ describe('cli/commands/gates', () => {
         childProcess.spawnSync('git', ['config', 'user.email', 'octopus-tests@example.com'], { cwd: repoRoot, windowsHide: true, stdio: 'ignore' });
         childProcess.spawnSync('git', ['add', '.'], { cwd: repoRoot, windowsHide: true, stdio: 'ignore' });
 
-        const exitCode = runHumanCommitCommand(['-m', 'test: initial commit'], { cwd: repoRoot });
+        const exitCode = await runHumanCommitCommand(['-m', 'test: initial commit'], { cwd: repoRoot });
         const logResult = childProcess.spawnSync('git', ['log', '--oneline', '-1'], {
             cwd: repoRoot,
             windowsHide: true,
@@ -248,5 +249,33 @@ describe('cli/commands/gates', () => {
         assert.match(logResult.stdout, /test: initial commit/);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+});
+
+describe('executeCommand timeout protection (T-061)', () => {
+    it('runs a simple command successfully with default timeout', () => {
+        const result = executeCommand(`node -e "console.log('hello')"`, {
+            cwd: process.cwd()
+        });
+        assert.equal(result.exitCode, 0);
+        assert.ok(result.outputLines.some(line => line.includes('hello')));
+        assert.equal(result.timedOut, false);
+    });
+
+    it('reports timedOut when command exceeds specified timeout', () => {
+        const result = executeCommand(
+            `node -e "const s=Date.now();while(Date.now()-s<10000){}"`,
+            { cwd: process.cwd(), timeoutMs: 500 }
+        );
+        assert.equal(result.timedOut, true);
+        assert.equal(result.exitCode, 1);
+        assert.ok(result.outputLines.some(line => /timed out/i.test(line)));
+    });
+
+    it('throws ENOENT for missing executable', () => {
+        assert.throws(
+            () => executeCommand('__nonexistent_executable_12345__', { cwd: process.cwd() }),
+            /not found in PATH/
+        );
     });
 });

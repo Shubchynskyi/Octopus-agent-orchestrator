@@ -61,6 +61,7 @@ const BASE_REQUIRED_PATHS = Object.freeze([
 const RULE_FILES = Object.freeze([
     '00-core.md',
     '10-project-context.md',
+    '15-project-memory.md',
     '20-architecture.md',
     '30-code-style.md',
     '35-strict-coding-rules.md',

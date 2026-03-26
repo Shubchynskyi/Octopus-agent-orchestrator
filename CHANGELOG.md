@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 2.3.0
+
+- added durable `project-memory` contract, generated project-memory summary, and lifecycle-safe preservation across install/update/reinit/uninstall flows
+- hardened lifecycle/update behavior with trust enforcement, streamed subprocesses, richer diagnostics, task-event hash normalization, deferred `VERSION` restore safety, and LF-preserving uninstall hook cleanup
+- aligned CLI contracts for `update` / `update git`, added signal-aware temp-root cleanup, and improved top-level failure markers for automation
+- added real `npm pack -> install -> invoke` release smoke coverage plus stronger compat, contract-smoke, lifecycle, and packaging tests
+- refreshed release docs and manifest ownership contracts, added walkthrough docs, and distilled skill-authoring guidance into the `skill-builder` references
+- removed the remaining PowerShell/Pester compatibility traces so the public runtime surface is unambiguously Node-only
+- normalized release/install/update docs to version-safe placeholders, replaced packaged local doc links with GitHub links, and renamed the runtime contract doc to `docs/node-runtime-contract.md`
+- isolated the `npm pack -> install -> invoke` smoke test from shared repo build state to make release validation deterministic
+
+## 2.2.0
+
+- added public `octopus update git` for explicit git-based update acquisition and `octopus rollback` for restoring the previous deployed version
+- fixed `update` / `check-update --apply` to run the full update lifecycle after bundle sync and persist rollback metadata for reliable rollback
+- fixed npm-facing package docs: absolute README links and image, repository metadata in `package.json`, and clearer `npx -y octopus-agent-orchestrator setup` guidance
+- refreshed CLI/HOW_TO/run-methods/node-runtime-contract docs for npm-first installs, git update testing, rollback behavior, and the current package version
+
+## 2.1.0
+
+- added npm-based `check-update` / `update` source resolution with local `--package-spec` and `--source-path` testing overrides
+- expanded optional skill-pack source templates across AI, polyglot backend, data/database, docs/process, frontend-web, and quality/architecture domains
+- improved packaged CLI help and update documentation for npm-first installation and upgrade workflows
+
 ## 2.0.0
 
 - fixed packaged CLI drift so `bin/octopus.js` matches the current Node runtime behavior
@@ -15,7 +39,7 @@
 
 ## 1.0.8
 
-- completed the Node-only runtime migration
+- established the Node-only runtime baseline
 - removed legacy shell lifecycle entrypoints and gate wrappers
 - aligned bootstrap, install, init, reinit, verify, update, uninstall, and gate flows on `bin/octopus.js`
 - reduced the deployed bundle surface to `bin/`, `src/`, `template/`, and core docs
