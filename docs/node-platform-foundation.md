@@ -25,6 +25,12 @@ This document records the TypeScript/Node foundation that now backs the active r
 | `tsconfig.json` | Editor-facing entrypoint |
 | `tsconfig.node-foundation.json` | Tooling contract for the Node foundation |
 
+## Execution Model
+
+- In the source repository, `bin/octopus.js` executes JS-compatible `src/**/*.ts` files directly by mapping `.ts` loading onto the Node `.js` loader.
+- In packaged installs under `node_modules`, `bin/octopus.js` switches to compiled `dist/src/**/*.js`.
+- `scripts/node-foundation/build.ts` produces `.node-build/` for staged contract tests and `dist/` for the published-package runtime.
+
 ## Validator Strategy
 
 Validation stays in-repo and TypeScript-first:
@@ -50,3 +56,8 @@ Rebuilds the staged runtime and executes `tests/node/**/*.test.js`, then prints 
 - `bin/octopus.js` is the active runtime router.
 - Lifecycle commands and gates are Node-only.
 - Historical shell wrappers have been removed from the runtime surface.
+
+## Repository Branch Note
+
+- `master` and `dev` are the active heads for the current Node runtime line.
+- `feat/node-runtime-migration` may still appear in clones or remotes as a historical alias that points to the same head; it is not a separate maintained runtime track.

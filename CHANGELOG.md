@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 2.3.1
+
+- synchronized release metadata on `2.3.1`, including the root `package-lock.json` version/license fields with `package.json`, `VERSION`, and `LICENSE`
+- clarified the runtime execution model: the source repository runs JS-compatible `src/**/*.ts` directly through `bin/octopus.js`, while packaged installs under `node_modules` use compiled `dist/src/**/*.js`
+- refreshed internal token-economy planning docs to describe the current Node-only runtime instead of obsolete PowerShell or shell/Python implementation paths
+- documented `feat/node-runtime-migration` as a historical branch alias rather than a separate active runtime line
+
 ## 2.3.0
 
 - added durable `project-memory` contract, generated project-memory summary, and lifecycle-safe preservation across install/update/reinit/uninstall flows

@@ -11,6 +11,12 @@ This document captures the current Node-only runtime surface.
 - Entrypoint: `bin/octopus.js`
 - Runtime baseline: `Node.js >=20.0.0`
 
+## Execution Modes
+
+- Source-repository mode: `bin/octopus.js` loads JS-compatible `src/**/*.ts` directly.
+- Packaged-install mode: under `node_modules`, `bin/octopus.js` resolves to compiled `dist/src/**/*.js`.
+- Public CLI commands, gate names, and verification markers are the same in both modes.
+
 ## Command Inventory
 
 Lifecycle commands:

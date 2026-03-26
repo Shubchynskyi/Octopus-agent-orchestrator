@@ -104,7 +104,7 @@ Full reference: **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopu
 | **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md)** | Complete CLI command reference |
 | **[docs/architecture.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/architecture.md)** | Design, runtime model, deployed files |
 | **[docs/configuration.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/configuration.md)** | Token economy, output filters, review capabilities |
-| **[docs/node-platform-foundation.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/node-platform-foundation.md)** | Node 20 M1 foundation, validators, and build/test skeleton |
+| **[docs/node-platform-foundation.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/node-platform-foundation.md)** | Node foundation, execution model, validators, and build/test skeleton |
 | **[docs/work-example.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/work-example.md)** | Task lifecycle walkthrough |
 | **[AGENT_INIT_PROMPT.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/AGENT_INIT_PROMPT.md)** | Setup prompt for coding agents |
 | **[CHANGELOG.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/CHANGELOG.md)** | Full changelog |
@@ -131,6 +131,7 @@ Full reference: **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopu
 - Optional skills are discovered from the compact `live/config/skills-index.json` index. After the user selects a built-in pack, it should be installed into `live/skills/**` without reading the full optional `SKILL.md` immediately. Full optional skill files should be opened only later, when the selected skill is actually activated for a task or a hard activation rule requires it.
 - `octopus` without arguments is now non-destructive and only prints overview/help.
 - The public CLI owns the validated runtime surface for lifecycle commands and gate routes.
+- In the source repository, `bin/octopus.js` runs JS-compatible `src/**/*.ts` directly; in packaged installs under `node_modules`, the same router switches to compiled `dist/src/**/*.js`.
 - Root `tsconfig.json` is the editor-facing entrypoint and simply extends `tsconfig.node-foundation.json`.
 - Installer is non-destructive for existing project files outside managed blocks.
 - Commit message format is project-defined; conventional commits are optional.
