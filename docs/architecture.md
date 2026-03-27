@@ -6,14 +6,16 @@
 - The selected source-of-truth entrypoint contains the full routing index.
 - Additional active agent files can be materialized as redirects or provider bridges, but unused entrypoints are not created by default.
 - Provider-native agent profiles bridge back to the same `live/skills/*` contracts.
-- The public runtime surface is the Node CLI: `bin/octopus.js`.
+- The public runtime surface is the generated Node CLI launcher: `bin/octopus.js`.
 - Existing project docs and legacy agent files are read as input context only.
 
 ## Runtime Model
 
 ```text
 bin/octopus.js
-  -> loads src/**/*.ts
+  -> loads compiled dist/src/**/*.js (or staged .node-build/src/**/*.js for tests)
+  -> generated from strict TypeScript source in src/bin/octopus.ts
+  -> loads runtime compiled from strict TypeScript source in src/**/*.ts
   -> runs lifecycle commands, validators, and gates
   -> materializes live/, runtime/, and managed root entrypoints
 ```
@@ -22,8 +24,9 @@ bin/octopus.js
 
 | Layer | Location | Runtime | Role |
 |---|---|---|---|
-| Public CLI | `bin/octopus.js` | Node.js 20 LTS | Main lifecycle and gate router |
-| Canonical runtime | `src/**/*.ts` | Node.js 20 LTS | TypeScript source of behavior |
+| Public CLI | `bin/octopus.js` | Node.js 20 LTS | Generated launcher compiled from `src/bin/octopus.ts` |
+| TypeScript source of truth | `src/**/*.ts` | compile-time only | Strict compiler-enforced runtime source |
+| Executed runtime | `dist/src/**/*.js` and `.node-build/src/**/*.js` | Node.js 20 LTS | Compiled lifecycle, validator, and gate implementation |
 | Live workspace | `live/**` | materialized content | Canonical rules, config, skills, metadata |
 
 ## What Is Deployed To Project Root
@@ -108,3 +111,9 @@ Gate pipeline:
 ```
 
 All gate events are logged to `runtime/task-events/<task-id>.jsonl` with hash-chain integrity.
+
+## Validation Contract
+
+- `tsconfig.build.json` enforces `strict:true` for `src/**/*.ts`.
+- `tsconfig.tests.json` enforces `strict:true` for `src/**/*.ts`, `tests/node/**/*.ts`, and `scripts/node-foundation/**/*.ts`.
+- `npm run validate:release` is the explicit release proof path: `build -> test -> pack -> install/invoke`.

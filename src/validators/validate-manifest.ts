@@ -1,14 +1,20 @@
-const path = require('node:path');
+import * as path from 'node:path';
+import { pathExists, readTextFile } from '../core/fs';
+import { isPathInsideRoot } from '../core/paths';
 
-const { pathExists, readTextFile } = require('../core/fs.ts');
-const { isPathInsideRoot } = require('../core/paths.ts');
+export interface ManifestValidationResult {
+    passed: boolean;
+    manifestPath: string;
+    entriesChecked: number;
+    duplicates: string[];
+}
 
 /**
  * Parse list items from MANIFEST.md content.
  * Matches lines like "- path/to/file".
  */
-function parseManifestItems(content) {
-    const items = [];
+export function parseManifestItems(content: string): string[] {
+    const items: string[] = [];
     const lines = content.split(/\r?\n/);
 
     for (const line of lines) {
@@ -33,11 +39,11 @@ function parseManifestItems(content) {
  *
  * Returns { passed, manifestPath, entriesChecked, duplicates }.
  */
-function validateManifest(manifestPath, targetRoot) {
+export function validateManifest(manifestPath: string, targetRoot?: string): ManifestValidationResult {
     const resolvedPath = path.resolve(manifestPath);
 
     if (targetRoot) {
-        var resolvedRoot = path.resolve(String(targetRoot));
+        const resolvedRoot = path.resolve(String(targetRoot));
         if (!isPathInsideRoot(resolvedRoot, resolvedPath)) {
             throw new Error("ManifestPath must resolve inside TargetRoot '" + resolvedRoot + "'. Resolved path: " + resolvedPath);
         }
@@ -54,8 +60,8 @@ function validateManifest(manifestPath, targetRoot) {
         throw new Error(`No manifest list items found in: ${resolvedPath}`);
     }
 
-    const seen = {};
-    const duplicates = [];
+    const seen: Record<string, string> = {};
+    const duplicates: string[] = [];
 
     for (const item of items) {
         const key = item.toLowerCase().replace(/\\/g, '/');
@@ -78,8 +84,8 @@ function validateManifest(manifestPath, targetRoot) {
  * Format manifest validation result as diagnostic output lines.
  * Stable machine-readable diagnostic format for the Node CLI.
  */
-function formatManifestResult(result) {
-    const lines = [];
+export function formatManifestResult(result: ManifestValidationResult): string {
+    const lines: string[] = [];
 
     if (!result.passed) {
         lines.push('MANIFEST_VALIDATION_FAILED');
@@ -96,9 +102,3 @@ function formatManifestResult(result) {
 
     return lines.join('\n');
 }
-
-module.exports = {
-    formatManifestResult,
-    parseManifestItems,
-    validateManifest
-};

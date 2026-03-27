@@ -1,17 +1,16 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const { buildScopedDiffMetadata, convertToGitPathspecs } = require('../gate-runtime/scoped-diff.ts');
-const { matchAnyRegex } = require('../gate-runtime/text-utils.ts');
-const { normalizePath, resolveGitRoot, resolvePathInsideRepo, toStringArray, toPosix } = require('./helpers.ts');
-const { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } = require('../core/subprocess.ts');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { buildScopedDiffMetadata, convertToGitPathspecs } from '../gate-runtime/scoped-diff';
+import { matchAnyRegex } from '../gate-runtime/text-utils';
+import { normalizePath, resolveGitRoot, resolvePathInsideRepo, toStringArray, toPosix } from './helpers';
+import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
 
 /**
  * Resolve output path for scoped diff.
  */
-function resolveOutputPath(explicitOutputPath, preflightPath, reviewType, repoRoot) {
+export function resolveOutputPath(explicitOutputPath: string, preflightPath: string, reviewType: string, repoRoot: string): string {
     if (explicitOutputPath && explicitOutputPath.trim()) {
-        return resolvePathInsideRepo(explicitOutputPath, repoRoot, { allowMissing: true });
+        return resolvePathInsideRepo(explicitOutputPath, repoRoot, { allowMissing: true }) as string;
     }
     const preflightDir = path.dirname(preflightPath);
     const baseName = path.basename(preflightPath, path.extname(preflightPath)).replace(/-preflight$/, '');
@@ -21,9 +20,9 @@ function resolveOutputPath(explicitOutputPath, preflightPath, reviewType, repoRo
 /**
  * Resolve metadata path for scoped diff.
  */
-function resolveMetadataPath(explicitMetadataPath, preflightPath, reviewType, repoRoot) {
+export function resolveMetadataPath(explicitMetadataPath: string, preflightPath: string, reviewType: string, repoRoot: string): string {
     if (explicitMetadataPath && explicitMetadataPath.trim()) {
-        return resolvePathInsideRepo(explicitMetadataPath, repoRoot, { allowMissing: true });
+        return resolvePathInsideRepo(explicitMetadataPath, repoRoot, { allowMissing: true }) as string;
     }
     const preflightDir = path.dirname(preflightPath);
     const baseName = path.basename(preflightPath, path.extname(preflightPath)).replace(/-preflight$/, '');
@@ -33,7 +32,7 @@ function resolveMetadataPath(explicitMetadataPath, preflightPath, reviewType, re
 /**
  * Run git diff and return stdout text.
  */
-function runGitDiff(gitRoot, useStaged, pathspecs) {
+export function runGitDiff(gitRoot: string, useStaged: boolean, pathspecs: string[]): string {
     const gitArgs = ['-C', String(gitRoot), 'diff', '--no-color'];
     if (useStaged) gitArgs.push('--staged');
     else gitArgs.push('HEAD');
@@ -60,12 +59,23 @@ function runGitDiff(gitRoot, useStaged, pathspecs) {
     return String(result.stdout || '');
 }
 
+export interface BuildScopedDiffOptions {
+    reviewType: string;
+    preflightPath: string;
+    pathsConfigPath: string;
+    outputPath: string;
+    metadataPath: string;
+    fullDiffPath?: string | null;
+    repoRoot: string;
+    useStaged?: boolean;
+}
+
 /**
  * Build a scoped diff for a specific review type.
  * Orchestrates git operations and writes artifacts.
  * Returns the metadata object.
  */
-function buildScopedDiff(options) {
+export function buildScopedDiff(options: BuildScopedDiffOptions) {
     const reviewType = options.reviewType;
     const preflightPath = options.preflightPath;
     const pathsConfigPath = options.pathsConfigPath;
@@ -129,7 +139,7 @@ function buildScopedDiff(options) {
     if (outputPayload && !outputPayload.endsWith('\n')) outputPayload += '\n';
     fs.writeFileSync(outputPath, outputPayload, 'utf8');
 
-    function lineCount(text) {
+    function lineCount(text: string): number {
         if (!text) return 0;
         return text.split('\n').length;
     }
@@ -156,10 +166,3 @@ function buildScopedDiff(options) {
 
     return result;
 }
-
-module.exports = {
-    buildScopedDiff,
-    resolveMetadataPath,
-    resolveOutputPath,
-    runGitDiff
-};

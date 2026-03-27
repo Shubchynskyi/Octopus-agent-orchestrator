@@ -1,6 +1,5 @@
-const { MANAGED_CONFIG_NAMES } = require('../core/constants.ts');
-
-const {
+import { MANAGED_CONFIG_NAMES } from '../core/constants';
+import {
     cloneUnknownProperties,
     ensurePlainObject,
     normalizeBooleanLike,
@@ -8,9 +7,15 @@ const {
     normalizeNonEmptyString,
     normalizeOptionalString,
     normalizeStringArray
-} = require('./shared.ts');
+} from './shared';
 
-function normalizeIntegerArray(value, fieldName, options = {}) {
+interface IntegerArrayOptions {
+    allowScalar?: boolean;
+    minimum?: number;
+    maximum?: number;
+}
+
+function normalizeIntegerArray(value: unknown, fieldName: string, options: IntegerArrayOptions = {}): number[] {
     const allowScalar = options.allowScalar === true;
     const items = Array.isArray(value) ? value : (allowScalar ? [value] : null);
 
@@ -18,7 +23,7 @@ function normalizeIntegerArray(value, fieldName, options = {}) {
         throw new Error(`${fieldName} must be an array.`);
     }
 
-    const normalized = [];
+    const normalized: number[] = [];
     for (const item of items) {
         const integerValue = normalizeInteger(item, fieldName, options);
         if (!normalized.includes(integerValue)) {
@@ -29,9 +34,9 @@ function normalizeIntegerArray(value, fieldName, options = {}) {
     return normalized.sort((left, right) => left - right);
 }
 
-function validateReviewCapabilitiesConfig(input) {
+export function validateReviewCapabilitiesConfig(input: unknown): Record<string, boolean> {
     const raw = ensurePlainObject(input, 'review-capabilities');
-    const normalized = {};
+    const normalized: Record<string, boolean> = {};
 
     for (const [key, value] of Object.entries(raw)) {
         normalized[key] = normalizeBooleanLike(value, `review-capabilities.${key}`);
@@ -46,7 +51,7 @@ function validateReviewCapabilitiesConfig(input) {
     return normalized;
 }
 
-function validatePathsConfig(input) {
+export function validatePathsConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'paths');
     const knownKeys = new Set([
         'metrics_path',
@@ -81,19 +86,21 @@ function validatePathsConfig(input) {
     }
 
     const triggers = ensurePlainObject(raw.triggers, 'paths.triggers');
-    normalized.triggers = {};
+    const triggersMap: Record<string, string[]> = {};
     for (const [key, value] of Object.entries(triggers)) {
-        normalized.triggers[key] = normalizeStringArray(value, `paths.triggers.${key}`, { allowScalar: true });
+        triggersMap[key] = normalizeStringArray(value, `paths.triggers.${key}`, { allowScalar: true });
     }
 
-    if (Object.keys(normalized.triggers).length === 0) {
+    if (Object.keys(triggersMap).length === 0) {
         throw new Error('paths.triggers must not be empty.');
     }
+
+    normalized.triggers = triggersMap;
 
     return normalized;
 }
 
-function validateTokenEconomyConfig(input) {
+export function validateTokenEconomyConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'token-economy');
     const knownKeys = new Set([
         'enabled',
@@ -117,7 +124,7 @@ function validateTokenEconomyConfig(input) {
     return normalized;
 }
 
-function validateContextLookupObject(input, fieldName) {
+function validateContextLookupObject(input: unknown, fieldName: string): Record<string, unknown> {
     const raw = ensurePlainObject(input, fieldName);
     return {
         ...raw,
@@ -125,7 +132,7 @@ function validateContextLookupObject(input, fieldName) {
     };
 }
 
-function validateOutputFilterOperation(input, fieldName) {
+function validateOutputFilterOperation(input: unknown, fieldName: string): Record<string, unknown> {
     const raw = ensurePlainObject(input, fieldName);
     const knownKeys = new Set(['type', 'pattern', 'replacement', 'suffix', 'max_chars']);
     const normalized = cloneUnknownProperties(raw, knownKeys);
@@ -150,7 +157,7 @@ function validateOutputFilterOperation(input, fieldName) {
     return normalized;
 }
 
-function validateOutputFilterParser(input, fieldName) {
+function validateOutputFilterParser(input: unknown, fieldName: string): Record<string, unknown> {
     const raw = ensurePlainObject(input, fieldName);
     const knownKeys = new Set(['type', 'strategy', 'max_matches', 'tail_count', 'max_lines']);
     const normalized = cloneUnknownProperties(raw, knownKeys);
@@ -180,7 +187,7 @@ function validateOutputFilterParser(input, fieldName) {
     return normalized;
 }
 
-function validateOutputFilterProfile(input, fieldName) {
+function validateOutputFilterProfile(input: unknown, fieldName: string): Record<string, unknown> {
     const raw = ensurePlainObject(input, fieldName);
     const knownKeys = new Set(['description', 'emit_when_empty', 'operations', 'parser']);
     const normalized = cloneUnknownProperties(raw, knownKeys);
@@ -211,7 +218,7 @@ function validateOutputFilterProfile(input, fieldName) {
     return normalized;
 }
 
-function validateOutputFiltersConfig(input) {
+export function validateOutputFiltersConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'output-filters');
     const knownKeys = new Set(['version', 'passthrough_ceiling', 'profiles']);
     const normalized = cloneUnknownProperties(raw, knownKeys);
@@ -227,14 +234,16 @@ function validateOutputFiltersConfig(input) {
     }
 
     const profiles = ensurePlainObject(raw.profiles, 'output-filters.profiles');
-    normalized.profiles = {};
+    const profilesMap: Record<string, Record<string, unknown>> = {};
     for (const [key, value] of Object.entries(profiles)) {
-        normalized.profiles[key] = validateOutputFilterProfile(value, `output-filters.profiles.${key}`);
+        profilesMap[key] = validateOutputFilterProfile(value, `output-filters.profiles.${key}`);
     }
 
-    if (Object.keys(normalized.profiles).length === 0) {
+    if (Object.keys(profilesMap).length === 0) {
         throw new Error('output-filters.profiles must not be empty.');
     }
+
+    normalized.profiles = profilesMap;
 
     return normalized;
 }
@@ -246,7 +255,7 @@ const MANAGED_CONFIG_VALIDATORS = Object.freeze({
     'output-filters': validateOutputFiltersConfig
 });
 
-function normalizeManagedConfigName(configName) {
+function normalizeManagedConfigName(configName: unknown): string {
     const normalized = normalizeNonEmptyString(configName, 'configName').toLowerCase();
     const match = MANAGED_CONFIG_NAMES.find((candidate) => candidate.toLowerCase() === normalized);
 
@@ -257,20 +266,13 @@ function normalizeManagedConfigName(configName) {
     return match;
 }
 
-function validateManagedConfigByName(configName, input) {
+export function validateManagedConfigByName(configName: unknown, input: unknown): Record<string, unknown> {
     const normalizedName = normalizeManagedConfigName(configName);
-    return MANAGED_CONFIG_VALIDATORS[normalizedName](input);
+    const validators = MANAGED_CONFIG_VALIDATORS as Record<string, (input: unknown) => Record<string, unknown>>;
+    return validators[normalizedName](input);
 }
 
-function getManagedConfigValidators() {
+export function getManagedConfigValidators() {
     return MANAGED_CONFIG_VALIDATORS;
 }
 
-module.exports = {
-    getManagedConfigValidators,
-    validateManagedConfigByName,
-    validateOutputFiltersConfig,
-    validatePathsConfig,
-    validateReviewCapabilitiesConfig,
-    validateTokenEconomyConfig
-};

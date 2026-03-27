@@ -1,13 +1,17 @@
-const { toStringArray, countTextChars } = require('./text-utils.ts');
+import { toStringArray, countTextChars } from './text-utils';
 
-const DEFAULT_TOKEN_ESTIMATOR = 'hybrid_text_v1';
-const LEGACY_TOKEN_ESTIMATOR = 'chars_per_4';
-const TOKENISH_UNIT_PATTERN = /[A-Za-z]+(?:'[A-Za-z]+)?|[0-9]+|[^\w\s]/gu;
+export const DEFAULT_TOKEN_ESTIMATOR = 'hybrid_text_v1';
+export const LEGACY_TOKEN_ESTIMATOR = 'chars_per_4';
+export const TOKENISH_UNIT_PATTERN = /[A-Za-z]+(?:'[A-Za-z]+)?|[0-9]+|[^\w\s]/gu;
+
+interface TokenEstimatorOptions {
+    estimator?: string;
+}
 
 /**
  * Estimate token count from character count using a simple divisor.
  */
-function estimateTokenCountFromChars(charCount, options = {}) {
+export function estimateTokenCountFromChars(charCount: number, options: TokenEstimatorOptions = {}): number {
     const estimator = options.estimator || LEGACY_TOKEN_ESTIMATOR;
     if (charCount <= 0) {
         return 0;
@@ -26,7 +30,7 @@ function estimateTokenCountFromChars(charCount, options = {}) {
  * hybrid_text_v1 supplements chars_per_4 with a tokenish unit count
  * so code/log heavy text does not look artificially cheap.
  */
-function estimateTokenCount(lines, options = {}) {
+export function estimateTokenCount(lines: unknown, options: TokenEstimatorOptions = {}): number {
     const estimator = options.estimator || DEFAULT_TOKEN_ESTIMATOR;
     const normalizedLines = toStringArray(lines);
     const charCount = countTextChars(normalizedLines);
@@ -50,10 +54,19 @@ function estimateTokenCount(lines, options = {}) {
     return Math.max(baseEstimate, hybridEstimate);
 }
 
+interface BuildOutputTelemetryOptions {
+    filterMode?: string;
+    fallbackMode?: string;
+    parserMode?: string;
+    parserName?: string;
+    parserStrategy?: string;
+    tokenEstimator?: string;
+}
+
 /**
  * Build output telemetry for filtered output, matching Python build_output_telemetry.
  */
-function buildOutputTelemetry(rawLines, filteredLines, options = {}) {
+export function buildOutputTelemetry(rawLines: unknown, filteredLines: unknown, options: BuildOutputTelemetryOptions = {}): Record<string, unknown> {
     const filterMode = options.filterMode || 'passthrough';
     const fallbackMode = options.fallbackMode || 'none';
     const parserMode = options.parserMode || 'NONE';
@@ -96,7 +109,7 @@ function buildOutputTelemetry(rawLines, filteredLines, options = {}) {
 /**
  * Coerce a value to an integer or return null, matching Python _coerce_int_like.
  */
-function coerceIntLike(value) {
+export function coerceIntLike(value: unknown): number | null {
     if (value == null || typeof value === 'boolean') {
         return null;
     }
@@ -118,10 +131,24 @@ function coerceIntLike(value) {
     return null;
 }
 
+interface OutputTelemetryRecord {
+    estimated_saved_tokens?: unknown;
+    raw_line_count?: unknown;
+    filtered_line_count?: unknown;
+    raw_char_count?: unknown;
+    filtered_char_count?: unknown;
+    raw_token_count_estimate?: unknown;
+}
+
+interface FormatVisibleSavingsOptions {
+    label?: string;
+    minimumSavedTokens?: number;
+}
+
 /**
  * Format a human-readable savings line, matching Python format_visible_savings_line.
  */
-function formatVisibleSavingsLine(telemetry, options = {}) {
+export function formatVisibleSavingsLine(telemetry: unknown, options: FormatVisibleSavingsOptions = {}): string | null {
     const label = options.label || 'token-economy';
     const minimumSavedTokens = options.minimumSavedTokens != null ? options.minimumSavedTokens : 10;
 
@@ -129,14 +156,15 @@ function formatVisibleSavingsLine(telemetry, options = {}) {
         return null;
     }
 
-    const savedTokens = coerceIntLike(telemetry.estimated_saved_tokens);
-    const rawLineCount = coerceIntLike(telemetry.raw_line_count);
-    const filteredLineCount = coerceIntLike(telemetry.filtered_line_count);
-    const rawCharCount = coerceIntLike(telemetry.raw_char_count);
-    const filteredCharCount = coerceIntLike(telemetry.filtered_char_count);
-    const rawTokenEstimate = coerceIntLike(telemetry.raw_token_count_estimate);
+    const tel = telemetry as Record<string, unknown>;
+    const savedTokens = coerceIntLike(tel.estimated_saved_tokens);
+    const rawLineCount = coerceIntLike(tel.raw_line_count);
+    const filteredLineCount = coerceIntLike(tel.filtered_line_count);
+    const rawCharCount = coerceIntLike(tel.raw_char_count);
+    const filteredCharCount = coerceIntLike(tel.filtered_char_count);
+    const rawTokenEstimate = coerceIntLike(tel.raw_token_count_estimate);
 
-    if ([savedTokens, rawLineCount, filteredLineCount, rawCharCount, filteredCharCount].includes(null)) {
+    if (savedTokens === null || rawLineCount === null || filteredLineCount === null || rawCharCount === null || filteredCharCount === null) {
         return null;
     }
     if (savedTokens <= 0) {
@@ -162,13 +190,3 @@ function formatVisibleSavingsLine(telemetry, options = {}) {
     return `[${resolvedLabel}] saved ~${savedTokens} tokens`;
 }
 
-module.exports = {
-    DEFAULT_TOKEN_ESTIMATOR,
-    LEGACY_TOKEN_ESTIMATOR,
-    TOKENISH_UNIT_PATTERN,
-    buildOutputTelemetry,
-    coerceIntLike,
-    estimateTokenCount,
-    estimateTokenCountFromChars,
-    formatVisibleSavingsLine
-};

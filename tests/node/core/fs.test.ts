@@ -1,11 +1,11 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
-const { pathExists, readTextFile, writeTextFile } = require('../../../src/core/fs.ts');
-const { readJsonFile, writeJsonFile } = require('../../../src/core/json.ts');
+import { pathExists, readTextFile, writeTextFile } from '../../../src/core/fs';
+import { readJsonFile, writeJsonFile } from '../../../src/core/json';
 
 test('writeTextFile creates parent directories and normalizes line endings', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-node-foundation-'));

@@ -1,16 +1,11 @@
-const { readJsonFile } = require('../core/json.ts');
-const { validateManagedConfigByName } = require('../schemas/config-artifacts.ts');
-const { validateInitAnswers } = require('../schemas/init-answers.ts');
+import { readJsonFile } from '../core/json';
+import { validateManagedConfigByName } from '../schemas/config-artifacts';
+import { validateInitAnswers } from '../schemas/init-answers';
 
-function loadInitAnswersFile(filePath) {
+export function loadInitAnswersFile(filePath: string) {
     return validateInitAnswers(readJsonFile(filePath));
 }
 
-function loadManagedConfigFile(configName, filePath) {
+export function loadManagedConfigFile(configName: string, filePath: string) {
     return validateManagedConfigByName(configName, readJsonFile(filePath));
 }
-
-module.exports = {
-    loadInitAnswersFile,
-    loadManagedConfigFile
-};

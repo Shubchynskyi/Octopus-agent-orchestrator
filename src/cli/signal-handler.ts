@@ -1,19 +1,15 @@
-const fs = require('node:fs');
+import * as fs from 'node:fs';
 
 // ---------------------------------------------------------------------------
 // CLI signal handler – temp-root cleanup & cancellation on SIGINT/SIGTERM
 // ---------------------------------------------------------------------------
 
-/** @type {Set<() => void>} */
-const cleanupCallbacks = new Set();
+const cleanupCallbacks: Set<() => void> = new Set();
 
-/** @type {AbortController | null} */
-let controller = null;
+let controller: AbortController | null = null;
 
-/** @type {boolean} */
 let shuttingDown = false;
 
-/** @type {boolean} */
 let installed = false;
 
 // ---------------------------------------------------------------------------
@@ -28,7 +24,7 @@ let installed = false;
  * @param {() => void} fn
  * @returns {() => void} dispose – call to unregister
  */
-function registerCleanup(fn) {
+export function registerCleanup(fn: () => void): () => void {
     cleanupCallbacks.add(fn);
     return function dispose() {
         cleanupCallbacks.delete(fn);
@@ -39,7 +35,7 @@ function registerCleanup(fn) {
  * Unregister a previously registered cleanup callback.
  * @param {() => void} fn
  */
-function unregisterCleanup(fn) {
+export function unregisterCleanup(fn: () => void): void {
     cleanupCallbacks.delete(fn);
 }
 
@@ -48,7 +44,7 @@ function unregisterCleanup(fn) {
  * Returns `null` if {@link installSignalHandlers} has not been called yet.
  * @returns {AbortSignal | null}
  */
-function getShutdownSignal() {
+export function getShutdownSignal(): AbortSignal | null {
     return controller ? controller.signal : null;
 }
 
@@ -59,7 +55,7 @@ function getShutdownSignal() {
  * Creates an internal AbortController whose signal is available via
  * {@link getShutdownSignal}.
  */
-function installSignalHandlers() {
+export function installSignalHandlers() {
     if (installed) return;
     installed = true;
 
@@ -82,7 +78,7 @@ function installSignalHandlers() {
  * Remove the process-level signal handlers and reset internal state.
  * Primarily useful for testing so handlers don't leak between runs.
  */
-function uninstallSignalHandlers() {
+export function uninstallSignalHandlers() {
     if (!installed) return;
     installed = false;
 
@@ -139,7 +135,7 @@ function onSignal() {
  * @returns {() => void} dispose – call to unregister (e.g. in a finally block
  *                        after the directory has already been cleaned up).
  */
-function registerTempRoot(dirPath) {
+export function registerTempRoot(dirPath: string): () => void {
     const fn = function () {
         try {
             fs.rmSync(dirPath, { recursive: true, force: true });
@@ -148,11 +144,3 @@ function registerTempRoot(dirPath) {
     return registerCleanup(fn);
 }
 
-module.exports = {
-    getShutdownSignal,
-    installSignalHandlers,
-    registerCleanup,
-    registerTempRoot,
-    uninstallSignalHandlers,
-    unregisterCleanup
-};

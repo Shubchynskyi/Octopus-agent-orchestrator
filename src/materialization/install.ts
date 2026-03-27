@@ -1,21 +1,20 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const { ALL_AGENT_ENTRYPOINT_FILES } = require('../core/constants.ts');
-const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
-const { readJsonFile, writeJsonFile } = require('../core/json.ts');
-const { removeManagedBlock } = require('../core/managed-blocks.ts');
-const { normalizeLineEndings } = require('../core/line-endings.ts');
-const { resolvePathInsideRoot } = require('../core/paths.ts');
-const { validateInitAnswers } = require('../schemas/init-answers.ts');
-const {
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { ALL_AGENT_ENTRYPOINT_FILES } from '../core/constants';
+import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
+import { readJsonFile, writeJsonFile } from '../core/json';
+import { removeManagedBlock } from '../core/managed-blocks';
+import { normalizeLineEndings } from '../core/line-endings';
+import { resolvePathInsideRoot } from '../core/paths';
+import { validateInitAnswers } from '../schemas/init-answers';
+import {
     getCanonicalEntrypointFile,
     getActiveAgentEntrypointFiles,
     convertActiveAgentEntrypointFilesToString,
     getProviderOrchestratorProfileDefinitions,
     getGitHubSkillBridgeProfileDefinitions
-} = require('./common.ts');
-const {
+} from './common';
+import {
     MANAGED_START,
     MANAGED_END,
     COMMIT_GUARD_START,
@@ -31,15 +30,40 @@ const {
     buildClaudeLocalSettingsContent,
     buildGitignoreEntries,
     syncManagedBlockInContent
-} = require('./content-builders.ts');
+} from './content-builders';
 
-function escapeRegex(text) {
+interface RunInstallOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    dryRun?: boolean;
+    preserveExisting?: boolean;
+    alignExisting?: boolean;
+    runInit?: boolean;
+    answerDependentOnly?: boolean;
+    skipBackups?: boolean;
+    assistantLanguage: string;
+    assistantBrevity: string;
+    sourceOfTruth: string;
+    initAnswersPath: string;
+    initRunner?: (options: {
+        targetRoot: string;
+        assistantLanguage: string;
+        assistantBrevity: string;
+        sourceOfTruth: string;
+        enforceNoAutoCommit: boolean;
+        tokenEconomyEnabled: boolean;
+    }) => void;
+}
+
+type BackupFileCallback = (destPath: string, relativePath: string) => void;
+
+function escapeRegex(text: string): string {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function formatInstallBackupTimestamp(date) {
-    const pad2 = (value) => String(value).padStart(2, '0');
-    const pad3 = (value) => String(value).padStart(3, '0');
+function formatInstallBackupTimestamp(date: Date): string {
+    const pad2 = (value: number): string => String(value).padStart(2, '0');
+    const pad3 = (value: number): string => String(value).padStart(3, '0');
     return [
         String(date.getUTCFullYear()),
         pad2(date.getUTCMonth() + 1),
@@ -51,7 +75,7 @@ function formatInstallBackupTimestamp(date) {
     ].join('') + '-' + pad3(date.getUTCMilliseconds());
 }
 
-function createUniqueInstallBackupRoot(bundleRoot) {
+function createUniqueInstallBackupRoot(bundleRoot: string): { timestamp: string; backupRoot: string } {
     const backupsRoot = path.join(bundleRoot, 'runtime', 'backups');
     const baseTimestamp = formatInstallBackupTimestamp(new Date());
     let candidateTimestamp = baseTimestamp;
@@ -88,7 +112,7 @@ function createUniqueInstallBackupRoot(bundleRoot) {
  * @param {Function} [options.initRunner] - Optional callback to run init
  * @returns {object} Install result metrics
  */
-function runInstall(options) {
+export function runInstall(options: RunInstallOptions) {
     const {
         targetRoot,
         bundleRoot,
@@ -200,7 +224,7 @@ function runInstall(options) {
     let aligned = 0;
     let forcedOverwrites = 0;
     let initInvoked = false;
-    const backedUpSet = new Set();
+    const backedUpSet = new Set<string>();
 
     // Pre-existing file tracking
     const preExistingPaths = INSTALL_BACKUP_CANDIDATE_PATHS
@@ -219,7 +243,7 @@ function runInstall(options) {
     }
 
     // Backup helper
-    function backupFile(destPath, relativePath) {
+    function backupFile(destPath: string, relativePath: string): void {
         if (skipBackups || !pathExists(destPath)) return;
         const key = relativePath.toLowerCase().replace(/\\/g, '/');
         if (backedUpSet.has(key)) return;
@@ -233,7 +257,7 @@ function runInstall(options) {
     }
 
     // Sync managed block into a file on disk
-    function syncManagedBlockOnDisk(destPath, relativePath, managedBlock) {
+    function syncManagedBlockOnDisk(destPath: string, relativePath: string, managedBlock: string): boolean {
         if (!pathExists(destPath)) return false;
         const content = readTextFile(destPath);
         const result = syncManagedBlockInContent(content, managedBlock);
@@ -245,7 +269,7 @@ function runInstall(options) {
         return true;
     }
 
-    function cleanupEmptyParentDirectories(startPath) {
+    function cleanupEmptyParentDirectories(startPath: string): void {
         let currentPath = path.dirname(startPath);
         const stopPath = path.resolve(targetRoot);
         while (currentPath.startsWith(stopPath) && currentPath !== stopPath) {
@@ -265,7 +289,7 @@ function runInstall(options) {
         }
     }
 
-    function removeObsoleteManagedFile(relativePath) {
+    function removeObsoleteManagedFile(relativePath: string): boolean {
         const destPath = path.join(targetRoot, relativePath);
         if (!pathExists(destPath)) {
             return false;
@@ -307,7 +331,7 @@ function runInstall(options) {
     }
 
     // Apply entrypoint managed block
-    function applyEntrypointManagedBlock(relativePath, managedBlock) {
+    function applyEntrypointManagedBlock(relativePath: string, managedBlock: string): void {
         const destPath = path.join(targetRoot, relativePath);
         const destDir = path.dirname(destPath);
         if (!pathExists(destPath)) {
@@ -324,7 +348,7 @@ function runInstall(options) {
     }
 
     // Template content with placeholder replacements
-    function getTemplateContent(sourcePath, relativePath) {
+    function getTemplateContent(sourcePath: string, relativePath: string): string | null {
         if (!pathExists(sourcePath)) return null;
         let content = readTextFile(sourcePath);
         if (!content || !content.trim()) return null;
@@ -354,10 +378,12 @@ function runInstall(options) {
                     if (relPath === 'TASK.md') {
                         const templateContent = getTemplateContent(sourcePath, relPath);
                         const existingContent = readTextFile(destPath);
-                        const taskBlock = buildTaskManagedBlockWithExistingQueue(templateContent, existingContent);
-                        if (taskBlock) {
-                            if (syncManagedBlockOnDisk(destPath, relPath, taskBlock)) {
-                                aligned++;
+                        if (templateContent !== null) {
+                            const taskBlock = buildTaskManagedBlockWithExistingQueue(templateContent, existingContent);
+                            if (taskBlock) {
+                                if (syncManagedBlockOnDisk(destPath, relPath, taskBlock)) {
+                                    aligned++;
+                                }
                             }
                         }
                     }
@@ -381,10 +407,12 @@ function runInstall(options) {
             if (pathExists(taskDestPath)) {
                 const templateContent = getTemplateContent(taskSourcePath, 'TASK.md');
                 const existingContent = readTextFile(taskDestPath);
-                const taskBlock = buildTaskManagedBlockWithExistingQueue(templateContent, existingContent);
-                if (taskBlock) {
-                    if (syncManagedBlockOnDisk(taskDestPath, 'TASK.md', taskBlock)) {
-                        aligned++;
+                if (templateContent !== null) {
+                    const taskBlock = buildTaskManagedBlockWithExistingQueue(templateContent, existingContent);
+                    if (taskBlock) {
+                        if (syncManagedBlockOnDisk(taskDestPath, 'TASK.md', taskBlock)) {
+                            aligned++;
+                        }
                     }
                 }
             } else {
@@ -429,7 +457,9 @@ function runInstall(options) {
             backupFile(qwenPath, qwenRelPath);
             if (!dryRun) {
                 ensureDirectory(path.dirname(qwenPath));
-                fs.writeFileSync(qwenPath, qwenPlan.content, 'utf8');
+                if (qwenPlan.content !== null) {
+                    fs.writeFileSync(qwenPath, qwenPlan.content, 'utf8');
+                }
             }
             qwenUpdated = true;
             if (preserveExisting) aligned++;
@@ -446,7 +476,7 @@ function runInstall(options) {
     }
     const claudePlan = buildClaudeLocalSettingsContent(claudeExisting, enableClaudeOrchestratorFullAccess);
     let claudeUpdated = false;
-    let claudeParseMode = claudePlan.parseMode;
+    let claudeParseMode: string = claudePlan.parseMode;
     let claudeNeedsUpdate = claudePlan.needsUpdate;
 
     if (enableClaudeOrchestratorFullAccess) {
@@ -615,7 +645,12 @@ function runInstall(options) {
 /**
  * Applies or removes the commit guard pre-commit hook.
  */
-function applyCommitGuardHook(targetRoot, enabled, dryRun, backupFile) {
+export function applyCommitGuardHook(
+    targetRoot: string,
+    enabled: boolean,
+    dryRun: boolean,
+    backupFile?: BackupFileCallback
+): boolean {
     const gitDirPath = path.join(targetRoot, '.git');
     if (!pathExists(gitDirPath)) {
         if (enabled) {
@@ -672,8 +707,3 @@ function applyCommitGuardHook(targetRoot, enabled, dryRun, backupFile) {
     }
     return true;
 }
-
-module.exports = {
-    applyCommitGuardHook,
-    runInstall
-};

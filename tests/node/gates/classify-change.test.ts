@@ -1,13 +1,13 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     classifyChange,
     getDefaultClassificationConfig,
     getReviewCapabilities
-} = require('../../../src/gates/classify-change.ts');
+} from '../../../src/gates/classify-change';
 
-function makeConfig(overrides = {}) {
+function makeConfig(overrides: Record<string, unknown> = {}) {
     const defaults = getDefaultClassificationConfig('/repo');
     // re-build flattened config matching getClassificationConfig output shape
     const base = {

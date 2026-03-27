@@ -1,7 +1,7 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     compareVersionStrings,
     copyDirectoryContentMerge,
     copyPathRecursive,
@@ -16,11 +16,11 @@ const {
     syncWorkingTreeBundleItems,
     validateTargetRoot,
     writeRollbackRecords
-} = require('../../../src/lifecycle/common.ts');
+} from '../../../src/lifecycle/common';
 
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 function mkTmpDir() {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'oao-lifecycle-common-'));

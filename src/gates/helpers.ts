@@ -1,13 +1,20 @@
-const fs = require('node:fs');
-const path = require('node:path');
-const crypto = require('node:crypto');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as crypto from 'node:crypto';
+import { DEFAULT_BUNDLE_NAME } from '../core/constants';
 
-const { DEFAULT_BUNDLE_NAME } = require('../core/constants.ts');
+export interface ResolvePathOptions {
+    allowMissing?: boolean;
+}
+
+export interface ToStringArrayOptions {
+    trimValues?: boolean;
+}
 
 /**
  * Normalize a path to Unix-style, trimming whitespace and stripping leading ./
  */
-function normalizePath(pathValue) {
+export function normalizePath(pathValue: unknown): string {
     if (pathValue == null) return '';
     let text = String(pathValue).trim().replace(/\\/g, '/');
     text = text.replace(/^\.\//, '');
@@ -18,7 +25,7 @@ function normalizePath(pathValue) {
 /**
  * Convert any path to POSIX forward-slash style.
  */
-function toPosix(pathValue) {
+export function toPosix(pathValue: unknown): string {
     if (pathValue == null) return '';
     return String(pathValue).replace(/\\/g, '/');
 }
@@ -26,7 +33,7 @@ function toPosix(pathValue) {
 /**
  * Resolve project root from a script directory by walking up to find the bundle.
  */
-function resolveProjectRoot(startDir) {
+export function resolveProjectRoot(startDir: string): string {
     let current = path.resolve(startDir);
     for (let i = 0; i < 20; i++) {
         if (fs.existsSync(path.join(current, 'MANIFEST.md')) && fs.existsSync(path.join(current, 'VERSION'))) {
@@ -44,10 +51,10 @@ function resolveProjectRoot(startDir) {
  * use it directly; otherwise prefer a deployed bundle when present and fall back
  * to the workspace root when the bundle has not been materialized yet.
  */
-function joinOrchestratorPath(repoRoot, relativePath) {
+export function joinOrchestratorPath(repoRoot: string, relativePath: string): string {
     const repoRootResolved = path.resolve(repoRoot);
     const deployedRoot = path.resolve(repoRootResolved, DEFAULT_BUNDLE_NAME);
-    const looksLikeBundleRoot = (candidatePath) => (
+    const looksLikeBundleRoot = (candidatePath: string): boolean => (
         fs.existsSync(path.join(candidatePath, 'MANIFEST.md'))
         && fs.existsSync(path.join(candidatePath, 'VERSION'))
     );
@@ -75,14 +82,14 @@ function joinOrchestratorPath(repoRoot, relativePath) {
 /**
  * Get orchestrator-relative path as a posix string.
  */
-function orchestratorRelativePath(repoRoot, relativePath) {
+export function orchestratorRelativePath(repoRoot: string, relativePath: string): string {
     return toPosix(joinOrchestratorPath(repoRoot, relativePath));
 }
 
 /**
  * Resolve a path inside the repo root. If relative, resolve against repoRoot.
  */
-function resolvePathInsideRepo(pathValue, repoRoot, options = {}) {
+export function resolvePathInsideRepo(pathValue: string, repoRoot: string, options: ResolvePathOptions = {}): string | null {
     const allowMissing = options.allowMissing || false;
     const text = String(pathValue).trim();
     if (!text) return null;
@@ -104,14 +111,14 @@ function resolvePathInsideRepo(pathValue, repoRoot, options = {}) {
 /**
  * Resolve task ID from explicit value or output path hint.
  */
-function resolveTaskId(explicitTaskId, outputPathHint) {
+export function resolveTaskId(explicitTaskId: unknown, outputPathHint: unknown): string | null {
     if (explicitTaskId && String(explicitTaskId).trim()) {
         return String(explicitTaskId).trim();
     }
     if (!outputPathHint || !String(outputPathHint).trim()) {
         return null;
     }
-    const baseName = path.basename(outputPathHint, path.extname(outputPathHint));
+    const baseName = path.basename(String(outputPathHint), path.extname(String(outputPathHint)));
     const candidate = baseName.replace(/-preflight$/, '').trim();
     return candidate || null;
 }
@@ -119,7 +126,7 @@ function resolveTaskId(explicitTaskId, outputPathHint) {
 /**
  * Parse boolean-like values, matching Python/PS parse_bool.
  */
-function parseBool(value, defaultValue = false) {
+export function parseBool(value: unknown, defaultValue = false): boolean {
     if (value == null) return !!defaultValue;
     if (typeof value === 'boolean') return value;
     const text = String(value).trim().toLowerCase();
@@ -131,7 +138,7 @@ function parseBool(value, defaultValue = false) {
 /**
  * SHA-256 hash of a string.
  */
-function stringSha256(value) {
+export function stringSha256(value: unknown): string | null {
     if (value == null) return null;
     return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex').toLowerCase();
 }
@@ -139,7 +146,7 @@ function stringSha256(value) {
 /**
  * SHA-256 hash of a file.
  */
-function fileSha256(filePath) {
+export function fileSha256(filePath: string): string | null {
     if (!filePath) return null;
     try {
         if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return null;
@@ -153,7 +160,7 @@ function fileSha256(filePath) {
 /**
  * Count non-empty lines in a file.
  */
-function countFileLines(filePath) {
+export function countFileLines(filePath: string): number {
     try {
         if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return 0;
         const content = fs.readFileSync(filePath, 'utf8');
@@ -166,8 +173,8 @@ function countFileLines(filePath) {
 /**
  * Normalize root prefixes: ensure trailing /, deduplicate, sort.
  */
-function normalizeRootPrefixes(prefixes) {
-    const set = new Set();
+export function normalizeRootPrefixes(prefixes: unknown[] | null | undefined): string[] {
+    const set = new Set<string>();
     for (const prefix of (prefixes || [])) {
         let value = normalizePath(prefix);
         if (!value) continue;
@@ -180,7 +187,7 @@ function normalizeRootPrefixes(prefixes) {
 /**
  * Test if a path starts with any of the given prefixes (case-insensitive).
  */
-function testPathPrefix(pathValue, prefixes) {
+export function testPathPrefix(pathValue: string, prefixes: string[]): boolean {
     const lower = pathValue.toLowerCase();
     for (const prefix of prefixes) {
         if (lower.startsWith(prefix.toLowerCase())) return true;
@@ -191,7 +198,7 @@ function testPathPrefix(pathValue, prefixes) {
 /**
  * Append a JSON line to a metrics file.
  */
-function appendMetricsEvent(metricsPath, eventObject, emitMetrics) {
+export function appendMetricsEvent(metricsPath: string, eventObject: Record<string, unknown>, emitMetrics: boolean): void {
     if (!emitMetrics || !metricsPath) return;
     try {
         fs.mkdirSync(path.dirname(String(metricsPath)), { recursive: true });
@@ -204,7 +211,7 @@ function appendMetricsEvent(metricsPath, eventObject, emitMetrics) {
 /**
  * Convert value(s) to a flat string array, matching gate_utils.to_string_array.
  */
-function toStringArray(value, options = {}) {
+export function toStringArray(value: unknown, options: ToStringArrayOptions = {}): string[] {
     const trimValues = options.trimValues || false;
     if (value == null) return [];
     if (typeof value === 'string') {
@@ -229,7 +236,7 @@ function toStringArray(value, options = {}) {
 /**
  * Resolve git root from a repo root.
  */
-function resolveGitRoot(repoRoot) {
+export function resolveGitRoot(repoRoot: string): string {
     const resolved = path.resolve(repoRoot);
     if (fs.existsSync(path.join(resolved, '.git'))) return resolved;
     const bundleCandidate = path.resolve(resolved, DEFAULT_BUNDLE_NAME);
@@ -237,21 +244,3 @@ function resolveGitRoot(repoRoot) {
     return resolved;
 }
 
-module.exports = {
-    appendMetricsEvent,
-    countFileLines,
-    fileSha256,
-    joinOrchestratorPath,
-    normalizePath,
-    normalizeRootPrefixes,
-    orchestratorRelativePath,
-    parseBool,
-    resolveGitRoot,
-    resolvePathInsideRepo,
-    resolveProjectRoot,
-    resolveTaskId,
-    stringSha256,
-    testPathPrefix,
-    toPosix,
-    toStringArray
-};

@@ -1,4 +1,5 @@
-const { matchAnyRegex } = require('./text-utils.ts');
+import { matchAnyRegex } from './text-utils';
+import * as path from 'node:path';
 
 /**
  * Build a scoped diff by filtering changed files against trigger regexes.
@@ -7,7 +8,23 @@ const { matchAnyRegex } = require('./text-utils.ts');
  * Shared scoped-diff behavior used by the Node gate runtime.
  * without git or filesystem side effects.
  */
-function buildScopedDiffMetadata(options) {
+export interface ScopedDiffOptions {
+    reviewType: string;
+    changedFiles?: string[];
+    triggerRegexes?: string[];
+    scopedDiffText?: string;
+    fullDiffText?: string;
+    fullDiffSource?: string;
+    useStaged?: boolean;
+    preflightPath?: string;
+    pathsConfigPath?: string;
+    outputPath?: string;
+    metadataPath?: string;
+    gitRepoRoot?: string;
+    fullDiffPath?: string;
+}
+
+export function buildScopedDiffMetadata(options: ScopedDiffOptions): Record<string, unknown> {
     const reviewType = options.reviewType;
     const changedFiles = options.changedFiles || [];
     const triggerRegexes = options.triggerRegexes || [];
@@ -51,7 +68,7 @@ function buildScopedDiffMetadata(options) {
         outputDiffText = fullDiffText;
     }
 
-    function countLines(text) {
+    function countLines(text: string): number {
         if (!text) return 0;
         return text.split(/\r?\n/).length;
     }
@@ -79,7 +96,7 @@ function buildScopedDiffMetadata(options) {
  * Convert pathspecs from repo-root-relative to git-root-relative.
  * Mirrors the legacy pathspec normalization contract.
  */
-function convertToGitPathspecs(pathspecs, repoRoot, gitRoot) {
+export function convertToGitPathspecs(pathspecs: string[], repoRoot: string, gitRoot: string): string[] {
     if (!pathspecs || pathspecs.length === 0) {
         return [];
     }
@@ -91,7 +108,6 @@ function convertToGitPathspecs(pathspecs, repoRoot, gitRoot) {
         return [...pathspecs];
     }
 
-    const path = require('node:path');
     const gitRootName = path.basename(gitRootNormalized);
     const prefix = `${gitRootName}/`;
 
@@ -104,7 +120,3 @@ function convertToGitPathspecs(pathspecs, repoRoot, gitRoot) {
     });
 }
 
-module.exports = {
-    buildScopedDiffMetadata,
-    convertToGitPathspecs
-};

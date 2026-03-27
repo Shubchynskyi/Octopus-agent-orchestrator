@@ -1,25 +1,23 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const {
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import {
     ALL_AGENT_ENTRYPOINT_FILES,
     BOOLEAN_TRUE_VALUES,
     BOOLEAN_FALSE_VALUES,
     DEFAULT_BUNDLE_NAME
-} = require('../core/constants.ts');
-const { pathExists, readTextFile } = require('../core/fs.ts');
-const { detectLineEnding } = require('../core/line-endings.ts');
-const { readJsonFile } = require('../core/json.ts');
-const { getActiveAgentEntrypointFiles, getCanonicalEntrypointFile } = require('../materialization/common.ts');
-const {
+} from '../core/constants';
+import { pathExists, readTextFile } from '../core/fs';
+import { detectLineEnding } from '../core/line-endings';
+import { readJsonFile } from '../core/json';
+import { getActiveAgentEntrypointFiles, getCanonicalEntrypointFile } from '../materialization/common';
+import {
     MANAGED_START,
     MANAGED_END,
     COMMIT_GUARD_START,
     COMMIT_GUARD_END,
     CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES
-} = require('../materialization/content-builders.ts');
-
-const {
+} from '../materialization/content-builders';
+import {
     copyPathRecursive,
     createRollbackSnapshot,
     getTimestamp,
@@ -27,25 +25,101 @@ const {
     removePathRecursive,
     removeUninstallSentinel,
     restoreRollbackSnapshot,
+    type RollbackRecord,
     validateTargetRoot,
     writeRollbackRecords,
     writeUninstallSentinel
-} = require('./common.ts');
+} from './common';
+
+type JsonObject = Record<string, unknown>;
+
+interface EntrypointConfigJson extends JsonObject {
+    CanonicalEntrypoint?: unknown;
+    SourceOfTruth?: unknown;
+    ActiveAgentFiles?: unknown;
+}
+
+interface InitializationBackupManifest extends JsonObject {
+    PreExistingFiles?: unknown;
+    preExistingFiles?: unknown;
+}
+
+interface QwenSettingsContext extends JsonObject {
+    fileName?: unknown;
+}
+
+interface QwenSettings extends JsonObject {
+    context?: QwenSettingsContext;
+}
+
+interface ClaudeLocalSettingsPermissions extends JsonObject {
+    allow?: unknown;
+}
+
+interface ClaudeLocalSettings extends JsonObject {
+    permissions?: ClaudeLocalSettingsPermissions;
+}
+
+interface UninstallTestHooks {
+    afterFileCleanup?: () => void;
+}
+
+export interface RunUninstallOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    initAnswersPath?: string;
+    dryRun?: boolean;
+    skipBackups?: boolean;
+    noPrompt?: boolean;
+    keepPrimaryEntrypoint?: string | boolean | null;
+    keepTaskFile?: string | boolean | null;
+    keepRuntimeArtifacts?: string | boolean | null;
+    _testHooks?: UninstallTestHooks;
+}
+
+export interface RunUninstallResult {
+    targetRoot: string;
+    orchestratorRoot: string;
+    initAnswersPath: string;
+    initializationBackupRoot: string;
+    canonicalEntrypoint: string;
+    keepPrimaryEntrypoint: boolean;
+    keepTaskFile: boolean;
+    keepRuntimeArtifacts: boolean;
+    dryRun: boolean;
+    skipBackups: boolean;
+    backupRoot: string;
+    preservedRuntimePath: string;
+    preservedProjectMemoryPath: string;
+    filesUpdated: number;
+    filesDeleted: number;
+    filesRestored: number;
+    directoriesDeleted: number;
+    itemsBackedUp: number;
+    rollbackStatus: string;
+    warningsCount: number;
+    warnings: string[];
+    result: 'DRY_RUN' | 'SUCCESS';
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const ENTRYPOINT_FILES = Object.freeze([...ALL_AGENT_ENTRYPOINT_FILES]);
+export const ENTRYPOINT_FILES = Object.freeze([...ALL_AGENT_ENTRYPOINT_FILES]);
 
-const PROVIDER_AGENT_FILES = Object.freeze([
+export const PROVIDER_AGENT_FILES = Object.freeze([
     '.github/agents/orchestrator.md',
     '.windsurf/agents/orchestrator.md',
     '.junie/agents/orchestrator.md',
     '.antigravity/agents/orchestrator.md'
 ]);
 
-const GITHUB_SKILL_BRIDGE_FILES = Object.freeze([
+export const GITHUB_SKILL_BRIDGE_FILES = Object.freeze([
     '.github/agents/reviewer.md',
     '.github/agents/code-review.md',
     '.github/agents/db-review.md',
@@ -58,12 +132,12 @@ const GITHUB_SKILL_BRIDGE_FILES = Object.freeze([
     '.github/agents/dependency-review.md'
 ]);
 
-const QWEN_SETTINGS_RELATIVE = '.qwen/settings.json';
-const CLAUDE_LOCAL_SETTINGS_RELATIVE = '.claude/settings.local.json';
-const PRE_COMMIT_HOOK_RELATIVE = '.git/hooks/pre-commit';
+export const QWEN_SETTINGS_RELATIVE = '.qwen/settings.json';
+export const CLAUDE_LOCAL_SETTINGS_RELATIVE = '.claude/settings.local.json';
+export const PRE_COMMIT_HOOK_RELATIVE = '.git/hooks/pre-commit';
 
-const GITIGNORE_MANAGED_COMMENT = '# Octopus-agent-orchestrator managed ignores';
-const GITIGNORE_MANAGED_ENTRIES = Object.freeze([
+export const GITIGNORE_MANAGED_COMMENT = '# Octopus-agent-orchestrator managed ignores';
+export const GITIGNORE_MANAGED_ENTRIES = Object.freeze([
     'Octopus-agent-orchestrator/',
     'AGENTS.md',
     'TASK.md',
@@ -80,7 +154,7 @@ const GITIGNORE_MANAGED_ENTRIES = Object.freeze([
 // Boolean answer parsing (mirrors Convert-ToBooleanAnswer)
 // ---------------------------------------------------------------------------
 
-function parseBooleanAnswer(value, fieldName) {
+export function parseBooleanAnswer(value: unknown, fieldName: string): boolean {
     if (value === true) return true;
     if (value === false) return false;
     const normalized = String(value).trim().toLowerCase();
@@ -93,50 +167,57 @@ function parseBooleanAnswer(value, fieldName) {
 // Entrypoint detection helpers
 // ---------------------------------------------------------------------------
 
-function getCanonicalEntrypointFromSourceOfTruth(sourceOfTruthValue) {
+function getCanonicalEntrypointFromSourceOfTruth(sourceOfTruthValue: unknown): string | null {
     if (!sourceOfTruthValue || !String(sourceOfTruthValue).trim()) return null;
     try {
-        return getCanonicalEntrypointFile(sourceOfTruthValue);
+        return getCanonicalEntrypointFile(String(sourceOfTruthValue));
     } catch (_e) {
         return null;
     }
 }
 
-function tryGetCanonicalEntrypointFromJsonFile(filePath, preferCanonicalProperty) {
+function tryGetCanonicalEntrypointFromJsonFile(filePath: string, preferCanonicalProperty: boolean): string | null {
     if (!pathExists(filePath)) return null;
-    let payload;
+    let payload: unknown;
     try { payload = readJsonFile(filePath); } catch (_e) { return null; }
-    if (!payload || typeof payload !== 'object') return null;
+    if (!isJsonObject(payload)) return null;
 
-    if (preferCanonicalProperty && payload.CanonicalEntrypoint) {
-        const canonical = String(payload.CanonicalEntrypoint).trim();
+    const config = payload as EntrypointConfigJson;
+
+    if (preferCanonicalProperty && config.CanonicalEntrypoint) {
+        const canonical = String(config.CanonicalEntrypoint).trim();
         if (canonical) return canonical;
     }
 
-    if (payload.SourceOfTruth) {
-        return getCanonicalEntrypointFromSourceOfTruth(String(payload.SourceOfTruth));
+    if (config.SourceOfTruth) {
+        return getCanonicalEntrypointFromSourceOfTruth(String(config.SourceOfTruth));
     }
     return null;
 }
 
-function tryGetActiveAgentFilesFromJsonFile(filePath, fallbackSourceOfTruth) {
+function tryGetActiveAgentFilesFromJsonFile(filePath: string, fallbackSourceOfTruth: string | null): string[] {
     if (!pathExists(filePath)) return [];
-    let payload;
+    let payload: unknown;
     try { payload = readJsonFile(filePath); } catch (_e) { return []; }
-    if (!payload || typeof payload !== 'object') return [];
+    if (!isJsonObject(payload)) return [];
 
-    const activeAgentFilesRaw = payload.ActiveAgentFiles
-        ? String(payload.ActiveAgentFiles).trim() || null
+    const config = payload as EntrypointConfigJson;
+
+    const activeAgentFilesRaw = config.ActiveAgentFiles
+        ? String(config.ActiveAgentFiles).trim() || null
         : null;
 
-    const sot = payload.SourceOfTruth
-        ? String(payload.SourceOfTruth)
+    const sot = config.SourceOfTruth
+        ? String(config.SourceOfTruth)
         : fallbackSourceOfTruth || null;
 
     return getActiveAgentEntrypointFiles(activeAgentFilesRaw, sot);
 }
 
-function tryDetectCanonicalEntrypointFromManagedFiles(targetRoot, entrypointFiles) {
+function tryDetectCanonicalEntrypointFromManagedFiles(
+    targetRoot: string,
+    entrypointFiles: readonly string[]
+): string | null {
     for (const rel of entrypointFiles) {
         const candidatePath = path.join(targetRoot, rel);
         if (!pathExists(candidatePath)) continue;
@@ -153,7 +234,7 @@ function tryDetectCanonicalEntrypointFromManagedFiles(targetRoot, entrypointFile
 // Text normalization after managed block removal
 // ---------------------------------------------------------------------------
 
-function normalizeTextAfterManagedBlockRemoval(content) {
+function normalizeTextAfterManagedBlockRemoval(content: string): string {
     if (!content) return '';
     const eol = detectLineEnding(content);
     let normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -167,7 +248,7 @@ function normalizeTextAfterManagedBlockRemoval(content) {
 // Empty directory cleanup
 // ---------------------------------------------------------------------------
 
-function removeEmptyDirectoriesUpwards(startDirectory, targetRoot, dryRun) {
+function removeEmptyDirectoriesUpwards(startDirectory: string, targetRoot: string, dryRun: boolean): number {
     let current = startDirectory;
     let deletedCount = 0;
     const normalizedRoot = path.resolve(targetRoot).toLowerCase();
@@ -198,31 +279,32 @@ function removeEmptyDirectoriesUpwards(startDirectory, targetRoot, dryRun) {
 // Initialization backup helpers
 // ---------------------------------------------------------------------------
 
-function getInitializationBackupRoot(orchestratorRoot) {
+function getInitializationBackupRoot(orchestratorRoot: string): string | null {
     const installBackupsRoot = path.join(orchestratorRoot, 'runtime', 'backups');
     if (!pathExists(installBackupsRoot)) return null;
 
     const dirs = fs.readdirSync(installBackupsRoot, { withFileTypes: true })
-        .filter((e) => e.isDirectory())
-        .map((e) => e.name)
+        .filter((entry: fs.Dirent) => entry.isDirectory())
+        .map((entry: fs.Dirent) => entry.name)
         .sort();
 
     if (dirs.length === 0) return null;
     return path.join(installBackupsRoot, dirs[0]);
 }
 
-function getInitializationBackupManifest(backupRoot) {
+function getInitializationBackupManifest(backupRoot: string | null): InitializationBackupManifest | null {
     if (!backupRoot) return null;
     const manifestPath = path.join(backupRoot, '_install-backup.manifest.json');
     if (!pathExists(manifestPath)) return null;
     try {
-        return readJsonFile(manifestPath);
+        const manifest = readJsonFile(manifestPath);
+        return isJsonObject(manifest) ? manifest as InitializationBackupManifest : null;
     } catch (_e) {
         return null;
     }
 }
 
-function isManagedOnlyBackupContent(backupPath, managedStart, managedEnd) {
+function isManagedOnlyBackupContent(backupPath: string, managedStart: string, managedEnd: string): boolean {
     if (!pathExists(backupPath)) return false;
     const content = readTextFile(backupPath);
     if (!content.trim()) return false;
@@ -237,7 +319,13 @@ function isManagedOnlyBackupContent(backupPath, managedStart, managedEnd) {
     return normalizeTextAfterManagedBlockRemoval(withoutBlock) === '';
 }
 
-function shouldRestoreItemFromInitializationBackup(relativePath, backupPath, manifest, managedStart, managedEnd) {
+function shouldRestoreItemFromInitializationBackup(
+    relativePath: string,
+    backupPath: string,
+    manifest: InitializationBackupManifest | null,
+    managedStart: string,
+    managedEnd: string
+): boolean {
     if (manifest) {
         const preExistingFiles = manifest.PreExistingFiles || manifest.preExistingFiles;
         if (Array.isArray(preExistingFiles)) {
@@ -253,11 +341,11 @@ function shouldRestoreItemFromInitializationBackup(relativePath, backupPath, man
     return !isManagedOnlyBackupContent(backupPath, managedStart, managedEnd);
 }
 
-function escapeRegex(text) {
+function escapeRegex(text: string): string {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function arrayContainsPath(items, relativePath) {
+function arrayContainsPath(items: readonly string[], relativePath: string): boolean {
     const normalizedRelative = String(relativePath || '').replace(/\\/g, '/').toLowerCase();
     for (const item of items) {
         if (String(item || '').replace(/\\/g, '/').toLowerCase() === normalizedRelative) {
@@ -267,7 +355,7 @@ function arrayContainsPath(items, relativePath) {
     return false;
 }
 
-function looksLikeManagedFileWithoutMarkers(relativePath, content) {
+function looksLikeManagedFileWithoutMarkers(relativePath: string, content: string): boolean {
     const text = String(content || '');
     if (!text.trim()) return false;
 
@@ -305,7 +393,7 @@ function looksLikeManagedFileWithoutMarkers(relativePath, content) {
 // Rollback item set for journal-based uninstall
 // ---------------------------------------------------------------------------
 
-function getUninstallRollbackItems() {
+export function getUninstallRollbackItems(): string[] {
     return [
         'TASK.md',
         ...ENTRYPOINT_FILES,
@@ -337,7 +425,7 @@ function getUninstallRollbackItems() {
  * @param {string|boolean} [options.keepRuntimeArtifacts]
  * @returns {object} Uninstall result
  */
-function runUninstall(options) {
+export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
     const {
         targetRoot,
         bundleRoot,
@@ -353,7 +441,7 @@ function runUninstall(options) {
     const orchestratorRoot = path.join(normalizedTarget, DEFAULT_BUNDLE_NAME);
 
     // Resolve init answers path (allow missing)
-    let initAnswersCandidatePath;
+    let initAnswersCandidatePath: string;
     if (path.isAbsolute(initAnswersPath)) {
         initAnswersCandidatePath = initAnswersPath;
     } else {
@@ -364,18 +452,18 @@ function runUninstall(options) {
     const timestamp = getTimestamp();
 
     // State tracking
-    let backupRoot = null;
-    const backedUpSet = new Set();
+    let backupRoot: string | null = null;
+    const backedUpSet = new Set<string>();
     let itemsBackedUp = 0;
     let deletedFiles = 0;
     let updatedFiles = 0;
     let deletedDirectories = 0;
     let restoredFiles = 0;
-    const warnings = [];
-    let preservedRuntimePath = null;
-    let preservedProjectMemoryPath = null;
-    let rollbackSnapshotPath = null;
-    let rollbackRecords = [];
+    const warnings: string[] = [];
+    let preservedRuntimePath: string | null = null;
+    let preservedProjectMemoryPath: string | null = null;
+    let rollbackSnapshotPath: string | null = null;
+    let rollbackRecords: RollbackRecord[] = [];
     let rollbackStatus = 'NOT_NEEDED';
     let currentPhase = 'INIT';
     const journalRoot = path.join(normalizedTarget, `${DEFAULT_BUNDLE_NAME}-uninstall-journal`);
@@ -399,14 +487,14 @@ function runUninstall(options) {
     // Internal helpers bound to this uninstall context
     // ---------------------------------------------------------------------------
 
-    function getBackupRoot() {
+    function getBackupRoot(): string {
         if (!backupRoot) {
             backupRoot = path.join(normalizedTarget, `${DEFAULT_BUNDLE_NAME}-uninstall-backups`, timestamp);
         }
         return backupRoot;
     }
 
-    function backupItem(itemPath, relativePath, isDirectory, forcePreserve) {
+    function backupItem(itemPath: string, relativePath: string, isDirectory: boolean, forcePreserve: boolean): void {
         if (!fs.existsSync(itemPath)) return;
         if (skipBackups && !forcePreserve) return;
 
@@ -423,11 +511,11 @@ function runUninstall(options) {
         itemsBackedUp++;
     }
 
-    function addWarning(message) {
+    function addWarning(message: string): void {
         warnings.push(message);
     }
 
-    function updateOrRemoveFile(filePath, relativePath, content) {
+    function updateOrRemoveFile(filePath: string, relativePath: string, content: string): void {
         backupItem(filePath, relativePath, false, false);
 
         if (!content || !content.trim()) {
@@ -445,7 +533,7 @@ function runUninstall(options) {
         updatedFiles++;
     }
 
-    function removeManagedFile(relativePath) {
+    function removeManagedFile(relativePath: string): void {
         const filePath = path.join(normalizedTarget, relativePath);
         if (!pathExists(filePath)) return;
 
@@ -469,14 +557,14 @@ function runUninstall(options) {
         updateOrRemoveFile(filePath, relativePath, normalized);
     }
 
-    function getInitBackupPath(relativePath) {
+    function getInitBackupPath(relativePath: string): string | null {
         if (!initBackupRoot) return null;
         const bp = path.join(initBackupRoot, relativePath);
         if (!fs.existsSync(bp)) return null;
         return bp;
     }
 
-    function restoreItemFromInitializationBackup(relativePath) {
+    function restoreItemFromInitializationBackup(relativePath: string): boolean {
         const bp = getInitBackupPath(relativePath);
         if (!bp) return false;
 
@@ -491,14 +579,14 @@ function runUninstall(options) {
 
         if (!dryRun) {
             fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-            const backupItem2 = fs.lstatSync(bp);
+            const backupItemStats = fs.lstatSync(bp);
             if (fs.existsSync(destinationPath)) {
                 const destItem = fs.lstatSync(destinationPath);
-                if (destItem.isDirectory() !== backupItem2.isDirectory()) {
+                if (destItem.isDirectory() !== backupItemStats.isDirectory()) {
                     removePathRecursive(destinationPath);
                 }
             }
-            if (backupItem2.isDirectory()) {
+            if (backupItemStats.isDirectory()) {
                 removePathRecursive(destinationPath);
                 copyPathRecursive(bp, destinationPath);
             } else {
@@ -510,11 +598,11 @@ function runUninstall(options) {
         return true;
     }
 
-    function cleanupQwenSettings(qwenManagedEntries) {
+    function cleanupQwenSettings(qwenManagedEntries: readonly string[]): void {
         const filePath = path.join(normalizedTarget, QWEN_SETTINGS_RELATIVE);
         if (!pathExists(filePath)) return;
 
-        let settings;
+        let settings: unknown;
         try {
             settings = readJsonFile(filePath);
         } catch (_e) {
@@ -522,24 +610,29 @@ function runUninstall(options) {
             return;
         }
 
-        if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        if (!isJsonObject(settings)) {
             addWarning(`Skipping '${QWEN_SETTINGS_RELATIVE}' because its JSON root is no longer an object.`);
             return;
         }
 
-        if (!settings.context || typeof settings.context !== 'object') return;
+        const qwenSettings = settings as QwenSettings;
+        if (!qwenSettings.context || typeof qwenSettings.context !== 'object') return;
 
-        const currentEntries = Array.isArray(settings.context.fileName)
-            ? settings.context.fileName.filter((e) => e && String(e).trim()).map((e) => String(e).trim())
+        const context = qwenSettings.context as QwenSettingsContext;
+
+        const currentEntries = Array.isArray(context.fileName)
+            ? context.fileName
+                .filter((entry: unknown) => entry && String(entry).trim())
+                .map((entry: unknown) => String(entry).trim())
             : [];
 
-        const managedSet = new Set(qwenManagedEntries);
-        const updatedEntries = currentEntries.filter((e) => !managedSet.has(e));
+        const managedSet = new Set<string>(qwenManagedEntries);
+        const updatedEntries = currentEntries.filter((entry: string) => !managedSet.has(entry));
 
         if (updatedEntries.length === currentEntries.length) return;
 
-        const updatedSettings = { ...settings };
-        const updatedContext = { ...updatedSettings.context };
+        const updatedSettings: QwenSettings = { ...qwenSettings };
+        const updatedContext: QwenSettingsContext = { ...context };
 
         if (updatedEntries.length > 0) {
             updatedContext.fileName = updatedEntries;
@@ -562,11 +655,11 @@ function runUninstall(options) {
         updateOrRemoveFile(filePath, QWEN_SETTINGS_RELATIVE, json);
     }
 
-    function cleanupClaudeLocalSettings() {
+    function cleanupClaudeLocalSettings(): void {
         const filePath = path.join(normalizedTarget, CLAUDE_LOCAL_SETTINGS_RELATIVE);
         if (!pathExists(filePath)) return;
 
-        let settings;
+        let settings: unknown;
         try {
             settings = readJsonFile(filePath);
         } catch (_e) {
@@ -574,24 +667,29 @@ function runUninstall(options) {
             return;
         }
 
-        if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        if (!isJsonObject(settings)) {
             addWarning(`Skipping '${CLAUDE_LOCAL_SETTINGS_RELATIVE}' because its JSON root is no longer an object.`);
             return;
         }
 
-        if (!settings.permissions || typeof settings.permissions !== 'object') return;
+        const claudeSettings = settings as ClaudeLocalSettings;
+        if (!claudeSettings.permissions || typeof claudeSettings.permissions !== 'object') return;
 
-        const currentAllowEntries = Array.isArray(settings.permissions.allow)
-            ? settings.permissions.allow.filter((e) => e && String(e).trim()).map((e) => String(e).trim())
+        const permissions = claudeSettings.permissions as ClaudeLocalSettingsPermissions;
+
+        const currentAllowEntries = Array.isArray(permissions.allow)
+            ? permissions.allow
+                .filter((entry: unknown) => entry && String(entry).trim())
+                .map((entry: unknown) => String(entry).trim())
             : [];
 
-        const managedSet = new Set([...CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES]);
-        const updatedAllowEntries = currentAllowEntries.filter((e) => !managedSet.has(e));
+        const managedSet = new Set<string>([...CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES]);
+        const updatedAllowEntries = currentAllowEntries.filter((entry: string) => !managedSet.has(entry));
 
         if (updatedAllowEntries.length === currentAllowEntries.length) return;
 
-        const updatedSettings = { ...settings };
-        const updatedPermissions = { ...updatedSettings.permissions };
+        const updatedSettings: ClaudeLocalSettings = { ...claudeSettings };
+        const updatedPermissions: ClaudeLocalSettingsPermissions = { ...permissions };
 
         if (updatedAllowEntries.length > 0) {
             updatedPermissions.allow = updatedAllowEntries;
@@ -614,7 +712,7 @@ function runUninstall(options) {
         updateOrRemoveFile(filePath, CLAUDE_LOCAL_SETTINGS_RELATIVE, json);
     }
 
-    function cleanupGitignore() {
+    function cleanupGitignore(): void {
         const filePath = path.join(normalizedTarget, '.gitignore');
         if (!pathExists(filePath)) return;
 
@@ -649,7 +747,7 @@ function runUninstall(options) {
         updateOrRemoveFile(filePath, '.gitignore', updatedContent);
     }
 
-    function cleanupCommitGuardHook() {
+    function cleanupCommitGuardHook(): void {
         const filePath = path.join(normalizedTarget, PRE_COMMIT_HOOK_RELATIVE);
         if (!pathExists(filePath)) return;
 
@@ -670,7 +768,7 @@ function runUninstall(options) {
         updateOrRemoveFile(filePath, PRE_COMMIT_HOOK_RELATIVE, updatedContent);
     }
 
-    function removeBundleDirectory() {
+    function removeBundleDirectory(): void {
         if (!fs.existsSync(orchestratorRoot) || !fs.lstatSync(orchestratorRoot).isDirectory()) return;
 
         const keepRuntime = keepRuntimeArtifactsValue;
@@ -706,7 +804,7 @@ function runUninstall(options) {
         canonicalEntrypoint = tryDetectCanonicalEntrypointFromManagedFiles(normalizedTarget, ENTRYPOINT_FILES);
     }
 
-    let detectedActiveAgentFiles = [];
+    let detectedActiveAgentFiles: string[] = [];
     if (pathExists(initAnswersCandidatePath)) {
         detectedActiveAgentFiles = tryGetActiveAgentFilesFromJsonFile(initAnswersCandidatePath, null);
     }
@@ -718,7 +816,7 @@ function runUninstall(options) {
     }
 
     // Build qwen managed entries (TASK.md + active agent files)
-    const qwenManagedEntries = [...new Set(['TASK.md', ...detectedActiveAgentFiles.filter(Boolean)])].sort();
+    const qwenManagedEntries = [...new Set(['TASK.md', ...detectedActiveAgentFiles])].sort();
 
     // ---------------------------------------------------------------------------
     // Resolve keep decisions
@@ -849,8 +947,8 @@ function runUninstall(options) {
 
         currentPhase = 'FINALIZE';
 
-    } catch (error) {
-        const errorMessage = error.message || String(error);
+    } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
 
         if (!dryRun && rollbackSnapshotPath && rollbackRecords.length > 0) {
             try {
@@ -858,8 +956,8 @@ function runUninstall(options) {
                     normalizedTarget, rollbackSnapshotPath, rollbackRecords
                 );
                 rollbackStatus = 'RESTORED';
-            } catch (rollbackError) {
-                const rollbackMsg = rollbackError.message || String(rollbackError);
+            } catch (rollbackError: unknown) {
+                const rollbackMsg = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
                 rollbackStatus = `FAILED: ${rollbackMsg}`;
                 throw new Error(
                     `Uninstall failed during ${currentPhase}. Original error: ${errorMessage}. ` +
@@ -914,17 +1012,3 @@ function runUninstall(options) {
         result: dryRun ? 'DRY_RUN' : 'SUCCESS'
     };
 }
-
-module.exports = {
-    CLAUDE_LOCAL_SETTINGS_RELATIVE,
-    ENTRYPOINT_FILES,
-    GITIGNORE_MANAGED_COMMENT,
-    GITIGNORE_MANAGED_ENTRIES,
-    GITHUB_SKILL_BRIDGE_FILES,
-    PRE_COMMIT_HOOK_RELATIVE,
-    PROVIDER_AGENT_FILES,
-    QWEN_SETTINGS_RELATIVE,
-    getUninstallRollbackItems,
-    parseBooleanAnswer,
-    runUninstall
-};

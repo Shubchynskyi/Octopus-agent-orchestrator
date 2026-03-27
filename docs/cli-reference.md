@@ -9,6 +9,7 @@ The runtime is Node-only.
 - Aliases: `octopus`, `oao`, `octopus-agent-orchestrator`
 - Source invocation: `node bin/octopus.js <command>`
 - Runtime baseline: `Node.js 20 LTS`
+- Source installs from a git/source checkout run `npm prepare`, which builds the generated `bin/octopus.js` launcher and compiled runtime before execution.
 
 ---
 

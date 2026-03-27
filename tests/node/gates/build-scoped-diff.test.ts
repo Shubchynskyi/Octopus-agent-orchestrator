@@ -1,11 +1,11 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
-const { runGitDiff } = require('../../../src/gates/build-scoped-diff.ts');
+import { runGitDiff } from '../../../src/gates/build-scoped-diff';
 
 test('runGitDiff handles repo roots and pathspecs with spaces', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scoped-diff-'));

@@ -1,7 +1,5 @@
-module.exports = {
-    ...require('./validate-manifest.ts'),
-    ...require('./workspace-layout.ts'),
-    ...require('./status.ts'),
-    ...require('./verify.ts'),
-    ...require('./doctor.ts')
-};
+export * from './validate-manifest';
+export * from './workspace-layout';
+export * from './status';
+export * from './verify';
+export * from './doctor';

@@ -1,22 +1,61 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
-const { readJsonFile, writeJsonFile } = require('../core/json.ts');
-const { validateInitAnswers, serializeInitAnswers } = require('../schemas/init-answers.ts');
-const {
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
+import { readJsonFile, writeJsonFile } from '../core/json';
+import { validateInitAnswers, serializeInitAnswers } from '../schemas/init-answers';
+import {
     createAgentInitState,
     doesAgentInitStateMatchAnswers,
     readAgentInitStateSafe,
     writeAgentInitState
-} = require('../runtime/agent-init-state.ts');
-const {
-    getCanonicalEntrypointFile,
-    getActiveAgentEntrypointFiles,
-    convertActiveAgentEntrypointFilesToString
-} = require('./common.ts');
-const { applyAssistantDefaults } = require('./rule-materialization.ts');
-const { runInstall } = require('./install.ts');
+} from '../runtime/agent-init-state';
+import { getCanonicalEntrypointFile, getActiveAgentEntrypointFiles, convertActiveAgentEntrypointFilesToString } from './common';
+import { applyAssistantDefaults } from './rule-materialization';
+import { runInstall } from './install';
+
+interface ReinitOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    initAnswersPath?: string;
+    overrides?: Record<string, unknown>;
+    skipVerify?: boolean;
+    skipManifestValidation?: boolean;
+}
+
+export interface ReinitChange {
+    key: string;
+    action: string;
+    value: string;
+    source: string;
+    note: string;
+}
+
+interface InitAnswerInference {
+    source: 'version.json' | 'token-economy.json';
+    property: string;
+}
+
+interface InitAnswerSchemaEntry {
+    key: string;
+    defaultValue: string;
+    inferFrom: InitAnswerInference[] | null;
+}
+
+interface RecollectInitAnswersOptions {
+    existingAnswers?: Record<string, unknown> | null;
+    liveVersion?: Record<string, unknown> | null;
+    tokenEconomyConfig?: Record<string, unknown> | null;
+    overrides?: Record<string, unknown>;
+    changes?: ReinitChange[];
+}
+
+type RecollectedInitAnswers = Record<string, string> & { CollectedVia: string };
+
+function asObjectRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
 
 /**
  * Runs the reinit pipeline.
@@ -31,7 +70,7 @@ const { runInstall } = require('./install.ts');
  * @param {boolean} [options.skipManifestValidation=false]
  * @returns {object} Reinit result
  */
-function runReinit(options) {
+export function runReinit(options: ReinitOptions) {
     const {
         targetRoot,
         bundleRoot,
@@ -63,10 +102,10 @@ function runReinit(options) {
     const previousAgentInitState = previousAgentInitStateResult.state;
 
     // Load existing answers if present
-    let existingAnswers = null;
+    let existingAnswers: Record<string, unknown> | null = null;
     if (pathExists(resolvedInitPath)) {
         try {
-            existingAnswers = readJsonFile(resolvedInitPath);
+            existingAnswers = asObjectRecord(readJsonFile(resolvedInitPath));
         } catch {
             existingAnswers = null;
         }
@@ -74,10 +113,10 @@ function runReinit(options) {
 
     // Load existing live/version.json for inference
     const liveVersionPath = path.join(bundleRoot, 'live', 'version.json');
-    let existingLiveVersion = null;
+    let existingLiveVersion: Record<string, unknown> | null = null;
     if (pathExists(liveVersionPath)) {
         try {
-            existingLiveVersion = readJsonFile(liveVersionPath);
+            existingLiveVersion = asObjectRecord(readJsonFile(liveVersionPath));
         } catch {
             existingLiveVersion = null;
         }
@@ -85,17 +124,17 @@ function runReinit(options) {
 
     // Load existing token-economy config
     const tokenEconomyConfigPath = path.join(bundleRoot, 'live', 'config', 'token-economy.json');
-    let existingTokenEconomyConfig = null;
+    let existingTokenEconomyConfig: Record<string, unknown> | null = null;
     if (pathExists(tokenEconomyConfigPath)) {
         try {
-            existingTokenEconomyConfig = readJsonFile(tokenEconomyConfigPath);
+            existingTokenEconomyConfig = asObjectRecord(readJsonFile(tokenEconomyConfigPath));
         } catch {
             existingTokenEconomyConfig = null;
         }
     }
 
     // Recollect init answers (apply overrides, preserve existing, use defaults)
-    const changes = [];
+    const changes: ReinitChange[] = [];
     const initAnswers = recollectInitAnswers({
         existingAnswers,
         liveVersion: existingLiveVersion,
@@ -226,11 +265,11 @@ function runReinit(options) {
 /**
  * Recollects init answers, applying overrides and preserving existing values.
  */
-function recollectInitAnswers(opts) {
+export function recollectInitAnswers(opts: RecollectInitAnswersOptions): RecollectedInitAnswers {
     const { existingAnswers, liveVersion, tokenEconomyConfig, overrides = {}, changes = [] } = opts;
 
     const schema = getInitAnswerSchema();
-    const result = {};
+    const result: Record<string, string> = {};
 
     for (const def of schema) {
         const key = def.key;
@@ -277,10 +316,10 @@ function recollectInitAnswers(opts) {
         result.CollectedVia = 'CLI_NONINTERACTIVE';
     }
 
-    return result;
+    return result as RecollectedInitAnswers;
 }
 
-function getInitAnswerSchema() {
+function getInitAnswerSchema(): InitAnswerSchemaEntry[] {
     return [
         {
             key: 'AssistantLanguage',
@@ -323,7 +362,7 @@ function getInitAnswerSchema() {
     ];
 }
 
-function getOptionalValue(obj, key) {
+export function getOptionalValue(obj: Record<string, unknown> | null | undefined, key: string): string | null {
     if (!obj || typeof obj !== 'object') return null;
     // Case-insensitive lookup
     const normalizedKey = key.toLowerCase().replace(/[_-]/g, '');
@@ -341,7 +380,7 @@ function getOptionalValue(obj, key) {
 /**
  * Updates the core rule file (00-core.md) with language/brevity values.
  */
-function updateCoreRuleFile(bundleRoot, sourceRoot, language, brevity) {
+export function updateCoreRuleFile(bundleRoot: string, sourceRoot: string, language: string, brevity: string): boolean {
     const livePath = path.join(bundleRoot, 'live/docs/agent-rules/00-core.md');
     const templatePath = path.join(sourceRoot, 'docs/agent-rules/00-core.md');
 
@@ -374,7 +413,11 @@ function updateCoreRuleFile(bundleRoot, sourceRoot, language, brevity) {
 /**
  * Updates the token economy config with the enabled flag.
  */
-function updateTokenEconomyConfig(bundleRoot, sourceRoot, enabled) {
+export function updateTokenEconomyConfig(
+    bundleRoot: string,
+    sourceRoot: string,
+    enabled: boolean
+): { updated: boolean; path: string } {
     const templatePath = path.join(sourceRoot, 'config/token-economy.json');
     const destPath = path.join(bundleRoot, 'live/config/token-economy.json');
 
@@ -382,18 +425,23 @@ function updateTokenEconomyConfig(bundleRoot, sourceRoot, enabled) {
         throw new Error(`Token economy template config not found: ${templatePath}`);
     }
 
-    const templateConfig = readJsonFile(templatePath);
-    let existingConfig = null;
+    const templateConfig = asObjectRecord(readJsonFile(templatePath));
+    if (!templateConfig) {
+        throw new Error(`Token economy template config must be a JSON object: ${templatePath}`);
+    }
+    let existingConfig: Record<string, unknown> | null = null;
     if (pathExists(destPath)) {
         try {
-            existingConfig = readJsonFile(destPath);
+            existingConfig = asObjectRecord(readJsonFile(destPath));
         } catch {
             existingConfig = null;
         }
     }
 
     // Merge (simple for token economy)
-    const merged = existingConfig || JSON.parse(JSON.stringify(templateConfig));
+    const merged: Record<string, unknown> = existingConfig
+        ? JSON.parse(JSON.stringify(existingConfig)) as Record<string, unknown>
+        : JSON.parse(JSON.stringify(templateConfig)) as Record<string, unknown>;
     merged.enabled = enabled;
 
     const json = JSON.stringify(merged, null, 2);
@@ -410,11 +458,3 @@ function updateTokenEconomyConfig(bundleRoot, sourceRoot, enabled) {
 
     return { updated, path: destPath };
 }
-
-module.exports = {
-    getOptionalValue,
-    recollectInitAnswers,
-    runReinit,
-    updateCoreRuleFile,
-    updateTokenEconomyConfig
-};

@@ -1,14 +1,14 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     DEFAULT_COMPILE_TIMEOUT_MS,
     DEFAULT_GIT_CLONE_TIMEOUT_MS,
     DEFAULT_GIT_TIMEOUT_MS,
     DEFAULT_NPM_TIMEOUT_MS,
     spawnStreamed,
     spawnSyncWithTimeout
-} = require('../../../src/core/subprocess.ts');
+} from '../../../src/core/subprocess';
 
 describe('spawnStreamed', () => {
     it('captures stdout from a successful process', async () => {
@@ -62,7 +62,7 @@ describe('spawnStreamed', () => {
     });
 
     it('streams output via onStdout callback', async () => {
-        const chunks = [];
+        const chunks: string[] = [];
         const result = await spawnStreamed(process.execPath, ['-e', 'console.log("chunk1"); console.log("chunk2")'], {
             timeoutMs: 5000,
             onStdout(chunk) { chunks.push(chunk); }
@@ -76,7 +76,7 @@ describe('spawnStreamed', () => {
     it('rejects with ENOENT for missing executable', async () => {
         await assert.rejects(
             () => spawnStreamed('__nonexistent_executable_12345__', [], { timeoutMs: 5000 }),
-            (err) => err.message.includes('not found in PATH')
+            (err) => (err as Error).message.includes('not found in PATH')
         );
     });
 });
@@ -116,7 +116,7 @@ describe('spawnStreamed – kill-path cleanup', () => {
         // Parent spawns a child; both sleep forever.
         // On Windows killChild() uses taskkill /T /F for tree-kill.
         const script = [
-            'const cp = require("child_process");',
+            "import * as cp from 'child_process';",
             'cp.spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {stdio:"ignore"});',
             'setTimeout(()=>{},60000);'
         ].join('\n');

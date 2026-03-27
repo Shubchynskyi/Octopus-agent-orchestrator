@@ -1,7 +1,7 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     normalizePath,
     toPosix,
     resolveTaskId,
@@ -10,7 +10,7 @@ const {
     normalizeRootPrefixes,
     testPathPrefix,
     toStringArray
-} = require('../../../src/gates/helpers.ts');
+} from '../../../src/gates/helpers';
 
 describe('gates/helpers', () => {
     describe('normalizePath', () => {
@@ -79,8 +79,8 @@ describe('gates/helpers', () => {
     describe('stringSha256', () => {
         it('returns a 64-char lowercase hex string', () => {
             const hash = stringSha256('hello');
-            assert.equal(hash.length, 64);
-            assert.match(hash, /^[a-f0-9]{64}$/);
+            assert.equal(hash!.length, 64);
+            assert.match(hash!, /^[a-f0-9]{64}$/);
         });
         it('returns null for null input', () => {
             assert.equal(stringSha256(null), null);

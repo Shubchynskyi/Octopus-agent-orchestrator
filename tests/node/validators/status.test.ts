@@ -1,21 +1,21 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     getStatusSnapshot,
     formatStatusSnapshot,
     resolveInitAnswersPath
-} = require('../../../src/validators/status.ts');
+} from '../../../src/validators/status';
 
-function writeStatusFixtureFile(filePath, content) {
+function writeStatusFixtureFile(filePath: string, content: string) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, content, 'utf8');
 }
 
-function seedInitializedWorkspace(tmpDir, collectedVia, options = {}) {
+function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options: Record<string, unknown> = {}) {
     const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
     const runtimePath = path.join(bundlePath, 'runtime');
     const liveRulesPath = path.join(bundlePath, 'live', 'docs', 'agent-rules');

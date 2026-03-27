@@ -1,33 +1,22 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-function resolveRuntimeModule(relativeModulePath) {
-    const basePath = path.resolve(__dirname, relativeModulePath);
-    const candidates = [`${basePath}.ts`, `${basePath}.js`];
-    for (const candidate of candidates) {
-        if (fs.existsSync(candidate)) {
-            return candidate;
-        }
-    }
-    throw new Error(`Cannot resolve runtime module for '${relativeModulePath}'.`);
-}
-
-const {
+import {
     COMMIT_GUARD_START,
     MANAGED_START,
     MANAGED_END
-} = require(resolveRuntimeModule('../../../src/materialization/content-builders'));
-const { runAgentInit } = require(resolveRuntimeModule('../../../src/lifecycle/agent-init'));
-const { runReinit } = require(resolveRuntimeModule('../../../src/materialization/reinit'));
-const { runUpdate } = require(resolveRuntimeModule('../../../src/lifecycle/update'));
-const { runUninstall } = require(resolveRuntimeModule('../../../src/lifecycle/uninstall'));
-const { getStatusSnapshot } = require(resolveRuntimeModule('../../../src/validators/status'));
-const { runVerify } = require(resolveRuntimeModule('../../../src/validators/verify'));
-const { validateManifest } = require(resolveRuntimeModule('../../../src/validators/validate-manifest'));
+} from '../../../src/materialization/content-builders';
+import { runAgentInit } from '../../../src/lifecycle/agent-init';
+import { runReinit } from '../../../src/materialization/reinit';
+import { runUpdate } from '../../../src/lifecycle/update';
+import { runUninstall } from '../../../src/lifecycle/uninstall';
+import { getStatusSnapshot } from '../../../src/validators/status';
+import { runVerify } from '../../../src/validators/verify';
+import { validateManifest } from '../../../src/validators/validate-manifest';
 
-function findRepoRoot() {
+function findRepoRoot(): string {
     let dir = __dirname;
     while (dir !== path.dirname(dir)) {
         if (fs.existsSync(path.join(dir, 'VERSION')) && fs.existsSync(path.join(dir, 'template'))) {
@@ -38,22 +27,22 @@ function findRepoRoot() {
     throw new Error('Cannot find repo root');
 }
 
-function createRepoLocalWorkspace(repoRoot, prefix) {
+function createRepoLocalWorkspace(repoRoot: string, prefix: string) {
     const baseDir = path.join(repoRoot, 'runtime', 'test-workspaces');
     fs.mkdirSync(baseDir, { recursive: true });
     return fs.mkdtempSync(path.join(baseDir, `${prefix}-`));
 }
 
-function writeTextFile(filePath, content) {
+function writeTextFile(filePath: string, content: string) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, content, 'utf8');
 }
 
-function readJson(filePath) {
+function readJson(filePath: string): Record<string, unknown> {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
-function materializeProjectCommands(bundleRoot) {
+function materializeProjectCommands(bundleRoot: string) {
     const commandsPath = path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md');
     let content = fs.readFileSync(commandsPath, 'utf8');
     const replacements = new Map([
@@ -80,7 +69,7 @@ function materializeProjectCommands(bundleRoot) {
     fs.writeFileSync(commandsPath, content, 'utf8');
 }
 
-function listChildDirectories(parentDir) {
+function listChildDirectories(parentDir: string) {
     if (!fs.existsSync(parentDir)) return [];
     return fs.readdirSync(parentDir, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
@@ -88,7 +77,7 @@ function listChildDirectories(parentDir) {
         .sort();
 }
 
-function seedLegacyWorkspace(workspaceRoot) {
+function seedLegacyWorkspace(workspaceRoot: string) {
     const legacyFiles = new Map([
         ['AGENTS.md', '# User AGENTS\n\nLegacy user instructions.\n'],
         ['TASK.md', '# User Tasks\n\n- Keep this original task list.\n'],
@@ -110,17 +99,17 @@ function seedLegacyWorkspace(workspaceRoot) {
     return legacyFiles;
 }
 
-async function runInteractiveSetup(repoRoot, workspaceRoot, answers) {
-    const cliHelpersPath = resolveRuntimeModule('../../../src/cli/commands/cli-helpers');
-    const setupPath = resolveRuntimeModule('../../../src/cli/commands/setup');
+async function runInteractiveSetup(repoRoot: string, workspaceRoot: string, answers: Record<string, unknown>) {
+    const cliHelpersPath = require.resolve('../../../src/cli/commands/cli-helpers');
+    const setupPath = require.resolve('../../../src/cli/commands/setup');
     const cliHelpers = require(cliHelpersPath);
     const originals = {
         supportsInteractivePrompts: cliHelpers.supportsInteractivePrompts,
         promptTextInput: cliHelpers.promptTextInput,
         promptSingleSelect: cliHelpers.promptSingleSelect
     };
-    const promptTrace = [];
-    const output = [];
+    const promptTrace: string[] = [];
+    const output: string[] = [];
     const selectValues = [
         answers.assistantBrevity,
         answers.sourceOfTruth,
@@ -134,19 +123,19 @@ async function runInteractiveSetup(repoRoot, workspaceRoot, answers) {
 
     delete require.cache[setupPath];
     cliHelpers.supportsInteractivePrompts = function () { return true; };
-    cliHelpers.promptTextInput = async function (title) {
+    cliHelpers.promptTextInput = async function (title: string) {
         promptTrace.push(title);
         return answers.assistantLanguage;
     };
-    cliHelpers.promptSingleSelect = async function (config) {
+    cliHelpers.promptSingleSelect = async function (config: { title: string; options: Array<{ value: string }> }) {
         promptTrace.push(config.title);
         const value = selectValues[selectIndex];
         selectIndex += 1;
-        assert.ok(config.options.some((option) => option.value === value), `Unexpected prompt value '${value}' for '${config.title}'.`);
+        assert.ok(config.options.some((option: { value: string }) => option.value === value), `Unexpected prompt value '${value}' for '${config.title}'.`);
         return value;
     };
-    console.log = function (...args) {
-        output.push(args.map((value) => String(value)).join(' '));
+    console.log = function (...args: unknown[]) {
+        output.push(args.map((value: unknown) => String(value)).join(' '));
     };
 
     try {
@@ -167,7 +156,7 @@ async function runInteractiveSetup(repoRoot, workspaceRoot, answers) {
     return { promptTrace, output };
 }
 
-function injectBundleUpdate(bundleRoot, updateMarker, nextVersion) {
+function injectBundleUpdate(bundleRoot: string, updateMarker: string, nextVersion: string) {
     const versionPath = path.join(bundleRoot, 'VERSION');
     const templateClaudePath = path.join(bundleRoot, 'template', 'CLAUDE.md');
     const currentTemplate = fs.readFileSync(templateClaudePath, 'utf8');
@@ -267,8 +256,8 @@ describe('full local lifecycle', () => {
             const installedAgents = fs.readFileSync(path.join(workspaceRoot, 'AGENTS.md'), 'utf8');
             const installedTask = fs.readFileSync(path.join(workspaceRoot, 'TASK.md'), 'utf8');
             const installedGitignore = fs.readFileSync(path.join(workspaceRoot, '.gitignore'), 'utf8');
-            const installedQwen = readJson(path.join(workspaceRoot, '.qwen', 'settings.json'));
-            const installedClaude = readJson(path.join(workspaceRoot, '.claude', 'settings.local.json'));
+            const installedQwen = readJson(path.join(workspaceRoot, '.qwen', 'settings.json')) as { context: { fileName: string[] }; [k: string]: unknown };
+            const installedClaude = readJson(path.join(workspaceRoot, '.claude', 'settings.local.json')) as { permissions: { allow: string[] }; [k: string]: unknown };
             const installedHook = fs.readFileSync(path.join(workspaceRoot, '.git', 'hooks', 'pre-commit'), 'utf8');
 
             assert.ok(installedAgents.includes(MANAGED_START));
@@ -289,8 +278,9 @@ describe('full local lifecycle', () => {
             const installBackupManifest = readJson(
                 path.join(installBackupsRoot, installBackupDirs[0], '_install-backup.manifest.json')
             );
+            const preExistingFilesList = installBackupManifest.PreExistingFiles as unknown[] || [];
             const preExistingFiles = new Set(
-                (installBackupManifest.PreExistingFiles || []).map((item) => String(item).replace(/\\/g, '/').toLowerCase())
+                preExistingFilesList.map((item: unknown) => String(item).replace(/\\/g, '/').toLowerCase())
             );
             for (const relativePath of legacyFiles.keys()) {
                 assert.ok(

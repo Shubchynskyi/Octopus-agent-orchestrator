@@ -1,11 +1,11 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const { runCheckUpdate } = require('../../../src/lifecycle/check-update.ts');
-const { removePathRecursive, getUpdateSentinelPath } = require('../../../src/lifecycle/common.ts');
+import { runCheckUpdate } from '../../../src/lifecycle/check-update';
+import { removePathRecursive, getUpdateSentinelPath } from '../../../src/lifecycle/common';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -18,7 +18,7 @@ function findRepoRoot() {
     throw new Error('Cannot find repo root');
 }
 
-function setupCheckUpdateWorkspace(repoRoot, deployedVersion) {
+function setupCheckUpdateWorkspace(repoRoot: string, deployedVersion: string) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-checkupdate-'));
     const bundle = path.join(tmpDir, 'Octopus-agent-orchestrator');
     fs.mkdirSync(bundle, { recursive: true });
@@ -431,9 +431,9 @@ describe('runCheckUpdate', () => {
                     trustOverride: true
                 }),
                 (error) => {
-                    assert.match(error.message, /DiagnosticCode: UPDATE_SOURCE_VERSION_MISSING/);
-                    assert.match(error.message, /DiagnosticSource:/);
-                    assert.match(error.message, /DiagnosticHint:/);
+                    assert.match((error as Error).message, /DiagnosticCode: UPDATE_SOURCE_VERSION_MISSING/);
+                    assert.match((error as Error).message, /DiagnosticSource:/);
+                    assert.match((error as Error).message, /DiagnosticHint:/);
                     return true;
                 }
             );

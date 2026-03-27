@@ -1,12 +1,16 @@
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-
-const { DEFAULT_BUNDLE_NAME } = require('../core/constants.ts');
-const { pathExists, readTextFile } = require('../core/fs.ts');
-const { DEFAULT_NPM_TIMEOUT_MS, spawnStreamed, spawnSyncWithTimeout } = require('../core/subprocess.ts');
-
-const {
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { pathExists, readTextFile } from '../core/fs';
+import {
+    DEFAULT_NPM_TIMEOUT_MS,
+    spawnStreamed,
+    spawnSyncWithTimeout,
+    type SpawnStreamedOptions,
+    type SpawnSyncWithTimeoutOptions
+} from '../core/subprocess';
+import {
     BUNDLE_SYNC_ITEMS,
     compareVersionStrings,
     copyDirectoryContentMerge,
@@ -19,21 +23,108 @@ const {
     writeUpdateSentinel,
     restoreSyncedItemsFromBackup,
     validateTargetRoot
-} = require('./common.ts');
+} from './common';
+import { validateNpmSourceTrust, validatePathSourceTrust } from './update-trust';
+import { classifyNpmDiagnostic, createLifecycleDiagnosticError } from './update-diagnostics';
 
-const {
-    validateNpmSourceTrust,
-    validatePathSourceTrust
-} = require('./update-trust.ts');
-const {
-    classifyNpmDiagnostic,
-    createLifecycleDiagnosticError
-} = require('./update-diagnostics.ts');
+export const DEFAULT_PACKAGE_NAME = 'octopus-agent-orchestrator';
 
-const DEFAULT_PACKAGE_NAME = 'octopus-agent-orchestrator';
-let resolvedNpmInvocation = null;
+interface NpmInvocation {
+    command: string;
+    prefixArgs: string[];
+}
 
-function resolveNpmInvocation() {
+interface ResolveInstalledPackageRootOptions {
+    sourceReference?: string;
+}
+
+export interface AcquireUpdateSourceOptions {
+    deployedBundleRoot: string;
+    packageSpec?: string | null;
+    sourcePath?: string | null;
+    trustOverride?: boolean;
+    signal?: AbortSignal | null;
+    onProgress?: ((chunk: string) => void) | null;
+    diagnosticSourceReference?: string | null;
+    diagnosticTool?: string | null;
+}
+
+export interface AcquiredUpdateSource {
+    sourceType: 'path' | 'npm';
+    sourceReference: string;
+    diagnosticSourceReference: string;
+    packageSpec: string | null;
+    packageName: string | null;
+    sourceRoot: string;
+    trustPolicy: string;
+    diagnosticTool: string;
+    cleanup: () => void;
+}
+
+interface CheckUpdateOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    initAnswersPath?: string;
+    packageSpec?: string | null;
+    sourcePath?: string | null;
+    apply?: boolean;
+    noPrompt?: boolean;
+    dryRun?: boolean;
+    skipVerify?: boolean;
+    skipManifestValidation?: boolean;
+    trustOverride?: boolean;
+    runningScriptPath?: string | null;
+    signal?: AbortSignal | null;
+    onProgress?: ((chunk: string) => void) | null;
+    diagnosticSourceReference?: string | null;
+    diagnosticTool?: string | null;
+    updateRunner?: ((options: {
+        targetRoot: string;
+        initAnswersPath: string;
+        noPrompt: boolean;
+        skipVerify: boolean;
+        skipManifestValidation: boolean;
+    }) => void) | null;
+}
+
+interface CheckUpdateResult {
+    targetRoot: string;
+    sourceType: string;
+    sourceReference: string;
+    packageSpec: string | null;
+    sourcePath: string | null;
+    packageName: string | null;
+    currentVersion: string;
+    latestVersion: string | null;
+    updateAvailable: boolean;
+    applyRequested: boolean;
+    noPrompt: boolean;
+    dryRun: boolean;
+    trustPolicy: string;
+    syncItemsDetected: number;
+    syncItemsBackedUp: number;
+    syncItemsUpdated: number;
+    syncBackupRoot: string;
+    syncBackupMetadataPath: string;
+    syncRollbackStatus: string;
+    syncedItems: string[];
+    updateApplied: boolean;
+    checkUpdateResult: string;
+}
+
+function toObjectRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+let resolvedNpmInvocation: NpmInvocation | null = null;
+
+function resolveNpmInvocation(): NpmInvocation {
     if (resolvedNpmInvocation) {
         return resolvedNpmInvocation;
     }
@@ -70,7 +161,7 @@ function resolveNpmInvocation() {
     return resolvedNpmInvocation;
 }
 
-function runNpmSync(args, options = {}) {
+function runNpmSync(args: string[], options: SpawnSyncWithTimeoutOptions = {}) {
     const {
         encoding = 'utf8',
         stdio = 'pipe'
@@ -87,27 +178,27 @@ function runNpmSync(args, options = {}) {
     });
 }
 
-async function runNpmStreamed(args, options = {}) {
+async function runNpmStreamed(args: string[], options: SpawnStreamedOptions = {}) {
     const invocation = resolveNpmInvocation();
     const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_NPM_TIMEOUT_MS;
 
     return spawnStreamed(invocation.command, [...invocation.prefixArgs, ...args], {
         cwd: options.cwd,
         timeoutMs,
-        signal: options.signal || null,
-        onStdout: options.onStdout || null,
-        onStderr: options.onStderr || null
+        signal: options.signal ?? undefined,
+        onStdout: options.onStdout ?? undefined,
+        onStderr: options.onStderr ?? undefined
     });
 }
 
-function readPackageNameFromDirectory(directoryPath, fallbackValue = null) {
+function readPackageNameFromDirectory(directoryPath: string, fallbackValue: string | null = null): string | null {
     const packageJsonPath = path.join(directoryPath, 'package.json');
     if (!pathExists(packageJsonPath)) {
         return fallbackValue;
     }
 
     try {
-        const parsed = JSON.parse(readTextFile(packageJsonPath));
+        const parsed = toObjectRecord(JSON.parse(readTextFile(packageJsonPath)));
         const name = String(parsed && parsed.name ? parsed.name : '').trim();
         return name || fallbackValue;
     } catch (_error) {
@@ -115,11 +206,14 @@ function readPackageNameFromDirectory(directoryPath, fallbackValue = null) {
     }
 }
 
-function resolveNodeModulesPackageRoot(nodeModulesRoot, packageName) {
+function resolveNodeModulesPackageRoot(nodeModulesRoot: string, packageName: string): string {
     return path.join(nodeModulesRoot, ...packageName.split('/'));
 }
 
-function resolveInstalledPackageRoot(tempInstallRoot, options = {}) {
+function resolveInstalledPackageRoot(
+    tempInstallRoot: string,
+    options: ResolveInstalledPackageRootOptions = {}
+): { packageName: string; packageRoot: string } {
     const listResult = runNpmSync([
         'ls',
         '--json',
@@ -129,7 +223,7 @@ function resolveInstalledPackageRoot(tempInstallRoot, options = {}) {
     ]);
 
     const sourceReference = String(options.sourceReference || tempInstallRoot);
-    const detailText = listResult.error ? (listResult.error.message || String(listResult.error)) : '';
+    const detailText = listResult.error ? getErrorMessage(listResult.error) : '';
     if (listResult.error || listResult.status !== 0) {
         throw createLifecycleDiagnosticError({
             message: `Failed to inspect installed update package metadata for '${sourceReference}'.`,
@@ -154,9 +248,9 @@ function resolveInstalledPackageRoot(tempInstallRoot, options = {}) {
         });
     }
 
-    let parsed;
+    let parsed: Record<string, unknown> = {};
     try {
-        parsed = JSON.parse(stdout);
+        parsed = toObjectRecord(JSON.parse(stdout)) || {};
     } catch (_error) {
         throw createLifecycleDiagnosticError({
             message: `Failed to parse installed update package metadata for '${sourceReference}'.`,
@@ -167,7 +261,8 @@ function resolveInstalledPackageRoot(tempInstallRoot, options = {}) {
         });
     }
 
-    const dependencyNames = Object.keys(parsed && parsed.dependencies ? parsed.dependencies : {});
+    const dependencyMap = toObjectRecord(parsed.dependencies) || {};
+    const dependencyNames = Object.keys(dependencyMap);
     if (dependencyNames.length === 0) {
         throw createLifecycleDiagnosticError({
             message: `Installed update package metadata did not contain any top-level dependencies for '${sourceReference}'.`,
@@ -196,7 +291,7 @@ function resolveInstalledPackageRoot(tempInstallRoot, options = {}) {
     };
 }
 
-async function acquireUpdateSource(options) {
+export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): Promise<AcquiredUpdateSource> {
     const {
         deployedBundleRoot,
         packageSpec,
@@ -238,7 +333,7 @@ async function acquireUpdateSource(options) {
     }
 
     const versionResult = runNpmSync(['--version'], { stdio: 'pipe' });
-    const versionDetailText = versionResult.error ? (versionResult.error.message || String(versionResult.error)) : '';
+    const versionDetailText = versionResult.error ? getErrorMessage(versionResult.error) : '';
     if (versionResult.error || versionResult.status !== 0) {
         throw createLifecycleDiagnosticError({
             message: 'npm is required for npm-based check-update workflow.',
@@ -251,7 +346,7 @@ async function acquireUpdateSource(options) {
         });
     }
 
-    const deployedPackageName = readPackageNameFromDirectory(deployedBundleRoot, DEFAULT_PACKAGE_NAME);
+    const deployedPackageName = readPackageNameFromDirectory(deployedBundleRoot, DEFAULT_PACKAGE_NAME) || DEFAULT_PACKAGE_NAME;
     const effectivePackageSpec = String(packageSpec || `${deployedPackageName}@latest`).trim();
     const effectiveDiagnosticSource = diagnosticSourceReference || effectivePackageSpec;
 
@@ -272,8 +367,8 @@ async function acquireUpdateSource(options) {
             effectivePackageSpec
         ];
         const installResult = await runNpmStreamed(installArgs, {
-            signal,
-            onStderr: onProgress || null
+            signal: signal ?? undefined,
+            onStderr: onProgress ?? undefined
         });
 
         if (installResult.cancelled) {
@@ -324,7 +419,7 @@ async function acquireUpdateSource(options) {
                 removePathRecursive(tempInstallRoot);
             }
         };
-    } catch (error) {
+    } catch (error: unknown) {
         removePathRecursive(tempInstallRoot);
         throw error;
     }
@@ -354,7 +449,7 @@ async function acquireUpdateSource(options) {
  * @param {Function} [options.updateRunner] - Callback that performs the post-sync update step
  * @returns {Promise<object>} Check-update result
  */
-async function runCheckUpdate(options) {
+export async function runCheckUpdate(options: CheckUpdateOptions): Promise<CheckUpdateResult> {
     const {
         targetRoot,
         bundleRoot,
@@ -403,7 +498,7 @@ async function runCheckUpdate(options) {
         diagnosticTool
     });
 
-    const result = {
+    const result: CheckUpdateResult = {
         targetRoot: normalizedTarget,
         sourceType: source.sourceType,
         sourceReference: source.sourceReference,
@@ -458,7 +553,7 @@ async function runCheckUpdate(options) {
         result.checkUpdateResult = result.updateAvailable ? 'UPDATE_AVAILABLE' : 'UP_TO_DATE';
 
         if (result.updateAvailable && apply) {
-            const syncPreexistingMap = {};
+            const syncPreexistingMap: Record<string, boolean> = {};
             const DEFERRED_VERSION_ITEM = 'VERSION';
 
             try {
@@ -593,15 +688,15 @@ async function runCheckUpdate(options) {
                     result.checkUpdateResult = 'DRY_RUN_UPDATE_AVAILABLE';
                 }
             } catch (applyError) {
-                const originalError = applyError.message || String(applyError);
+                const originalError = getErrorMessage(applyError);
                 removeUpdateSentinel(deployedBundleRoot);
                 if (!dryRun && Object.keys(syncPreexistingMap).length > 0) {
                     result.syncRollbackStatus = 'ATTEMPTED';
                     try {
                         restoreSyncedItemsFromBackup(deployedBundleRoot, syncBackupRoot, syncPreexistingMap, runningScriptPath);
                         result.syncRollbackStatus = 'SUCCESS';
-                    } catch (rollbackError) {
-                        const rollbackMsg = rollbackError.message || String(rollbackError);
+                    } catch (rollbackError: unknown) {
+                        const rollbackMsg = getErrorMessage(rollbackError);
                         result.syncRollbackStatus = `FAILED: ${rollbackMsg}`;
                         throw new Error(`Update apply failed. Original error: ${originalError}. Sync rollback failed: ${rollbackMsg}`);
                     }
@@ -616,9 +711,3 @@ async function runCheckUpdate(options) {
 
     return result;
 }
-
-module.exports = {
-    DEFAULT_PACKAGE_NAME,
-    acquireUpdateSource,
-    runCheckUpdate
-};

@@ -1,10 +1,10 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     BASE_REQUIRED_PATHS,
     RULE_FILES,
     PROJECT_COMMAND_PLACEHOLDERS,
@@ -20,7 +20,7 @@ const {
     getCommandsRulePath,
     getMissingProjectCommands,
     readUtf8IfExists
-} = require('../../../src/validators/workspace-layout.ts');
+} from '../../../src/validators/workspace-layout';
 
 test('BASE_REQUIRED_PATHS is a frozen non-empty array', () => {
     assert.ok(Array.isArray(BASE_REQUIRED_PATHS));

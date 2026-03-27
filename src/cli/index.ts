@@ -1,4 +1,4 @@
-const {
+import {
     DEFAULT_BUNDLE_NAME,
     DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
     LIFECYCLE_COMMANDS,
@@ -6,9 +6,9 @@ const {
     NODE_BASELINE_LABEL,
     NODE_ENGINE_RANGE,
     SOURCE_OF_TRUTH_VALUES
-} = require('../core/constants.ts');
+} from '../core/constants';
 
-function describeFoundation() {
+export function describeFoundation() {
     return {
         activeCliEntrypoint: 'bin/octopus.js',
         defaultBundleName: DEFAULT_BUNDLE_NAME,
@@ -22,6 +22,3 @@ function describeFoundation() {
     };
 }
 
-module.exports = {
-    describeFoundation
-};

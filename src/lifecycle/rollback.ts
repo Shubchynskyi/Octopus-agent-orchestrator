@@ -1,12 +1,11 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const { DEFAULT_BUNDLE_NAME } = require('../core/constants.ts');
-const { pathExists, readTextFile } = require('../core/fs.ts');
-const { validateInitAnswers } = require('../schemas/init-answers.ts');
-const { runInstall } = require('../materialization/install.ts');
-const { runInit } = require('../materialization/init.ts');
-const {
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { pathExists, readTextFile } from '../core/fs';
+import { validateInitAnswers } from '../schemas/init-answers';
+import { runInstall } from '../materialization/install';
+import { runInit } from '../materialization/init';
+import {
     BUNDLE_SYNC_ITEMS,
     compareVersionStrings,
     copyPathRecursive,
@@ -24,10 +23,49 @@ const {
     writeRollbackRecords,
     writeSyncBackupMetadata,
     writeUpdateSentinel
-} = require('./common.ts');
-const { getUpdateRollbackItems } = require('./update.ts');
+} from './common';
+import { getUpdateRollbackItems } from './update';
+import { acquireUpdateSource, DEFAULT_PACKAGE_NAME } from './check-update';
 
-function readVersionOrFallback(versionPath, fallbackValue = 'unknown') {
+interface RollbackLifecycleOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    dryRun?: boolean;
+}
+
+interface RunRollbackToVersionOptions extends RollbackLifecycleOptions {
+    targetVersion: string;
+    sourcePath?: string | null;
+    packageSpec?: string | null;
+    trustOverride?: boolean;
+    initAnswersPath?: string;
+    skipVerify?: boolean;
+    skipManifestValidation?: boolean;
+    installRunner?: (options: Parameters<typeof runInstall>[0]) => unknown;
+    materializationRunner?: (options: Parameters<typeof runInit>[0]) => unknown;
+}
+
+interface RunSnapshotRollbackOptions extends RollbackLifecycleOptions {
+    snapshotPath?: string | null;
+}
+
+interface RunRollbackOptions extends RunSnapshotRollbackOptions {
+    targetVersion?: string | null;
+    sourcePath?: string | null;
+    packageSpec?: string | null;
+    initAnswersPath?: string;
+    trustOverride?: boolean;
+    skipVerify?: boolean;
+    skipManifestValidation?: boolean;
+    installRunner?: (options: Parameters<typeof runInstall>[0]) => unknown;
+    materializationRunner?: (options: Parameters<typeof runInit>[0]) => unknown;
+}
+
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+function readVersionOrFallback(versionPath: string, fallbackValue: string = 'unknown'): string {
     if (!pathExists(versionPath)) {
         return fallbackValue;
     }
@@ -36,15 +74,15 @@ function readVersionOrFallback(versionPath, fallbackValue = 'unknown') {
     return value || fallbackValue;
 }
 
-function getRollbackSnapshotsRoot(targetRoot) {
+export function getRollbackSnapshotsRoot(targetRoot: string): string {
     return path.join(targetRoot, DEFAULT_BUNDLE_NAME, 'runtime', 'update-rollbacks');
 }
 
-function getBundleBackupsRoot(targetRoot) {
+export function getBundleBackupsRoot(targetRoot: string): string {
     return path.join(targetRoot, DEFAULT_BUNDLE_NAME, 'runtime', 'bundle-backups');
 }
 
-function listRollbackSnapshotPaths(targetRoot) {
+export function listRollbackSnapshotPaths(targetRoot: string): string[] {
     const snapshotsRoot = getRollbackSnapshotsRoot(targetRoot);
     if (!pathExists(snapshotsRoot)) {
         return [];
@@ -56,7 +94,7 @@ function listRollbackSnapshotPaths(targetRoot) {
         .sort((left, right) => right.localeCompare(left));
 }
 
-function resolveRollbackSnapshotPath(targetRoot, snapshotPath) {
+export function resolveRollbackSnapshotPath(targetRoot: string, snapshotPath?: string | null): string {
     if (snapshotPath) {
         return path.isAbsolute(snapshotPath)
             ? snapshotPath
@@ -71,7 +109,7 @@ function resolveRollbackSnapshotPath(targetRoot, snapshotPath) {
     return candidates[0];
 }
 
-function listBundleBackupPaths(targetRoot) {
+export function listBundleBackupPaths(targetRoot: string): string[] {
     const backupsRoot = getBundleBackupsRoot(targetRoot);
     if (!pathExists(backupsRoot)) {
         return [];
@@ -83,7 +121,7 @@ function listBundleBackupPaths(targetRoot) {
         .sort((left, right) => right.localeCompare(left));
 }
 
-function getRelativeRollbackPath(targetRoot, absolutePath) {
+function getRelativeRollbackPath(targetRoot: string, absolutePath: string): string {
     return path.relative(targetRoot, absolutePath).replace(/\\/g, '/');
 }
 
@@ -91,7 +129,7 @@ function getRelativeRollbackPath(targetRoot, absolutePath) {
  * Scans existing rollback snapshots for one whose VERSION matches the
  * requested version.  Returns the absolute snapshot path or null.
  */
-function findSnapshotByVersion(targetRoot, targetVersion) {
+export function findSnapshotByVersion(targetRoot: string, targetVersion: string): string | null {
     const snapshots = listRollbackSnapshotPaths(targetRoot);
     for (const snapshotPath of snapshots) {
         const versionPath = path.join(snapshotPath, DEFAULT_BUNDLE_NAME, 'VERSION');
@@ -111,7 +149,7 @@ function findSnapshotByVersion(targetRoot, targetVersion) {
 // re-runs install + materialization to bring the workspace to that version.
 // ---------------------------------------------------------------------------
 
-async function runRollbackToVersion(options) {
+export async function runRollbackToVersion(options: RunRollbackToVersionOptions) {
     const {
         targetRoot,
         bundleRoot,
@@ -176,8 +214,8 @@ async function runRollbackToVersion(options) {
     const matchingSnapshot = findSnapshotByVersion(normalizedTarget, targetVersion);
     let resolvedSourceType = 'unknown';
     let resolvedSourceReference = '';
-    let sourceRoot = null;
-    let sourceCleanup = function () {};
+    let sourceRoot: string | null = null;
+    let sourceCleanup: () => void = () => {};
     let sourceVersion = 'unknown';
 
     if (matchingSnapshot) {
@@ -196,7 +234,6 @@ async function runRollbackToVersion(options) {
         sourceVersion = readVersionOrFallback(path.join(sourceRoot, 'VERSION'));
     } else {
         // Acquire from npm
-        const { acquireUpdateSource, DEFAULT_PACKAGE_NAME } = require('./check-update.ts');
         let effectivePackageSpec = packageSpec || null;
         if (!effectivePackageSpec) {
             const deployedPkgPath = path.join(deployedBundleRoot, 'package.json');
@@ -204,7 +241,7 @@ async function runRollbackToVersion(options) {
             if (pathExists(deployedPkgPath)) {
                 try {
                     const pkgJson = JSON.parse(readTextFile(deployedPkgPath));
-                    if (pkgJson && pkgJson.name) {
+                    if (pkgJson && typeof pkgJson === 'object' && !Array.isArray(pkgJson) && 'name' in pkgJson) {
                         packageName = String(pkgJson.name).trim() || DEFAULT_PACKAGE_NAME;
                     }
                 } catch (_e) { /* use default */ }
@@ -262,7 +299,7 @@ async function runRollbackToVersion(options) {
 
         // --- Step 4: Sync bundle items from source ---
         if (!dryRun) {
-            const syncPreexistingMap = {};
+            const syncPreexistingMap: Record<string, boolean> = {};
             for (const item of BUNDLE_SYNC_ITEMS) {
                 if (item === DEFERRED_VERSION_ITEM) continue;
 
@@ -378,8 +415,8 @@ async function runRollbackToVersion(options) {
             restoreStatus = 'SKIPPED_DRY_RUN';
             safetyRollbackStatus = 'SKIPPED_DRY_RUN';
         }
-    } catch (error) {
-        const errorMessage = error.message || String(error);
+    } catch (error: unknown) {
+        const errorMessage = getErrorMessage(error);
         removeUpdateSentinel(deployedBundleRoot);
 
         if (syncStatus !== 'SUCCESS') syncStatus = `FAILED: ${errorMessage}`;
@@ -396,8 +433,8 @@ async function runRollbackToVersion(options) {
             const safetyRecords = readRollbackRecords(safetySnapshotPath);
             restoreRollbackSnapshot(normalizedTarget, safetySnapshotPath, safetyRecords);
             safetyRollbackStatus = 'SUCCESS';
-        } catch (safetyRollbackError) {
-            const safetyRollbackMessage = safetyRollbackError.message || String(safetyRollbackError);
+        } catch (safetyRollbackError: unknown) {
+            const safetyRollbackMessage = getErrorMessage(safetyRollbackError);
             safetyRollbackStatus = `FAILED: ${safetyRollbackMessage}`;
             sourceCleanup();
             throw new Error(
@@ -477,7 +514,7 @@ async function runRollbackToVersion(options) {
 // Snapshot-based rollback (original flow, unchanged).
 // ---------------------------------------------------------------------------
 
-function runSnapshotRollback(options) {
+export function runSnapshotRollback(options: RunSnapshotRollbackOptions) {
     const {
         targetRoot,
         bundleRoot,
@@ -566,8 +603,8 @@ function runSnapshotRollback(options) {
             bundleRestoreStatus = bundleBackupPath ? 'SKIPPED_DRY_RUN' : 'SKIPPED_NO_BUNDLE_BACKUP';
             safetyRollbackStatus = 'SKIPPED_DRY_RUN';
         }
-    } catch (error) {
-        const errorMessage = error.message || String(error);
+    } catch (error: unknown) {
+        const errorMessage = getErrorMessage(error);
         restoreStatus = `FAILED: ${errorMessage}`;
         if (!String(bundleRestoreStatus).startsWith('FAILED')) {
             bundleRestoreStatus = `FAILED: ${errorMessage}`;
@@ -581,8 +618,8 @@ function runSnapshotRollback(options) {
             const safetyRecords = readRollbackRecords(safetySnapshotPath);
             restoreRollbackSnapshot(normalizedTarget, safetySnapshotPath, safetyRecords);
             safetyRollbackStatus = 'SUCCESS';
-        } catch (safetyRollbackError) {
-            const safetyRollbackMessage = safetyRollbackError.message || String(safetyRollbackError);
+        } catch (safetyRollbackError: unknown) {
+            const safetyRollbackMessage = getErrorMessage(safetyRollbackError);
             safetyRollbackStatus = `FAILED: ${safetyRollbackMessage}`;
             throw new Error(
                 `Rollback failed. Original error: ${errorMessage}. ` +
@@ -667,22 +704,13 @@ function runSnapshotRollback(options) {
  * @param {Function} [options.installRunner]
  * @param {Function} [options.materializationRunner]
  */
-async function runRollback(options) {
+export async function runRollback(options: RunRollbackOptions) {
     const { targetVersion = null } = options;
     if (targetVersion) {
-        return await runRollbackToVersion(options);
+        return await runRollbackToVersion({
+            ...options,
+            targetVersion
+        });
     }
     return runSnapshotRollback(options);
 }
-
-module.exports = {
-    findSnapshotByVersion,
-    getBundleBackupsRoot,
-    getRollbackSnapshotsRoot,
-    listBundleBackupPaths,
-    listRollbackSnapshotPaths,
-    resolveRollbackSnapshotPath,
-    runRollback,
-    runRollbackToVersion,
-    runSnapshotRollback
-};

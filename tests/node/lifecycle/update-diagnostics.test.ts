@@ -1,12 +1,12 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     classifyGitDiagnostic,
     classifyNpmDiagnostic,
     createLifecycleDiagnosticError,
     normalizeDiagnosticText
-} = require('../../../src/lifecycle/update-diagnostics.ts');
+} from '../../../src/lifecycle/update-diagnostics';
 
 describe('classifyGitDiagnostic', () => {
     it('classifies missing refs', () => {
@@ -72,11 +72,11 @@ describe('createLifecycleDiagnosticError', () => {
             stdout: ''
         });
 
-        assert.match(error.message, /DiagnosticTool: git/);
-        assert.match(error.message, /DiagnosticCode: GIT_REF_NOT_FOUND/);
-        assert.match(error.message, /DiagnosticSource: https:\/\/example\.com\/repo\.git#missing/);
-        assert.match(error.message, /DiagnosticHint:/);
-        assert.match(error.message, /DiagnosticStderr:/);
+        assert.match((error as Error).message, /DiagnosticTool: git/);
+        assert.match((error as Error).message, /DiagnosticCode: GIT_REF_NOT_FOUND/);
+        assert.match((error as Error).message, /DiagnosticSource: https:\/\/example\.com\/repo\.git#missing/);
+        assert.match((error as Error).message, /DiagnosticHint:/);
+        assert.match((error as Error).message, /DiagnosticStderr:/);
         assert.equal(error.diagnosticCode, 'GIT_REF_NOT_FOUND');
     });
 

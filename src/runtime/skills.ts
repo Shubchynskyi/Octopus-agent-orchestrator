@@ -1,12 +1,272 @@
-const fs = require('node:fs');
-const path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
+import { readJsonFile, writeJsonFile } from '../core/json';
+import { getProjectDiscovery } from '../materialization/project-discovery';
+import { emitSkillSuggestedEvent } from './skill-telemetry';
 
-const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
-const { readJsonFile, writeJsonFile } = require('../core/json.ts');
-const { getProjectDiscovery } = require('../materialization/project-discovery.ts');
-const { emitSkillSuggestedEvent } = require('./skill-telemetry.ts');
+type JsonObject = Record<string, unknown>;
 
-const BASELINE_SKILL_DIRECTORIES = Object.freeze([
+const REVIEW_CAPABILITY_KEYS = Object.freeze([
+    'code',
+    'db',
+    'security',
+    'refactor',
+    'api',
+    'test',
+    'performance',
+    'infra',
+    'dependency'
+] as const);
+
+const OPTIONAL_REVIEW_CAPABILITY_KEYS = Object.freeze([
+    'api',
+    'test',
+    'performance',
+    'infra',
+    'dependency'
+] as const);
+
+type ReviewCapabilityKey = (typeof REVIEW_CAPABILITY_KEYS)[number];
+type OptionalReviewCapabilityKey = (typeof OPTIONAL_REVIEW_CAPABILITY_KEYS)[number];
+type ReviewCapabilities = Record<ReviewCapabilityKey, boolean>;
+type SignalMatchCategory =
+    | 'stack_signals'
+    | 'task_signals'
+    | 'changed_path_signals'
+    | 'project_path_signals'
+    | 'aliases_or_tags';
+
+interface InstalledSkillPacksPayload {
+    version: number;
+    installed_packs: string[];
+}
+
+interface SkillPackManifestDefinition {
+    id: string;
+    label: string;
+    description: string;
+    tags: string[];
+    recommendedFor: string[];
+    packRoot: string;
+}
+
+interface SkillManifestDefinition {
+    id: string;
+    name: string;
+    pack: string;
+    summary: string;
+    tags: string[];
+    aliases: string[];
+    stackSignals: string[];
+    taskSignals: string[];
+    changedPathSignals: string[];
+    references: string[];
+    costHint: string;
+    priority: number;
+    autoload: string;
+    deprecated: boolean;
+    replacedBy: string | null;
+    implemented: boolean;
+    skillRoot: string;
+}
+
+interface BaselineSkillManifestDefinition {
+    id: string;
+    name: string;
+    summary: string;
+    tags: string[];
+    aliases: string[];
+    references: string[];
+    costHint: string;
+    priority: number;
+    autoload: string;
+    skillRoot: string;
+}
+
+interface ManifestWithReferences {
+    references: string[];
+}
+
+interface BuiltinSkillPackDefinition extends SkillPackManifestDefinition {
+    skills: SkillManifestDefinition[];
+    skillCount: number;
+    skillDirectories: string[];
+    readySkillCount: number;
+    readySkillDirectories: string[];
+    placeholderSkillCount: number;
+    placeholderSkillDirectories: string[];
+    implemented: boolean;
+    collidesWithBaseline: boolean;
+}
+
+interface SkillsIndexPackEntry {
+    id: string;
+    label: string;
+    description: string;
+    tags: string[];
+    recommended_for: string[];
+    skill_count: number;
+    ready_skill_count: number;
+    placeholder_skill_count: number;
+    implemented: boolean;
+    collides_with_baseline: boolean;
+}
+
+interface SkillsIndexSkillEntry {
+    id: string;
+    name: string;
+    pack: string;
+    summary: string;
+    tags: string[];
+    aliases: string[];
+    stack_signals: string[];
+    task_signals: string[];
+    changed_path_signals: string[];
+    references: string[];
+    cost_hint: string;
+    priority: number;
+    autoload: string;
+    deprecated: boolean;
+    replaced_by: string | null;
+    implemented: boolean;
+    template_skill_path: string;
+}
+
+interface SkillsIndexPayload {
+    version: number;
+    packs: SkillsIndexPackEntry[];
+    skills: SkillsIndexSkillEntry[];
+}
+
+interface SkillsIndexData {
+    indexPath: string;
+    payload: SkillsIndexPayload;
+}
+
+export interface SignalMatches {
+    stack_signals: string[];
+    task_signals: string[];
+    changed_path_signals: string[];
+    project_path_signals: string[];
+    aliases_or_tags: string[];
+}
+
+interface ProjectDiscoveryData {
+    source: string;
+    detectedStacks: string[];
+    topLevelDirectories: string[];
+    relativeFiles: string[];
+}
+
+interface SuggestionContext {
+    discovery: ProjectDiscoveryData;
+    taskText: string;
+    taskTextLower: string;
+    projectPaths: string[];
+    changedPaths: string[];
+    textCorpus: string;
+    textCorpusLower: string;
+}
+
+export interface SkillSuggestion {
+    id: string;
+    name: string;
+    pack: string;
+    summary: string;
+    score: number;
+    installed: boolean;
+    matches: SignalMatches;
+}
+
+interface PackSuggestionAggregate {
+    id: string;
+    score: number;
+    skillIds: string[];
+    matches: SignalMatches;
+}
+
+interface PackSuggestion {
+    id: string;
+    label: string;
+    description: string;
+    implemented: boolean;
+    collidesWithBaseline: boolean;
+    score: number;
+    installed: boolean;
+    skillIds: string[];
+    matches: SignalMatches;
+}
+
+interface SuggestSkillsOptions {
+    taskText?: unknown;
+    changedPaths?: unknown;
+    limit?: unknown;
+    packLimit?: unknown;
+    taskId?: unknown;
+}
+
+interface DedupeSkillsResult {
+    primary: SkillSuggestion[];
+    collapsed: SkillSuggestion[];
+}
+
+interface ReadInstalledSkillPacksResult {
+    configPath: string;
+    installedPackIds: string[];
+}
+
+interface ListedBuiltinPack {
+    id: string;
+    label: string;
+    description: string;
+    tags: string[];
+    recommendedFor: string[];
+    skillCount: number;
+    readySkillCount: number;
+    readySkillDirectories: string[];
+    placeholderSkillCount: number;
+    placeholderSkillDirectories: string[];
+    implemented: boolean;
+    collidesWithBaseline: boolean;
+    skillDirectories: string[];
+    installed: boolean;
+}
+
+interface SkillPackListing {
+    configPath: string;
+    indexPath: string;
+    baselineSkillDirectories: string[];
+    liveSkillDirectories: string[];
+    installedPackIds: string[];
+    installedOptionalSkillDirectories: string[];
+    builtinPacks: ListedBuiltinPack[];
+    customSkillDirectories: string[];
+}
+
+type FuzzyAliasMap = Map<string, string[]>;
+
+function asObjectRecord(value: unknown): JsonObject {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as JsonObject
+        : {};
+}
+
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+function createEmptySignalMatches(): SignalMatches {
+    return {
+        stack_signals: [],
+        task_signals: [],
+        changed_path_signals: [],
+        project_path_signals: [],
+        aliases_or_tags: []
+    };
+}
+
+export const BASELINE_SKILL_DIRECTORIES = Object.freeze([
     'code-review',
     'db-review',
     'dependency-review',
@@ -17,12 +277,12 @@ const BASELINE_SKILL_DIRECTORIES = Object.freeze([
     'skill-builder'
 ]);
 
-const DEFAULT_INSTALLED_PACKS_PAYLOAD = Object.freeze({
+const DEFAULT_INSTALLED_PACKS_PAYLOAD: Readonly<InstalledSkillPacksPayload> = Object.freeze({
     version: 1,
     installed_packs: []
 });
 
-const REVIEW_CAPABILITIES_DEFAULTS = Object.freeze({
+const REVIEW_CAPABILITIES_DEFAULTS: Readonly<ReviewCapabilities> = Object.freeze({
     code: true,
     db: true,
     security: true,
@@ -34,7 +294,7 @@ const REVIEW_CAPABILITIES_DEFAULTS = Object.freeze({
     dependency: false
 });
 
-const OPTIONAL_REVIEW_SKILL_DIRECTORY_MAP = Object.freeze({
+const OPTIONAL_REVIEW_SKILL_DIRECTORY_MAP: Readonly<Record<OptionalReviewCapabilityKey, readonly string[]>> = Object.freeze({
     api: ['api-review', 'api-contract-review'],
     test: ['test-review', 'testing-strategy'],
     performance: ['performance-review'],
@@ -42,14 +302,14 @@ const OPTIONAL_REVIEW_SKILL_DIRECTORY_MAP = Object.freeze({
     dependency: ['dependency-review']
 });
 
-const SKILLS_INDEX_VERSION = 1;
+export const SKILLS_INDEX_VERSION = 1;
 const OPTIONAL_SKILL_PLACEHOLDER_PATTERN = /TODO:\s*fill this optional skill\.?/i;
 const SUGGESTED_SKILL_MIN_SCORE = 75;
 const SUGGESTED_PACK_MIN_SCORE = 75;
 
-function normalizeStringArray(value) {
-    const items = Array.isArray(value) ? value : (value === undefined || value === null ? [] : [value]);
-    const normalized = [];
+function normalizeStringArray(value: unknown): string[] {
+    const items: unknown[] = Array.isArray(value) ? value : (value === undefined || value === null ? [] : [value]);
+    const normalized: string[] = [];
     for (const item of items) {
         const text = String(item || '').trim();
         if (!text || normalized.includes(text)) {
@@ -60,12 +320,12 @@ function normalizeStringArray(value) {
     return normalized.sort();
 }
 
-function normalizeOptionalString(value) {
+function normalizeOptionalString(value: unknown): string | null {
     const text = String(value || '').trim();
     return text || null;
 }
 
-function normalizeRequiredString(value, fieldName) {
+function normalizeRequiredString(value: unknown, fieldName: string): string {
     const text = normalizeOptionalString(value);
     if (!text) {
         throw new Error(`${fieldName} is required.`);
@@ -73,7 +333,7 @@ function normalizeRequiredString(value, fieldName) {
     return text;
 }
 
-function normalizeNonNegativeInteger(value, fallbackValue) {
+function normalizeNonNegativeInteger(value: unknown, fallbackValue: number): number {
     if (value === undefined || value === null || value === '') {
         return fallbackValue;
     }
@@ -84,43 +344,43 @@ function normalizeNonNegativeInteger(value, fallbackValue) {
     return numeric;
 }
 
-function getSkillPacksConfigPath(bundleRoot) {
+export function getSkillPacksConfigPath(bundleRoot: string): string {
     return path.join(bundleRoot, 'live', 'config', 'skill-packs.json');
 }
 
-function getSkillsIndexConfigPath(bundleRoot) {
+export function getSkillsIndexConfigPath(bundleRoot: string): string {
     return path.join(bundleRoot, 'live', 'config', 'skills-index.json');
 }
 
-function getReviewCapabilitiesConfigPath(bundleRoot) {
+export function getReviewCapabilitiesConfigPath(bundleRoot: string): string {
     return path.join(bundleRoot, 'live', 'config', 'review-capabilities.json');
 }
 
-function getLiveSkillsRoot(bundleRoot) {
+function getLiveSkillsRoot(bundleRoot: string): string {
     return path.join(bundleRoot, 'live', 'skills');
 }
 
-function getTemplateSkillPacksRoot(bundleRoot) {
+function getTemplateSkillPacksRoot(bundleRoot: string): string {
     return path.join(bundleRoot, 'template', 'skill-packs');
 }
 
-function getPackTemplateRoot(bundleRoot, packId) {
+function getPackTemplateRoot(bundleRoot: string, packId: string): string {
     return path.join(getTemplateSkillPacksRoot(bundleRoot), packId);
 }
 
-function getPackManifestPath(packRoot) {
+function getPackManifestPath(packRoot: string): string {
     return path.join(packRoot, 'pack.json');
 }
 
-function getSkillManifestPath(skillRoot) {
+function getSkillManifestPath(skillRoot: string): string {
     return path.join(skillRoot, 'skill.json');
 }
 
-function getTemplateSkillRelativePath(packId, skillId) {
+function getTemplateSkillRelativePath(packId: string, skillId: string): string {
     return path.join('template', 'skill-packs', packId, 'skills', skillId, 'SKILL.md').replace(/\\/g, '/');
 }
 
-function isPlaceholderOptionalSkill(summary, skillRoot) {
+function isPlaceholderOptionalSkill(summary: unknown, skillRoot: string): boolean {
     if (OPTIONAL_SKILL_PLACEHOLDER_PATTERN.test(String(summary || ''))) {
         return true;
     }
@@ -137,13 +397,13 @@ function isPlaceholderOptionalSkill(summary, skillRoot) {
     }
 }
 
-function readPackManifest(packRoot) {
+function readPackManifest(packRoot: string): SkillPackManifestDefinition {
     const manifestPath = getPackManifestPath(packRoot);
     if (!pathExists(manifestPath)) {
         throw new Error(`Skill pack manifest is missing: ${manifestPath}`);
     }
 
-    const manifest = readJsonFile(manifestPath);
+    const manifest = asObjectRecord(readJsonFile(manifestPath));
     const fallbackPackId = path.basename(packRoot);
 
     return {
@@ -156,13 +416,13 @@ function readPackManifest(packRoot) {
     };
 }
 
-function readSkillManifest(skillRoot, fallbackPackId) {
+function readSkillManifest(skillRoot: string, fallbackPackId: string): SkillManifestDefinition {
     const manifestPath = getSkillManifestPath(skillRoot);
     if (!pathExists(manifestPath)) {
         throw new Error(`Skill manifest is missing: ${manifestPath}`);
     }
 
-    const manifest = readJsonFile(manifestPath);
+    const manifest = asObjectRecord(readJsonFile(manifestPath));
     const fallbackSkillId = path.basename(skillRoot);
     const skillId = normalizeRequiredString(manifest.id || fallbackSkillId, `skill.json id (${fallbackSkillId})`);
     const packId = normalizeRequiredString(manifest.pack || fallbackPackId, `skill.json pack (${skillId})`);
@@ -188,13 +448,13 @@ function readSkillManifest(skillRoot, fallbackPackId) {
     };
 }
 
-function readBaselineSkillManifest(skillRoot) {
+function readBaselineSkillManifest(skillRoot: string): BaselineSkillManifestDefinition {
     const manifestPath = getSkillManifestPath(skillRoot);
     if (!pathExists(manifestPath)) {
         throw new Error(`Skill manifest is missing: ${manifestPath}`);
     }
 
-    const manifest = readJsonFile(manifestPath);
+    const manifest = asObjectRecord(readJsonFile(manifestPath));
     const fallbackSkillId = path.basename(skillRoot);
 
     return {
@@ -211,9 +471,9 @@ function readBaselineSkillManifest(skillRoot) {
     };
 }
 
-function collectMissingReferenceIssues(skillRoot, manifest, skillLabel) {
-    const issues = [];
-    for (const reference of Array.isArray(manifest.references) ? manifest.references : []) {
+function collectMissingReferenceIssues(skillRoot: string, manifest: ManifestWithReferences, skillLabel: string): string[] {
+    const issues: string[] = [];
+    for (const reference of manifest.references) {
         const referencePath = path.join(skillRoot, 'references', reference);
         if (!pathExists(referencePath)) {
             issues.push(`${skillLabel} declares missing reference '${reference}'.`);
@@ -222,7 +482,7 @@ function collectMissingReferenceIssues(skillRoot, manifest, skillLabel) {
     return issues;
 }
 
-function listPackSkillDefinitions(packRoot, packId) {
+function listPackSkillDefinitions(packRoot: string, packId: string): SkillManifestDefinition[] {
     const skillsRoot = path.join(packRoot, 'skills');
     if (!pathExists(skillsRoot)) {
         return [];
@@ -234,7 +494,7 @@ function listPackSkillDefinitions(packRoot, packId) {
         .sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function listBuiltinSkillPacks(bundleRoot) {
+export function listBuiltinSkillPacks(bundleRoot: string): BuiltinSkillPackDefinition[] {
     const templateSkillPacksRoot = getTemplateSkillPacksRoot(bundleRoot);
     if (!pathExists(templateSkillPacksRoot)) {
         return [];
@@ -264,11 +524,11 @@ function listBuiltinSkillPacks(bundleRoot) {
         .sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function getBuiltinSkillPackDefinition(bundleRoot, packId) {
+export function getBuiltinSkillPackDefinition(bundleRoot: string, packId: string): BuiltinSkillPackDefinition | null {
     return listBuiltinSkillPacks(bundleRoot).find((pack) => pack.id === packId) || null;
 }
 
-function buildSkillsIndex(bundleRoot) {
+export function buildSkillsIndex(bundleRoot: string): SkillsIndexPayload {
     const builtinPacks = listBuiltinSkillPacks(bundleRoot);
     return {
         version: SKILLS_INDEX_VERSION,
@@ -308,42 +568,42 @@ function buildSkillsIndex(bundleRoot) {
     };
 }
 
-function writeSkillsIndex(bundleRoot) {
+export function writeSkillsIndex(bundleRoot: string): string {
     const indexPath = getSkillsIndexConfigPath(bundleRoot);
     ensureDirectory(path.dirname(indexPath));
     writeJsonFile(indexPath, buildSkillsIndex(bundleRoot));
     return indexPath;
 }
 
-function readSkillsIndex(bundleRoot) {
+export function readSkillsIndex(bundleRoot: string): SkillsIndexData {
     const indexPath = getSkillsIndexConfigPath(bundleRoot);
     if (!pathExists(indexPath)) {
         throw new Error(`Skills index is missing: ${indexPath}`);
     }
 
-    const payload = readJsonFile(indexPath);
+    const payload = asObjectRecord(readJsonFile(indexPath));
     if (!payload || !Array.isArray(payload.packs) || !Array.isArray(payload.skills)) {
         throw new Error(`Skills index has an invalid shape: ${indexPath}`);
     }
 
     return {
         indexPath,
-        payload
+        payload: payload as unknown as SkillsIndexPayload
     };
 }
 
-function normalizeReviewCapabilitiesConfig(raw) {
-    const normalized = {};
-    const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+function normalizeReviewCapabilitiesConfig(raw: unknown): ReviewCapabilities {
+    const normalized = {} as ReviewCapabilities;
+    const source = asObjectRecord(raw);
 
-    for (const [key, fallbackValue] of Object.entries(REVIEW_CAPABILITIES_DEFAULTS)) {
-        normalized[key] = key in source ? !!source[key] : fallbackValue;
+    for (const key of REVIEW_CAPABILITY_KEYS) {
+        normalized[key] = key in source ? Boolean(source[key]) : REVIEW_CAPABILITIES_DEFAULTS[key];
     }
 
     return normalized;
 }
 
-function readTemplateReviewCapabilities(bundleRoot) {
+function readTemplateReviewCapabilities(bundleRoot: string): ReviewCapabilities {
     const templatePath = path.join(bundleRoot, 'template', 'config', 'review-capabilities.json');
     if (!pathExists(templatePath)) {
         return { ...REVIEW_CAPABILITIES_DEFAULTS };
@@ -363,7 +623,7 @@ function readTemplateReviewCapabilities(bundleRoot) {
 // if signal says "kubernetes" and text says "k8s" (or vice-versa), the
 // alias layer bridges the gap.  All terms are compared lowercased.
 // ---------------------------------------------------------------------------
-const FUZZY_ALIAS_GROUPS = Object.freeze([
+export const FUZZY_ALIAS_GROUPS = Object.freeze([
     ['k8s', 'kubernetes', 'kube'],
     ['pg', 'postgres', 'postgresql', 'pgsql'],
     ['js', 'javascript'],
@@ -384,13 +644,13 @@ const FUZZY_ALIAS_GROUPS = Object.freeze([
     ['fastapi', 'fast-api'],
 ]);
 
-let _fuzzyAliasMap = null;
+let _fuzzyAliasMap: FuzzyAliasMap | null = null;
 
-function getFuzzyAliasMap() {
+export function getFuzzyAliasMap(): FuzzyAliasMap {
     if (_fuzzyAliasMap) {
         return _fuzzyAliasMap;
     }
-    _fuzzyAliasMap = new Map();
+    _fuzzyAliasMap = new Map<string, string[]>();
     for (const group of FUZZY_ALIAS_GROUPS) {
         for (const term of group) {
             const key = term.toLowerCase();
@@ -407,7 +667,7 @@ function getFuzzyAliasMap() {
     return _fuzzyAliasMap;
 }
 
-function containsAtWordBoundary(text, term) {
+export function containsAtWordBoundary(text: string, term: string): boolean {
     let startIndex = 0;
     while (startIndex <= text.length - term.length) {
         const idx = text.indexOf(term, startIndex);
@@ -426,9 +686,9 @@ function containsAtWordBoundary(text, term) {
     return false;
 }
 
-function getSignalFuzzyVariants(normalizedSignal) {
+export function getSignalFuzzyVariants(normalizedSignal: string): string[] {
     const aliasMap = getFuzzyAliasMap();
-    const variants = [];
+    const variants: string[] = [];
     for (const [term, aliases] of aliasMap) {
         if (!containsAtWordBoundary(normalizedSignal, term)) {
             continue;
@@ -443,7 +703,7 @@ function getSignalFuzzyVariants(normalizedSignal) {
     return variants;
 }
 
-function textMatchesFuzzyVariant(text, normalizedSignal) {
+export function textMatchesFuzzyVariant(text: string, normalizedSignal: string): boolean {
     const variants = getSignalFuzzyVariants(normalizedSignal);
     for (const variant of variants) {
         if (containsAtWordBoundary(text, variant)) {
@@ -455,22 +715,22 @@ function textMatchesFuzzyVariant(text, normalizedSignal) {
 
 // ---------------------------------------------------------------------------
 
-function normalizeSearchText(value) {
+function normalizeSearchText(value: unknown): string {
     return String(value || '').trim().toLowerCase();
 }
 
-function normalizeSearchTokens(value) {
+function normalizeSearchTokens(value: unknown): string[] {
     return normalizeSearchText(value)
         .split(/[^a-z0-9.+#/_-]+/i)
         .map((item) => item.trim())
         .filter(Boolean);
 }
 
-function normalizeSignalText(value) {
+function normalizeSignalText(value: unknown): string {
     return normalizeSearchText(value).replace(/\*/g, '').replace(/\\/g, '/');
 }
 
-function normalizeChangedPath(targetRoot, value) {
+function normalizeChangedPath(targetRoot: string, value: unknown): string | null {
     const text = String(value || '').trim();
     if (!text) {
         return null;
@@ -490,7 +750,7 @@ function normalizeChangedPath(targetRoot, value) {
     return resolvedPath.replace(/\\/g, '/');
 }
 
-function textContainsSignal(text, signal) {
+function textContainsSignal(text: string, signal: string): boolean {
     const normalizedSignal = normalizeSignalText(signal);
     if (!normalizedSignal) {
         return false;
@@ -502,13 +762,13 @@ function textContainsSignal(text, signal) {
     return textMatchesFuzzyVariant(normalizedText, normalizedSignal);
 }
 
-function anyPathMatchesSignal(paths, signal) {
+function anyPathMatchesSignal(paths: readonly string[], signal: string): boolean {
     const normalizedSignal = normalizeSignalText(signal);
     if (!normalizedSignal) {
         return false;
     }
 
-    return paths.some((candidate) => {
+    return paths.some((candidate: string) => {
         const normalizedCandidate = String(candidate || '').replace(/\\/g, '/').toLowerCase();
         if (normalizedCandidate.includes(normalizedSignal)) {
             return true;
@@ -517,9 +777,10 @@ function anyPathMatchesSignal(paths, signal) {
     });
 }
 
-function getSignalMatches(signals, matcher) {
-    const matches = [];
-    for (const signal of Array.isArray(signals) ? signals : []) {
+function getSignalMatches(signals: unknown, matcher: (signal: string) => boolean): string[] {
+    const matches: string[] = [];
+    const candidates: unknown[] = Array.isArray(signals) ? signals : [];
+    for (const signal of candidates) {
         const text = String(signal || '').trim();
         if (!text || matches.includes(text)) {
             continue;
@@ -531,11 +792,11 @@ function getSignalMatches(signals, matcher) {
     return matches.sort();
 }
 
-function buildSuggestionContext(targetRoot, taskText, changedPaths) {
-    const discovery = getProjectDiscovery(targetRoot);
+function buildSuggestionContext(targetRoot: string, taskText: unknown, changedPaths: unknown): SuggestionContext {
+    const discovery = getProjectDiscovery(targetRoot) as ProjectDiscoveryData;
     const normalizedChangedPaths = normalizeStringArray(changedPaths)
         .map((item) => normalizeChangedPath(targetRoot, item))
-        .filter(Boolean);
+        .filter((item): item is string => item !== null);
     const projectPaths = Array.isArray(discovery.relativeFiles) ? discovery.relativeFiles : [];
     const taskTextValue = String(taskText || '').trim();
     const textCorpus = [
@@ -557,26 +818,30 @@ function buildSuggestionContext(targetRoot, taskText, changedPaths) {
     };
 }
 
-function scoreSkillSuggestion(skill, context, installedPackIds) {
+function scoreSkillSuggestion(
+    skill: SkillsIndexSkillEntry,
+    context: SuggestionContext,
+    installedPackIds: readonly string[]
+): SkillSuggestion | null {
     const aliasSignals = [
         skill.id,
         skill.name,
-        ...(Array.isArray(skill.aliases) ? skill.aliases : [])
+        ...skill.aliases
     ];
 
-    const stackMatches = getSignalMatches(skill.stack_signals, (signal) => (
+    const stackMatches = getSignalMatches(skill.stack_signals, (signal: string) => (
         textContainsSignal(context.textCorpusLower, signal) || anyPathMatchesSignal(context.projectPaths, signal)
     ));
-    const taskMatches = getSignalMatches(skill.task_signals, (signal) => (
+    const taskMatches = getSignalMatches(skill.task_signals, (signal: string) => (
         textContainsSignal(context.taskTextLower, signal)
     ));
-    const changedPathMatches = getSignalMatches(skill.changed_path_signals, (signal) => (
+    const changedPathMatches = getSignalMatches(skill.changed_path_signals, (signal: string) => (
         anyPathMatchesSignal(context.changedPaths, signal)
     ));
-    const projectPathMatches = getSignalMatches(skill.changed_path_signals, (signal) => (
+    const projectPathMatches = getSignalMatches(skill.changed_path_signals, (signal: string) => (
         anyPathMatchesSignal(context.projectPaths, signal)
-    )).filter((signal) => !changedPathMatches.includes(signal));
-    const aliasMatches = getSignalMatches(aliasSignals, (signal) => (
+    )).filter((signal: string) => !changedPathMatches.includes(signal));
+    const aliasMatches = getSignalMatches(aliasSignals, (signal: string) => (
         textContainsSignal(context.taskTextLower, signal) || anyPathMatchesSignal(context.changedPaths, signal)
     ));
 
@@ -591,7 +856,7 @@ function scoreSkillSuggestion(skill, context, installedPackIds) {
         return null;
     }
 
-    if (Array.isArray(skill.stack_signals) && skill.stack_signals.length > 0 && stackMatches.length === 0 && aliasMatches.length === 0) {
+    if (skill.stack_signals.length > 0 && stackMatches.length === 0 && aliasMatches.length === 0) {
         return null;
     }
 
@@ -629,26 +894,30 @@ function scoreSkillSuggestion(skill, context, installedPackIds) {
 // same-pack skills survive only when they contribute evidence in a signal
 // category the primary skill does not cover.
 // ---------------------------------------------------------------------------
-const MATCH_CATEGORIES = Object.freeze([
+export const MATCH_CATEGORIES = Object.freeze([
     'stack_signals', 'task_signals', 'changed_path_signals',
     'project_path_signals', 'aliases_or_tags'
-]);
+]) as readonly SignalMatchCategory[];
 
-function hasDistinctSignalCoverage(primarySkill, candidateSkill) {
+export function hasDistinctSignalCoverage(primarySkill: SkillSuggestion, candidateSkill: SkillSuggestion): boolean {
+    const pm = primarySkill.matches;
+    const cm = candidateSkill.matches;
     for (const category of MATCH_CATEGORIES) {
-        const primaryMatches = (primarySkill.matches && primarySkill.matches[category]) || [];
-        const candidateMatches = (candidateSkill.matches && candidateSkill.matches[category]) || [];
-        if (primaryMatches.length === 0 && candidateMatches.length > 0) {
+        const primaryMatches = pm ? pm[category] : undefined;
+        const candidateMatches = cm ? cm[category] : undefined;
+        const primaryEmpty = !primaryMatches || primaryMatches.length === 0;
+        const candidateHas = candidateMatches != null && candidateMatches.length > 0;
+        if (primaryEmpty && candidateHas) {
             return true;
         }
     }
     return false;
 }
 
-function dedupeSkillsByPack(sortedSkills) {
-    const topByPack = new Map();
-    const primary = [];
-    const collapsed = [];
+export function dedupeSkillsByPack(sortedSkills: readonly SkillSuggestion[]): DedupeSkillsResult {
+    const topByPack = new Map<string, SkillSuggestion>();
+    const primary: SkillSuggestion[] = [];
+    const collapsed: SkillSuggestion[] = [];
 
     for (const skill of sortedSkills) {
         const existing = topByPack.get(skill.pack);
@@ -669,27 +938,25 @@ function dedupeSkillsByPack(sortedSkills) {
 
 // ---------------------------------------------------------------------------
 
-function aggregatePackSuggestions(skillSuggestions, packIndex, installedPackIds) {
-    const byPackId = new Map();
+function aggregatePackSuggestions(
+    skillSuggestions: readonly SkillSuggestion[],
+    packIndex: Map<string, SkillsIndexPackEntry>,
+    installedPackIds: readonly string[]
+): PackSuggestion[] {
+    const byPackId = new Map<string, PackSuggestionAggregate>();
 
     for (const suggestion of skillSuggestions) {
         const existing = byPackId.get(suggestion.pack) || {
             id: suggestion.pack,
             score: 0,
             skillIds: [],
-            matches: {
-                stack_signals: [],
-                task_signals: [],
-                changed_path_signals: [],
-                project_path_signals: [],
-                aliases_or_tags: []
-            }
+            matches: createEmptySignalMatches()
         };
 
         existing.score = Math.max(existing.score, suggestion.score);
         existing.skillIds.push(suggestion.id);
 
-        for (const key of Object.keys(existing.matches)) {
+        for (const key of MATCH_CATEGORIES) {
             for (const item of suggestion.matches[key]) {
                 if (!existing.matches[key].includes(item)) {
                     existing.matches[key].push(item);
@@ -701,21 +968,21 @@ function aggregatePackSuggestions(skillSuggestions, packIndex, installedPackIds)
     }
 
     return Array.from(byPackId.values())
-        .map((entry) => {
-            const pack = packIndex.get(entry.id) || { id: entry.id, label: entry.id, description: '' };
+        .map((entry: PackSuggestionAggregate) => {
+            const pack = packIndex.get(entry.id);
             return {
                 id: entry.id,
-                label: pack.label,
-                description: pack.description,
-                implemented: pack.implemented !== false,
-                collidesWithBaseline: pack.collides_with_baseline === true,
+                label: pack?.label ?? entry.id,
+                description: pack?.description ?? '',
+                implemented: pack?.implemented !== false,
+                collidesWithBaseline: pack?.collides_with_baseline === true,
                 score: entry.score,
                 installed: installedPackIds.includes(entry.id),
                 skillIds: entry.skillIds.sort(),
                 matches: entry.matches
             };
         })
-        .sort((left, right) => {
+        .sort((left: PackSuggestion, right: PackSuggestion) => {
             if (right.score !== left.score) {
                 return right.score - left.score;
             }
@@ -723,29 +990,29 @@ function aggregatePackSuggestions(skillSuggestions, packIndex, installedPackIds)
         });
 }
 
-function suggestSkills(bundleRoot, targetRoot, options = {}) {
+export function suggestSkills(bundleRoot: string, targetRoot: string, options: SuggestSkillsOptions = {}) {
     const { indexPath, payload } = readSkillsIndex(bundleRoot);
     const { installedPackIds } = readInstalledSkillPacks(bundleRoot);
     const listing = listSkillPacks(bundleRoot);
     const liveSkillDirectorySet = new Set(listing.liveSkillDirectories);
     const context = buildSuggestionContext(targetRoot, options.taskText || '', options.changedPaths || []);
-    const packIndex = new Map((payload.packs || []).map((pack) => [pack.id, pack]));
+    const packIndex = new Map<string, SkillsIndexPackEntry>(payload.packs.map((pack: SkillsIndexPackEntry) => [pack.id, pack]));
     const limit = normalizeNonNegativeInteger(options.limit, 7) || 7;
     const packLimit = normalizeNonNegativeInteger(options.packLimit, 5) || 5;
 
-    const allSkillSuggestions = (payload.skills || [])
-        .filter((skill) => skill && skill.implemented !== false)
-        .map((skill) => scoreSkillSuggestion(skill, context, installedPackIds))
-        .filter(Boolean)
-        .sort((left, right) => {
+    const allSkillSuggestions = payload.skills
+        .filter((skill: SkillsIndexSkillEntry) => skill.implemented !== false)
+        .map((skill: SkillsIndexSkillEntry) => scoreSkillSuggestion(skill, context, installedPackIds))
+        .filter((skill): skill is SkillSuggestion => skill !== null)
+        .sort((left: SkillSuggestion, right: SkillSuggestion) => {
             if (right.score !== left.score) {
                 return right.score - left.score;
             }
             return left.id.localeCompare(right.id);
         });
 
-    const availableRelevantSkillsFull = allSkillSuggestions.filter((skill) => liveSkillDirectorySet.has(skill.id));
-    const suggestedSkillsFull = allSkillSuggestions.filter((skill) => (
+    const availableRelevantSkillsFull = allSkillSuggestions.filter((skill: SkillSuggestion) => liveSkillDirectorySet.has(skill.id));
+    const suggestedSkillsFull = allSkillSuggestions.filter((skill: SkillSuggestion) => (
         !liveSkillDirectorySet.has(skill.id) &&
         skill.score >= SUGGESTED_SKILL_MIN_SCORE
     ));
@@ -763,10 +1030,15 @@ function suggestSkills(bundleRoot, targetRoot, options = {}) {
     const cappedSuggestedSkills = suggestedDedupe.primary.slice(0, limit);
 
     // Emit skill_suggested telemetry when a taskId is provided.
-    const taskId = options.taskId || null;
+    const taskId = normalizeOptionalString(options.taskId);
     if (taskId) {
         for (const suggestion of cappedSuggestedSkills) {
-            emitSkillSuggestedEvent(bundleRoot, taskId, suggestion, 'context_match');
+            emitSkillSuggestedEvent(bundleRoot, taskId, {
+                id: suggestion.id,
+                pack: suggestion.pack,
+                score: suggestion.score,
+                matches: null
+            }, 'context_match', undefined);
         }
     }
 
@@ -796,12 +1068,12 @@ function suggestSkills(bundleRoot, targetRoot, options = {}) {
     };
 }
 
-function validateInstalledPackIds(value) {
+function validateInstalledPackIds(value: unknown): string[] {
     if (!Array.isArray(value)) {
         return [];
     }
 
-    const normalized = [];
+    const normalized: string[] = [];
     for (const item of value) {
         const text = String(item || '').trim();
         if (!text || normalized.includes(text)) {
@@ -813,7 +1085,7 @@ function validateInstalledPackIds(value) {
     return normalized.sort();
 }
 
-function readInstalledSkillPacks(bundleRoot) {
+export function readInstalledSkillPacks(bundleRoot: string): ReadInstalledSkillPacksResult {
     const configPath = getSkillPacksConfigPath(bundleRoot);
     if (!pathExists(configPath)) {
         return {
@@ -822,14 +1094,14 @@ function readInstalledSkillPacks(bundleRoot) {
         };
     }
 
-    const payload = readJsonFile(configPath);
+    const payload = asObjectRecord(readJsonFile(configPath));
     return {
         configPath,
         installedPackIds: validateInstalledPackIds(payload.installed_packs)
     };
 }
 
-function writeInstalledSkillPacks(bundleRoot, installedPackIds) {
+export function writeInstalledSkillPacks(bundleRoot: string, installedPackIds: unknown): string {
     const configPath = getSkillPacksConfigPath(bundleRoot);
     writeJsonFile(configPath, {
         ...DEFAULT_INSTALLED_PACKS_PAYLOAD,
@@ -838,7 +1110,7 @@ function writeInstalledSkillPacks(bundleRoot, installedPackIds) {
     return configPath;
 }
 
-function listLiveSkillDirectories(bundleRoot) {
+function listLiveSkillDirectories(bundleRoot: string): string[] {
     const liveSkillsRoot = getLiveSkillsRoot(bundleRoot);
     if (!pathExists(liveSkillsRoot)) {
         return [];
@@ -850,13 +1122,14 @@ function listLiveSkillDirectories(bundleRoot) {
         .sort();
 }
 
-function syncReviewCapabilities(bundleRoot) {
+export function syncReviewCapabilities(bundleRoot: string): { configPath: string; capabilities: ReviewCapabilities } {
     const configPath = getReviewCapabilitiesConfigPath(bundleRoot);
     const capabilities = readTemplateReviewCapabilities(bundleRoot);
     const liveSkillDirectorySet = new Set(listLiveSkillDirectories(bundleRoot));
 
-    for (const [capabilityKey, candidateDirectories] of Object.entries(OPTIONAL_REVIEW_SKILL_DIRECTORY_MAP)) {
-        capabilities[capabilityKey] = candidateDirectories.some((candidate) => liveSkillDirectorySet.has(candidate));
+    for (const capabilityKey of OPTIONAL_REVIEW_CAPABILITY_KEYS) {
+        const candidateDirectories = OPTIONAL_REVIEW_SKILL_DIRECTORY_MAP[capabilityKey];
+        capabilities[capabilityKey] = candidateDirectories.some((candidate: string) => liveSkillDirectorySet.has(candidate));
     }
 
     ensureDirectory(path.dirname(configPath));
@@ -868,11 +1141,11 @@ function syncReviewCapabilities(bundleRoot) {
     };
 }
 
-function listSkillPacks(bundleRoot) {
+export function listSkillPacks(bundleRoot: string): SkillPackListing {
     const installed = readInstalledSkillPacks(bundleRoot);
     const liveSkillDirectories = listLiveSkillDirectories(bundleRoot);
     const builtinPacks = listBuiltinSkillPacks(bundleRoot);
-    const managedPackSkillDirs = new Set();
+    const managedPackSkillDirs = new Set<string>();
 
     for (const packId of installed.installedPackIds) {
         const pack = builtinPacks.find((candidate) => candidate.id === packId);
@@ -884,10 +1157,10 @@ function listSkillPacks(bundleRoot) {
         }
     }
 
-    const customSkillDirectories = liveSkillDirectories.filter((skillDir) => {
+    const customSkillDirectories = liveSkillDirectories.filter((skillDir: string) => {
         return !BASELINE_SKILL_DIRECTORIES.includes(skillDir) && !managedPackSkillDirs.has(skillDir);
     });
-    const installedOptionalSkillDirectories = liveSkillDirectories.filter((skillDir) => managedPackSkillDirs.has(skillDir));
+    const installedOptionalSkillDirectories = liveSkillDirectories.filter((skillDir: string) => managedPackSkillDirs.has(skillDir));
 
     return {
         configPath: installed.configPath,
@@ -916,7 +1189,7 @@ function listSkillPacks(bundleRoot) {
     };
 }
 
-function copyDirectoryRecursive(sourcePath, destinationPath) {
+function copyDirectoryRecursive(sourcePath: string, destinationPath: string): void {
     ensureDirectory(destinationPath);
     for (const entry of fs.readdirSync(sourcePath, { withFileTypes: true })) {
         const sourceEntryPath = path.join(sourcePath, entry.name);
@@ -930,7 +1203,7 @@ function copyDirectoryRecursive(sourcePath, destinationPath) {
     }
 }
 
-function addSkillPack(bundleRoot, packId) {
+export function addSkillPack(bundleRoot: string, packId: string) {
     const pack = getBuiltinSkillPackDefinition(bundleRoot, packId);
     if (!pack) {
         throw new Error(`Unknown skill pack '${packId}'.`);
@@ -982,7 +1255,7 @@ function addSkillPack(bundleRoot, packId) {
     };
 }
 
-function removeSkillPack(bundleRoot, packId) {
+export function removeSkillPack(bundleRoot: string, packId: string) {
     const pack = getBuiltinSkillPackDefinition(bundleRoot, packId);
     if (!pack) {
         throw new Error(`Unknown skill pack '${packId}'.`);
@@ -1000,7 +1273,7 @@ function removeSkillPack(bundleRoot, packId) {
     }
 
     const liveSkillsRoot = getLiveSkillsRoot(bundleRoot);
-    const removedSkillDirectories = [];
+    const removedSkillDirectories: string[] = [];
     for (const skillDir of pack.skillDirectories) {
         const destinationSkillDir = path.join(liveSkillsRoot, skillDir);
         if (pathExists(destinationSkillDir)) {
@@ -1009,7 +1282,7 @@ function removeSkillPack(bundleRoot, packId) {
         }
     }
 
-    const updatedPackIds = current.installedPackIds.filter((candidate) => candidate !== packId);
+    const updatedPackIds = current.installedPackIds.filter((candidate: string) => candidate !== packId);
     const configPath = writeInstalledSkillPacks(bundleRoot, updatedPackIds);
     const reviewCapabilities = syncReviewCapabilities(bundleRoot);
 
@@ -1024,9 +1297,9 @@ function removeSkillPack(bundleRoot, packId) {
     };
 }
 
-function validateSkillsIndex(bundleRoot) {
+export function validateSkillsIndex(bundleRoot: string) {
     const indexPath = getSkillsIndexConfigPath(bundleRoot);
-    const issues = [];
+    const issues: string[] = [];
     const expected = buildSkillsIndex(bundleRoot);
 
     if (!pathExists(indexPath)) {
@@ -1034,10 +1307,10 @@ function validateSkillsIndex(bundleRoot) {
         return { indexPath, expected, issues, passed: false };
     }
 
-    let parsed = null;
+    let parsed: unknown = null;
     try {
         parsed = readJsonFile(indexPath);
-    } catch (error) {
+    } catch {
         issues.push(`Skills index is not valid JSON: ${indexPath}`);
         return { indexPath, expected, issues, passed: false };
     }
@@ -1056,9 +1329,9 @@ function validateSkillsIndex(bundleRoot) {
     };
 }
 
-function validateSkillPacks(bundleRoot) {
+export function validateSkillPacks(bundleRoot: string) {
     const listing = listSkillPacks(bundleRoot);
-    const issues = [];
+    const issues: string[] = [];
     const liveSkillsRoot = getLiveSkillsRoot(bundleRoot);
     const liveSkillsReadmePath = path.join(liveSkillsRoot, 'README.md');
 
@@ -1086,7 +1359,7 @@ function validateSkillPacks(bundleRoot) {
                 }
                 issues.push(...collectMissingReferenceIssues(skillRoot, manifest, `Baseline skill '${skillDir}'`));
             } catch (error) {
-                issues.push(`Baseline skill '${skillDir}' has an invalid manifest: ${String((error && error.message) || error)}`);
+                issues.push(`Baseline skill '${skillDir}' has an invalid manifest: ${getErrorMessage(error)}`);
             }
         }
 
@@ -1136,7 +1409,7 @@ function validateSkillPacks(bundleRoot) {
                     }
                     issues.push(...collectMissingReferenceIssues(skillRoot, manifest, `Installed skill '${skillDir}'`));
                 } catch (error) {
-                    issues.push(`Installed skill '${skillDir}' has an invalid manifest: ${String((error && error.message) || error)}`);
+                    issues.push(`Installed skill '${skillDir}' has an invalid manifest: ${getErrorMessage(error)}`);
                 }
             }
 
@@ -1155,33 +1428,3 @@ function validateSkillPacks(bundleRoot) {
         passed: issues.length === 0
     };
 }
-
-module.exports = {
-    BASELINE_SKILL_DIRECTORIES,
-    FUZZY_ALIAS_GROUPS,
-    MATCH_CATEGORIES,
-    SKILLS_INDEX_VERSION,
-    addSkillPack,
-    buildSkillsIndex,
-    containsAtWordBoundary,
-    dedupeSkillsByPack,
-    getBuiltinSkillPackDefinition,
-    getFuzzyAliasMap,
-    getReviewCapabilitiesConfigPath,
-    getSignalFuzzyVariants,
-    getSkillPacksConfigPath,
-    getSkillsIndexConfigPath,
-    hasDistinctSignalCoverage,
-    listBuiltinSkillPacks,
-    listSkillPacks,
-    readSkillsIndex,
-    readInstalledSkillPacks,
-    removeSkillPack,
-    suggestSkills,
-    syncReviewCapabilities,
-    textMatchesFuzzyVariant,
-    validateSkillPacks,
-    validateSkillsIndex,
-    writeInstalledSkillPacks,
-    writeSkillsIndex
-};

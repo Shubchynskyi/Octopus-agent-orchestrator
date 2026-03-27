@@ -10,22 +10,37 @@
  * - Overridden sources are clearly flagged in the result.
  */
 
-const TRUSTED_GIT_REPO_URLS = Object.freeze([
+export const TRUSTED_GIT_REPO_URLS = Object.freeze([
     'https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git',
     'https://github.com/Shubchynskyi/Octopus-agent-orchestrator'
 ]);
 
-const TRUSTED_NPM_PACKAGE_NAMES = Object.freeze([
+export const TRUSTED_NPM_PACKAGE_NAMES = Object.freeze([
     'octopus-agent-orchestrator'
 ]);
 
-const TRUST_OVERRIDE_ENV_VAR = 'OCTOPUS_UPDATE_TRUST_OVERRIDE';
+export const TRUST_OVERRIDE_ENV_VAR = 'OCTOPUS_UPDATE_TRUST_OVERRIDE';
+
+interface TrustOverrideOptions {
+    trustOverride?: boolean;
+}
+
+interface TrustValidationResult {
+    trusted: boolean;
+    overridden: boolean;
+    policy: 'overridden' | 'enforced';
+}
+
+interface ParsedNpmPackageSpec {
+    name: string;
+    version: string | null;
+}
 
 /**
  * Returns true when the caller has explicitly opted out of trust enforcement.
  * Checks both the options object and the environment variable.
  */
-function isTrustOverrideActive(options) {
+export function isTrustOverrideActive(options?: TrustOverrideOptions | null): boolean {
     if (options && options.trustOverride === true) return true;
     const envValue = String(process.env[TRUST_OVERRIDE_ENV_VAR] || '').trim().toLowerCase();
     return envValue === '1' || envValue === 'true' || envValue === 'yes';
@@ -35,11 +50,11 @@ function isTrustOverrideActive(options) {
  * Normalises a git URL for comparison: trims whitespace, strips trailing
  * slashes and the optional .git suffix, then lowercases.
  */
-function normalizeGitUrl(url) {
+export function normalizeGitUrl(url: string): string {
     return String(url || '').trim().replace(/\/+$/, '').replace(/\.git$/i, '').toLowerCase();
 }
 
-function isGitRepoUrlTrusted(repoUrl) {
+export function isGitRepoUrlTrusted(repoUrl: string): boolean {
     const normalized = normalizeGitUrl(repoUrl);
     for (const trusted of TRUSTED_GIT_REPO_URLS) {
         if (normalizeGitUrl(trusted) === normalized) return true;
@@ -52,7 +67,7 @@ function isGitRepoUrlTrusted(repoUrl) {
  * Returns null for specs that are not valid package-name references
  * (local paths, URLs, tarballs, etc.).
  */
-function parseNpmPackageSpec(spec) {
+export function parseNpmPackageSpec(spec: string): ParsedNpmPackageSpec | null {
     const trimmed = String(spec || '').trim();
     if (!trimmed) return null;
 
@@ -91,7 +106,7 @@ function parseNpmPackageSpec(spec) {
     };
 }
 
-function isNpmPackageSpecTrusted(packageSpec) {
+export function isNpmPackageSpecTrusted(packageSpec: string): boolean {
     const parsed = parseNpmPackageSpec(packageSpec);
     if (!parsed || !parsed.name) return false;
     return TRUSTED_NPM_PACKAGE_NAMES.includes(parsed.name.toLowerCase());
@@ -99,7 +114,7 @@ function isNpmPackageSpecTrusted(packageSpec) {
 
 // ── Validation entry-points ────────────────────────────────────────────
 
-function validateGitSourceTrust(repoUrl, options) {
+export function validateGitSourceTrust(repoUrl: string, options?: TrustOverrideOptions | null): TrustValidationResult {
     const overridden = isTrustOverrideActive(options);
     if (overridden) {
         return { trusted: false, overridden: true, policy: 'overridden' };
@@ -115,7 +130,7 @@ function validateGitSourceTrust(repoUrl, options) {
     );
 }
 
-function validateNpmSourceTrust(packageSpec, options) {
+export function validateNpmSourceTrust(packageSpec: string, options?: TrustOverrideOptions | null): TrustValidationResult {
     const overridden = isTrustOverrideActive(options);
     if (overridden) {
         return { trusted: false, overridden: true, policy: 'overridden' };
@@ -131,7 +146,7 @@ function validateNpmSourceTrust(packageSpec, options) {
     );
 }
 
-function validatePathSourceTrust(sourcePath, options) {
+export function validatePathSourceTrust(sourcePath: string, options?: TrustOverrideOptions | null): TrustValidationResult {
     const overridden = isTrustOverrideActive(options);
     if (overridden) {
         return { trusted: false, overridden: true, policy: 'overridden' };
@@ -142,17 +157,3 @@ function validatePathSourceTrust(sourcePath, options) {
         `Use --trust-override or set ${TRUST_OVERRIDE_ENV_VAR}=1 to bypass.`
     );
 }
-
-module.exports = {
-    TRUST_OVERRIDE_ENV_VAR,
-    TRUSTED_GIT_REPO_URLS,
-    TRUSTED_NPM_PACKAGE_NAMES,
-    isGitRepoUrlTrusted,
-    isNpmPackageSpecTrusted,
-    isTrustOverrideActive,
-    normalizeGitUrl,
-    parseNpmPackageSpec,
-    validateGitSourceTrust,
-    validateNpmSourceTrust,
-    validatePathSourceTrust
-};

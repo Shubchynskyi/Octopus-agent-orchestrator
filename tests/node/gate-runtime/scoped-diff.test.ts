@@ -1,10 +1,11 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     buildScopedDiffMetadata,
-    convertToGitPathspecs
-} = require('../../../src/gate-runtime/scoped-diff.ts');
+    convertToGitPathspecs,
+    ScopedDiffOptions
+} from '../../../src/gate-runtime/scoped-diff';
 
 // --- buildScopedDiffMetadata ---
 
@@ -21,7 +22,7 @@ test('buildScopedDiffMetadata returns scoped diff when matches exist', () => {
     assert.equal(result.matched_files_count, 2);
     assert.deepEqual(result.matched_files, ['src/auth.py', 'src/db.py']);
     assert.equal(result.fallback_to_full_diff, false);
-    assert.ok(result.output_diff_text.includes('src/auth.py'));
+    assert.ok(((result as Record<string, unknown>).output_diff_text as string).includes('src/auth.py'));
 });
 
 test('buildScopedDiffMetadata falls back to full diff when no matches', () => {
@@ -35,7 +36,7 @@ test('buildScopedDiffMetadata falls back to full diff when no matches', () => {
 
     assert.equal(result.matched_files_count, 0);
     assert.equal(result.fallback_to_full_diff, true);
-    assert.equal(result.output_diff_text, 'full diff\n');
+    assert.equal((result as Record<string, unknown>).output_diff_text as string, 'full diff\n');
 });
 
 test('buildScopedDiffMetadata falls back when scoped diff empty', () => {
@@ -53,7 +54,7 @@ test('buildScopedDiffMetadata falls back when scoped diff empty', () => {
 
 test('buildScopedDiffMetadata throws for missing reviewType', () => {
     assert.throws(
-        () => buildScopedDiffMetadata({ triggerRegexes: ['test'] }),
+        () => buildScopedDiffMetadata({ triggerRegexes: ['test'] } as unknown as ScopedDiffOptions),
         /reviewType is required/
     );
 });
@@ -106,7 +107,7 @@ test('buildScopedDiffMetadata counts lines correctly', () => {
 
 test('convertToGitPathspecs returns empty for empty input', () => {
     assert.deepEqual(convertToGitPathspecs([], '/repo', '/repo'), []);
-    assert.deepEqual(convertToGitPathspecs(null, '/repo', '/repo'), []);
+    assert.deepEqual(convertToGitPathspecs(null as unknown as string[], '/repo', '/repo'), []);
 });
 
 test('convertToGitPathspecs passes through when roots match', () => {

@@ -1,24 +1,44 @@
-const fs = require('node:fs');
-const path = require('node:path');
+import * as childProcess from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-const { NODE_ENGINE_RANGE } = require('../../src/core/constants.ts');
-
-function getRepoRoot() {
-    return path.resolve(__dirname, '..', '..');
+export interface BuildResult {
+    buildRoot: string;
+    copiedFiles: string[];
+    generatedCliPath: string;
+    manifestPath: string;
+    repoRoot: string;
 }
 
-function collectFiles(rootPath, extension = '.ts') {
+export function getRepoRoot(): string {
+    let current = __dirname;
+    while (current !== path.dirname(current)) {
+        if (fs.existsSync(path.join(current, 'package.json')) && fs.existsSync(path.join(current, 'VERSION'))) {
+            return current;
+        }
+        current = path.dirname(current);
+    }
+    throw new Error('Cannot resolve repo root from ' + __dirname);
+}
+
+function getNodeEngineRange(): string {
+    const pkg: { engines?: { node?: string } } =
+        JSON.parse(fs.readFileSync(path.join(getRepoRoot(), 'package.json'), 'utf8'));
+    return (pkg.engines && pkg.engines.node) || '>=20.0.0';
+}
+
+function collectFiles(rootPath: string, extension: string = '.js'): string[] {
     if (!fs.existsSync(rootPath)) {
         return [];
     }
 
     const entries = fs.readdirSync(rootPath, { withFileTypes: true });
-    const files = [];
+    const files: string[] = [];
 
     for (const entry of entries) {
         const entryPath = path.join(rootPath, entry.name);
         if (entry.isDirectory()) {
-            files.push(...collectFiles(entryPath));
+            files.push(...collectFiles(entryPath, extension));
             continue;
         }
 
@@ -30,31 +50,7 @@ function collectFiles(rootPath, extension = '.ts') {
     return files.sort();
 }
 
-function validateSourceModule(filePath) {
-    const resolved = require.resolve(filePath);
-    delete require.cache[resolved];
-    require(resolved);
-    delete require.cache[resolved];
-}
-
-function rewriteTypeScriptSpecifiers(source) {
-    return String(source).replace(
-        /require\((['"])(\.[^'"]+?)\.ts\1\)/g,
-        (match, quote, specifier) => `require(${quote}${specifier}.js${quote})`
-    );
-}
-
-function copyFileToBuildRoot(filePath, repoRoot, buildRoot) {
-    const relativePath = path.relative(repoRoot, filePath);
-    const outputRelativePath = relativePath.replace(/\.ts$/i, '.js');
-    const destinationPath = path.join(buildRoot, outputRelativePath);
-    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-    const transformedSource = rewriteTypeScriptSpecifiers(fs.readFileSync(filePath, 'utf8'));
-    fs.writeFileSync(destinationPath, transformedSource, 'utf8');
-    return outputRelativePath.split(path.sep).join('/');
-}
-
-function resetBuildRoot(buildRoot) {
+function resetBuildRoot(buildRoot: string): void {
     fs.mkdirSync(buildRoot, { recursive: true });
 
     for (const entry of fs.readdirSync(buildRoot, { withFileTypes: true })) {
@@ -67,110 +63,147 @@ function resetBuildRoot(buildRoot) {
     }
 }
 
-function buildSourceRoots(repoRoot, buildRoot, sourceRoots, options = {}) {
-    const copiedFiles = [];
-    const validateSourceFiles = new Set((options.validateSourceFiles || []).map(p => path.resolve(p)));
+function runTsc(args: string[], repoRoot: string): void {
+    const tscCliPath = path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
+    if (!fs.existsSync(tscCliPath)) {
+        throw new Error(`TypeScript CLI not found: ${tscCliPath}`);
+    }
+
+    const result = childProcess.spawnSync(process.execPath, [tscCliPath, ...args], {
+        cwd: repoRoot,
+        stdio: 'inherit',
+        windowsHide: true
+    });
+    if (result.status !== 0) {
+        throw new Error('TypeScript compilation failed (exit ' + result.status + ')');
+    }
+}
+
+function syncRepoCliEntrypoint(compiledRoot: string, repoRoot: string): string {
+    const compiledCliPath = path.join(compiledRoot, 'src', 'bin', 'octopus.js');
+    if (!fs.existsSync(compiledCliPath)) {
+        throw new Error(`Compiled CLI launcher not found: ${compiledCliPath}`);
+    }
+
+    const repoCliPath = path.join(repoRoot, 'bin', 'octopus.js');
+    fs.mkdirSync(path.dirname(repoCliPath), { recursive: true });
+    fs.copyFileSync(compiledCliPath, repoCliPath);
+
+    try {
+        fs.chmodSync(repoCliPath, 0o755);
+    } catch {
+        // Best-effort on Windows.
+    }
+
+    return repoCliPath;
+}
+
+export function syncRepoCliFromScriptsBuild(): string {
+    const repoRoot = getRepoRoot();
+    return syncRepoCliEntrypoint(path.join(repoRoot, '.scripts-build'), repoRoot);
+}
+
+export function buildNodeFoundation(): BuildResult {
+    const repoRoot = getRepoRoot();
+    const buildRoot = path.join(repoRoot, '.node-build');
 
     resetBuildRoot(buildRoot);
 
-    for (const sourceRoot of sourceRoots) {
-        for (const filePath of collectFiles(sourceRoot, '.ts')) {
-            if (validateSourceFiles.has(path.resolve(sourceRoot))) {
-                validateSourceModule(filePath);
+    // Compile src/ + tests/ + scripts/ with tsc (single type-checked graph)
+    runTsc(['-p', 'tsconfig.tests.json'], repoRoot);
+    const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
+
+    // Collect compiled files from all source roots
+    const allFiles: string[] = [];
+
+    for (const subdir of ['src', 'tests/node', 'scripts/node-foundation', 'scripts/test']) {
+        const compiledRoot = path.join(buildRoot, ...subdir.split('/'));
+        if (fs.existsSync(compiledRoot)) {
+            for (const absPath of collectFiles(compiledRoot, '.js')) {
+                allFiles.push(path.relative(buildRoot, absPath).split(path.sep).join('/'));
             }
-            copiedFiles.push(copyFileToBuildRoot(filePath, repoRoot, buildRoot));
         }
     }
-
-    return copiedFiles;
-}
-
-function buildNodeFoundation() {
-    const repoRoot = getRepoRoot();
-    const buildRoot = path.join(repoRoot, '.node-build');
-    const sourceRoots = [
-        path.join(repoRoot, 'src'),
-        path.join(repoRoot, 'tests', 'node')
-    ];
-    const copiedFiles = buildSourceRoots(repoRoot, buildRoot, sourceRoots, {
-        validateSourceFiles: [path.join(repoRoot, 'src')]
-    });
 
     const manifestPath = path.join(buildRoot, 'node-foundation-manifest.json');
     fs.writeFileSync(
         manifestPath,
         JSON.stringify({
-            nodeEngineRange: NODE_ENGINE_RANGE,
-            sourceRoots: ['src', 'tests/node'],
-            files: copiedFiles
+            nodeEngineRange: getNodeEngineRange(),
+            sourceRoots: ['src', 'tests/node', 'scripts/node-foundation', 'scripts/test'],
+            files: allFiles
         }, null, 2) + '\n',
         'utf8'
     );
 
-    return {
-        buildRoot,
-        copiedFiles,
-        manifestPath,
-        repoRoot
-    };
+    return { buildRoot, copiedFiles: allFiles, generatedCliPath, manifestPath, repoRoot };
 }
 
-function buildPublishRuntime() {
+export function buildPublishRuntime(): BuildResult {
     const repoRoot = getRepoRoot();
     const buildRoot = path.join(repoRoot, 'dist');
-    const sourceRoots = [
-        path.join(repoRoot, 'src')
-    ];
-    const copiedFiles = buildSourceRoots(repoRoot, buildRoot, sourceRoots, {
-        validateSourceFiles: sourceRoots
-    });
+
+    resetBuildRoot(buildRoot);
+
+    // Compile src/ with tsc to dist/
+    runTsc(['-p', 'tsconfig.build.json'], repoRoot);
+    const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
+
+    // Collect compiled files
+    const srcBuildRoot = path.join(buildRoot, 'src');
+    const copiedFiles: string[] = fs.existsSync(srcBuildRoot)
+        ? collectFiles(srcBuildRoot, '.js').map((f: string) =>
+            path.relative(buildRoot, f).split(path.sep).join('/')
+        )
+        : [];
 
     const manifestPath = path.join(buildRoot, 'publish-runtime-manifest.json');
     fs.writeFileSync(
         manifestPath,
         JSON.stringify({
-            nodeEngineRange: NODE_ENGINE_RANGE,
+            nodeEngineRange: getNodeEngineRange(),
             sourceRoots: ['src'],
             files: copiedFiles
         }, null, 2) + '\n',
         'utf8'
     );
 
-    return {
-        buildRoot,
-        copiedFiles,
-        manifestPath,
-        repoRoot
-    };
+    return { buildRoot, copiedFiles, generatedCliPath, manifestPath, repoRoot };
 }
 
-function runNodeFoundationBuild() {
+export function runNodeFoundationBuild(): BuildResult {
     const result = buildNodeFoundation();
     console.log('NODE_FOUNDATION_BUILD_OK');
     console.log(`OutputRoot: ${path.relative(result.repoRoot, result.buildRoot).split(path.sep).join('/')}`);
+    console.log(`GeneratedCliPath: ${path.relative(result.repoRoot, result.generatedCliPath).split(path.sep).join('/')}`);
     console.log(`ManifestPath: ${path.relative(result.repoRoot, result.manifestPath).split(path.sep).join('/')}`);
     console.log(`Files: ${result.copiedFiles.length}`);
     return result;
 }
 
-function runPublishRuntimeBuild() {
+export function runPublishRuntimeBuild(): BuildResult {
     const result = buildPublishRuntime();
     console.log('PUBLISH_RUNTIME_BUILD_OK');
     console.log(`OutputRoot: ${path.relative(result.repoRoot, result.buildRoot).split(path.sep).join('/')}`);
+    console.log(`GeneratedCliPath: ${path.relative(result.repoRoot, result.generatedCliPath).split(path.sep).join('/')}`);
     console.log(`ManifestPath: ${path.relative(result.repoRoot, result.manifestPath).split(path.sep).join('/')}`);
     console.log(`Files: ${result.copiedFiles.length}`);
     return result;
 }
 
+// CLI entry point: dispatch based on argv when run directly
 if (require.main === module) {
-    runNodeFoundationBuild();
+    const command = process.argv[2];
+    if (command === 'publish-runtime') {
+        runPublishRuntimeBuild();
+    } else if (command === 'node-foundation') {
+        runNodeFoundationBuild();
+    } else if (command === 'sync-repo-cli') {
+        const repoCliPath = syncRepoCliFromScriptsBuild();
+        console.log('REPO_CLI_SYNC_OK');
+        console.log(`GeneratedCliPath: ${path.relative(getRepoRoot(), repoCliPath).split(path.sep).join('/')}`);
+    } else {
+        console.error(`Usage: node build.js <publish-runtime|node-foundation|sync-repo-cli>`);
+        process.exit(1);
+    }
 }
-
-module.exports = {
-    buildPublishRuntime,
-    buildNodeFoundation,
-    collectFiles,
-    getRepoRoot,
-    runPublishRuntimeBuild,
-    runNodeFoundationBuild
-};

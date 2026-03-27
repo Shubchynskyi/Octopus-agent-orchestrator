@@ -1,10 +1,10 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const { runReinit, recollectInitAnswers, getOptionalValue } = require('../../../src/materialization/reinit.ts');
+import { runReinit, recollectInitAnswers, getOptionalValue, ReinitChange } from '../../../src/materialization/reinit';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -17,7 +17,7 @@ function findRepoRoot() {
     throw new Error('Cannot find repo root');
 }
 
-function setupTestWorkspace(bundleRoot) {
+function setupTestWorkspace(bundleRoot: string) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-reinit-'));
     const bundle = path.join(tmpDir, 'Octopus-agent-orchestrator');
     fs.mkdirSync(bundle, { recursive: true });
@@ -49,7 +49,7 @@ function setupTestWorkspace(bundleRoot) {
     return { projectRoot: tmpDir, bundleRoot: bundle };
 }
 
-function copyDirRecursive(src, dst) {
+function copyDirRecursive(src: string, dst: string) {
     fs.mkdirSync(dst, { recursive: true });
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
         const srcPath = path.join(src, entry.name);
@@ -84,7 +84,7 @@ describe('getOptionalValue', () => {
 
 describe('recollectInitAnswers', () => {
     it('preserves existing answers', () => {
-        const changes = [];
+        const changes: ReinitChange[] = [];
         const result = recollectInitAnswers({
             existingAnswers: {
                 AssistantLanguage: 'Russian',
@@ -106,7 +106,7 @@ describe('recollectInitAnswers', () => {
     });
 
     it('applies overrides over existing', () => {
-        const changes = [];
+        const changes: ReinitChange[] = [];
         const result = recollectInitAnswers({
             existingAnswers: {
                 AssistantLanguage: 'English',
@@ -127,7 +127,7 @@ describe('recollectInitAnswers', () => {
     });
 
     it('uses defaults when no existing or overrides', () => {
-        const changes = [];
+        const changes: ReinitChange[] = [];
         const result = recollectInitAnswers({ changes });
 
         assert.equal(result.AssistantLanguage, 'English');
@@ -138,7 +138,7 @@ describe('recollectInitAnswers', () => {
     });
 
     it('infers from live version.json', () => {
-        const changes = [];
+        const changes: ReinitChange[] = [];
         const result = recollectInitAnswers({
             liveVersion: { AssistantLanguage: 'French', SourceOfTruth: 'Windsurf' },
             changes
@@ -151,7 +151,7 @@ describe('recollectInitAnswers', () => {
     });
 
     it('infers TokenEconomyEnabled from token-economy.json', () => {
-        const changes = [];
+        const changes: ReinitChange[] = [];
         const result = recollectInitAnswers({
             tokenEconomyConfig: { enabled: false },
             changes

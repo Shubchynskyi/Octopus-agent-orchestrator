@@ -1,9 +1,9 @@
-function escapeRegex(text) {
+function escapeRegex(text: string): string {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function listTemplateTokens(text) {
-    const tokens = new Set();
+export function listTemplateTokens(text: string): string[] {
+    const tokens = new Set<string>();
     const pattern = /\{\{([A-Z0-9_]+)\}\}/g;
     const source = String(text);
     let match = pattern.exec(source);
@@ -16,7 +16,7 @@ function listTemplateTokens(text) {
     return [...tokens];
 }
 
-function replaceTemplateTokens(text, replacements) {
+export function replaceTemplateTokens(text: string, replacements: Record<string, string>): string {
     let result = String(text);
 
     for (const [key, value] of Object.entries(replacements)) {
@@ -27,7 +27,3 @@ function replaceTemplateTokens(text, replacements) {
     return result;
 }
 
-module.exports = {
-    listTemplateTokens,
-    replaceTemplateTokens
-};

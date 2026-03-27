@@ -1,10 +1,10 @@
-const { describe, it, beforeEach, afterEach } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     TRUST_OVERRIDE_ENV_VAR,
     TRUSTED_GIT_REPO_URLS,
     TRUSTED_NPM_PACKAGE_NAMES,
@@ -16,10 +16,10 @@ const {
     validateGitSourceTrust,
     validateNpmSourceTrust,
     validatePathSourceTrust
-} = require('../../../src/lifecycle/update-trust.ts');
+} from '../../../src/lifecycle/update-trust';
 
-const { runCheckUpdate } = require('../../../src/lifecycle/check-update.ts');
-const { removePathRecursive } = require('../../../src/lifecycle/common.ts');
+import { runCheckUpdate } from '../../../src/lifecycle/check-update';
+import { removePathRecursive } from '../../../src/lifecycle/common';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ function findRepoRoot() {
     throw new Error('Cannot find repo root');
 }
 
-function setupCheckUpdateWorkspace(deployedVersion) {
+function setupCheckUpdateWorkspace(deployedVersion: string) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-trust-'));
     const bundle = path.join(tmpDir, 'Octopus-agent-orchestrator');
     fs.mkdirSync(bundle, { recursive: true });
@@ -135,8 +135,8 @@ describe('parseNpmPackageSpec', () => {
 
     it('returns null for empty or falsy input', () => {
         assert.equal(parseNpmPackageSpec(''), null);
-        assert.equal(parseNpmPackageSpec(null), null);
-        assert.equal(parseNpmPackageSpec(undefined), null);
+        assert.equal(parseNpmPackageSpec(null as unknown as string), null);
+        assert.equal(parseNpmPackageSpec(undefined as unknown as string), null);
     });
 });
 
@@ -297,9 +297,9 @@ describe('validateGitSourceTrust', () => {
         try {
             validateGitSourceTrust('https://evil.com/repo.git', { trustOverride: false });
             assert.fail('Expected an error');
-        } catch (err) {
-            assert.ok(err.message.includes('https://evil.com/repo.git'));
-            assert.ok(err.message.includes('--trust-override'));
+        } catch (err: unknown) {
+            assert.ok((err as Error).message.includes('https://evil.com/repo.git'));
+            assert.ok((err as Error).message.includes('--trust-override'));
         }
     });
 });
@@ -338,9 +338,9 @@ describe('validateNpmSourceTrust', () => {
         try {
             validateNpmSourceTrust('evil-package@1.0.0', { trustOverride: false });
             assert.fail('Expected an error');
-        } catch (err) {
-            assert.ok(err.message.includes('evil-package@1.0.0'));
-            assert.ok(err.message.includes('--trust-override'));
+        } catch (err: unknown) {
+            assert.ok((err as Error).message.includes('evil-package@1.0.0'));
+            assert.ok((err as Error).message.includes('--trust-override'));
         }
     });
 });
@@ -366,9 +366,9 @@ describe('validatePathSourceTrust', () => {
         try {
             validatePathSourceTrust('C:\\dev\\repo', { trustOverride: false });
             assert.fail('Expected an error');
-        } catch (err) {
-            assert.ok(err.message.includes('C:\\dev\\repo'));
-            assert.ok(err.message.includes('--trust-override'));
+        } catch (err: unknown) {
+            assert.ok((err as Error).message.includes('C:\\dev\\repo'));
+            assert.ok((err as Error).message.includes('--trust-override'));
         }
     });
 });

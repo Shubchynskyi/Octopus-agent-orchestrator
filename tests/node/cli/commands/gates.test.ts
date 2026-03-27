@@ -1,10 +1,10 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
-const {
+import {
     runClassifyChangeCommand,
     runCompileGateCommand,
     runDocImpactGateCommand,
@@ -13,16 +13,17 @@ const {
     runRequiredReviewsCheckCommand,
     splitCommandLine,
     executeCommand
-} = require('../../../../src/cli/commands/gates.ts');
+} from '../../../../src/cli/commands/gates';
+import * as childProcess from 'node:child_process';
 
-function createTempRepo() {
+function createTempRepo(): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-gates-'));
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     return root;
 }
 
-function writePreflight(repoRoot, taskId, overrides = {}) {
+function writePreflight(repoRoot: string, taskId: string, overrides: Record<string, unknown> = {}): string {
     const preflightPath = path.join(repoRoot, `${taskId}-preflight.json`);
     const payload = {
         task_id: taskId,
@@ -230,8 +231,7 @@ describe('cli/commands/gates', () => {
 
     it('runs human commit through git with commit guard override', async () => {
         const repoRoot = createTempRepo();
-        const childProcess = require('node:child_process');
-
+    
         childProcess.spawnSync('git', ['init'], { cwd: repoRoot, windowsHide: true, stdio: 'ignore' });
         childProcess.spawnSync('git', ['config', 'user.name', 'Octopus Tests'], { cwd: repoRoot, windowsHide: true, stdio: 'ignore' });
         childProcess.spawnSync('git', ['config', 'user.email', 'octopus-tests@example.com'], { cwd: repoRoot, windowsHide: true, stdio: 'ignore' });

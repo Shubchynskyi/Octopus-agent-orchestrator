@@ -1,15 +1,16 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     getProjectDiscovery,
     buildProjectDiscoveryLines,
     buildDiscoveryOverlaySection,
-    STACK_SIGNALS
-} = require('../../../src/materialization/project-discovery.ts');
+    STACK_SIGNALS,
+    ProjectDiscovery
+} from '../../../src/materialization/project-discovery';
 
 describe('STACK_SIGNALS', () => {
     it('covers expected tech stacks', () => {
@@ -90,7 +91,7 @@ describe('buildProjectDiscoveryLines', () => {
             suggestedCommands: ['npm run test'],
             sampleFiles: ['package.json', 'src/index.js']
         };
-        const lines = buildProjectDiscoveryLines(discovery, '2025-01-01T00:00:00Z');
+        const lines = buildProjectDiscoveryLines(discovery as unknown as ProjectDiscovery, '2025-01-01T00:00:00Z');
         const text = lines.join('\n');
         assert.ok(text.includes('# Project Discovery'));
         assert.ok(text.includes('## Detected Stack Signals'));
@@ -112,7 +113,7 @@ describe('buildDiscoveryOverlaySection', () => {
             detectedStacks: ['Python', 'Go'],
             topLevelDirectories: ['src', 'cmd']
         };
-        const result = buildDiscoveryOverlaySection(discovery);
+        const result = buildDiscoveryOverlaySection(discovery as unknown as ProjectDiscovery);
         assert.ok(result.includes('## Project Discovery Snapshot'));
         assert.ok(result.includes('Python, Go'));
         assert.ok(result.includes('src, cmd'));
@@ -125,7 +126,7 @@ describe('buildDiscoveryOverlaySection', () => {
             detectedStacks: [],
             topLevelDirectories: []
         };
-        const result = buildDiscoveryOverlaySection(discovery);
+        const result = buildDiscoveryOverlaySection(discovery as unknown as ProjectDiscovery);
         assert.ok(result.includes('none detected'));
     });
 });

@@ -1,3 +1,5 @@
-module.exports = {
-    shimRegistry: require('./shim-registry.ts')
+import * as shimRegistry from './shim-registry';
+
+export {
+    shimRegistry
 };

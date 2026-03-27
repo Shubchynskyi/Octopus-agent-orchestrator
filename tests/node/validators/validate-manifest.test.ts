@@ -1,14 +1,14 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     parseManifestItems,
     validateManifest,
     formatManifestResult
-} = require('../../../src/validators/validate-manifest.ts');
+} from '../../../src/validators/validate-manifest';
 
 test('parseManifestItems extracts list items from markdown', () => {
     const content = [

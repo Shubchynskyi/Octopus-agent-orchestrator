@@ -1,17 +1,13 @@
-const { normalizeLineEndings } = require('../core/line-endings.ts');
-const {
-    NODE_BUNDLE_CLI_COMMAND,
-    NODE_GATE_COMMAND_PREFIX,
-    NODE_HUMAN_COMMIT_COMMAND
-} = require('./command-constants.ts');
+import { normalizeLineEndings } from '../core/line-endings';
+import { NODE_BUNDLE_CLI_COMMAND, NODE_GATE_COMMAND_PREFIX, NODE_HUMAN_COMMIT_COMMAND } from './command-constants';
 
-const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
-const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
-const COMMIT_GUARD_START = '# Octopus-agent-orchestrator:commit-guard-start';
-const COMMIT_GUARD_END = '# Octopus-agent-orchestrator:commit-guard-end';
-const COMMIT_GUARD_ENV_NAME = 'OCTOPUS_ALLOW_COMMIT';
-const COMMIT_GUARD_EXTRA_MARKERS_ENV = 'OCTOPUS_AGENT_ENV_MARKERS';
-const COMMIT_GUARD_AGENT_MARKERS = Object.freeze([
+export const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
+export const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
+export const COMMIT_GUARD_START = '# Octopus-agent-orchestrator:commit-guard-start';
+export const COMMIT_GUARD_END = '# Octopus-agent-orchestrator:commit-guard-end';
+export const COMMIT_GUARD_ENV_NAME = 'OCTOPUS_ALLOW_COMMIT';
+export const COMMIT_GUARD_EXTRA_MARKERS_ENV = 'OCTOPUS_AGENT_ENV_MARKERS';
+export const COMMIT_GUARD_AGENT_MARKERS = Object.freeze([
     'CODEX_THREAD_ID',
     'CLAUDE_CODE_SSE_PORT',
     'AIDER_SESSION_ID',
@@ -19,7 +15,7 @@ const COMMIT_GUARD_AGENT_MARKERS = Object.freeze([
     'CURSOR_AGENT'
 ]);
 
-const INSTALL_BACKUP_CANDIDATE_PATHS = Object.freeze([
+export const INSTALL_BACKUP_CANDIDATE_PATHS = Object.freeze([
     'CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'TASK.md',
     '.antigravity/rules.md', '.github/copilot-instructions.md',
     '.junie/guidelines.md', '.windsurf/rules/rules.md',
@@ -34,7 +30,7 @@ const INSTALL_BACKUP_CANDIDATE_PATHS = Object.freeze([
     '.github/agents/infra-review.md', '.github/agents/dependency-review.md'
 ]);
 
-const CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES = Object.freeze([
+export const CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES = Object.freeze([
     `Bash(${NODE_BUNDLE_CLI_COMMAND} *:*)`,
     `Bash(cd * && ${NODE_BUNDLE_CLI_COMMAND} *:*)`,
     'Bash(npx octopus-agent-orchestrator *:*)',
@@ -60,11 +56,38 @@ const ENTRYPOINT_RULE_LINKS = Object.freeze([
     ['Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md', 'Skill Catalog']
 ]);
 
-function escapeRegex(text) {
+interface TaskQueueTableRange {
+    lines: string[];
+    rowsStartIndex: number;
+    rowsEndIndex: number;
+}
+
+interface ProviderOrchestratorProfileLike {
+    gitignoreEntries: string[];
+}
+
+type SettingsParseMode = 'default' | 'merge-existing' | 'invalid-root' | 'invalid-json';
+
+interface SettingsBuildResult {
+    content: string;
+    needsUpdate: boolean;
+    parseMode: SettingsParseMode;
+}
+
+interface ManagedBlockSyncResult {
+    content: string;
+    changed: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function escapeRegex(text: string): string {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function restoreEntrypointRuleLinks(content) {
+function restoreEntrypointRuleLinks(content: string): string {
     let restored = String(content || '');
     for (const [rulePath, label] of ENTRYPOINT_RULE_LINKS) {
         const plainBullet = new RegExp('^\\- \\`' + escapeRegex(rulePath) + '\\`$', 'gm');
@@ -76,7 +99,11 @@ function restoreEntrypointRuleLinks(content) {
 /**
  * Extracts managed block (between start/end markers) from text content.
  */
-function extractManagedBlockFromContent(content, startMarker, endMarker) {
+export function extractManagedBlockFromContent(
+    content: string | null | undefined,
+    startMarker: string,
+    endMarker: string
+): string | null {
     if (!content || !content.trim()) return null;
     const pattern = new RegExp(
         `${escapeRegex(startMarker)}[\\s\\S]*?${escapeRegex(endMarker)}`, 'm'
@@ -88,7 +115,7 @@ function extractManagedBlockFromContent(content, startMarker, endMarker) {
 /**
  * Parses the Active Queue table range from a managed block in TASK.md.
  */
-function getTaskQueueTableRange(managedBlock) {
+export function getTaskQueueTableRange(managedBlock: string | null | undefined): TaskQueueTableRange | null {
     if (!managedBlock || !managedBlock.trim()) return null;
     const normalized = normalizeLineEndings(managedBlock, '\n');
     const lines = normalized.split('\n');
@@ -129,7 +156,7 @@ function getTaskQueueTableRange(managedBlock) {
 /**
  * Extracts task queue rows from a managed block.
  */
-function getTaskQueueRowsFromManagedBlock(managedBlock) {
+export function getTaskQueueRowsFromManagedBlock(managedBlock: string | null | undefined): string[] {
     const range = getTaskQueueTableRange(managedBlock);
     if (!range) return [];
     const rows = [];
@@ -144,7 +171,7 @@ function getTaskQueueRowsFromManagedBlock(managedBlock) {
 /**
  * Replaces task queue rows in a managed block.
  */
-function setTaskQueueRowsInManagedBlock(managedBlock, rows) {
+export function setTaskQueueRowsInManagedBlock(managedBlock: string, rows: string[]): string {
     const range = getTaskQueueTableRange(managedBlock);
     if (!range) return managedBlock;
 
@@ -156,7 +183,7 @@ function setTaskQueueRowsInManagedBlock(managedBlock, rows) {
 /**
  * Builds a TASK.md managed block preserving existing queue rows.
  */
-function buildTaskManagedBlockWithExistingQueue(templateContent, existingContent) {
+export function buildTaskManagedBlockWithExistingQueue(templateContent: string, existingContent: string): string | null {
     const templateBlock = extractManagedBlockFromContent(templateContent, MANAGED_START, MANAGED_END);
     if (!templateBlock) return null;
 
@@ -172,7 +199,7 @@ function buildTaskManagedBlockWithExistingQueue(templateContent, existingContent
 /**
  * Builds the canonical entrypoint managed block (for the source-of-truth file).
  */
-function buildCanonicalManagedBlock(canonicalFile, templateClaudeContent) {
+export function buildCanonicalManagedBlock(canonicalFile: string, templateClaudeContent: string): string {
     const baseBlock = extractManagedBlockFromContent(templateClaudeContent, MANAGED_START, MANAGED_END);
     if (!baseBlock) {
         throw new Error('Template CLAUDE.md managed block is missing; cannot build canonical entrypoint.');
@@ -183,7 +210,11 @@ function buildCanonicalManagedBlock(canonicalFile, templateClaudeContent) {
 /**
  * Builds a redirect managed block for non-canonical entrypoints.
  */
-function buildRedirectManagedBlock(targetFile, canonicalFile, providerBridgePaths) {
+export function buildRedirectManagedBlock(
+    targetFile: string,
+    canonicalFile: string,
+    providerBridgePaths: string[] | null | undefined
+): string {
     const providerLines = [];
     for (const bridgePath of (providerBridgePaths || [])) {
         const normalized = bridgePath.replace(/\\/g, '/');
@@ -226,7 +257,7 @@ function buildRedirectManagedBlock(targetFile, canonicalFile, providerBridgePath
 /**
  * Builds the commit guard hook script content.
  */
-function buildCommitGuardManagedBlock() {
+export function buildCommitGuardManagedBlock() {
     const agentEnvLines = COMMIT_GUARD_AGENT_MARKERS.map((m) => `  "${m}"`).join('\n');
     return `${COMMIT_GUARD_START}
 # Commit blocked by Octopus auto-commit guard only for detected agent sessions.
@@ -267,7 +298,11 @@ ${COMMIT_GUARD_END}`;
 /**
  * Builds provider orchestrator agent markdown content.
  */
-function buildProviderOrchestratorAgentContent(providerLabel, canonicalFile, bridgePath) {
+export function buildProviderOrchestratorAgentContent(
+    providerLabel: string,
+    canonicalFile: string,
+    bridgePath: string
+): string {
     return `${MANAGED_START}
 # ${providerLabel} Agent: Orchestrator
 
@@ -320,7 +355,13 @@ ${MANAGED_END}`.trim();
 /**
  * Builds GitHub skill bridge agent markdown content.
  */
-function buildGitHubSkillBridgeAgentContent(profileTitle, canonicalFile, skillPath, reviewRequirement, capabilityFlag) {
+export function buildGitHubSkillBridgeAgentContent(
+    profileTitle: string,
+    canonicalFile: string,
+    skillPath: string,
+    reviewRequirement: string,
+    capabilityFlag: string
+): string {
     return `${MANAGED_START}
 # GitHub Agent: ${profileTitle}
 
@@ -350,17 +391,20 @@ ${MANAGED_END}`.trim();
 /**
  * Merges required entries into Qwen settings JSON, preserving existing structure.
  */
-function buildQwenSettingsContent(existingContent, requiredEntries) {
-    const entries = (requiredEntries || ['TASK.md', 'AGENTS.md']).filter((e) => e && e.trim());
+export function buildQwenSettingsContent(
+    existingContent: string | null | undefined,
+    requiredEntries: string[] | null | undefined
+): SettingsBuildResult {
+    const entries = (requiredEntries || ['TASK.md', 'AGENTS.md']).filter((entry: string) => Boolean(entry && entry.trim()));
     const unique = [...new Set(entries)];
-    let settingsMap = {};
+    let settingsMap: Record<string, unknown> = {};
     let needsUpdate = false;
-    let parseMode = 'default';
+    let parseMode: SettingsParseMode = 'default';
 
     if (existingContent && existingContent.trim()) {
         try {
-            const parsed = JSON.parse(existingContent);
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const parsed: unknown = JSON.parse(existingContent);
+            if (isRecord(parsed)) {
                 settingsMap = parsed;
                 parseMode = 'merge-existing';
             } else {
@@ -375,14 +419,17 @@ function buildQwenSettingsContent(existingContent, requiredEntries) {
         needsUpdate = true;
     }
 
-    if (!settingsMap.context || typeof settingsMap.context !== 'object' || Array.isArray(settingsMap.context)) {
-        settingsMap.context = {};
+    const existingContext = settingsMap.context;
+    const contextMap: Record<string, unknown> = isRecord(existingContext) ? existingContext : {};
+    if (!isRecord(existingContext)) {
+        settingsMap.context = contextMap;
         needsUpdate = true;
     }
 
-    const currentEntries = [];
-    if (Array.isArray(settingsMap.context.fileName)) {
-        for (const item of settingsMap.context.fileName) {
+    const currentEntries: string[] = [];
+    const fileNameValue = contextMap.fileName;
+    if (Array.isArray(fileNameValue)) {
+        for (const item of fileNameValue) {
             if (item != null && String(item).trim()) {
                 currentEntries.push(String(item).trim());
             }
@@ -398,7 +445,7 @@ function buildQwenSettingsContent(existingContent, requiredEntries) {
         }
     }
 
-    settingsMap.context.fileName = currentEntries;
+    contextMap.fileName = currentEntries;
     return {
         content: JSON.stringify(settingsMap, null, 2),
         needsUpdate,
@@ -409,16 +456,19 @@ function buildQwenSettingsContent(existingContent, requiredEntries) {
 /**
  * Merges required permission entries into Claude local settings JSON.
  */
-function buildClaudeLocalSettingsContent(existingContent, enableOrchestratorAccess) {
+export function buildClaudeLocalSettingsContent(
+    existingContent: string | null | undefined,
+    enableOrchestratorAccess: boolean
+): SettingsBuildResult {
     const requiredAllowEntries = enableOrchestratorAccess ? [...CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES] : [];
-    let settingsMap = {};
+    let settingsMap: Record<string, unknown> = {};
     let needsUpdate = false;
-    let parseMode = 'default';
+    let parseMode: SettingsParseMode = 'default';
 
     if (existingContent && existingContent.trim()) {
         try {
-            const parsed = JSON.parse(existingContent);
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const parsed: unknown = JSON.parse(existingContent);
+            if (isRecord(parsed)) {
                 settingsMap = parsed;
                 parseMode = 'merge-existing';
             } else {
@@ -433,14 +483,17 @@ function buildClaudeLocalSettingsContent(existingContent, enableOrchestratorAcce
         needsUpdate = true;
     }
 
-    if (!settingsMap.permissions || typeof settingsMap.permissions !== 'object' || Array.isArray(settingsMap.permissions)) {
-        settingsMap.permissions = {};
+    const existingPermissions = settingsMap.permissions;
+    const permissionsMap: Record<string, unknown> = isRecord(existingPermissions) ? existingPermissions : {};
+    if (!isRecord(existingPermissions)) {
+        settingsMap.permissions = permissionsMap;
         needsUpdate = true;
     }
 
-    const allowEntries = [];
-    if (Array.isArray(settingsMap.permissions.allow)) {
-        for (const item of settingsMap.permissions.allow) {
+    const allowEntries: string[] = [];
+    const allowValue = permissionsMap.allow;
+    if (Array.isArray(allowValue)) {
+        for (const item of allowValue) {
             if (item != null && String(item).trim()) {
                 allowEntries.push(String(item).trim());
             }
@@ -456,7 +509,7 @@ function buildClaudeLocalSettingsContent(existingContent, enableOrchestratorAcce
         }
     }
 
-    settingsMap.permissions.allow = allowEntries;
+    permissionsMap.allow = allowEntries;
     return {
         content: JSON.stringify(settingsMap, null, 2),
         needsUpdate,
@@ -467,7 +520,12 @@ function buildClaudeLocalSettingsContent(existingContent, enableOrchestratorAcce
 /**
  * Computes the set of .gitignore entries needed for a given configuration.
  */
-function buildGitignoreEntries(activeEntryFiles, providerOrchestratorProfiles, enableClaudeOrchestratorFullAccess, includeQwenDirectory = false) {
+export function buildGitignoreEntries(
+    activeEntryFiles: string[],
+    providerOrchestratorProfiles: ProviderOrchestratorProfileLike[],
+    enableClaudeOrchestratorFullAccess: boolean,
+    includeQwenDirectory = false
+): string[] {
     const entries = ['Octopus-agent-orchestrator/', 'TASK.md'];
 
     if (includeQwenDirectory) {
@@ -501,7 +559,7 @@ function buildGitignoreEntries(activeEntryFiles, providerOrchestratorProfiles, e
  * entirely so the previous content lives only in install backups instead of being
  * merged with the new orchestrator contract.
  */
-function syncManagedBlockInContent(content, managedBlock) {
+export function syncManagedBlockInContent(content: string | null | undefined, managedBlock: string): ManagedBlockSyncResult {
     const pattern = new RegExp(
         `${escapeRegex(MANAGED_START)}[\\s\\S]*?${escapeRegex(MANAGED_END)}`, 'm'
     );
@@ -517,29 +575,3 @@ function syncManagedBlockInContent(content, managedBlock) {
 
     return { content: newContent, changed: newContent !== (content || '') };
 }
-
-module.exports = {
-    buildCanonicalManagedBlock,
-    buildClaudeLocalSettingsContent,
-    buildCommitGuardManagedBlock,
-    buildGitHubSkillBridgeAgentContent,
-    buildGitignoreEntries,
-    buildProviderOrchestratorAgentContent,
-    buildQwenSettingsContent,
-    buildRedirectManagedBlock,
-    buildTaskManagedBlockWithExistingQueue,
-    CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES,
-    COMMIT_GUARD_AGENT_MARKERS,
-    COMMIT_GUARD_END,
-    COMMIT_GUARD_ENV_NAME,
-    COMMIT_GUARD_EXTRA_MARKERS_ENV,
-    COMMIT_GUARD_START,
-    extractManagedBlockFromContent,
-    getTaskQueueRowsFromManagedBlock,
-    getTaskQueueTableRange,
-    INSTALL_BACKUP_CANDIDATE_PATHS,
-    MANAGED_END,
-    MANAGED_START,
-    setTaskQueueRowsInManagedBlock,
-    syncManagedBlockInContent
-};

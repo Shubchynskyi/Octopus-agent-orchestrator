@@ -1,15 +1,9 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const {
-    DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
-    SOURCE_OF_TRUTH_VALUES
-} = require('../../core/constants.ts');
-const { getActiveAgentEntrypointFiles } = require('../../materialization/common.ts');
-
-const { getStatusSnapshot } = require('../../validators/status.ts');
-
-const {
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { DEFAULT_INIT_ANSWERS_RELATIVE_PATH, SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
+import { getActiveAgentEntrypointFiles } from '../../materialization/common';
+import { getStatusSnapshot } from '../../validators/status';
+import {
     acquireSourceRoot,
     bold,
     ensureDirectoryExists,
@@ -34,16 +28,29 @@ const {
     resolvePathInsideRoot,
     supportsInteractivePrompts,
     syncBundleItems,
+    type PackageJsonLike,
+    type StatusSnapshot,
     tryNormalizeAssistantBrevity,
     tryNormalizeSourceOfTruth,
     tryParseBooleanText
-} = require('./cli-helpers.ts');
+} from './cli-helpers';
+import {
+    createAgentInitState,
+    doesAgentInitStateMatchAnswers,
+    readAgentInitStateSafe,
+    writeAgentInitState
+} from '../../runtime/agent-init-state';
+import { serializeInitAnswers } from '../../schemas/init-answers';
+import { runInstall } from '../../materialization/install';
+import { runInit } from '../../materialization/init';
+import { validateManifest } from '../../validators/validate-manifest';
+import { runVerify } from '../../validators/verify';
 
 // ---------------------------------------------------------------------------
 // Flag definitions
 // ---------------------------------------------------------------------------
 
-const SETUP_DEFINITIONS = {
+export const SETUP_DEFINITIONS = {
     '--target-root': { key: 'targetRoot', type: 'string' },
     '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
     '--repo-url': { key: 'repoUrl', type: 'string' },
@@ -63,18 +70,52 @@ const SETUP_DEFINITIONS = {
     '--token-economy-enabled': { key: 'tokenEconomyEnabled', type: 'string' }
 };
 
+interface SetupOptions {
+    help?: boolean;
+    version?: boolean;
+    targetRoot?: string;
+    initAnswersPath?: string;
+    repoUrl?: string;
+    branch?: string;
+    dryRun?: boolean;
+    runVerify?: boolean;
+    noPrompt?: boolean;
+    skipVerify?: boolean;
+    skipManifestValidation?: boolean;
+    assistantLanguage?: string;
+    assistantBrevity?: string;
+    activeAgentFiles?: string;
+    sourceOfTruth?: string;
+    enforceNoAutoCommit?: string;
+    claudeOrchestratorFullAccess?: string;
+    tokenEconomyEnabled?: string;
+}
+
+interface SetupAnswers {
+    assistantLanguage: string;
+    assistantBrevity: string;
+    sourceOfTruth: string;
+    enforceNoAutoCommit: boolean | string;
+    claudeOrchestratorFullAccess: boolean | string;
+    tokenEconomyEnabled: boolean | string;
+    activeAgentFiles: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Setup answer defaults & interactive collection
 // ---------------------------------------------------------------------------
 
-function resolveSetupActiveAgentFiles(sourceOfTruth, explicitActiveAgentFiles) {
+function resolveSetupActiveAgentFiles(
+    sourceOfTruth: string,
+    explicitActiveAgentFiles: string | null | undefined
+): string | null {
     if (explicitActiveAgentFiles === undefined) {
         return normalizeActiveAgentFiles(null, sourceOfTruth);
     }
     return normalizeActiveAgentFiles(explicitActiveAgentFiles, sourceOfTruth);
 }
 
-function getSetupAnswerDefaults(targetRoot, initAnswersPath, options) {
+export function getSetupAnswerDefaults(targetRoot: string, initAnswersPath: string, options: SetupOptions): SetupAnswers {
     const resolvedInitAnswersPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
     const existingAnswers = readOptionalJsonFile(resolvedInitAnswersPath) || {};
     const sourceOfTruth = tryNormalizeSourceOfTruth(
@@ -109,7 +150,11 @@ function getSetupAnswerDefaults(targetRoot, initAnswersPath, options) {
     };
 }
 
-async function collectSetupAnswersInteractively(targetRoot, initAnswersPath, options) {
+export async function collectSetupAnswersInteractively(
+    targetRoot: string,
+    initAnswersPath: string,
+    options: SetupOptions
+): Promise<SetupAnswers> {
     const defaults = getSetupAnswerDefaults(targetRoot, initAnswersPath, options);
 
     const assistantLanguage = await promptTextInput('Set communication language', defaults.assistantLanguage);
@@ -173,7 +218,7 @@ async function collectSetupAnswersInteractively(targetRoot, initAnswersPath, opt
 // Setup handoff message
 // ---------------------------------------------------------------------------
 
-function printSetupHandoff(snapshot) {
+export function printSetupHandoff(snapshot: StatusSnapshot): void {
     const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
     console.log('');
     console.log(bold('Agent Initialization'));
@@ -190,7 +235,7 @@ function printSetupHandoff(snapshot) {
     console.log(`     ${green('Execute task T-001 depth=2')}`);
 }
 
-function buildSetupHandoffText(snapshot) {
+export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
     const lines = [];
     lines.push('');
@@ -213,7 +258,11 @@ function buildSetupHandoffText(snapshot) {
 // Setup banner builder (testable)
 // ---------------------------------------------------------------------------
 
-function buildSetupStepsText(targetRoot, canUseInteractivePrompts, interactiveSetup) {
+export function buildSetupStepsText(
+    targetRoot: string,
+    canUseInteractivePrompts: boolean,
+    interactiveSetup: boolean
+): string {
     const subtitle = canUseInteractivePrompts
         ? 'You will be asked 6 control questions.'
         : interactiveSetup
@@ -246,8 +295,13 @@ function buildSetupStepsText(targetRoot, canUseInteractivePrompts, interactiveSe
  *   - Agent handoff message if agent init is incomplete
  *   - Exit code 0 on success
  */
-async function handleSetup(commandArgv, packageJson, packageRoot) {
-    const { options } = parseOptions(commandArgv, SETUP_DEFINITIONS);
+export async function handleSetup(
+    commandArgv: string[],
+    packageJson: PackageJsonLike,
+    packageRoot: string
+): Promise<void> {
+    const { options: parsedOptions } = parseOptions(commandArgv, SETUP_DEFINITIONS);
+    const options = parsedOptions as SetupOptions;
 
     if (options.help) { printHelp(packageJson); return; }
     if (options.version) { console.log(packageJson.version); return; }
@@ -278,7 +332,7 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
 
     const source = await acquireSourceRoot(options.repoUrl, options.branch, packageRoot);
     try {
-        const promptedAnswers = canUseInteractivePrompts
+        const promptedAnswers: SetupAnswers | null = canUseInteractivePrompts
             ? await collectSetupAnswersInteractively(
                 targetRoot,
                 options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
@@ -299,7 +353,7 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
 
         const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
         const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
-        const resolvedAnswers = promptedAnswers || {};
+        const resolvedAnswers: Partial<SetupAnswers> = promptedAnswers || {};
         const assistantLanguage = resolvedAnswers.assistantLanguage || options.assistantLanguage || 'English';
         const assistantBrevity = resolvedAnswers.assistantBrevity
             || (options.assistantBrevity !== undefined ? normalizeAssistantBrevity(options.assistantBrevity) : 'concise');
@@ -323,12 +377,6 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
         const collectedVia = canUseInteractivePrompts ? 'CLI_INTERACTIVE' : 'CLI_NONINTERACTIVE';
         const resolvedInitAnswersPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
         const normalizedActiveAgentFiles = getActiveAgentEntrypointFiles(activeAgentFiles, sourceOfTruth);
-        const {
-            createAgentInitState,
-            doesAgentInitStateMatchAnswers,
-            readAgentInitStateSafe,
-            writeAgentInitState
-        } = require('../../runtime/agent-init-state.ts');
         const previousAgentInitStateResult = readAgentInitStateSafe(targetRoot);
         const previousAgentInitState = previousAgentInitStateResult.state;
         const preserveExistingCheckpoints = doesAgentInitStateMatchAnswers(previousAgentInitState, {
@@ -342,7 +390,6 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
             if (!fs.existsSync(initAnswersDir)) {
                 fs.mkdirSync(initAnswersDir, { recursive: true });
             }
-            const { serializeInitAnswers } = require('../../schemas/init-answers.ts');
             const serialized = serializeInitAnswers({
                 AssistantLanguage: assistantLanguage,
                 AssistantBrevity: assistantBrevity,
@@ -359,7 +406,7 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
                 SourceOfTruth: sourceOfTruth,
                 AssistantLanguageConfirmed: true,
                 ActiveAgentFilesConfirmed: options.activeAgentFiles !== undefined
-                    || (
+                    || Boolean(
                         preserveExistingCheckpoints
                         && previousAgentInitState
                         && previousAgentInitState.ActiveAgentFilesConfirmed
@@ -380,8 +427,6 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
             }));
         }
 
-        const { runInstall } = require('../../materialization/install.ts');
-        const { runInit } = require('../../materialization/init.ts');
         runInstall({
             targetRoot,
             bundleRoot: effectiveBundlePath,
@@ -390,7 +435,7 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
             sourceOfTruth,
             initAnswersPath: resolvedInitAnswersPath,
             dryRun: options.dryRun,
-            initRunner: function (initOptions) {
+            initRunner: function (initOptions: Omit<Parameters<typeof runInit>[0], 'bundleRoot'>) {
                 runInit(Object.assign({ bundleRoot: effectiveBundlePath }, initOptions));
             }
         });
@@ -399,7 +444,6 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
         if (!options.skipManifestValidation) {
             try {
                 const manifestPath = path.join(effectiveBundlePath, 'MANIFEST.md');
-                const { validateManifest } = require('../../validators/validate-manifest.ts');
                 const manifestResult = validateManifest(manifestPath, targetRoot);
                 manifestStatus = manifestResult.passed ? 'PASS' : 'FAIL';
             } catch (_error) {
@@ -407,12 +451,11 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
             }
         }
 
-        const snapshot = getStatusSnapshot(targetRoot, initAnswersPath);
+        const snapshot = getStatusSnapshot(targetRoot, initAnswersPath) as StatusSnapshot;
         let verifyStatus = options.skipVerify ? 'SKIPPED' : 'PENDING_AGENT_CONTEXT';
         if (!options.skipVerify) {
             try {
                 if (snapshot.readyForTasks || options.runVerify) {
-                    const { runVerify } = require('../../validators/verify.ts');
                     const verifyResult = runVerify({
                         targetRoot,
                         sourceOfTruth,
@@ -444,13 +487,3 @@ async function handleSetup(commandArgv, packageJson, packageRoot) {
         source.cleanup();
     }
 }
-
-module.exports = {
-    buildSetupHandoffText,
-    buildSetupStepsText,
-    collectSetupAnswersInteractively,
-    getSetupAnswerDefaults,
-    handleSetup,
-    printSetupHandoff,
-    SETUP_DEFINITIONS
-};

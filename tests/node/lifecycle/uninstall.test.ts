@@ -1,12 +1,12 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const { runUninstall, parseBooleanAnswer, getUninstallRollbackItems } = require('../../../src/lifecycle/uninstall.ts');
-const { removePathRecursive } = require('../../../src/lifecycle/common.ts');
-const { MANAGED_START, MANAGED_END, COMMIT_GUARD_START, COMMIT_GUARD_END } = require('../../../src/materialization/content-builders.ts');
+import { runUninstall, parseBooleanAnswer, getUninstallRollbackItems } from '../../../src/lifecycle/uninstall';
+import { removePathRecursive } from '../../../src/lifecycle/common';
+import { MANAGED_START, MANAGED_END, COMMIT_GUARD_START, COMMIT_GUARD_END } from '../../../src/materialization/content-builders';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -19,7 +19,7 @@ function findRepoRoot() {
     throw new Error('Cannot find repo root');
 }
 
-function copyDirRecursive(src, dst) {
+function copyDirRecursive(src: string, dst: string) {
     fs.mkdirSync(dst, { recursive: true });
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
         const srcPath = path.join(src, entry.name);
@@ -32,7 +32,7 @@ function copyDirRecursive(src, dst) {
     }
 }
 
-function setupDeployedWorkspace(repoRoot) {
+function setupDeployedWorkspace(repoRoot: string) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-uninstall-'));
     const bundle = path.join(tmpDir, 'Octopus-agent-orchestrator');
     fs.mkdirSync(bundle, { recursive: true });
@@ -278,7 +278,7 @@ describe('runUninstall', () => {
                 const settings = JSON.parse(fs.readFileSync(path.join(projectRoot, '.claude', 'settings.local.json'), 'utf8'));
                 const allowEntries = settings.permissions && settings.permissions.allow ? settings.permissions.allow : [];
                 assert.ok(allowEntries.includes('user-custom-permission'));
-                assert.ok(!allowEntries.some((e) => e.includes('Octopus-agent-orchestrator')));
+                assert.ok(!allowEntries.some((e: string) => e.includes('Octopus-agent-orchestrator')));
             }
         } finally {
             removePathRecursive(projectRoot);

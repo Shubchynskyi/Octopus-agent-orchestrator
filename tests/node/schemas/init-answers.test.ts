@@ -1,11 +1,11 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     getCanonicalEntrypointForSource,
     serializeInitAnswers,
     validateInitAnswers
-} = require('../../../src/schemas/init-answers.ts');
+} from '../../../src/schemas/init-answers';
 
 test('validateInitAnswers normalizes booleans and canonical entrypoint selections', () => {
     const normalized = validateInitAnswers({

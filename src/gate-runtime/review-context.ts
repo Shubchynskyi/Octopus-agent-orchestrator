@@ -1,18 +1,35 @@
-const { stringSha256 } = require('./hash.ts');
-const { estimateTokenCount, DEFAULT_TOKEN_ESTIMATOR, LEGACY_TOKEN_ESTIMATOR } = require('./token-telemetry.ts');
+import { stringSha256 } from './hash';
+import { estimateTokenCount, DEFAULT_TOKEN_ESTIMATOR, LEGACY_TOKEN_ESTIMATOR } from './token-telemetry';
+
+interface CompactMarkdownOptions {
+    stripExamples?: boolean;
+    stripCodeBlocks?: boolean;
+}
+
+interface CompactMarkdownResult {
+    content: string;
+    original_line_count: number;
+    output_line_count: number;
+    original_char_count: number;
+    output_char_count: number;
+    removed_code_blocks: number;
+    removed_example_sections: number;
+    removed_example_labels: number;
+    removed_example_content_lines: number;
+}
 
 /**
  * Compact markdown content by stripping examples and/or code blocks.
  * Matches Python compact_markdown_content exactly.
  */
-function compactMarkdownContent(content, options = {}) {
+export function compactMarkdownContent(content: unknown, options: CompactMarkdownOptions = {}): CompactMarkdownResult {
     const stripExamples = options.stripExamples || false;
     const stripCodeBlocks = options.stripCodeBlocks || false;
 
     let sourceText = content == null ? '' : String(content);
     sourceText = sourceText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const lines = sourceText.split('\n');
-    const outputLines = [];
+    const outputLines: string[] = [];
     let exampleHeadingLevel = null;
     let insideRemovedCodeBlock = false;
     let pendingExampleLabel = false;
@@ -146,7 +163,7 @@ function compactMarkdownContent(content, options = {}) {
 /**
  * Get compact review budget, matching Python get_compact_review_budget.
  */
-function getCompactReviewBudget(failTailLines) {
+export function getCompactReviewBudget(failTailLines: unknown): Record<string, number> {
     let resolvedFailTailLines = 50;
     if (typeof failTailLines === 'boolean') {
         resolvedFailTailLines = 50;
@@ -171,16 +188,34 @@ function getCompactReviewBudget(failTailLines) {
     };
 }
 
+interface AuditReviewArtifactOptions {
+    artifactPath: string;
+    content: string;
+    reviewContext?: Record<string, unknown>;
+}
+
+export interface AuditReviewArtifactResult {
+    expected: boolean;
+    token_economy_active: boolean;
+    review_context_path: string | null;
+    line_count: number;
+    char_count: number;
+    code_fence_line_count: number;
+    example_marker_count: number;
+    budget: ReturnType<typeof getCompactReviewBudget>;
+    warnings: string[];
+    warning_count: number;
+}
+
 /**
  * Audit review artifact compaction, matching Python audit_review_artifact_compaction.
  */
-function auditReviewArtifactCompaction(options) {
+export function auditReviewArtifactCompaction(options: AuditReviewArtifactOptions): AuditReviewArtifactResult {
     const artifactPath = options.artifactPath;
     const content = options.content;
-    let reviewContext = options.reviewContext;
-    reviewContext = (reviewContext && typeof reviewContext === 'object') ? reviewContext : {};
-    const tokenEconomy = reviewContext.token_economy || {};
-    const flags = tokenEconomy.flags || {};
+    let reviewContext: Record<string, unknown> = (options.reviewContext && typeof options.reviewContext === 'object') ? options.reviewContext : {};
+    const tokenEconomy = (reviewContext.token_economy && typeof reviewContext.token_economy === 'object' ? reviewContext.token_economy : {}) as Record<string, unknown>;
+    const flags = (tokenEconomy.flags && typeof tokenEconomy.flags === 'object' ? tokenEconomy.flags : {}) as Record<string, unknown>;
     const tokenEconomyActive = !!(reviewContext.token_economy_active) || !!(tokenEconomy.active);
     const compactExpected = tokenEconomyActive && !!(flags.compact_reviewer_output);
     const budget = getCompactReviewBudget(flags.fail_tail_lines);
@@ -191,7 +226,7 @@ function auditReviewArtifactCompaction(options) {
         line => /^\s*(?:#{1,6}\s+.*example.*|(?:bad|good)?\s*examples?\s*:)\s*$/i.test(line)
     ).length;
 
-    const warnings = [];
+    const warnings: string[] = [];
     if (compactExpected) {
         if (lines.length > budget.max_lines) {
             warnings.push(
@@ -235,7 +270,28 @@ function auditReviewArtifactCompaction(options) {
  * Build a rule context artifact, matching Python build_rule_context_artifact.
  * Returns metadata without writing files (caller handles IO for testability).
  */
-function buildReviewContextSections(selectedRulePaths, readFileCallback, options = {}) {
+export interface ReviewContextSourceFile {
+    path: string;
+    original_line_count: number;
+    output_line_count: number;
+    original_char_count: number;
+    output_char_count: number;
+    removed_code_blocks: number;
+    removed_example_sections: number;
+    removed_example_labels: number;
+    removed_example_content_lines: number;
+    content_sha256: string | null;
+}
+
+export interface ReviewContextSectionsResult {
+    artifact_text: string;
+    artifact_sha256: string | null;
+    source_file_count: number;
+    source_files: ReviewContextSourceFile[];
+    summary: Record<string, unknown>;
+}
+
+export function buildReviewContextSections(selectedRulePaths: string[], readFileCallback: (path: string) => string, options: CompactMarkdownOptions = {}): ReviewContextSectionsResult {
     const stripExamples = options.stripExamples || false;
     const stripCodeBlocks = options.stripCodeBlocks || false;
 
@@ -322,9 +378,3 @@ function buildReviewContextSections(selectedRulePaths, readFileCallback, options
     };
 }
 
-module.exports = {
-    auditReviewArtifactCompaction,
-    buildReviewContextSections,
-    compactMarkdownContent,
-    getCompactReviewBudget
-};

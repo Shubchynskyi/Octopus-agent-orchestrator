@@ -1,14 +1,14 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     getCanonicalEntrypointFile,
     normalizeAgentEntrypointToken,
     getActiveAgentEntrypointFiles,
     convertActiveAgentEntrypointFilesToString,
     getProviderOrchestratorProfileDefinitions,
     getGitHubSkillBridgeProfileDefinitions
-} = require('../../../src/materialization/common.ts');
+} from '../../../src/materialization/common';
 
 describe('getCanonicalEntrypointFile', () => {
     it('maps all source-of-truth values to entrypoint files', () => {

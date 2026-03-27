@@ -1,10 +1,10 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     GATE_COMMANDS,
     getAllShimmedGateNames
-} = require('../../../src/compat/shim-registry.ts');
+} from '../../../src/compat/shim-registry';
 
 // ---------------------------------------------------------------------------
 // GATE_COMMANDS – structural checks

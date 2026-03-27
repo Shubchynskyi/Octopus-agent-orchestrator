@@ -1,14 +1,14 @@
-const childProcess = require('node:child_process');
-const path = require('node:path');
+import * as childProcess from 'node:child_process';
+import * as path from 'node:path';
 
-const { buildNodeFoundation, getRepoRoot } = require('./build.ts');
+import { buildNodeFoundation, getRepoRoot, BuildResult } from './build';
 
-function runNodeFoundationTests() {
-    const repoRoot = getRepoRoot();
-    const buildResult = buildNodeFoundation();
-    const testFiles = buildResult.copiedFiles
-        .filter((relativePath) => relativePath.startsWith('tests/node/') && relativePath.endsWith('.test.js'))
-        .map((relativePath) => path.join(buildResult.buildRoot, ...relativePath.split('/')));
+export function runNodeFoundationTests(): void {
+    const repoRoot: string = getRepoRoot();
+    const buildResult: BuildResult = buildNodeFoundation();
+    const testFiles: string[] = buildResult.copiedFiles
+        .filter((relativePath: string) => relativePath.startsWith('tests/node/') && relativePath.endsWith('.test.js'))
+        .map((relativePath: string) => path.join(buildResult.buildRoot, ...relativePath.split('/')));
 
     if (testFiles.length === 0) {
         throw new Error('No Node foundation tests were found under .node-build/tests/node.');
@@ -26,10 +26,7 @@ function runNodeFoundationTests() {
     console.log('NODE_FOUNDATION_TEST_OK');
 }
 
+// CLI entry point when run directly
 if (require.main === module) {
     runNodeFoundationTests();
 }
-
-module.exports = {
-    runNodeFoundationTests
-};

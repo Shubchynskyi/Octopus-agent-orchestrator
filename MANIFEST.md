@@ -75,7 +75,7 @@ Configured when `EnforceNoAutoCommit=true`:
 
 Kept inside bundle:
 - `package.json` (npm package metadata shipped with the source bundle and synced into deployed workspaces during update)
-- `bin/octopus.js` (npm bootstrap/lifecycle/gate CLI; exposes `octopus`, `oao`, and `octopus-agent-orchestrator`)
+- `bin/octopus.js` (generated npm bootstrap/lifecycle/gate CLI compiled from `src/bin/octopus.ts`; exposes `octopus`, `oao`, and `octopus-agent-orchestrator`)
 - `src/**` (canonical Node/TypeScript runtime for lifecycle commands, validators, and gates)
 - `dist/**` (compiled JavaScript output consumed at runtime)
 - template/**

@@ -1,43 +1,99 @@
-const childProcess = require('node:child_process');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const readline = require('node:readline');
-
-const {
+import * as childProcess from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import * as readline from 'node:readline';
+import {
     ALL_AGENT_ENTRYPOINT_FILES,
     BOOLEAN_FALSE_VALUES,
     BOOLEAN_TRUE_VALUES,
     BREVITY_VALUES,
     DEFAULT_BUNDLE_NAME,
     SOURCE_OF_TRUTH_VALUES
-} = require('../../core/constants.ts');
-const {
-    getCanonicalEntrypointFile,
-    normalizeAgentEntrypointToken: normalizeCommonAgentEntrypointToken
-} = require('../../materialization/common.ts');
+} from '../../core/constants';
+import { getCanonicalEntrypointFile, normalizeAgentEntrypointToken as normalizeCommonAgentEntrypointToken } from '../../materialization/common';
+import { isPathInsideRoot } from '../../core/paths';
+import { registerTempRoot } from '../signal-handler';
 
-const { isPathInsideRoot } = require('../../core/paths.ts');
-const { registerTempRoot } = require('../signal-handler.ts');
+type ColorFormatter = (text: string) => string;
+
+type ParsedOptionValue = string | boolean | string[] | undefined;
+
+type OptionDefinitions = Record<string, { key: string; type: string }>;
+
+export interface PackageJsonLike {
+    name: string;
+    version: string;
+    [key: string]: unknown;
+}
+
+export interface HighlightedPairOptions {
+    labelColor?: ColorFormatter;
+    valueColor?: ColorFormatter;
+    indent?: string;
+}
+
+export interface PromptSingleSelectOption {
+    label: string;
+    value: string;
+}
+
+export interface PromptSingleSelectConfig {
+    title: string;
+    defaultLabel: string;
+    options: PromptSingleSelectOption[];
+    defaultValue: string;
+}
+
+export interface StatusSnapshot {
+    targetRoot: string;
+    bundlePath: string;
+    initAnswersResolvedPath: string;
+    collectedVia: string | null;
+    activeAgentFiles: string | null;
+    sourceOfTruth: string | null;
+    canonicalEntrypoint: string | null;
+    bundlePresent: boolean;
+    primaryInitializationComplete: boolean;
+    agentInitializationComplete: boolean;
+    readyForTasks: boolean;
+    agentInitializationPendingReason:
+        | 'AGENT_HANDOFF_REQUIRED'
+        | 'LANGUAGE_CONFIRMATION_PENDING'
+        | 'ACTIVE_AGENT_FILES_PENDING'
+        | 'AGENT_STATE_STALE'
+        | 'PROJECT_RULES_PENDING'
+        | 'SKILLS_PROMPT_PENDING'
+        | 'VALIDATION_PENDING'
+        | 'AGENT_STATE_INVALID'
+        | 'PROJECT_COMMANDS_PENDING'
+        | null;
+    missingProjectCommands: string[];
+    initAnswersError: string | null;
+    liveVersionError: string | null;
+    agentInitStateError: string | null;
+    commandsRulePath: string;
+    recommendedNextCommand: string;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_REPO_URL = 'https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git';
+export const DEFAULT_REPO_URL = 'https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git';
 
-const SKIPPED_ENTRY_NAMES = new Set([
+export const SKIPPED_ENTRY_NAMES = new Set([
     '__pycache__',
     '.pytest_cache'
 ]);
 
-const SKIPPED_FILE_SUFFIXES = Object.freeze([
+export const SKIPPED_FILE_SUFFIXES = Object.freeze([
     '.pyc',
     '.pyo',
     '.pyd'
 ]);
 
-const DEPLOY_ITEMS = Object.freeze([
+export const DEPLOY_ITEMS = Object.freeze([
     '.gitattributes',
     'bin',
     'src',
@@ -52,7 +108,12 @@ const DEPLOY_ITEMS = Object.freeze([
     'package.json'
 ]);
 
-const COMMAND_SUMMARY = Object.freeze([
+export const COMPILED_RUNTIME_DEPLOY_CANDIDATES = Object.freeze([
+    'dist',
+    '.node-build'
+]);
+
+export const COMMAND_SUMMARY = Object.freeze([
     ['setup', 'First-run onboarding'],
     ['agent-init', 'Finalize mandatory agent onboarding'],
     ['status', 'Show workspace status'],
@@ -73,28 +134,28 @@ const COMMAND_SUMMARY = Object.freeze([
 // Terminal color helpers
 // ---------------------------------------------------------------------------
 
-function supportsColor() {
+export function supportsColor(): boolean {
     if (process.env.NO_COLOR !== undefined) return false;
     if (process.env.FORCE_COLOR !== undefined) return true;
     return Boolean(process.stdout && process.stdout.isTTY);
 }
 
-function colorize(text, code) {
+export function colorize(text: string, code: string): string {
     return supportsColor() ? `\u001b[${code}m${text}\u001b[0m` : text;
 }
 
-function bold(text) { return colorize(text, '1'); }
-function green(text) { return colorize(text, '32'); }
-function cyan(text) { return colorize(text, '36'); }
-function yellow(text) { return colorize(text, '33'); }
-function red(text) { return colorize(text, '31'); }
-function dim(text) { return colorize(text, '2'); }
+export function bold(text: string): string { return colorize(text, '1'); }
+export function green(text: string): string { return colorize(text, '32'); }
+export function cyan(text: string): string { return colorize(text, '36'); }
+export function yellow(text: string): string { return colorize(text, '33'); }
+export function red(text: string): string { return colorize(text, '31'); }
+export function dim(text: string): string { return colorize(text, '2'); }
 
-function padRight(text, width) {
+export function padRight(text: string, width: number): string {
     return String(text).padEnd(width, ' ');
 }
 
-function printHighlightedPair(label, value, options) {
+export function printHighlightedPair(label: string, value: string, options?: HighlightedPairOptions): void {
     const labelColor = (options && options.labelColor) || yellow;
     const valueColor = (options && options.valueColor) || green;
     const indent = (options && options.indent) || '';
@@ -105,39 +166,39 @@ function printHighlightedPair(label, value, options) {
 // TTY / interactive detection
 // ---------------------------------------------------------------------------
 
-function supportsInteractivePrompts() {
+export function supportsInteractivePrompts(): boolean {
     return Boolean(process.stdin && process.stdout && process.stdin.isTTY && process.stdout.isTTY);
 }
 
-function readLineInput(promptText) {
-    return new Promise(function (resolve) {
+export function readLineInput(promptText: string): Promise<string> {
+    return new Promise<string>(function (resolve: (value: string) => void): void {
         const rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout
         });
-        rl.question(promptText, function (value) {
+        rl.question(promptText, function (value: string): void {
             rl.close();
             resolve(String(value || '').trim());
         });
     });
 }
 
-async function promptTextInput(title, defaultValue) {
+export async function promptTextInput(title: string, defaultValue: string): Promise<string> {
     const answer = await readLineInput(`${yellow(`${title} [default: ${defaultValue}]:`)} `);
     const resolvedValue = answer || defaultValue;
     console.log(green(`Selected: ${resolvedValue}`));
     return resolvedValue;
 }
 
-async function promptSingleSelect(config) {
+export async function promptSingleSelect(config: PromptSingleSelectConfig): Promise<string> {
     const { title, defaultLabel, options, defaultValue } = config;
     if (!supportsInteractivePrompts()) {
         throw new Error('Interactive setup requires a TTY terminal.');
     }
-    const defaultIndex = Math.max(0, options.findIndex(function (o) { return o.value === defaultValue; }));
+    const defaultIndex = Math.max(0, options.findIndex(function (option: PromptSingleSelectOption): boolean { return option.value === defaultValue; }));
     console.log(yellow(title));
     console.log(`Default: ${defaultLabel}.`);
-    options.forEach(function (option, index) {
+    options.forEach(function (option: PromptSingleSelectOption, index: number): void {
         console.log(`  ${index + 1}. ${option.label}`);
     });
     while (true) {
@@ -161,11 +222,15 @@ async function promptSingleSelect(config) {
 // Option parsing
 // ---------------------------------------------------------------------------
 
-function parseOptions(argv, definitions, config) {
+export function parseOptions(
+    argv: string[],
+    definitions: OptionDefinitions,
+    config?: { allowPositionals?: boolean; maxPositionals?: number }
+): { options: Record<string, ParsedOptionValue>; positionals: string[] } {
     const allowPositionals = (config && config.allowPositionals) || false;
     const maxPositionals = (config && config.maxPositionals) || 0;
-    const options = {};
-    const positionals = [];
+    const options: Record<string, ParsedOptionValue> = {};
+    const positionals: string[] = [];
 
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index];
@@ -198,10 +263,10 @@ function parseOptions(argv, definitions, config) {
             index += 1;
         }
         if (definition.type === 'string[]') {
-            if (!Array.isArray(options[definition.key])) {
-                options[definition.key] = [];
-            }
-            options[definition.key].push(resolvedValue);
+            const existingValue = options[definition.key];
+            const values = Array.isArray(existingValue) ? existingValue : [];
+            values.push(resolvedValue);
+            options[definition.key] = values;
         } else {
             options[definition.key] = resolvedValue;
         }
@@ -214,11 +279,11 @@ function parseOptions(argv, definitions, config) {
 // Value normalization helpers
 // ---------------------------------------------------------------------------
 
-function normalizeLogicalKey(value) {
+export function normalizeLogicalKey(value: unknown): string {
     return String(value || '').toLowerCase().replace(/[_\-\s]/g, '');
 }
 
-function getInitAnswerValue(answers, logicalName) {
+export function getInitAnswerValue(answers: Record<string, unknown>, logicalName: string): unknown {
     const targetKey = normalizeLogicalKey(logicalName);
     for (const [key, value] of Object.entries(answers)) {
         if (normalizeLogicalKey(key) === targetKey) return value;
@@ -226,7 +291,7 @@ function getInitAnswerValue(answers, logicalName) {
     return null;
 }
 
-function parseBooleanText(value, label) {
+export function parseBooleanText(value: unknown, label: string): boolean {
     if (typeof value === 'boolean') return value;
     if (typeof value === 'number' && Number.isFinite(value) && (value === 0 || value === 1)) return value === 1;
     if (typeof value === 'string') {
@@ -237,7 +302,7 @@ function parseBooleanText(value, label) {
     throw new Error(`${label} must be one of: true, false, yes, no, 1, 0.`);
 }
 
-function tryParseBooleanText(value, fallback) {
+export function tryParseBooleanText(value: unknown, fallback: boolean): boolean {
     try {
         return value === undefined || value === null || String(value).trim() === ''
             ? fallback
@@ -245,30 +310,30 @@ function tryParseBooleanText(value, fallback) {
     } catch (_e) { return fallback; }
 }
 
-function parseOptionalText(value) {
+export function parseOptionalText(value: unknown): string | null {
     if (value === undefined || value === null) return null;
     if (Array.isArray(value)) {
-        const items = value.map(function (item) { return String(item || '').trim(); }).filter(Boolean);
+        const items = value.map(function (item: unknown): string { return String(item || '').trim(); }).filter(Boolean);
         return items.length > 0 ? items.join(', ') : null;
     }
     const text = String(value).trim();
     return text || null;
 }
 
-function parseRequiredText(value, label) {
+export function parseRequiredText(value: unknown, label: string): string {
     const text = String(value || '').trim();
     if (!text) throw new Error(`${label} must not be empty.`);
     return text;
 }
 
-function normalizeSourceOfTruth(value) {
+export function normalizeSourceOfTruth(value: unknown): string {
     const text = parseRequiredText(value, 'SourceOfTruth');
     const match = SOURCE_OF_TRUTH_VALUES.find(function (c) { return c.toLowerCase() === text.toLowerCase(); });
     if (!match) throw new Error(`SourceOfTruth must be one of: ${SOURCE_OF_TRUTH_VALUES.join(', ')}.`);
     return match;
 }
 
-function tryNormalizeSourceOfTruth(value, fallback) {
+export function tryNormalizeSourceOfTruth(value: unknown, fallback?: string): string {
     if (fallback === undefined) fallback = 'Claude';
     try {
         return value === undefined || value === null || String(value).trim() === ''
@@ -277,7 +342,7 @@ function tryNormalizeSourceOfTruth(value, fallback) {
     } catch (_e) { return fallback; }
 }
 
-function normalizeAssistantBrevity(value) {
+export function normalizeAssistantBrevity(value: unknown): string {
     const text = parseRequiredText(value, 'AssistantBrevity').toLowerCase();
     if (!BREVITY_VALUES.includes(text)) {
         throw new Error(`AssistantBrevity must be one of: ${BREVITY_VALUES.join(', ')}.`);
@@ -285,7 +350,7 @@ function normalizeAssistantBrevity(value) {
     return text;
 }
 
-function tryNormalizeAssistantBrevity(value, fallback) {
+export function tryNormalizeAssistantBrevity(value: unknown, fallback?: string): string {
     if (fallback === undefined) fallback = 'concise';
     try {
         return value === undefined || value === null || String(value).trim() === ''
@@ -294,7 +359,7 @@ function tryNormalizeAssistantBrevity(value, fallback) {
     } catch (_e) { return fallback; }
 }
 
-function convertSourceOfTruthToEntrypoint(sourceOfTruth) {
+export function convertSourceOfTruthToEntrypoint(sourceOfTruth: string): string | null {
     try {
         return getCanonicalEntrypointFile(sourceOfTruth);
     } catch (_error) {
@@ -302,18 +367,18 @@ function convertSourceOfTruthToEntrypoint(sourceOfTruth) {
     }
 }
 
-function normalizeAgentEntrypointToken(value) {
+export function normalizeAgentEntrypointToken(value: unknown): string | null {
     try {
-        return normalizeCommonAgentEntrypointToken(value);
+        return normalizeCommonAgentEntrypointToken(String(value || ''));
     } catch (_error) {
         return null;
     }
 }
 
-function normalizeActiveAgentFiles(value, sourceOfTruth) {
+export function normalizeActiveAgentFiles(value: unknown, sourceOfTruth: string): string | null {
     const canonicalEntrypoint = convertSourceOfTruthToEntrypoint(sourceOfTruth);
     const tokens = parseOptionalText(value)
-        ? String(value).split(/[;,]+/).map(normalizeAgentEntrypointToken).filter(Boolean)
+        ? String(value).split(/[;,]+/).map(normalizeAgentEntrypointToken).filter(function (token): token is string { return token !== null; })
         : [];
     const unique = new Set(tokens);
     if (canonicalEntrypoint) unique.add(canonicalEntrypoint);
@@ -321,7 +386,7 @@ function normalizeActiveAgentFiles(value, sourceOfTruth) {
     return ordered.length > 0 ? ordered.join(', ') : null;
 }
 
-function normalizeCollectedVia(value) {
+export function normalizeCollectedVia(value: unknown): string {
     const text = parseOptionalText(value);
     return text || 'AGENT_INIT_PROMPT.md';
 }
@@ -330,21 +395,26 @@ function normalizeCollectedVia(value) {
 // Path helpers
 // ---------------------------------------------------------------------------
 
-function normalizePathValue(value) {
+export function normalizePathValue(value: unknown): string {
     return path.resolve(String(value || '.'));
 }
 
-function toPosixPath(value) {
+export function toPosixPath(value: string): string {
     return value.replace(/\\/g, '/');
 }
 
-function ensureDirectoryExists(directoryPath, label) {
+export function ensureDirectoryExists(directoryPath: string, label: string): void {
     if (!fs.existsSync(directoryPath)) throw new Error(`${label} not found: ${directoryPath}`);
     const stats = fs.lstatSync(directoryPath);
     if (!stats.isDirectory()) throw new Error(`${label} is not a directory: ${directoryPath}`);
 }
 
-function resolvePathInsideRoot(rootPath, pathValue, label, options) {
+export function resolvePathInsideRoot(
+    rootPath: string,
+    pathValue: string,
+    label: string,
+    options?: { requireFile?: boolean; allowMissing?: boolean }
+): string {
     const requireFile = (options && options.requireFile) || false;
     const allowMissing = (options && options.allowMissing) || false;
     let candidatePath = String(pathValue || '').trim();
@@ -365,11 +435,11 @@ function resolvePathInsideRoot(rootPath, pathValue, label, options) {
     return fullPath;
 }
 
-function getBundlePath(targetRoot) {
+export function getBundlePath(targetRoot: string): string {
     return path.join(targetRoot, DEFAULT_BUNDLE_NAME);
 }
 
-function getAgentInitPromptPath(bundlePath) {
+export function getAgentInitPromptPath(bundlePath: string): string {
     return path.join(bundlePath, 'AGENT_INIT_PROMPT.md');
 }
 
@@ -377,7 +447,7 @@ function getAgentInitPromptPath(bundlePath) {
 // JSON helpers
 // ---------------------------------------------------------------------------
 
-function readOptionalJsonFile(filePath) {
+export function readOptionalJsonFile(filePath: string) {
     if (!fs.existsSync(filePath)) return null;
     try {
         const raw = fs.readFileSync(filePath, 'utf8');
@@ -386,11 +456,11 @@ function readOptionalJsonFile(filePath) {
     } catch (_e) { return null; }
 }
 
-function readPackageJson(packageRoot) {
-    return JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
+export function readPackageJson(packageRoot: string): PackageJsonLike {
+    return JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8')) as PackageJsonLike;
 }
 
-function readBundleVersion(sourceRoot) {
+export function readBundleVersion(sourceRoot: string): string {
     const versionPath = path.join(sourceRoot, 'VERSION');
     if (fs.existsSync(versionPath)) return fs.readFileSync(versionPath, 'utf8').trim();
     return readPackageJson(sourceRoot).version;
@@ -400,20 +470,20 @@ function readBundleVersion(sourceRoot) {
 // File copy / bundle deployment
 // ---------------------------------------------------------------------------
 
-function shouldSkipPath(sourcePath) {
+export function shouldSkipPath(sourcePath: string): boolean {
     const entryName = path.basename(sourcePath);
     if (SKIPPED_ENTRY_NAMES.has(entryName)) return true;
     return SKIPPED_FILE_SUFFIXES.some(function (suffix) { return entryName.endsWith(suffix); });
 }
 
-function getCopyBoundaryRoot(sourcePath, stats, bundleRoot) {
+function getCopyBoundaryRoot(sourcePath: string, stats: fs.Stats, bundleRoot: string | undefined): string {
     if (bundleRoot) {
         return path.resolve(bundleRoot);
     }
     return path.resolve(stats.isDirectory() ? sourcePath : path.dirname(sourcePath));
 }
 
-function readSafeSymlinkTarget(sourcePath, boundaryRoot) {
+function readSafeSymlinkTarget(sourcePath: string, boundaryRoot: string): string {
     const linkTarget = fs.readlinkSync(sourcePath);
     const resolvedTarget = path.resolve(path.dirname(sourcePath), linkTarget);
     if (!isPathInsideRoot(boundaryRoot, resolvedTarget)) {
@@ -422,7 +492,7 @@ function readSafeSymlinkTarget(sourcePath, boundaryRoot) {
     return linkTarget;
 }
 
-function copyPath(sourcePath, destinationPath, bundleRoot) {
+export function copyPath(sourcePath: string, destinationPath: string, bundleRoot?: string): void {
     if (shouldSkipPath(sourcePath)) return;
     const stats = fs.lstatSync(sourcePath);
     const boundaryRoot = getCopyBoundaryRoot(sourcePath, stats, bundleRoot);
@@ -444,18 +514,18 @@ function copyPath(sourcePath, destinationPath, bundleRoot) {
     try { fs.chmodSync(destinationPath, stats.mode); } catch (_e) { /* Windows may ignore */ }
 }
 
-function removePathIfExists(targetPath) {
+export function removePathIfExists(targetPath: string): void {
     if (!fs.existsSync(targetPath)) return;
     fs.rmSync(targetPath, { recursive: true, force: true });
 }
 
-function ensureSourceItemExists(sourceRoot, relativePath) {
+export function ensureSourceItemExists(sourceRoot: string, relativePath: string): string {
     const sourcePath = path.join(sourceRoot, relativePath);
     if (!fs.existsSync(sourcePath)) throw new Error(`Bundle source asset is missing: ${relativePath}`);
     return sourcePath;
 }
 
-function deployFreshBundle(sourceRoot, destinationPath) {
+export function deployFreshBundle(sourceRoot: string, destinationPath: string): void {
     if (fs.existsSync(destinationPath)) {
         const stats = fs.lstatSync(destinationPath);
         if (!stats.isDirectory()) throw new Error(`Destination exists and is not a directory: ${destinationPath}`);
@@ -467,9 +537,10 @@ function deployFreshBundle(sourceRoot, destinationPath) {
         const sourcePath = ensureSourceItemExists(sourceRoot, relativePath);
         copyPath(sourcePath, path.join(destinationPath, relativePath), sourceRoot);
     }
+    copyCompiledRuntimeArtifacts(sourceRoot, destinationPath, { replaceExisting: false });
 }
 
-function syncBundleItems(sourceRoot, destinationPath) {
+export function syncBundleItems(sourceRoot: string, destinationPath: string): void {
     if (fs.existsSync(destinationPath) && !fs.lstatSync(destinationPath).isDirectory()) {
         throw new Error(`Bundle path exists and is not a directory: ${destinationPath}`);
     }
@@ -480,48 +551,112 @@ function syncBundleItems(sourceRoot, destinationPath) {
         removePathIfExists(targetPath);
         copyPath(sourcePath, targetPath, sourceRoot);
     }
+    copyCompiledRuntimeArtifacts(sourceRoot, destinationPath, { replaceExisting: true });
+}
+
+function hasCompiledRuntimeRoot(sourceRoot: string, relativePath: string): boolean {
+    return fs.existsSync(path.join(sourceRoot, relativePath, 'src', 'index.js'));
+}
+
+function isRecoverableRuntimeCopyError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+        return false;
+    }
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'MODULE_NOT_FOUND';
+}
+
+function copyCompiledRuntimeArtifacts(
+    sourceRoot: string,
+    destinationPath: string,
+    options: { replaceExisting: boolean }
+): void {
+    const availableCandidates = COMPILED_RUNTIME_DEPLOY_CANDIDATES.filter(function (relativePath: string): boolean {
+        return hasCompiledRuntimeRoot(sourceRoot, relativePath);
+    });
+
+    if (availableCandidates.length === 0) {
+        throw new Error(
+            'Octopus runtime build output not found.\n' +
+            'Run "npm run build" to compile TypeScript sources before bootstrap or install.'
+        );
+    }
+
+    let lastError: unknown = null;
+
+    for (let index = 0; index < availableCandidates.length; index += 1) {
+        const relativePath = availableCandidates[index];
+        const sourcePath = path.join(sourceRoot, relativePath);
+        const targetPath = path.join(destinationPath, relativePath);
+
+        try {
+            if (options.replaceExisting) {
+                removePathIfExists(targetPath);
+            }
+            copyPath(sourcePath, targetPath, sourceRoot);
+            return;
+        } catch (error: unknown) {
+            lastError = error;
+            removePathIfExists(targetPath);
+            const hasFallback = index < availableCandidates.length - 1;
+            if (!hasFallback || !isRecoverableRuntimeCopyError(error)) {
+                throw error;
+            }
+        }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error('Failed to copy compiled runtime artifacts.');
 }
 
 // ---------------------------------------------------------------------------
 // Source acquisition
 // ---------------------------------------------------------------------------
 
-function createMissingExecutableError(executableName) {
+function createMissingExecutableError(executableName: string): Error {
     return new Error(
         `'${executableName}' is not available on this system. ` +
         `Please install ${executableName} and ensure it is on your PATH.`
     );
 }
 
-function runProcess(executableName, args, options) {
+export function runProcess(
+    executableName: string,
+    args: string[],
+    options?: { cwd?: string; description?: string; interactive?: boolean }
+): Promise<void> {
     const cwd = (options && options.cwd) || process.cwd();
     const description = (options && options.description) || executableName;
     const interactive = (options && options.interactive) || false;
-    return new Promise(function (resolve, reject) {
+    return new Promise<void>(function (resolve: () => void, reject: (reason?: unknown) => void): void {
         let settled = false;
         const child = childProcess.spawn(executableName, args, {
             cwd,
             windowsHide: true,
             stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe']
         });
-        function rejectOnce(error) { if (!settled) { settled = true; reject(error); } }
-        function resolveOnce() { if (!settled) { settled = true; resolve(); } }
-        child.once('error', function (error) {
-            if (error && error.code === 'ENOENT') { rejectOnce(createMissingExecutableError(executableName)); return; }
+        function rejectOnce(error: Error): void { if (!settled) { settled = true; reject(error); } }
+        function resolveOnce(): void { if (!settled) { settled = true; resolve(); } }
+        child.once('error', function (error: Error): void {
+            const errno = error as NodeJS.ErrnoException;
+            if (errno.code === 'ENOENT') { rejectOnce(createMissingExecutableError(executableName)); return; }
             rejectOnce(error);
         });
         if (!interactive) {
-            if (child.stdout) { child.stdout.setEncoding('utf8'); child.stdout.on('data', function (chunk) { process.stdout.write(chunk); }); }
-            if (child.stderr) { child.stderr.setEncoding('utf8'); child.stderr.on('data', function (chunk) { process.stderr.write(chunk); }); }
+            if (child.stdout) { child.stdout.setEncoding('utf8'); child.stdout.on('data', function (chunk: string): void { process.stdout.write(chunk); }); }
+            if (child.stderr) { child.stderr.setEncoding('utf8'); child.stderr.on('data', function (chunk: string): void { process.stderr.write(chunk); }); }
         }
-        child.once('close', function (code) {
+        child.once('close', function (code: number | null): void {
             if (code !== 0) { rejectOnce(new Error(`${description} failed with exit code ${code}.`)); return; }
             resolveOnce();
         });
     });
 }
 
-async function acquireSourceRoot(repoUrl, branch, packageRoot) {
+export async function acquireSourceRoot(
+    repoUrl: string | undefined,
+    branch: string | undefined,
+    packageRoot: string
+): Promise<{ sourceRoot: string; bundleVersion: string; cleanup: () => void }> {
     if (!repoUrl && !branch) {
         return {
             sourceRoot: packageRoot,
@@ -553,7 +688,7 @@ async function acquireSourceRoot(repoUrl, branch, packageRoot) {
 // Banner / status display
 // ---------------------------------------------------------------------------
 
-function printBanner(packageJson, title, subtitle) {
+export function printBanner(packageJson: PackageJsonLike, title: string, subtitle: string): void {
     const width = 62;
     const top = `+${'-'.repeat(width - 2)}+`;
     const versionText = `v${packageJson.version}`;
@@ -566,7 +701,7 @@ function printBanner(packageJson, title, subtitle) {
     if (subtitle) console.log(dim(subtitle));
 }
 
-function buildBannerText(packageJson, title, subtitle) {
+export function buildBannerText(packageJson: PackageJsonLike, title: string, subtitle: string): string {
     const width = 62;
     const top = `+${'-'.repeat(width - 2)}+`;
     const versionText = `v${packageJson.version}`;
@@ -578,7 +713,7 @@ function buildBannerText(packageJson, title, subtitle) {
     return lines.join('\n');
 }
 
-function getStageBadge(completed, options) {
+export function getStageBadge(completed: boolean, options?: { warning?: boolean }): string {
     const warning = (options && options.warning) || false;
     const label = completed ? '[x]' : '[ ]';
     if (completed) return green(label);
@@ -586,14 +721,14 @@ function getStageBadge(completed, options) {
     return dim(label);
 }
 
-function getWorkspaceHeadline(snapshot) {
+export function getWorkspaceHeadline(snapshot: StatusSnapshot): string {
     if (snapshot.readyForTasks) return green('Workspace ready');
     if (snapshot.primaryInitializationComplete) return yellow('Agent setup required');
     if (snapshot.bundlePresent) return yellow('Primary setup required');
     return red('Not installed');
 }
 
-function printStatus(snapshot, options) {
+export function printStatus(snapshot: StatusSnapshot, options?: { heading?: string }): void {
     const heading = (options && options.heading) || 'OCTOPUS_STATUS';
     console.log(heading);
     console.log(bold(getWorkspaceHeadline(snapshot)));
@@ -640,14 +775,14 @@ function printStatus(snapshot, options) {
     printCommandSummary();
 }
 
-function printCommandSummary() {
+export function printCommandSummary(): void {
     console.log(bold('Available Commands'));
     for (const [name, description] of COMMAND_SUMMARY) {
         console.log(`  ${padRight(name, 10)} ${description}`);
     }
 }
 
-function printHelp(packageJson) {
+export function printHelp(packageJson: PackageJsonLike): void {
     const sections = [
         [
             `Octopus Agent Orchestrator CLI v${packageJson.version}`,
@@ -718,7 +853,7 @@ function printHelp(packageJson) {
     console.log(sections.map(function (s) { return s.join('\n'); }).join('\n\n'));
 }
 
-function buildHelpText(packageJson) {
+export function buildHelpText(packageJson: PackageJsonLike): string {
     const sections = [
         [
             `Octopus Agent Orchestrator CLI v${packageJson.version}`,
@@ -793,7 +928,7 @@ function buildHelpText(packageJson) {
 // Init-answers reading for status-like flows
 // ---------------------------------------------------------------------------
 
-function readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, commandName) {
+export function readInitAnswersArtifact(targetRoot: string, initAnswersPath: string, bundlePath: string, commandName: string) {
     const resolvedPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
     if (!fs.existsSync(resolvedPath)) {
         throw new Error(
@@ -804,7 +939,7 @@ function readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, comman
     }
     const raw = fs.readFileSync(resolvedPath, 'utf8');
     if (!raw.trim()) throw new Error(`Init answers artifact is empty: ${resolvedPath}`);
-    let answers;
+    let answers: Record<string, unknown>;
     try { answers = JSON.parse(raw); } catch (_e) {
         throw new Error(`Init answers artifact is not valid JSON: ${resolvedPath}`);
     }
@@ -833,66 +968,3 @@ function readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, comman
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
-
-module.exports = {
-    acquireSourceRoot,
-    bold,
-    buildBannerText,
-    buildHelpText,
-    COMMAND_SUMMARY,
-    colorize,
-    convertSourceOfTruthToEntrypoint,
-    copyPath,
-    cyan,
-    DEFAULT_REPO_URL,
-    DEPLOY_ITEMS,
-    deployFreshBundle,
-    dim,
-    ensureDirectoryExists,
-    ensureSourceItemExists,
-    getAgentInitPromptPath,
-    getBundlePath,
-    getInitAnswerValue,
-    getStageBadge,
-    getWorkspaceHeadline,
-    green,
-    normalizeActiveAgentFiles,
-    normalizeAgentEntrypointToken,
-    normalizeAssistantBrevity,
-    normalizeCollectedVia,
-    normalizeLogicalKey,
-    normalizePathValue,
-    normalizeSourceOfTruth,
-    padRight,
-    parseBooleanText,
-    parseOptionalText,
-    parseOptions,
-    parseRequiredText,
-    printBanner,
-    printCommandSummary,
-    printHelp,
-    printHighlightedPair,
-    printStatus,
-    promptSingleSelect,
-    promptTextInput,
-    readBundleVersion,
-    readInitAnswersArtifact,
-    readLineInput,
-    readOptionalJsonFile,
-    readPackageJson,
-    red,
-    removePathIfExists,
-    resolvePathInsideRoot,
-    runProcess,
-    shouldSkipPath,
-    SKIPPED_ENTRY_NAMES,
-    SKIPPED_FILE_SUFFIXES,
-    supportsColor,
-    supportsInteractivePrompts,
-    syncBundleItems,
-    toPosixPath,
-    tryNormalizeAssistantBrevity,
-    tryNormalizeSourceOfTruth,
-    tryParseBooleanText,
-    yellow
-};

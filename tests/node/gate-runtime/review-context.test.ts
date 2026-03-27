@@ -1,13 +1,13 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     compactMarkdownContent,
     getCompactReviewBudget,
     auditReviewArtifactCompaction,
     buildReviewContextSections
-} = require('../../../src/gate-runtime/review-context.ts');
-const { stringSha256 } = require('../../../src/gate-runtime/hash.ts');
+} from '../../../src/gate-runtime/review-context';
+import { stringSha256 } from '../../../src/gate-runtime/hash';
 
 // --- compactMarkdownContent ---
 
@@ -142,13 +142,13 @@ test('auditReviewArtifactCompaction warns on budget exceed', () => {
     });
     assert.equal(result.expected, true);
     assert.ok(result.warning_count > 0);
-    assert.ok(result.warnings.some(w => w.includes('exceeds compact line budget')));
+    assert.ok(result.warnings.some((w: string) => w.includes('exceeds compact line budget')));
 });
 
 // --- buildReviewContextSections ---
 
 test('buildReviewContextSections builds artifact from mock files', () => {
-    const files = {
+    const files: Record<string, string> = {
         'rules/rule-1.md': '# Rule 1\n\nSome content.\n',
         'rules/rule-2.md': '# Rule 2\n\n## Example\n\nSkip this.\n\n## Important\n\nKeep this.\n'
     };
@@ -167,16 +167,17 @@ test('buildReviewContextSections builds artifact from mock files', () => {
     assert.ok(!result.artifact_text.includes('Skip this.'));
     assert.ok(result.artifact_text.includes('Keep this.'));
     assert.ok(result.artifact_text.includes('> Example section omitted'));
-    assert.match(result.artifact_sha256, /^[0-9a-f]{64}$/);
+    assert.match(result.artifact_sha256!, /^[0-9a-f]{64}$/);
 
     // Verify summary totals
-    assert.ok(result.summary.original_line_count > 0);
-    assert.ok(result.summary.original_char_count > 0);
-    assert.ok(result.summary.original_token_count_estimate > 0);
+    const summary = result.summary as Record<string, number>;
+    assert.ok(summary.original_line_count > 0);
+    assert.ok(summary.original_char_count > 0);
+    assert.ok(summary.original_token_count_estimate > 0);
 
     // Verify each file entry has content_sha256
     for (const entry of result.source_files) {
-        assert.match(entry.content_sha256, /^[0-9a-f]{64}$/);
+        assert.match(entry.content_sha256!, /^[0-9a-f]{64}$/);
     }
 });
 

@@ -1,14 +1,13 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const { buildReviewContextSections } = require('../gate-runtime/review-context.ts');
-const { normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } = require('./helpers.ts');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { buildReviewContextSections } from '../gate-runtime/review-context';
+import { normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
 
 /**
  * Rule pack configuration by review type.
  * Matches Python get_rule_pack.
  */
-function getRulePack(reviewType) {
+export function getRulePack(reviewType: string) {
     if (reviewType === 'code') {
         return {
             full: ['00-core.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '70-security.md', '80-task-workflow.md'],
@@ -40,9 +39,9 @@ function getRulePack(reviewType) {
 /**
  * Resolve the output path for review context.
  */
-function resolveContextOutputPath(explicitOutputPath, preflightPath, reviewType, repoRoot) {
+export function resolveContextOutputPath(explicitOutputPath: string, preflightPath: string, reviewType: string, repoRoot: string): string {
     if (explicitOutputPath && explicitOutputPath.trim()) {
-        return resolvePathInsideRepo(explicitOutputPath, repoRoot, { allowMissing: true });
+        return resolvePathInsideRepo(explicitOutputPath, repoRoot, { allowMissing: true }) as string;
     }
     const preflightDir = path.dirname(preflightPath);
     const baseName = path.basename(preflightPath, path.extname(preflightPath)).replace(/-preflight$/, '');
@@ -52,9 +51,9 @@ function resolveContextOutputPath(explicitOutputPath, preflightPath, reviewType,
 /**
  * Resolve scoped diff metadata path.
  */
-function resolveScopedDiffMetadataPath(explicitPath, preflightPath, reviewType, repoRoot) {
+export function resolveScopedDiffMetadataPath(explicitPath: string, preflightPath: string, reviewType: string, repoRoot: string): string {
     if (explicitPath && explicitPath.trim()) {
-        return resolvePathInsideRepo(explicitPath, repoRoot, { allowMissing: true });
+        return resolvePathInsideRepo(explicitPath, repoRoot, { allowMissing: true }) as string;
     }
     const preflightDir = path.dirname(preflightPath);
     const baseName = path.basename(preflightPath, path.extname(preflightPath)).replace(/-preflight$/, '');
@@ -64,7 +63,7 @@ function resolveScopedDiffMetadataPath(explicitPath, preflightPath, reviewType, 
 /**
  * Convert a value to non-negative integer or null.
  */
-function toNonNegativeInt(value) {
+export function toNonNegativeInt(value: unknown): number | null {
     if (value == null || typeof value === 'boolean') return null;
     if (typeof value === 'number') return value >= 0 ? Math.floor(value) : null;
     try {
@@ -73,11 +72,31 @@ function toNonNegativeInt(value) {
     } catch { return null; }
 }
 
+interface TokenEconomyConfig {
+    enabled?: unknown;
+    enabled_depths?: unknown;
+    strip_examples?: unknown;
+    strip_code_blocks?: unknown;
+    scoped_diffs?: unknown;
+    compact_reviewer_output?: unknown;
+    fail_tail_lines?: unknown;
+}
+
+export interface BuildReviewContextOptions {
+    reviewType: string;
+    depth: number;
+    preflightPath: string;
+    tokenEconomyConfigPath: string;
+    scopedDiffMetadataPath: string;
+    outputPath: string;
+    repoRoot: string;
+}
+
 /**
  * Build review context for a specific review type and depth.
  * Builds the review-context artifact shape for the Node gate runtime.
  */
-function buildReviewContext(options) {
+export function buildReviewContext(options: BuildReviewContextOptions) {
     const reviewType = options.reviewType;
     const depth = options.depth;
     const preflightPath = options.preflightPath;
@@ -87,9 +106,9 @@ function buildReviewContext(options) {
     const repoRoot = options.repoRoot;
 
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
-    let tokenConfig = {};
+    let tokenConfig: TokenEconomyConfig = {};
     if (tokenEconomyConfigPath && fs.existsSync(tokenEconomyConfigPath) && fs.statSync(tokenEconomyConfigPath).isFile()) {
-        tokenConfig = JSON.parse(fs.readFileSync(tokenEconomyConfigPath, 'utf8'));
+        tokenConfig = JSON.parse(fs.readFileSync(tokenEconomyConfigPath, 'utf8')) as TokenEconomyConfig;
     }
 
     const enabled = parseBool(tokenConfig.enabled);
@@ -172,7 +191,7 @@ function buildReviewContext(options) {
 
     // Build the rule context artifact using gate-runtime
     const ruleContextArtifactPath = outputPath.replace(/\.json$/, '.md');
-    const readFileCallback = (rulePath) => {
+    const readFileCallback = (rulePath: string): string => {
         const resolved = path.isAbsolute(rulePath) ? rulePath : path.resolve(repoRoot, rulePath);
         try { return fs.readFileSync(resolved, 'utf8'); } catch { return ''; }
     };
@@ -183,7 +202,7 @@ function buildReviewContext(options) {
 
     // Write rule context artifact
     fs.mkdirSync(path.dirname(ruleContextArtifactPath), { recursive: true });
-    fs.writeFileSync(ruleContextArtifactPath, ruleContextSections.artifact_text, 'utf8');
+    fs.writeFileSync(ruleContextArtifactPath, String(ruleContextSections.artifact_text), 'utf8');
 
     const ruleContextArtifact = {
         artifact_path: normalizePath(ruleContextArtifactPath),
@@ -249,11 +268,3 @@ function buildReviewContext(options) {
 
     return result;
 }
-
-module.exports = {
-    buildReviewContext,
-    getRulePack,
-    resolveContextOutputPath,
-    resolveScopedDiffMetadataPath,
-    toNonNegativeInt
-};

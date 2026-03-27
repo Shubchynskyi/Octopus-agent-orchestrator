@@ -1,10 +1,10 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const childProcess = require('node:child_process');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as childProcess from 'node:child_process';
 
-function findRepoRoot(startDir) {
+function findRepoRoot(startDir: string): string {
     let current = path.resolve(startDir);
     while (true) {
         const packageJsonPath = path.join(current, 'package.json');
@@ -22,7 +22,7 @@ function findRepoRoot(startDir) {
 
 const CLI_PATH = path.join(findRepoRoot(__dirname), 'bin', 'octopus.js');
 
-function runCli(args) {
+function runCli(args: string[]) {
     const result = childProcess.spawnSync(
         process.execPath,
         [CLI_PATH, ...args],

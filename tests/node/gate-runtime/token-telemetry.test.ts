@@ -1,7 +1,7 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     DEFAULT_TOKEN_ESTIMATOR,
     LEGACY_TOKEN_ESTIMATOR,
     estimateTokenCountFromChars,
@@ -9,7 +9,7 @@ const {
     buildOutputTelemetry,
     coerceIntLike,
     formatVisibleSavingsLine
-} = require('../../../src/gate-runtime/token-telemetry.ts');
+} from '../../../src/gate-runtime/token-telemetry';
 
 // --- Constants ---
 
@@ -112,8 +112,8 @@ test('buildOutputTelemetry returns correct shape for identical input/output', ()
 
     assert.equal(result.raw_line_count, 2);
     assert.equal(result.filtered_line_count, 2);
-    assert.equal(result.estimated_saved_chars, 0);
-    assert.equal(result.estimated_saved_tokens, 0);
+    assert.equal((result as Record<string, number>).estimated_saved_chars, 0);
+    assert.equal((result as Record<string, number>).estimated_saved_tokens, 0);
     assert.equal(result.filter_mode, 'passthrough');
     assert.equal(result.fallback_mode, 'none');
     assert.equal(result.parser_mode, 'NONE');
@@ -131,8 +131,8 @@ test('buildOutputTelemetry shows savings when output is smaller', () => {
 
     assert.equal(result.raw_line_count, 4);
     assert.equal(result.filtered_line_count, 1);
-    assert.ok(result.estimated_saved_chars > 0);
-    assert.ok(result.estimated_saved_tokens > 0);
+    assert.ok((result as Record<string, number>).estimated_saved_chars > 0);
+    assert.ok((result as Record<string, number>).estimated_saved_tokens > 0);
     assert.equal(result.filter_mode, 'profile:test');
     assert.equal(result.parser_mode, 'FULL');
 });
@@ -165,7 +165,7 @@ test('formatVisibleSavingsLine formats with percentage when raw estimate availab
         raw_token_count_estimate: 100
     };
     const result = formatVisibleSavingsLine(telemetry);
-    assert.match(result, /^\[token-economy\] saved ~50 tokens \(~50%\)$/);
+    assert.match(result!, /^\[token-economy\] saved ~50 tokens \(~50%\)$/);
 });
 
 test('formatVisibleSavingsLine uses custom label', () => {
@@ -177,7 +177,7 @@ test('formatVisibleSavingsLine uses custom label', () => {
         filtered_char_count: 100
     };
     const result = formatVisibleSavingsLine(telemetry, { label: 'custom' });
-    assert.match(result, /^\[custom\] saved ~25 tokens$/);
+    assert.match(result!, /^\[custom\] saved ~25 tokens$/);
 });
 
 test('formatVisibleSavingsLine returns null when savings below minimum', () => {

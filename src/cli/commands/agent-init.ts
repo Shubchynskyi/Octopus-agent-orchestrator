@@ -1,22 +1,18 @@
-const path = require('node:path');
-
-const {
-    DEFAULT_BUNDLE_NAME,
-    DEFAULT_INIT_ANSWERS_RELATIVE_PATH
-} = require('../../core/constants.ts');
-const { runAgentInit } = require('../../lifecycle/agent-init.ts');
-const { getStatusSnapshot } = require('../../validators/status.ts');
-
-const {
+import * as path from 'node:path';
+import { DEFAULT_BUNDLE_NAME, DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../../core/constants';
+import { runAgentInit } from '../../lifecycle/agent-init';
+import { getStatusSnapshot } from '../../validators/status';
+import {
     bold,
     normalizePathValue,
     parseOptions,
+    PackageJsonLike,
     printBanner,
     printHelp,
     printStatus
-} = require('./cli-helpers.ts');
+} from './cli-helpers';
 
-const AGENT_INIT_DEFINITIONS = {
+export const AGENT_INIT_DEFINITIONS = {
     '--target-root': { key: 'targetRoot', type: 'string' },
     '--bundle-root': { key: 'bundleRoot', type: 'string' },
     '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
@@ -25,8 +21,8 @@ const AGENT_INIT_DEFINITIONS = {
     '--skills-prompted': { key: 'skillsPrompted', type: 'string' }
 };
 
-function buildAgentInitOutput(result) {
-    const lines = [];
+export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): string {
+    const lines: string[] = [];
     lines.push(`Verify: ${result.verifyPassed ? 'PASS' : 'FAIL'}`);
     lines.push(`ManifestValidation: ${result.manifestPassed ? 'PASS' : 'FAIL'}`);
     lines.push(`ProjectRulesUpdated: ${result.projectRulesUpdated ? 'True' : 'False'}`);
@@ -37,12 +33,12 @@ function buildAgentInitOutput(result) {
     return lines.join('\n');
 }
 
-function buildAgentInitNextStep(result) {
+export function buildAgentInitNextStep(result: ReturnType<typeof runAgentInit>): string {
     if (result.readyForTasks) {
         return 'Next: Execute task T-001 depth=2';
     }
 
-    const blockers = [];
+    const blockers: string[] = [];
     if (!result.projectRulesUpdated) {
         blockers.push('project rules are not marked as updated');
     }
@@ -59,13 +55,13 @@ function buildAgentInitNextStep(result) {
     return `Next: resolve blockers and rerun agent-init (${blockers.join('; ')})`;
 }
 
-function handleAgentInit(commandArgv, packageJson) {
+export function handleAgentInit(commandArgv: string[], packageJson: PackageJsonLike): ReturnType<typeof runAgentInit> | null {
     const { options } = parseOptions(commandArgv, AGENT_INIT_DEFINITIONS);
 
     if (options.help) { printHelp(packageJson); return null; }
     if (options.version) { console.log(packageJson.version); return null; }
 
-    if (!options.activeAgentFiles) {
+    if (typeof options.activeAgentFiles !== 'string' || !options.activeAgentFiles.trim()) {
         throw new Error('--active-agent-files is required for agent-init.');
     }
     if (options.projectRulesUpdated === undefined) {
@@ -75,11 +71,13 @@ function handleAgentInit(commandArgv, packageJson) {
         throw new Error('--skills-prompted is required for agent-init.');
     }
 
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    const bundleRoot = options.bundleRoot
+    const targetRoot = normalizePathValue(typeof options.targetRoot === 'string' ? options.targetRoot : '.');
+    const bundleRoot = typeof options.bundleRoot === 'string'
         ? normalizePathValue(options.bundleRoot)
         : path.join(targetRoot, DEFAULT_BUNDLE_NAME);
-    const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+    const initAnswersPath = typeof options.initAnswersPath === 'string'
+        ? options.initAnswersPath
+        : DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
 
     console.log('OCTOPUS_AGENT_INIT');
     printBanner(packageJson, 'Finalize agent onboarding', 'Runs install answer-dependent refresh, verify, manifest validation, and writes agent-init state.');
@@ -100,10 +98,3 @@ function handleAgentInit(commandArgv, packageJson) {
     printStatus(getStatusSnapshot(targetRoot, initAnswersPath), { heading: 'OCTOPUS_AGENT_INIT_STATUS' });
     return result;
 }
-
-module.exports = {
-    AGENT_INIT_DEFINITIONS,
-    buildAgentInitNextStep,
-    buildAgentInitOutput,
-    handleAgentInit
-};

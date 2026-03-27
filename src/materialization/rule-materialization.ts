@@ -1,25 +1,41 @@
-const fs = require('node:fs');
-const path = require('node:path');
-const { pathExists, readTextFile } = require('../core/fs.ts');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { pathExists, readTextFile } from '../core/fs';
 
-const RULE_FILES = Object.freeze([
+interface SelectRuleSourceOptions {
+    targetRoot: string;
+    liveRuleRoot: string;
+    templateRuleRoot: string;
+}
+
+interface RuleSourceSelection {
+    path: string;
+    origin: 'template' | 'live-existing' | 'legacy-docs';
+}
+
+interface ProjectMemorySummarySection {
+    heading: string;
+    content: string;
+}
+
+export const RULE_FILES = Object.freeze([
     '00-core.md', '10-project-context.md', '15-project-memory.md',
     '20-architecture.md', '30-code-style.md', '35-strict-coding-rules.md',
     '40-commands.md', '50-structure-and-docs.md', '60-operating-rules.md',
     '70-security.md', '80-task-workflow.md', '90-skill-catalog.md'
 ]);
 
-const GENERATED_RULE_FILES = Object.freeze(['15-project-memory.md']);
+export const GENERATED_RULE_FILES = Object.freeze(['15-project-memory.md']);
 
-const CONTEXT_RULE_FILES = Object.freeze([
+export const CONTEXT_RULE_FILES = Object.freeze([
     '10-project-context.md', '20-architecture.md', '30-code-style.md',
     '40-commands.md', '50-structure-and-docs.md', '60-operating-rules.md'
 ]);
 
-const DISCOVERY_AUGMENTED_RULE_FILES = CONTEXT_RULE_FILES;
+export const DISCOVERY_AUGMENTED_RULE_FILES = CONTEXT_RULE_FILES;
 
-const LANGUAGE_PLACEHOLDER = '{{ASSISTANT_RESPONSE_LANGUAGE}}';
-const BREVITY_PLACEHOLDER = '{{ASSISTANT_RESPONSE_BREVITY}}';
+export const LANGUAGE_PLACEHOLDER = '{{ASSISTANT_RESPONSE_LANGUAGE}}';
+export const BREVITY_PLACEHOLDER = '{{ASSISTANT_RESPONSE_BREVITY}}';
 
 /**
  * Selects the best source for a rule file following priority rules:
@@ -27,9 +43,8 @@ const BREVITY_PLACEHOLDER = '{{ASSISTANT_RESPONSE_BREVITY}}';
  * - Context rules (10-60): legacy > live > template
  * - Other rules: live > template > legacy
  */
-function selectRuleSource(ruleFile, options) {
+export function selectRuleSource(ruleFile: string, options: SelectRuleSourceOptions): RuleSourceSelection | null {
     const { targetRoot, liveRuleRoot, templateRuleRoot } = options;
-    const path = require('node:path');
 
     const legacyCandidate = path.join(targetRoot, 'docs/agent-rules', ruleFile);
     const liveCandidate = path.join(liveRuleRoot, ruleFile);
@@ -56,7 +71,7 @@ function selectRuleSource(ruleFile, options) {
 /**
  * Applies project discovery overlay to context rules (10-60).
  */
-function applyContextDefaults(content, ruleFile, discoveryOverlay) {
+export function applyContextDefaults(content: string, ruleFile: string, discoveryOverlay: string | null | undefined): string {
     if (!DISCOVERY_AUGMENTED_RULE_FILES.includes(ruleFile) || !discoveryOverlay) {
         return content;
     }
@@ -74,7 +89,7 @@ function applyContextDefaults(content, ruleFile, discoveryOverlay) {
 /**
  * Applies assistant language/brevity defaults to 00-core.md.
  */
-function applyAssistantDefaults(content, ruleFile, assistantLanguage, assistantBrevity) {
+export function applyAssistantDefaults(content: string, ruleFile: string, assistantLanguage: string, assistantBrevity: string): string {
     if (ruleFile !== '00-core.md') return content;
 
     let updated = content
@@ -101,7 +116,7 @@ function applyAssistantDefaults(content, ruleFile, assistantLanguage, assistantB
     return updated;
 }
 
-function escapeRegex(text) {
+function escapeRegex(text: string): string {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
@@ -109,7 +124,7 @@ function escapeRegex(text) {
  * Generates a read-only summary of project-memory sources for agent-rules.
  * If the directory is absent or has no substantive content, returns a stub.
  */
-function generateProjectMemorySummary(projectMemoryDir, timestampIso) {
+export function generateProjectMemorySummary(projectMemoryDir: string, timestampIso: string): string {
     const HEADER = '<!-- DO NOT EDIT — regenerated from project-memory/ -->';
     const TITLE = '# 15 · Project Memory Summary';
 
@@ -130,7 +145,7 @@ function generateProjectMemorySummary(projectMemoryDir, timestampIso) {
         ].join('\r\n');
     }
 
-    let entries;
+    let entries: fs.Dirent[];
     try {
         entries = fs.readdirSync(projectMemoryDir, { withFileTypes: true });
     } catch {
@@ -141,8 +156,8 @@ function generateProjectMemorySummary(projectMemoryDir, timestampIso) {
     }
 
     const mdFiles = entries
-        .filter(e => e.isFile() && e.name.toLowerCase().endsWith('.md') && e.name.toLowerCase() !== 'readme.md')
-        .map(e => e.name)
+        .filter((entry: fs.Dirent) => entry.isFile() && entry.name.toLowerCase().endsWith('.md') && entry.name.toLowerCase() !== 'readme.md')
+        .map((entry: fs.Dirent) => entry.name)
         .sort();
 
     if (mdFiles.length === 0) {
@@ -155,7 +170,7 @@ function generateProjectMemorySummary(projectMemoryDir, timestampIso) {
     }
 
     const lines = [...preamble];
-    const provenanceRows = [];
+    const provenanceRows: Array<{ heading: string; source: string }> = [];
     let hasContent = false;
 
     for (const fileName of mdFiles) {
@@ -200,12 +215,12 @@ function generateProjectMemorySummary(projectMemoryDir, timestampIso) {
  * Extracts level-2 heading sections that have non-empty content after stripping HTML comments.
  * Comments are stripped from the full text first so headings inside comments are ignored.
  */
-function extractNonEmptySections(markdown) {
+export function extractNonEmptySections(markdown: string): ProjectMemorySummarySection[] {
     const cleaned = stripHtmlComments(markdown);
     const lines = cleaned.split(/\r?\n/);
-    const sections = [];
-    let currentHeading = null;
-    let currentLines = [];
+    const sections: ProjectMemorySummarySection[] = [];
+    let currentHeading: string | null = null;
+    let currentLines: string[] = [];
 
     for (const line of lines) {
         const h2Match = line.match(/^##\s+(.+)$/);
@@ -233,21 +248,6 @@ function extractNonEmptySections(markdown) {
     return sections;
 }
 
-function stripHtmlComments(text) {
+export function stripHtmlComments(text: string): string {
     return text.replace(/<!--[\s\S]*?-->/g, '');
 }
-
-module.exports = {
-    applyAssistantDefaults,
-    applyContextDefaults,
-    BREVITY_PLACEHOLDER,
-    CONTEXT_RULE_FILES,
-    DISCOVERY_AUGMENTED_RULE_FILES,
-    extractNonEmptySections,
-    GENERATED_RULE_FILES,
-    generateProjectMemorySummary,
-    LANGUAGE_PLACEHOLDER,
-    RULE_FILES,
-    selectRuleSource,
-    stripHtmlComments
-};

@@ -1,18 +1,18 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const { runCheckUpdate } = require('../../../src/lifecycle/check-update.ts');
-const { runUpdate } = require('../../../src/lifecycle/update.ts');
-const {
+import { runCheckUpdate } from '../../../src/lifecycle/check-update';
+import { runUpdate } from '../../../src/lifecycle/update';
+import {
     findSnapshotByVersion,
     runRollback,
     runRollbackToVersion,
     runSnapshotRollback
-} = require('../../../src/lifecycle/rollback.ts');
-const { removePathRecursive } = require('../../../src/lifecycle/common.ts');
+} from '../../../src/lifecycle/rollback';
+import { removePathRecursive } from '../../../src/lifecycle/common';
 
 const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
 
@@ -27,7 +27,7 @@ function findRepoRoot() {
     throw new Error('Cannot find repo root');
 }
 
-function copyDirRecursive(src, dst) {
+function copyDirRecursive(src: string, dst: string) {
     fs.mkdirSync(dst, { recursive: true });
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
         const srcPath = path.join(src, entry.name);
@@ -40,7 +40,7 @@ function copyDirRecursive(src, dst) {
     }
 }
 
-function setupUpdateWorkspace(repoRoot) {
+function setupUpdateWorkspace(repoRoot: string) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-rollback-'));
     const bundle = path.join(tmpDir, 'Octopus-agent-orchestrator');
     fs.mkdirSync(bundle, { recursive: true });
@@ -73,7 +73,7 @@ function setupUpdateWorkspace(repoRoot) {
     };
 }
 
-function injectBundleUpdate(bundleRoot, updateMarker, nextVersion) {
+function injectBundleUpdate(bundleRoot: string, updateMarker: string, nextVersion: string) {
     const versionPath = path.join(bundleRoot, 'VERSION');
     const templateClaudePath = path.join(bundleRoot, 'template', 'CLAUDE.md');
     const currentTemplate = fs.readFileSync(templateClaudePath, 'utf8');
@@ -142,7 +142,7 @@ describe('runRollback (snapshot mode)', () => {
             assert.equal(rollbackResult.rollbackVersion, baselineVersion);
             assert.equal(fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(), baselineVersion);
             assert.equal(fs.readFileSync(path.join(bundleRoot, 'template', 'CLAUDE.md'), 'utf8'), baselineTemplateClaude);
-            assert.equal(rollbackResult.bundleRestoreStatus, 'SUCCESS');
+            assert.equal(rollbackResult.restoreStatus, 'SUCCESS');
             assert.ok(fs.existsSync(path.join(projectRoot, rollbackResult.rollbackReportPath)));
         } finally {
             removePathRecursive(projectRoot);
@@ -298,12 +298,12 @@ describe('runRollback (version mode)', () => {
             });
 
             assert.equal(rollbackResult.rollbackMode, 'version');
-            assert.equal(rollbackResult.targetVersion, '1.0.0');
-            assert.equal(rollbackResult.sourceType, 'path');
+            assert.equal((rollbackResult as Record<string, unknown>).targetVersion, '1.0.0');
+            assert.equal((rollbackResult as Record<string, unknown>).sourceType, 'path');
             assert.equal(rollbackResult.restoreStatus, 'SUCCESS');
-            assert.equal(rollbackResult.syncStatus, 'SUCCESS');
-            assert.equal(rollbackResult.installStatus, 'PASS');
-            assert.equal(rollbackResult.materializationStatus, 'PASS');
+            assert.equal((rollbackResult as Record<string, unknown>).syncStatus, 'SUCCESS');
+            assert.equal((rollbackResult as Record<string, unknown>).installStatus, 'PASS');
+            assert.equal((rollbackResult as Record<string, unknown>).materializationStatus, 'PASS');
             assert.equal(rollbackResult.rollbackVersion, '1.0.0');
             assert.equal(rollbackResult.updatedVersion, '1.0.0');
             assert.equal(fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(), '1.0.0');
@@ -373,7 +373,7 @@ describe('runRollback (version mode)', () => {
             });
 
             assert.equal(rollbackResult.rollbackMode, 'version');
-            assert.equal(rollbackResult.sourceType, 'snapshot');
+            assert.equal((rollbackResult as Record<string, unknown>).sourceType, 'snapshot');
             assert.equal(rollbackResult.restoreStatus, 'SUCCESS');
             assert.equal(rollbackResult.rollbackVersion, baselineVersion);
             assert.equal(fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(), baselineVersion);
@@ -495,8 +495,8 @@ describe('runRollback (version mode)', () => {
 
             assert.equal(dryResult.rollbackMode, 'version');
             assert.equal(dryResult.restoreStatus, 'SKIPPED_DRY_RUN');
-            assert.equal(dryResult.syncStatus, 'SKIPPED_DRY_RUN');
-            assert.equal(dryResult.installStatus, 'SKIPPED_DRY_RUN');
+            assert.equal((dryResult as Record<string, unknown>).syncStatus, 'SKIPPED_DRY_RUN');
+            assert.equal((dryResult as Record<string, unknown>).installStatus, 'SKIPPED_DRY_RUN');
             assert.equal(dryResult.safetySnapshotCreated, false);
             // VERSION should be unchanged
             assert.equal(fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(), '9.9.9');

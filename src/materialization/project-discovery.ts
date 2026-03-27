@@ -1,17 +1,39 @@
-const fs = require('node:fs');
-const path = require('node:path');
-const childProcess = require('node:child_process');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as childProcess from 'node:child_process';
+import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
+import { normalizeRelativePath } from '../core/paths';
+import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
 
-const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
-const { normalizeRelativePath } = require('../core/paths.ts');
-const { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } = require('../core/subprocess.ts');
+interface StackSignal {
+    name: string;
+    pattern: RegExp;
+}
 
-const EXCLUDED_PATH_FRAGMENTS = Object.freeze([
+interface StackEvidence {
+    name: string;
+    matches: string[];
+}
+
+export interface ProjectDiscovery {
+    source: string;
+    fileCount: number;
+    detectedStacks: string[];
+    stackEvidence: StackEvidence[];
+    topLevelDirectories: string[];
+    rootFiles: string[];
+    runtimePathHints: string[];
+    suggestedCommands: string[];
+    relativeFiles: string[];
+    sampleFiles: string[];
+}
+
+export const EXCLUDED_PATH_FRAGMENTS: readonly string[] = Object.freeze([
     '/.git/', '/node_modules/', '/.next/', '/dist/', '/build/',
     '/target/', '/bin/', '/obj/', '/Octopus-agent-orchestrator/'
 ]);
 
-const STACK_SIGNALS = Object.freeze([
+export const STACK_SIGNALS: readonly StackSignal[] = Object.freeze([
     { name: 'Node.js or JavaScript', pattern: /(^|\/)package\.json$/ },
     { name: 'TypeScript', pattern: /(^|\/)tsconfig(\.[^/]+)?\.json$/ },
     { name: 'Java or JVM', pattern: /(^\/)(pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?)$/ },
@@ -24,15 +46,15 @@ const STACK_SIGNALS = Object.freeze([
     { name: 'Containerization', pattern: /(^|\/)Dockerfile(\..+)?$|(^|\/)docker-compose(\.[^/]+)?\.ya?ml$/ }
 ]);
 
-const EXCLUDED_TOP_LEVEL_DIRS = new Set([
+export const EXCLUDED_TOP_LEVEL_DIRS = new Set([
     'Octopus-agent-orchestrator', '.git', 'node_modules', 'dist', 'build', 'target', 'bin', 'obj'
 ]);
 
 /**
  * Scans the project for stack signals, file listings, and directory structure.
  */
-function getProjectDiscovery(targetRoot) {
-    let relativeFiles = [];
+export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
+    let relativeFiles: string[] = [];
     let discoverySource = 'filesystem_scan';
 
     // Try git-based discovery first
@@ -49,8 +71,8 @@ function getProjectDiscovery(targetRoot) {
             });
 
             if (tracked.status === 0 && untracked.status === 0) {
-                const trackedFiles = (tracked.stdout || '').split('\n').filter((l) => l.trim());
-                const untrackedFiles = (untracked.stdout || '').split('\n').filter((l) => l.trim());
+                const trackedFiles = (tracked.stdout || '').split('\n').filter((l: string) => l.trim());
+                const untrackedFiles = (untracked.stdout || '').split('\n').filter((l: string) => l.trim());
                 relativeFiles = [...new Set([...trackedFiles, ...untrackedFiles])].sort();
                 discoverySource = 'git_index_and_worktree';
             }
@@ -65,20 +87,20 @@ function getProjectDiscovery(targetRoot) {
     }
 
     // Filter excluded paths
-    const filteredFiles = relativeFiles
-        .map((f) => normalizeRelativePath(f))
-        .filter((f) => {
+    const filteredFiles: string[] = relativeFiles
+        .map((f: string) => normalizeRelativePath(f))
+        .filter((f: string) => {
             if (!f) return false;
             const wrapped = `/${f}/`;
             return !EXCLUDED_PATH_FRAGMENTS.some((frag) => wrapped.includes(frag));
         });
-    const uniqueFiles = [...new Set(filteredFiles)].sort();
+    const uniqueFiles: string[] = [...new Set(filteredFiles)].sort();
 
     // Detect stacks
-    const detectedStacks = [];
-    const stackEvidence = [];
+    const detectedStacks: string[] = [];
+    const stackEvidence: StackEvidence[] = [];
     for (const signal of STACK_SIGNALS) {
-        const matches = uniqueFiles.filter((f) => signal.pattern.test(f)).slice(0, 8);
+        const matches = uniqueFiles.filter((f: string) => signal.pattern.test(f)).slice(0, 8);
         if (matches.length > 0) {
             detectedStacks.push(signal.name);
             stackEvidence.push({
@@ -89,7 +111,7 @@ function getProjectDiscovery(targetRoot) {
     }
 
     // Get top-level directories
-    let topLevelDirectories = [];
+    let topLevelDirectories: string[] = [];
     try {
         const entries = fs.readdirSync(targetRoot, { withFileTypes: true });
         topLevelDirectories = entries
@@ -101,7 +123,7 @@ function getProjectDiscovery(targetRoot) {
     }
 
     // Suggest commands
-    const suggestedCommands = [];
+    const suggestedCommands: string[] = [];
     if (detectedStacks.includes('Node.js or JavaScript')) {
         suggestedCommands.push('npm run test', 'npm run lint', 'npm run build');
     }
@@ -121,7 +143,7 @@ function getProjectDiscovery(targetRoot) {
         suggestedCommands.push('dotnet test');
     }
 
-    const rootFiles = uniqueFiles.filter((filePath) => !filePath.includes('/')).slice(0, 20);
+    const rootFiles = uniqueFiles.filter((filePath: string) => !filePath.includes('/')).slice(0, 20);
     const runtimePathHints = collectRuntimePathHints(uniqueFiles);
 
     return {
@@ -138,10 +160,10 @@ function getProjectDiscovery(targetRoot) {
     };
 }
 
-function collectRuntimePathHints(relativeFiles) {
+export function collectRuntimePathHints(relativeFiles: string[]): string[] {
     const runtimeRootTokens = new Set(['src', 'app', 'apps', 'backend', 'frontend', 'web', 'api', 'services', 'packages']);
-    const hints = [];
-    const seen = new Set();
+    const hints: string[] = [];
+    const seen = new Set<string>();
 
     for (const filePath of relativeFiles) {
         const segments = String(filePath || '').split('/').filter(Boolean);
@@ -172,8 +194,8 @@ function collectRuntimePathHints(relativeFiles) {
     return hints;
 }
 
-function collectFilesRecursive(rootPath, basePath) {
-    const results = [];
+function collectFilesRecursive(rootPath: string, basePath: string): string[] {
+    const results: string[] = [];
     try {
         const entries = fs.readdirSync(rootPath, { withFileTypes: true });
         for (const entry of entries) {
@@ -193,7 +215,7 @@ function collectFilesRecursive(rootPath, basePath) {
 /**
  * Builds project discovery markdown lines.
  */
-function buildProjectDiscoveryLines(discovery, timestampIso) {
+export function buildProjectDiscoveryLines(discovery: ProjectDiscovery, timestampIso: string): string[] {
     const tick = '`';
     const lines = [
         '# Project Discovery', '',
@@ -274,7 +296,7 @@ function buildProjectDiscoveryLines(discovery, timestampIso) {
 /**
  * Builds a brief discovery overlay section for context rules.
  */
-function buildDiscoveryOverlaySection(discovery) {
+export function buildDiscoveryOverlaySection(discovery: ProjectDiscovery): string {
     const stacksText = discovery.detectedStacks.length > 0
         ? discovery.detectedStacks.join(', ')
         : 'none detected';
@@ -291,13 +313,3 @@ function buildDiscoveryOverlaySection(discovery) {
         '- Full report: `Octopus-agent-orchestrator/live/project-discovery.md`'
     ].join('\r\n');
 }
-
-module.exports = {
-    buildDiscoveryOverlaySection,
-    buildProjectDiscoveryLines,
-    collectRuntimePathHints,
-    EXCLUDED_PATH_FRAGMENTS,
-    EXCLUDED_TOP_LEVEL_DIRS,
-    getProjectDiscovery,
-    STACK_SIGNALS
-};

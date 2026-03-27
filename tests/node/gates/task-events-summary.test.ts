@@ -1,18 +1,19 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     parseTimestamp,
     formatTimestamp,
     auditCommandCompactness,
     getCommandAuditFromDetails,
     buildTaskEventsSummary,
     formatTaskEventsSummaryText,
-    getOutputTelemetryFromPayload
-} = require('../../../src/gates/task-events-summary.ts');
+    getOutputTelemetryFromPayload,
+    TaskEventsSummaryResult
+} from '../../../src/gates/task-events-summary';
 
 describe('gates/task-events-summary', () => {
     describe('parseTimestamp', () => {
@@ -34,11 +35,11 @@ describe('gates/task-events-summary', () => {
     describe('formatTimestamp', () => {
         it('formats Date to ISO string', () => {
             const result = formatTimestamp(new Date('2024-01-15T10:30:00Z'));
-            assert.ok(result.includes('2024-01-15'));
+            assert.ok(result!.includes('2024-01-15'));
         });
         it('formats string timestamp', () => {
             const result = formatTimestamp('2024-01-15T10:30:00Z');
-            assert.ok(result.includes('2024-01-15'));
+            assert.ok(result!.includes('2024-01-15'));
         });
         it('returns null for null', () => {
             assert.equal(formatTimestamp(null), null);
@@ -77,7 +78,7 @@ describe('gates/task-events-summary', () => {
         it('extracts command from details.command', () => {
             const result = getCommandAuditFromDetails({ command: 'git diff HEAD' });
             assert.ok(result);
-            assert.ok(result.warning_count > 0);
+            assert.ok(((result as Record<string, unknown>).warning_count as number) > 0);
         });
         it('returns existing command_policy_audit if present', () => {
             const existing = { warnings: [], warning_count: 0 };
@@ -91,7 +92,7 @@ describe('gates/task-events-summary', () => {
     });
 
     describe('buildTaskEventsSummary', () => {
-        function createTaskEvents(tmpDir, taskId, events) {
+        function createTaskEvents(tmpDir: string, taskId: string, events: Array<Record<string, unknown>>) {
             const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
             fs.mkdirSync(eventsDir, { recursive: true });
             const filePath = path.join(eventsDir, `${taskId}.jsonl`);
@@ -218,12 +219,12 @@ describe('gates/task-events-summary', () => {
             );
 
             const summary = buildTaskEventsSummary({ taskId: 'T-003', eventsRoot: eventsDir, repoRoot: tmpDir });
-            assert.equal(summary.token_economy.total_estimated_saved_tokens, 165);
-            assert.equal(summary.token_economy.total_raw_token_count_estimate, 248);
-            assert.match(summary.token_economy.visible_summary_line, /Saved tokens: ~165/);
-            assert.match(summary.token_economy.visible_summary_line, /120 code review context/);
-            assert.match(summary.token_economy.visible_summary_line, /33 compile gate output/);
-            assert.match(summary.token_economy.visible_summary_line, /12 review gate output/);
+            assert.equal(summary.token_economy!.total_estimated_saved_tokens, 165);
+            assert.equal(summary.token_economy!.total_raw_token_count_estimate, 248);
+            assert.match(summary.token_economy!.visible_summary_line!, /Saved tokens: ~165/);
+            assert.match(summary.token_economy!.visible_summary_line!, /120 code review context/);
+            assert.match(summary.token_economy!.visible_summary_line!, /33 compile gate output/);
+            assert.match(summary.token_economy!.visible_summary_line!, /12 review gate output/);
 
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
@@ -258,7 +259,7 @@ describe('gates/task-events-summary', () => {
                     message: 'Done.'
                 }]
             };
-            const text = formatTaskEventsSummaryText(summary);
+            const text = formatTaskEventsSummaryText(summary as unknown as TaskEventsSummaryResult);
             assert.ok(text.includes('Task: T-001'));
             assert.ok(text.includes('Events: 1'));
             assert.ok(text.includes('IntegrityStatus: PASS'));
@@ -278,10 +279,10 @@ describe('gates/task-events-summary', () => {
                 }
             });
 
-            assert.equal(result.raw_token_count_estimate, 20);
-            assert.equal(result.output_token_count_estimate, 10);
-            assert.equal(result.estimated_saved_tokens, 10);
-            assert.equal(result.baseline_known, true);
+            assert.equal(result!.raw_token_count_estimate, 20);
+            assert.equal(result!.output_token_count_estimate, 10);
+            assert.equal(result!.estimated_saved_tokens, 10);
+            assert.equal(result!.baseline_known, true);
         });
     });
 });

@@ -1,44 +1,40 @@
-const childProcess = require('node:child_process');
+import * as childProcess from 'node:child_process';
+import type { ChildProcess, SpawnSyncReturns, SpawnSyncOptions, StdioOptions } from 'node:child_process';
 
 // ---------------------------------------------------------------------------
 // Default timeout constants (milliseconds)
 // ---------------------------------------------------------------------------
 
-const DEFAULT_GIT_TIMEOUT_MS = 60_000;         // 60 s for routine git ops
-const DEFAULT_GIT_CLONE_TIMEOUT_MS = 300_000;  // 5 min for clone/fetch
-const DEFAULT_NPM_TIMEOUT_MS = 300_000;        // 5 min for npm operations
-const DEFAULT_COMPILE_TIMEOUT_MS = 600_000;    // 10 min for compile/test/lint
+export const DEFAULT_GIT_TIMEOUT_MS = 60_000;         // 60 s for routine git ops
+export const DEFAULT_GIT_CLONE_TIMEOUT_MS = 300_000;  // 5 min for clone/fetch
+export const DEFAULT_NPM_TIMEOUT_MS = 300_000;        // 5 min for npm operations
+export const DEFAULT_COMPILE_TIMEOUT_MS = 600_000;    // 10 min for compile/test/lint
 
 // ---------------------------------------------------------------------------
 // spawnStreamed – async subprocess with streaming, timeout & cancellation
 // ---------------------------------------------------------------------------
 
-/**
- * Spawn a child process with streamed output, explicit timeout, and
- * AbortController-based cancellation.
- *
- * @param {string} command  Executable path or name
- * @param {string[]} args   Arguments
- * @param {object} [options]
- * @param {string}        [options.cwd]
- * @param {number}        [options.timeoutMs]      Max runtime in ms (0 = unlimited)
- * @param {AbortSignal}   [options.signal]         External cancellation signal
- * @param {boolean}       [options.shell]          Run through the system shell
- * @param {object}        [options.env]            Env overrides (merged with process.env)
- * @param {Function}      [options.onStdout]       (chunk: string) => void
- * @param {Function}      [options.onStderr]       (chunk: string) => void
- * @param {boolean}       [options.inheritStdio]   Use stdio: 'inherit' (interactive)
- * @param {number}        [options.maxBuffer]      Max buffered bytes (default 50 MB)
- * @returns {Promise<SpawnStreamedResult>}
- *
- * @typedef {object} SpawnStreamedResult
- * @property {number}  exitCode
- * @property {string}  stdout
- * @property {string}  stderr
- * @property {boolean} timedOut
- * @property {boolean} cancelled
- */
-function spawnStreamed(command, args, options) {
+export interface SpawnStreamedOptions {
+    cwd?: string;
+    timeoutMs?: number;
+    signal?: AbortSignal;
+    shell?: boolean;
+    env?: Record<string, string | undefined>;
+    onStdout?: (chunk: string) => void;
+    onStderr?: (chunk: string) => void;
+    inheritStdio?: boolean;
+    maxBuffer?: number;
+}
+
+export interface SpawnStreamedResult {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+    timedOut: boolean;
+    cancelled: boolean;
+}
+
+export function spawnStreamed(command: string, args: string[], options?: SpawnStreamedOptions): Promise<SpawnStreamedResult> {
     const opts = options || {};
     const cwd = opts.cwd || process.cwd();
     const timeoutMs = typeof opts.timeoutMs === 'number' ? opts.timeoutMs : 0;
@@ -60,13 +56,19 @@ function spawnStreamed(command, args, options) {
         let settled = false;
         let timedOut = false;
         let cancelled = false;
-        let timeoutHandle = null;
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
         let stdoutBuf = '';
         let stderrBuf = '';
         let stdoutBytes = 0;
         let stderrBytes = 0;
 
-        const spawnOpts = {
+        const spawnOpts: {
+            cwd: string;
+            windowsHide: boolean;
+            stdio: StdioOptions;
+            shell?: boolean;
+            env?: NodeJS.ProcessEnv;
+        } = {
             cwd,
             windowsHide: true,
             stdio: inheritStdio ? 'inherit' : ['ignore', 'pipe', 'pipe']
@@ -78,9 +80,9 @@ function spawnStreamed(command, args, options) {
             spawnOpts.env = { ...process.env, ...opts.env };
         }
 
-        const child = childProcess.spawn(command, args, spawnOpts);
+        const child: ChildProcess = childProcess.spawn(command, args, spawnOpts);
 
-        function cleanup() {
+        function cleanup(): void {
             if (timeoutHandle) {
                 clearTimeout(timeoutHandle);
                 timeoutHandle = null;
@@ -90,11 +92,9 @@ function spawnStreamed(command, args, options) {
             }
         }
 
-        function killChild() {
+        function killChild(): void {
             try {
                 if (process.platform === 'win32') {
-                    // On Windows, child.kill() sends SIGTERM which may not kill the
-                    // process tree. Use taskkill for a reliable tree-kill.
                     try {
                         childProcess.execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
                             stdio: 'ignore',
@@ -106,7 +106,6 @@ function spawnStreamed(command, args, options) {
                     }
                 } else {
                     child.kill('SIGTERM');
-                    // Follow up with SIGKILL after a grace period
                     setTimeout(function () {
                         try { child.kill('SIGKILL'); } catch (_e) { /* already exited */ }
                     }, 3000);
@@ -116,14 +115,14 @@ function spawnStreamed(command, args, options) {
             }
         }
 
-        function settle(result) {
+        function settle(result: SpawnStreamedResult): void {
             if (settled) return;
             settled = true;
             cleanup();
             resolve(result);
         }
 
-        function onAbort() {
+        function onAbort(): void {
             if (settled) return;
             cancelled = true;
             killChild();
@@ -141,7 +140,7 @@ function spawnStreamed(command, args, options) {
             }, timeoutMs);
         }
 
-        child.once('error', function (error) {
+        child.once('error', function (error: NodeJS.ErrnoException) {
             cleanup();
             if (settled) return;
             settled = true;
@@ -155,7 +154,7 @@ function spawnStreamed(command, args, options) {
         if (!inheritStdio) {
             if (child.stdout) {
                 child.stdout.setEncoding('utf8');
-                child.stdout.on('data', function (chunk) {
+                child.stdout.on('data', function (chunk: string) {
                     const len = Buffer.byteLength(chunk, 'utf8');
                     if (stdoutBytes + len <= maxBuffer) {
                         stdoutBuf += chunk;
@@ -168,7 +167,7 @@ function spawnStreamed(command, args, options) {
             }
             if (child.stderr) {
                 child.stderr.setEncoding('utf8');
-                child.stderr.on('data', function (chunk) {
+                child.stderr.on('data', function (chunk: string) {
                     const len = Buffer.byteLength(chunk, 'utf8');
                     if (stderrBytes + len <= maxBuffer) {
                         stderrBuf += chunk;
@@ -181,7 +180,7 @@ function spawnStreamed(command, args, options) {
             }
         }
 
-        child.once('close', function (code) {
+        child.once('close', function (code: number | null) {
             settle({
                 exitCode: code == null ? 1 : code,
                 stdout: stdoutBuf,
@@ -197,19 +196,18 @@ function spawnStreamed(command, args, options) {
 // spawnSyncWithTimeout – thin wrapper adding timeout to spawnSync
 // ---------------------------------------------------------------------------
 
-/**
- * Synchronous spawn with an explicit timeout and consistent option defaults.
- * Returns the same shape as child_process.spawnSync.
- *
- * @param {string} command
- * @param {string[]} args
- * @param {object} [options]   All spawnSync options plus `timeoutMs`.
- * @returns {import('child_process').SpawnSyncReturns<string>}
- */
-function spawnSyncWithTimeout(command, args, options) {
+export interface SpawnSyncWithTimeoutOptions extends SpawnSyncOptions {
+    timeoutMs?: number;
+}
+
+export interface SpawnSyncWithTimeoutResult extends SpawnSyncReturns<string> {
+    timedOut: boolean;
+}
+
+export function spawnSyncWithTimeout(command: string, args: string[], options?: SpawnSyncWithTimeoutOptions): SpawnSyncWithTimeoutResult {
     const opts = options || {};
     const timeoutMs = opts.timeoutMs || 0;
-    const passThrough = { ...opts };
+    const passThrough: SpawnSyncOptions & { timeoutMs?: number } = { ...opts };
     delete passThrough.timeoutMs;
 
     if (timeoutMs > 0) {
@@ -219,10 +217,10 @@ function spawnSyncWithTimeout(command, args, options) {
         passThrough.windowsHide = true;
     }
 
-    const result = childProcess.spawnSync(command, args, passThrough);
+    const result = childProcess.spawnSync(command, args, passThrough) as SpawnSyncWithTimeoutResult;
 
     // spawnSync sets result.signal === 'SIGTERM' on timeout
-    if (result.error && result.error.code === 'ETIMEDOUT') {
+    if (result.error && (result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
         result.timedOut = true;
     } else if (result.signal === 'SIGTERM' && timeoutMs > 0) {
         result.timedOut = true;
@@ -233,11 +231,3 @@ function spawnSyncWithTimeout(command, args, options) {
     return result;
 }
 
-module.exports = {
-    DEFAULT_COMPILE_TIMEOUT_MS,
-    DEFAULT_GIT_CLONE_TIMEOUT_MS,
-    DEFAULT_GIT_TIMEOUT_MS,
-    DEFAULT_NPM_TIMEOUT_MS,
-    spawnStreamed,
-    spawnSyncWithTimeout
-};

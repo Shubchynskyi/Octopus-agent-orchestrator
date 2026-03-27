@@ -1,17 +1,16 @@
-const fs = require('node:fs');
-const path = require('node:path');
-const { execFileSync } = require('node:child_process');
-
-const { stringSha256, fileSha256, normalizePath, toPosix, joinOrchestratorPath, resolvePathInsideRepo, toStringArray } = require('./helpers.ts');
-const { assertValidTaskId, appendTaskEvent } = require('../gate-runtime/task-events.ts');
-const { buildOutputTelemetry, formatVisibleSavingsLine } = require('../gate-runtime/token-telemetry.ts');
-const { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } = require('../core/subprocess.ts');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { stringSha256, fileSha256, normalizePath, toPosix, joinOrchestratorPath, resolvePathInsideRepo, toStringArray } from './helpers';
+import { assertValidTaskId, appendTaskEvent } from '../gate-runtime/task-events';
+import { buildOutputTelemetry, formatVisibleSavingsLine } from '../gate-runtime/token-telemetry';
+import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
 
 /**
  * Detect the compile command profile (kind/strategy/label/failure/success profiles).
  * Matches Python get_compile_command_profile exactly.
  */
-function getCompileCommandProfile(command) {
+export function getCompileCommandProfile(command: string) {
     const normalized = (command || '').trim().toLowerCase();
     let kind = 'compile';
     let strategy = 'generic';
@@ -71,7 +70,7 @@ function getCompileCommandProfile(command) {
  * Extract compile commands from a markdown rules file.
  * Matches Python get_compile_commands.
  */
-function getCompileCommands(rulePath) {
+export function getCompileCommands(rulePath: string): string[] {
     const content = fs.readFileSync(rulePath, 'utf8');
     const lines = content.split('\n');
     if (!lines.length) throw new Error(`Commands file is empty: ${rulePath}`);
@@ -125,7 +124,7 @@ function getCompileCommands(rulePath) {
 /**
  * Get output stats (warning and error line counts).
  */
-function getOutputStats(lines) {
+export function getOutputStats(lines: string[]) {
     let warningLines = 0;
     let errorLines = 0;
     for (const line of lines) {
@@ -139,12 +138,12 @@ function getOutputStats(lines) {
  * Get workspace snapshot for scope validation.
  * Matches Python get_workspace_snapshot.
  */
-function getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, explicitChangedFiles) {
+export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, includeUntracked: boolean, explicitChangedFiles: string[]) {
     const source = (detectionSource || 'git_auto').trim().toLowerCase();
     const useStaged = ['git_staged_only', 'git_staged_plus_untracked'].includes(source);
     if (source === 'git_staged_only') includeUntracked = false;
 
-    function gitLines(args, failMsg) {
+    function gitLines(args: string[], failMsg: string): string[] {
         const result = spawnSyncWithTimeout('git', ['-C', String(repoRoot), ...args], {
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -165,11 +164,11 @@ function getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, expli
     }
 
     const normalizedExplicit = [...new Set(
-        (explicitChangedFiles || []).map(f => normalizePath(f)).filter(Boolean)
+        (explicitChangedFiles || []).map((f: string) => normalizePath(f)).filter(Boolean)
     )].sort();
 
     if (source === 'explicit_changed_files' && normalizedExplicit.length > 0) {
-        const numstatRows = {};
+        const numstatRows: Record<string, { additions: string; deletions: string }> = {};
         try {
             for (const line of gitLines(['diff', '--numstat', '--diff-filter=ACMRTUXB', 'HEAD', '--', ...normalizedExplicit], 'Failed numstat')) {
                 const parts = line.split('\t');
@@ -212,7 +211,7 @@ function getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, expli
     diffArgs.push(useStaged ? '--cached' : 'HEAD');
     const changedFromDiff = gitLines(diffArgs, 'Failed to collect changed files snapshot.');
 
-    let untracked = [];
+    let untracked: string[] = [];
     if (includeUntracked) {
         untracked = gitLines(['ls-files', '--others', '--exclude-standard'], 'Failed to collect untracked files snapshot.');
     }
@@ -253,7 +252,7 @@ function getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, expli
     };
 }
 
-function countFileLines(filePath) {
+function countFileLines(filePath: string): number {
     try {
         if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return 0;
         let count = 0;
@@ -268,7 +267,7 @@ function countFileLines(filePath) {
 /**
  * Get preflight context for scope validation.
  */
-function getPreflightContext(preflightPath, taskId) {
+export function getPreflightContext(preflightPath: string, taskId: string) {
     if (!preflightPath || !fs.existsSync(preflightPath)) {
         throw new Error(`Preflight artifact not found: ${preflightPath}`);
     }
@@ -292,7 +291,7 @@ function getPreflightContext(preflightPath, taskId) {
     }
 
     const preflightChangedFiles = [...new Set(
-        (preflightObject.changed_files || []).map(f => normalizePath(String(f).replace(/\\/g, '/'))).filter(Boolean)
+        (preflightObject.changed_files || []).map((f: string) => normalizePath(String(f).replace(/\\/g, '/'))).filter(Boolean)
     )].sort();
 
     const changedLinesTotal = preflightObject.metrics.changed_lines_total;
@@ -315,10 +314,3 @@ function getPreflightContext(preflightPath, taskId) {
     };
 }
 
-module.exports = {
-    getCompileCommandProfile,
-    getCompileCommands,
-    getOutputStats,
-    getPreflightContext,
-    getWorkspaceSnapshot
-};

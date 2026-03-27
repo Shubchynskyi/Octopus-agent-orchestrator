@@ -1,14 +1,31 @@
-const path = require('node:path');
+import * as path from 'node:path';
+import { DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH } from '../core/constants';
+import { pathExists } from '../core/fs';
+import { readJsonFile, writeJsonFile } from '../core/json';
 
-const {
-    DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH
-} = require('../core/constants.ts');
-const { pathExists } = require('../core/fs.ts');
-const { readJsonFile, writeJsonFile } = require('../core/json.ts');
+export const AGENT_INIT_STATE_VERSION = 1;
 
-const AGENT_INIT_STATE_VERSION = 1;
+export interface AgentInitState {
+    Version: number;
+    UpdatedAt: string;
+    AssistantLanguage: string | null;
+    SourceOfTruth: string | null;
+    AssistantLanguageConfirmed: boolean;
+    ActiveAgentFilesConfirmed: boolean;
+    ProjectRulesUpdated: boolean;
+    SkillsPromptCompleted: boolean;
+    VerificationPassed: boolean;
+    ManifestValidationPassed: boolean;
+    ActiveAgentFiles: string[];
+}
 
-function normalizeBoolean(value, fieldName) {
+interface AgentInitStateReadResult {
+    statePath: string;
+    state: AgentInitState | null;
+    error: string | null;
+}
+
+function normalizeBoolean(value: unknown, fieldName: string): boolean {
     if (value === true || value === false) {
         return value;
     }
@@ -16,7 +33,7 @@ function normalizeBoolean(value, fieldName) {
     throw new Error(`${fieldName} must be a boolean.`);
 }
 
-function normalizeOptionalStringArray(value, fieldName) {
+function normalizeOptionalStringArray(value: unknown, fieldName: string): string[] {
     if (value === undefined || value === null) {
         return [];
     }
@@ -24,7 +41,7 @@ function normalizeOptionalStringArray(value, fieldName) {
         throw new Error(`${fieldName} must be an array.`);
     }
 
-    const normalized = [];
+    const normalized: string[] = [];
     for (const item of value) {
         const text = String(item || '').trim();
         if (!text) {
@@ -38,7 +55,7 @@ function normalizeOptionalStringArray(value, fieldName) {
     return normalized;
 }
 
-function normalizeOptionalString(value) {
+function normalizeOptionalString(value: unknown): string | null {
     if (value === undefined || value === null) {
         return null;
     }
@@ -47,7 +64,7 @@ function normalizeOptionalString(value) {
     return text || null;
 }
 
-function areStringArraysEqual(left, right) {
+export function areStringArraysEqual(left: unknown, right: unknown): boolean {
     const leftNormalized = normalizeOptionalStringArray(left, 'left');
     const rightNormalized = normalizeOptionalStringArray(right, 'right');
     if (leftNormalized.length !== rightNormalized.length) {
@@ -63,27 +80,29 @@ function areStringArraysEqual(left, right) {
     return true;
 }
 
-function validateAgentInitState(input) {
+export function validateAgentInitState(input: unknown): AgentInitState {
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
         throw new Error('Agent init state must be a JSON object.');
     }
 
+    const raw = input as Record<string, unknown>;
+
     return {
-        Version: input.Version === undefined ? AGENT_INIT_STATE_VERSION : Number(input.Version),
-        UpdatedAt: String(input.UpdatedAt || new Date().toISOString()),
-        AssistantLanguage: normalizeOptionalString(input.AssistantLanguage),
-        SourceOfTruth: normalizeOptionalString(input.SourceOfTruth),
-        AssistantLanguageConfirmed: normalizeBoolean(input.AssistantLanguageConfirmed, 'AssistantLanguageConfirmed'),
-        ActiveAgentFilesConfirmed: normalizeBoolean(input.ActiveAgentFilesConfirmed, 'ActiveAgentFilesConfirmed'),
-        ProjectRulesUpdated: normalizeBoolean(input.ProjectRulesUpdated, 'ProjectRulesUpdated'),
-        SkillsPromptCompleted: normalizeBoolean(input.SkillsPromptCompleted, 'SkillsPromptCompleted'),
-        VerificationPassed: normalizeBoolean(input.VerificationPassed, 'VerificationPassed'),
-        ManifestValidationPassed: normalizeBoolean(input.ManifestValidationPassed, 'ManifestValidationPassed'),
-        ActiveAgentFiles: normalizeOptionalStringArray(input.ActiveAgentFiles, 'ActiveAgentFiles')
+        Version: raw.Version === undefined ? AGENT_INIT_STATE_VERSION : Number(raw.Version),
+        UpdatedAt: String(raw.UpdatedAt || new Date().toISOString()),
+        AssistantLanguage: normalizeOptionalString(raw.AssistantLanguage),
+        SourceOfTruth: normalizeOptionalString(raw.SourceOfTruth),
+        AssistantLanguageConfirmed: normalizeBoolean(raw.AssistantLanguageConfirmed, 'AssistantLanguageConfirmed'),
+        ActiveAgentFilesConfirmed: normalizeBoolean(raw.ActiveAgentFilesConfirmed, 'ActiveAgentFilesConfirmed'),
+        ProjectRulesUpdated: normalizeBoolean(raw.ProjectRulesUpdated, 'ProjectRulesUpdated'),
+        SkillsPromptCompleted: normalizeBoolean(raw.SkillsPromptCompleted, 'SkillsPromptCompleted'),
+        VerificationPassed: normalizeBoolean(raw.VerificationPassed, 'VerificationPassed'),
+        ManifestValidationPassed: normalizeBoolean(raw.ManifestValidationPassed, 'ManifestValidationPassed'),
+        ActiveAgentFiles: normalizeOptionalStringArray(raw.ActiveAgentFiles, 'ActiveAgentFiles')
     };
 }
 
-function createAgentInitState(overrides = {}) {
+export function createAgentInitState(overrides: Partial<AgentInitState> = {}): AgentInitState {
     return validateAgentInitState({
         Version: AGENT_INIT_STATE_VERSION,
         UpdatedAt: new Date().toISOString(),
@@ -100,20 +119,23 @@ function createAgentInitState(overrides = {}) {
     });
 }
 
-function getAgentInitStatePath(targetRoot, relativePath = DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH) {
+export function getAgentInitStatePath(targetRoot: string, relativePath: string = DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH): string {
     return path.isAbsolute(relativePath)
         ? relativePath
         : path.resolve(targetRoot, relativePath);
 }
 
-function readAgentInitStateSafe(targetRoot, relativePath = DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH) {
+export function readAgentInitStateSafe(
+    targetRoot: string,
+    relativePath: string = DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH
+): AgentInitStateReadResult {
     const statePath = getAgentInitStatePath(targetRoot, relativePath);
     if (!pathExists(statePath)) {
-    return {
-        statePath,
-        state: null,
-        error: null
-    };
+        return {
+            statePath,
+            state: null,
+            error: null
+        };
     }
 
     try {
@@ -122,22 +144,29 @@ function readAgentInitStateSafe(targetRoot, relativePath = DEFAULT_AGENT_INIT_ST
             state: validateAgentInitState(readJsonFile(statePath)),
             error: null
         };
-    } catch (error) {
+    } catch (error: unknown) {
         return {
             statePath,
             state: null,
-            error: error.message || String(error)
+            error: error instanceof Error ? error.message : String(error)
         };
     }
 }
 
-function writeAgentInitState(targetRoot, state, relativePath = DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH) {
+export function writeAgentInitState(
+    targetRoot: string,
+    state: unknown,
+    relativePath: string = DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH
+): string {
     const statePath = getAgentInitStatePath(targetRoot, relativePath);
     writeJsonFile(statePath, validateAgentInitState(state));
     return statePath;
 }
 
-function doesAgentInitStateMatchAnswers(state, answers) {
+export function doesAgentInitStateMatchAnswers(
+    state: AgentInitState | null | undefined,
+    answers: Record<string, unknown> | null | undefined
+): boolean {
     if (!state) {
         return false;
     }
@@ -153,14 +182,3 @@ function doesAgentInitStateMatchAnswers(state, answers) {
         && areStringArraysEqual(state.ActiveAgentFiles, expectedActiveAgentFiles)
     );
 }
-
-module.exports = {
-    AGENT_INIT_STATE_VERSION,
-    areStringArraysEqual,
-    createAgentInitState,
-    doesAgentInitStateMatchAnswers,
-    getAgentInitStatePath,
-    readAgentInitStateSafe,
-    validateAgentInitState,
-    writeAgentInitState
-};

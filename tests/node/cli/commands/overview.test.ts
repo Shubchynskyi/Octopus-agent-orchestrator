@@ -1,15 +1,15 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     buildOverviewOutput,
     printOverview
-} = require('../../../../src/cli/commands/overview.ts');
+} from '../../../../src/cli/commands/overview';
 
-const { DEFAULT_BUNDLE_NAME } = require('../../../../src/core/constants.ts');
+import { DEFAULT_BUNDLE_NAME } from '../../../../src/core/constants';
 
 // ---------------------------------------------------------------------------
 // buildOverviewOutput

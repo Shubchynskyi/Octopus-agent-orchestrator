@@ -1,18 +1,13 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const {
-    DEFAULT_BUNDLE_NAME,
-    SOURCE_TO_ENTRYPOINT_MAP,
-    SOURCE_OF_TRUTH_VALUES
-} = require('../core/constants.ts');
-const { pathExists, readTextFile } = require('../core/fs.ts');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { DEFAULT_BUNDLE_NAME, SOURCE_TO_ENTRYPOINT_MAP, SOURCE_OF_TRUTH_VALUES } from '../core/constants';
+import { pathExists, readTextFile } from '../core/fs';
 
 /**
  * Required workspace paths that must exist after a full install.
  * Matches the deployed Node-only bundle surface.
  */
-const BASE_REQUIRED_PATHS = Object.freeze([
+export const BASE_REQUIRED_PATHS = Object.freeze([
     'TASK.md',
     'Octopus-agent-orchestrator/.gitattributes',
     'Octopus-agent-orchestrator/VERSION',
@@ -58,7 +53,7 @@ const BASE_REQUIRED_PATHS = Object.freeze([
 /**
  * Standard rule files that must exist in live/docs/agent-rules.
  */
-const RULE_FILES = Object.freeze([
+export const RULE_FILES = Object.freeze([
     '00-core.md',
     '10-project-context.md',
     '15-project-memory.md',
@@ -76,7 +71,7 @@ const RULE_FILES = Object.freeze([
 /**
  * Project command placeholders that indicate unfilled agent context.
  */
-const PROJECT_COMMAND_PLACEHOLDERS = Object.freeze([
+export const PROJECT_COMMAND_PLACEHOLDERS = Object.freeze([
     '<install dependencies command>',
     '<local environment bootstrap command>',
     '<start backend command>',
@@ -96,40 +91,55 @@ const PROJECT_COMMAND_PLACEHOLDERS = Object.freeze([
 /**
  * Template placeholder regex: {{SOME_TOKEN}}.
  */
-const TEMPLATE_PLACEHOLDER_PATTERN = /{{[A-Z0-9_]+}}/;
+export const TEMPLATE_PLACEHOLDER_PATTERN = /{{[A-Z0-9_]+}}/;
 
 /**
  * Managed block markers.
  */
-const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
-const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
+export const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
+export const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
+
+interface BuildRequiredPathsOptions {
+    activeAgentFiles?: readonly string[];
+    claudeOrchestratorFullAccess?: boolean;
+}
+
+interface RuleFileViolations {
+    ruleFileViolations: string[];
+    templatePlaceholderViolations: string[];
+}
+
+interface VersionViolationResult {
+    violations: string[];
+    bundleVersion: string | null;
+}
 
 /**
  * Get the canonical entrypoint file for a source-of-truth value.
  */
-function getCanonicalEntrypoint(sourceOfTruth) {
+export function getCanonicalEntrypoint(sourceOfTruth: string): string | null {
     const key = sourceOfTruth.trim().toUpperCase().replace(/\s+/g, '');
     const match = SOURCE_OF_TRUTH_VALUES.find(
         function (v) { return v.toUpperCase().replace(/\s+/g, '') === key; }
     );
-    return match ? SOURCE_TO_ENTRYPOINT_MAP[match] : null;
+    return match ? SOURCE_TO_ENTRYPOINT_MAP[match as keyof typeof SOURCE_TO_ENTRYPOINT_MAP] : null;
 }
 
 /**
  * Get the bundle path within a target root.
  */
-function getBundlePath(targetRoot) {
+export function getBundlePath(targetRoot: string): string {
     return path.join(targetRoot, DEFAULT_BUNDLE_NAME);
 }
 
 /**
  * Build the full list of required paths for a workspace.
  */
-function buildRequiredPaths(options) {
+export function buildRequiredPaths(options: BuildRequiredPathsOptions): string[] {
     var activeAgentFiles = options.activeAgentFiles || [];
     var claudeOrchestratorFullAccess = options.claudeOrchestratorFullAccess || false;
 
-    var paths = [].concat(BASE_REQUIRED_PATHS);
+    var paths: string[] = [...BASE_REQUIRED_PATHS];
 
     for (var i = 0; i < RULE_FILES.length; i++) {
         paths.push('Octopus-agent-orchestrator/live/docs/agent-rules/' + RULE_FILES[i]);
@@ -145,8 +155,8 @@ function buildRequiredPaths(options) {
         paths.push('.claude/settings.local.json');
     }
 
-    var unique = [];
-    var seen = {};
+    var unique: string[] = [];
+    var seen: Record<string, boolean> = {};
     for (var k = 0; k < paths.length; k++) {
         if (!(paths[k] in seen)) {
             seen[paths[k]] = true;
@@ -160,8 +170,8 @@ function buildRequiredPaths(options) {
 /**
  * Check which required paths are missing.
  */
-function detectMissingPaths(targetRoot, requiredPaths) {
-    var missing = [];
+export function detectMissingPaths(targetRoot: string, requiredPaths: readonly string[]): string[] {
+    var missing: string[] = [];
     for (var i = 0; i < requiredPaths.length; i++) {
         var fullPath = path.join(targetRoot, requiredPaths[i]);
         if (!pathExists(fullPath)) {
@@ -174,20 +184,20 @@ function detectMissingPaths(targetRoot, requiredPaths) {
 /**
  * Get the commands rule file path.
  */
-function getCommandsRulePath(bundlePath) {
+export function getCommandsRulePath(bundlePath: string): string {
     return path.join(bundlePath, 'live', 'docs', 'agent-rules', '40-commands.md');
 }
 
 /**
  * Read a text file, returning null if it doesn't exist.
  */
-function readUtf8IfExists(filePath) {
+export function readUtf8IfExists(filePath: string): string | null {
     try {
         if (!pathExists(filePath)) return null;
         var stats = fs.lstatSync(filePath);
         if (!stats.isFile()) return null;
         return readTextFile(filePath);
-    } catch (e) {
+    } catch {
         return null;
     }
 }
@@ -195,9 +205,9 @@ function readUtf8IfExists(filePath) {
 /**
  * Return any project-command placeholders still present in commands content.
  */
-function getMissingProjectCommands(commandsContent) {
+export function getMissingProjectCommands(commandsContent: string | null): string[] {
     if (!commandsContent) {
-        return [].concat(PROJECT_COMMAND_PLACEHOLDERS);
+        return [...PROJECT_COMMAND_PLACEHOLDERS];
     }
     return PROJECT_COMMAND_PLACEHOLDERS.filter(
         function (placeholder) { return commandsContent.includes(placeholder); }
@@ -207,7 +217,7 @@ function getMissingProjectCommands(commandsContent) {
 /**
  * Extract a managed block from file content.
  */
-function extractManagedBlock(content) {
+export function extractManagedBlock(content: string | null): string | null {
     if (!content) return null;
     var startEscaped = MANAGED_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     var endEscaped = MANAGED_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -219,9 +229,9 @@ function extractManagedBlock(content) {
 /**
  * Detect rule file violations: empty files and unresolved template placeholders.
  */
-function detectRuleFileViolations(targetRoot) {
-    var ruleFileViolations = [];
-    var templatePlaceholderViolations = [];
+export function detectRuleFileViolations(targetRoot: string): RuleFileViolations {
+    var ruleFileViolations: string[] = [];
+    var templatePlaceholderViolations: string[] = [];
 
     for (var i = 0; i < RULE_FILES.length; i++) {
         var ruleFile = RULE_FILES[i];
@@ -244,12 +254,16 @@ function detectRuleFileViolations(targetRoot) {
 /**
  * Detect version contract violations between VERSION file and live/version.json.
  */
-function detectVersionViolations(targetRoot, sourceOfTruth, canonicalEntrypoint) {
-    var violations = [];
+export function detectVersionViolations(
+    targetRoot: string,
+    sourceOfTruth: string,
+    canonicalEntrypoint: string | null
+): VersionViolationResult {
+    var violations: string[] = [];
     var bundleVersionPath = path.join(targetRoot, 'Octopus-agent-orchestrator/VERSION');
     var liveVersionPath = path.join(targetRoot, 'Octopus-agent-orchestrator/live/version.json');
 
-    var bundleVersion = null;
+    var bundleVersion: string | null = null;
 
     if (pathExists(bundleVersionPath)) {
         bundleVersion = readTextFile(bundleVersionPath).trim();
@@ -259,10 +273,14 @@ function detectVersionViolations(targetRoot, sourceOfTruth, canonicalEntrypoint)
     }
 
     if (pathExists(liveVersionPath)) {
-        var liveVersionObject;
+        var liveVersionObject: Record<string, unknown>;
         try {
-            liveVersionObject = JSON.parse(readTextFile(liveVersionPath));
-        } catch (e) {
+            var parsed = JSON.parse(readTextFile(liveVersionPath));
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                throw new Error('Invalid JSON root');
+            }
+            liveVersionObject = parsed as Record<string, unknown>;
+        } catch {
             violations.push('Octopus-agent-orchestrator/live/version.json must contain valid JSON.');
             return { violations: violations, bundleVersion: bundleVersion };
         }
@@ -307,8 +325,8 @@ function detectVersionViolations(targetRoot, sourceOfTruth, canonicalEntrypoint)
 /**
  * Validate managed config JSON files exist and parse without error.
  */
-function detectManagedConfigViolations(targetRoot, configRelativePath) {
-    var violations = [];
+export function detectManagedConfigViolations(targetRoot: string, configRelativePath: string): string[] {
+    var violations: string[] = [];
     var configPath = path.join(targetRoot, configRelativePath);
 
     if (!pathExists(configPath)) {
@@ -319,7 +337,7 @@ function detectManagedConfigViolations(targetRoot, configRelativePath) {
     try {
         var raw = readTextFile(configPath);
         JSON.parse(raw);
-    } catch (e) {
+    } catch {
         violations.push(configRelativePath + ' must contain valid JSON.');
     }
 
@@ -329,14 +347,14 @@ function detectManagedConfigViolations(targetRoot, configRelativePath) {
 /**
  * Detect .gitignore violations.
  */
-function detectGitignoreViolations(targetRoot, requiredEntries) {
+export function detectGitignoreViolations(targetRoot: string, requiredEntries: readonly string[]): string[] {
     var gitignorePath = path.join(targetRoot, '.gitignore');
     if (!pathExists(gitignorePath)) {
-        return [].concat(requiredEntries);
+        return [...requiredEntries];
     }
 
     var existingLines = readTextFile(gitignorePath).split(/\r?\n/);
-    var missing = [];
+    var missing: string[] = [];
 
     for (var i = 0; i < requiredEntries.length; i++) {
         if (existingLines.indexOf(requiredEntries[i]) === -1) {
@@ -346,24 +364,3 @@ function detectGitignoreViolations(targetRoot, requiredEntries) {
 
     return missing;
 }
-
-module.exports = {
-    BASE_REQUIRED_PATHS,
-    MANAGED_END,
-    MANAGED_START,
-    PROJECT_COMMAND_PLACEHOLDERS,
-    RULE_FILES,
-    TEMPLATE_PLACEHOLDER_PATTERN,
-    buildRequiredPaths,
-    detectGitignoreViolations,
-    detectManagedConfigViolations,
-    detectMissingPaths,
-    detectRuleFileViolations,
-    detectVersionViolations,
-    extractManagedBlock,
-    getBundlePath,
-    getCanonicalEntrypoint,
-    getCommandsRulePath,
-    getMissingProjectCommands,
-    readUtf8IfExists
-};

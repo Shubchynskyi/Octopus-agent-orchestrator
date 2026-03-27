@@ -1,8 +1,7 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const { matchAnyRegex } = require('../gate-runtime/text-utils.ts');
-const {
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { matchAnyRegex } from '../gate-runtime/text-utils';
+import {
     normalizePath,
     joinOrchestratorPath,
     normalizeRootPrefixes,
@@ -10,12 +9,85 @@ const {
     testPathPrefix,
     toPosix,
     toStringArray
-} = require('./helpers.ts');
+} from './helpers';
+
+interface TriggerConfig {
+    db: string[];
+    security: string[];
+    api: string[];
+    dependency: string[];
+    infra: string[];
+    test: string[];
+    performance: string[];
+}
+
+interface ClassificationConfig {
+    metrics_path: string;
+    runtime_roots: string[];
+    fast_path_roots: string[];
+    fast_path_allowed_regexes: string[];
+    fast_path_sensitive_regexes: string[];
+    sql_or_migration_regexes: string[];
+    triggers: TriggerConfig;
+    code_like_regexes: string[];
+}
+
+interface ResolvedClassificationConfig {
+    source: string;
+    config_path: string;
+    metrics_path: string;
+    runtime_roots: string[];
+    fast_path_roots: string[];
+    fast_path_allowed_regexes: string[];
+    fast_path_sensitive_regexes: string[];
+    sql_or_migration_regexes: string[];
+    db_trigger_regexes: string[];
+    security_trigger_regexes: string[];
+    api_trigger_regexes: string[];
+    dependency_trigger_regexes: string[];
+    infra_trigger_regexes: string[];
+    test_trigger_regexes: string[];
+    performance_trigger_regexes: string[];
+    code_like_regexes: string[];
+}
+
+interface ReviewCapabilities {
+    code: boolean;
+    db: boolean;
+    security: boolean;
+    refactor: boolean;
+    api: boolean;
+    test: boolean;
+    performance: boolean;
+    infra: boolean;
+    dependency: boolean;
+    [key: string]: boolean;
+}
+
+interface MatchConfiguredRootOptions {
+    allowNestedRoot?: boolean;
+    semanticPackageMatch?: boolean;
+}
+
+export interface ClassifyChangeOptions {
+    normalizedFiles?: string[];
+    taskIntent?: string;
+    fastPathMaxFiles?: number;
+    fastPathMaxChangedLines?: number;
+    performanceHeuristicMinLines?: number;
+    changedLinesTotal?: number;
+    additionsTotal?: number;
+    deletionsTotal?: number;
+    renameCount?: number;
+    detectionSource?: string;
+    classificationConfig: ResolvedClassificationConfig;
+    reviewCapabilities?: Partial<ReviewCapabilities>;
+}
 
 /**
  * Default classification config for the Node gate runtime.
  */
-function getDefaultClassificationConfig(repoRoot) {
+export function getDefaultClassificationConfig(repoRoot: string): ClassificationConfig {
     return {
         metrics_path: orchestratorRelativePath(repoRoot, 'runtime/metrics.jsonl'),
         runtime_roots: ['src/', 'app/', 'apps/', 'backend/', 'frontend/', 'web/', 'api/', 'services/', 'packages/'],
@@ -86,25 +158,26 @@ function getDefaultClassificationConfig(repoRoot) {
 /**
  * Load classification config from paths.json with defaults.
  */
-function getClassificationConfig(repoRoot) {
+export function getClassificationConfig(repoRoot: string): ResolvedClassificationConfig {
     const defaults = getDefaultClassificationConfig(repoRoot);
     const configPath = joinOrchestratorPath(repoRoot, 'live/config/paths.json');
     let source = 'defaults';
 
     if (fs.existsSync(configPath)) {
         try {
-            const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
             for (const key of [
                 'metrics_path', 'runtime_roots', 'fast_path_roots',
                 'fast_path_allowed_regexes', 'fast_path_sensitive_regexes',
                 'sql_or_migration_regexes', 'code_like_regexes'
-            ]) {
-                if (key in raw) defaults[key] = raw[key];
+            ] as const) {
+                if (key in raw) (defaults as unknown as Record<string, unknown>)[key] = raw[key];
             }
             if (raw.triggers && typeof raw.triggers === 'object') {
-                for (const triggerKey of ['db', 'security', 'api', 'dependency', 'infra', 'test', 'performance']) {
-                    if (triggerKey in raw.triggers) {
-                        defaults.triggers[triggerKey] = raw.triggers[triggerKey];
+                const rawTriggers = raw.triggers as Record<string, unknown>;
+                for (const triggerKey of ['db', 'security', 'api', 'dependency', 'infra', 'test', 'performance'] as const) {
+                    if (triggerKey in rawTriggers) {
+                        defaults.triggers[triggerKey] = rawTriggers[triggerKey] as string[];
                     }
                 }
             }
@@ -130,22 +203,22 @@ function getClassificationConfig(repoRoot) {
         infra_trigger_regexes: toStringArray(defaults.triggers.infra),
         test_trigger_regexes: toStringArray(defaults.triggers.test),
         performance_trigger_regexes: toStringArray(defaults.triggers.performance),
-        code_like_regexes: toStringArray(defaults.triggers.code_like_regexes || defaults.code_like_regexes)
+        code_like_regexes: toStringArray(defaults.code_like_regexes)
     };
 }
 
 /**
  * Load review capabilities from config file.
  */
-function getReviewCapabilities(repoRoot) {
-    const capabilities = {
+export function getReviewCapabilities(repoRoot: string): ReviewCapabilities {
+    const capabilities: ReviewCapabilities = {
         code: true, db: true, security: true, refactor: true,
         api: false, test: false, performance: false, infra: false, dependency: false
     };
     const configPath = joinOrchestratorPath(repoRoot, 'live/config/review-capabilities.json');
     if (!fs.existsSync(configPath)) return capabilities;
     try {
-        const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
         for (const key of Object.keys(capabilities)) {
             if (key in raw) capabilities[key] = !!raw[key];
         }
@@ -155,23 +228,23 @@ function getReviewCapabilities(repoRoot) {
 
 const GROUPED_PACKAGE_ROOTS = Object.freeze(['apps', 'packages', 'services', 'workspaces', 'projects']);
 
-function escapeRegex(text) {
+function escapeRegex(text: string): string {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function getRootTokens(roots) {
+function getRootTokens(roots: string[]): string[] {
     return normalizeRootPrefixes(toStringArray(roots))
-        .map((root) => root.replace(/\/+$/, '').toLowerCase())
+        .map((root: string) => root.replace(/\/+$/, '').toLowerCase())
         .filter(Boolean);
 }
 
-function matchesSemanticRoot(segment, rootTokens) {
+function matchesSemanticRoot(segment: string, rootTokens: string[]): boolean {
     const normalizedSegment = String(segment || '').trim().toLowerCase();
     if (!normalizedSegment) {
         return false;
     }
 
-    return rootTokens.some((token) => {
+    return rootTokens.some((token: string) => {
         if (!token || token === 'src') {
             return false;
         }
@@ -180,7 +253,7 @@ function matchesSemanticRoot(segment, rootTokens) {
     });
 }
 
-function matchesConfiguredRoot(pathValue, roots, options = {}) {
+function matchesConfiguredRoot(pathValue: string, roots: string[], options: MatchConfiguredRootOptions = {}): boolean {
     const normalizedPath = normalizePath(pathValue).toLowerCase();
     if (!normalizedPath) {
         return false;
@@ -216,7 +289,7 @@ function matchesConfiguredRoot(pathValue, roots, options = {}) {
  * Pure-logic classification of changed files.
  * Produces the canonical classify-change output shape.
  */
-function classifyChange(options) {
+export function classifyChange(options: ClassifyChangeOptions) {
     const normalizedFiles = options.normalizedFiles || [];
     const taskIntent = options.taskIntent || '';
     const fastPathMaxFiles = options.fastPathMaxFiles || 2;
@@ -237,28 +310,28 @@ function classifyChange(options) {
     const sqlOrMigration = classificationConfig.sql_or_migration_regexes;
     const codeLike = classificationConfig.code_like_regexes;
 
-    const testMatch = (p, regexes) => matchAnyRegex(p, regexes, {
+    const testMatch = (p: string, regexes: string[]) => matchAnyRegex(p, regexes, {
         skipInvalidRegex: true,
         caseInsensitive: true
     });
 
-    const runtimeChanged = normalizedFiles.some((p) => matchesConfiguredRoot(p, runtimeRoots, {
+    const runtimeChanged = normalizedFiles.some((p: string) => matchesConfiguredRoot(p, runtimeRoots, {
         allowNestedRoot: true
     }));
-    const dbTriggered = normalizedFiles.some(p => testMatch(p, classificationConfig.db_trigger_regexes));
-    const securityTriggered = normalizedFiles.some(p => testMatch(p, classificationConfig.security_trigger_regexes));
-    const apiTriggered = normalizedFiles.some(p => testMatch(p, classificationConfig.api_trigger_regexes));
-    const dependencyTriggered = normalizedFiles.some(p => testMatch(p, classificationConfig.dependency_trigger_regexes));
-    const infraTriggered = normalizedFiles.some(p => testMatch(p, classificationConfig.infra_trigger_regexes));
-    const testTriggered = normalizedFiles.some(p => testMatch(p, classificationConfig.test_trigger_regexes));
-    const performancePathTriggered = normalizedFiles.some(p => testMatch(p, classificationConfig.performance_trigger_regexes));
-    const sqlOrMigrationCount = normalizedFiles.filter(p => testMatch(p, sqlOrMigration)).length;
+    const dbTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.db_trigger_regexes));
+    const securityTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.security_trigger_regexes));
+    const apiTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.api_trigger_regexes));
+    const dependencyTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.dependency_trigger_regexes));
+    const infraTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.infra_trigger_regexes));
+    const testTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.test_trigger_regexes));
+    const performancePathTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.performance_trigger_regexes));
+    const sqlOrMigrationCount = normalizedFiles.filter((p: string) => testMatch(p, sqlOrMigration)).length;
     const onlySqlOrMigration = normalizedFiles.length > 0 && sqlOrMigrationCount === normalizedFiles.length;
 
     const refactorIntentTriggered = /\b(refactor|cleanup|restructure|extract|rename|modularization|simplify)\b/i.test(taskIntent);
-    const codeLikeCount = normalizedFiles.filter(p => testMatch(p, codeLike)).length;
+    const codeLikeCount = normalizedFiles.filter((p: string) => testMatch(p, codeLike)).length;
     const runtimeCodeLikeCount = normalizedFiles.filter(
-        (p) => matchesConfiguredRoot(p, runtimeRoots, { allowNestedRoot: true }) && testMatch(p, codeLike)
+        (p: string) => matchesConfiguredRoot(p, runtimeRoots, { allowNestedRoot: true }) && testMatch(p, codeLike)
     ).length;
     const runtimeCodeChanged = runtimeCodeLikeCount > 0;
 
@@ -286,11 +359,11 @@ function classifyChange(options) {
     );
     const performanceTriggered = performancePathTriggered || performanceHeuristicTriggered;
 
-    const allUnderFastRoots = normalizedFiles.length > 0 && normalizedFiles.every((p) => matchesConfiguredRoot(p, fastPathRoots, {
+    const allUnderFastRoots = normalizedFiles.length > 0 && normalizedFiles.every((p: string) => matchesConfiguredRoot(p, fastPathRoots, {
         semanticPackageMatch: true
     }));
-    const allFastAllowedTypes = normalizedFiles.length > 0 && normalizedFiles.every(p => testMatch(p, fastPathAllowed));
-    const hasFastSensitiveMatch = normalizedFiles.some(p => testMatch(p, fastPathSensitive));
+    const allFastAllowedTypes = normalizedFiles.length > 0 && normalizedFiles.every((p: string) => testMatch(p, fastPathAllowed));
+    const hasFastSensitiveMatch = normalizedFiles.some((p: string) => testMatch(p, fastPathSensitive));
 
     const fastPathEligible = (
         runtimeChanged
@@ -368,9 +441,3 @@ function classifyChange(options) {
     };
 }
 
-module.exports = {
-    classifyChange,
-    getClassificationConfig,
-    getDefaultClassificationConfig,
-    getReviewCapabilities
-};

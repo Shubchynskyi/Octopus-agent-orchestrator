@@ -1,9 +1,10 @@
-const crypto = require('node:crypto');
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
 
 /**
  * SHA-256 hash of a UTF-8 string. Returns null if value is null/undefined.
  */
-function stringSha256(value) {
+export function stringSha256(value: unknown): string | null {
     if (value == null) {
         return null;
     }
@@ -13,8 +14,7 @@ function stringSha256(value) {
 /**
  * SHA-256 hash of a file's raw bytes. Returns null if file missing/unreadable.
  */
-function fileSha256(filePath) {
-    const fs = require('node:fs');
+export function fileSha256(filePath: string): string | null {
     if (!filePath) {
         return null;
     }
@@ -29,4 +29,3 @@ function fileSha256(filePath) {
     }
 }
 
-module.exports = { stringSha256, fileSha256 };

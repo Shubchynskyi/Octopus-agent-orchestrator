@@ -1,20 +1,27 @@
-const { ensureTrailingLineEnding, normalizeLineEndings } = require('./line-endings.ts');
+import { ensureTrailingLineEnding, normalizeLineEndings } from './line-endings';
 
-function escapeRegex(text) {
+export interface ManagedBlockOptions {
+    startMarker: string;
+    endMarker: string;
+    blockLines?: string[];
+    newline?: string;
+}
+
+function escapeRegex(text: string): string {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function buildManagedBlock(startMarker, endMarker, blockLines, newline = '\n') {
+export function buildManagedBlock(startMarker: string, endMarker: string, blockLines: string | string[], newline: string = '\n'): string {
     const lines = Array.isArray(blockLines) ? blockLines.map((line) => String(line)) : [String(blockLines)];
     return [startMarker, ...lines, endMarker].join(newline);
 }
 
-function upsertManagedBlock(content, options) {
+export function upsertManagedBlock(content: string, options: ManagedBlockOptions): string {
     const newline = options.newline || '\n';
     const normalized = normalizeLineEndings(content || '', '\n');
     const block = buildManagedBlock(options.startMarker, options.endMarker, options.blockLines || [], '\n');
     const pattern = new RegExp(`${escapeRegex(options.startMarker)}\\n?[\\s\\S]*?${escapeRegex(options.endMarker)}`, 'm');
-    let result;
+    let result: string;
 
     if (pattern.test(normalized)) {
         result = normalized.replace(pattern, block);
@@ -27,7 +34,7 @@ function upsertManagedBlock(content, options) {
     return ensureTrailingLineEnding(normalizeLineEndings(result, newline), newline);
 }
 
-function removeManagedBlock(content, options) {
+export function removeManagedBlock(content: string, options: ManagedBlockOptions): string {
     const newline = options.newline || '\n';
     const normalized = normalizeLineEndings(content || '', '\n');
     const pattern = new RegExp(`\\n?${escapeRegex(options.startMarker)}\\n?[\\s\\S]*?${escapeRegex(options.endMarker)}\\n?`, 'm');
@@ -39,8 +46,3 @@ function removeManagedBlock(content, options) {
     return normalizeLineEndings(result, newline);
 }
 
-module.exports = {
-    buildManagedBlock,
-    removeManagedBlock,
-    upsertManagedBlock
-};

@@ -4,22 +4,22 @@
  * Tests assert filesystem state (not only error messages) to guarantee rollback
  * and recovery semantics are correct under failure conditions.
  */
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const { runUpdate, getUpdateRollbackItems } = require('../../../src/lifecycle/update.ts');
-const { runCheckUpdate } = require('../../../src/lifecycle/check-update.ts');
-const {
+import { runUpdate, getUpdateRollbackItems } from '../../../src/lifecycle/update';
+import { runCheckUpdate } from '../../../src/lifecycle/check-update';
+import {
     runRollback,
     runSnapshotRollback,
     runRollbackToVersion,
     findSnapshotByVersion
-} = require('../../../src/lifecycle/rollback.ts');
-const { runUninstall, parseBooleanAnswer, getUninstallRollbackItems } = require('../../../src/lifecycle/uninstall.ts');
-const {
+} from '../../../src/lifecycle/rollback';
+import { runUninstall, parseBooleanAnswer, getUninstallRollbackItems } from '../../../src/lifecycle/uninstall';
+import {
     removePathRecursive,
     getUpdateSentinelPath,
     getUninstallSentinelPath,
@@ -27,8 +27,8 @@ const {
     writeRollbackRecords,
     readRollbackRecords,
     restoreRollbackSnapshot
-} = require('../../../src/lifecycle/common.ts');
-const { MANAGED_START, MANAGED_END, COMMIT_GUARD_START, COMMIT_GUARD_END } = require('../../../src/materialization/content-builders.ts');
+} from '../../../src/lifecycle/common';
+import { MANAGED_START, MANAGED_END, COMMIT_GUARD_START, COMMIT_GUARD_END } from '../../../src/materialization/content-builders';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -45,7 +45,7 @@ function findRepoRoot() {
     throw new Error('Cannot find repo root');
 }
 
-function copyDirRecursive(src, dst) {
+function copyDirRecursive(src: string, dst: string) {
     fs.mkdirSync(dst, { recursive: true });
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
         const srcPath = path.join(src, entry.name);
@@ -60,7 +60,7 @@ function copyDirRecursive(src, dst) {
 
 const MANAGED_END_MARKER = '<!-- Octopus-agent-orchestrator:managed-end -->';
 
-function setupUpdateWorkspace(repoRoot) {
+function setupUpdateWorkspace(repoRoot: string) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-failpath-'));
     const bundle = path.join(tmpDir, 'Octopus-agent-orchestrator');
     fs.mkdirSync(bundle, { recursive: true });
@@ -93,7 +93,7 @@ function setupUpdateWorkspace(repoRoot) {
     };
 }
 
-function setupDeployedWorkspace(repoRoot) {
+function setupDeployedWorkspace(repoRoot: string) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-failpath-uninst-'));
     const bundle = path.join(tmpDir, 'Octopus-agent-orchestrator');
     fs.mkdirSync(bundle, { recursive: true });
@@ -126,7 +126,7 @@ function setupDeployedWorkspace(repoRoot) {
     return { projectRoot: tmpDir, bundleRoot: bundle };
 }
 
-function injectBundleUpdate(bundleRoot, updateMarker, nextVersion) {
+function injectBundleUpdate(bundleRoot: string, updateMarker: string, nextVersion: string) {
     const versionPath = path.join(bundleRoot, 'VERSION');
     const templateClaudePath = path.join(bundleRoot, 'template', 'CLAUDE.md');
     const currentTemplate = fs.readFileSync(templateClaudePath, 'utf8');
@@ -139,9 +139,9 @@ function injectBundleUpdate(bundleRoot, updateMarker, nextVersion) {
 }
 
 /** Collect all files (relative) under a directory for snapshot comparison. */
-function collectRelativeFiles(rootDir) {
-    const results = [];
-    function walk(dir) {
+function collectRelativeFiles(rootDir: string): string[] {
+    const results: string[] = [];
+    function walk(dir: string) {
         if (!fs.existsSync(dir)) return;
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
             const full = path.join(dir, entry.name);
@@ -157,8 +157,8 @@ function collectRelativeFiles(rootDir) {
 }
 
 /** Take a simple content snapshot of key files for comparison. */
-function snapshotKeyFiles(projectRoot, fileList) {
-    const snapshot = {};
+function snapshotKeyFiles(projectRoot: string, fileList: string[]): Record<string, string> {
+    const snapshot: Record<string, string> = {};
     for (const rel of fileList) {
         const full = path.join(projectRoot, rel);
         if (fs.existsSync(full) && fs.lstatSync(full).isFile()) {
@@ -272,7 +272,7 @@ describe('Update failure-path tests (T-070)', () => {
         try {
             fs.writeFileSync(path.join(projectRoot, 'CLAUDE.md'), 'double-failure-content');
 
-            let thrown = null;
+            let thrown: Error | null = null;
             try {
                 runUpdate({
                     targetRoot: projectRoot,
@@ -287,8 +287,8 @@ describe('Update failure-path tests (T-070)', () => {
                         throw new Error('INSTALL_FAIL_PRIMARY');
                     }
                 });
-            } catch (e) {
-                thrown = e;
+            } catch (e: unknown) {
+                thrown = e as Error;
             }
 
             assert.ok(thrown, 'Should throw on double failure');
@@ -624,7 +624,7 @@ describe('Rollback safety snapshot and failure paths (T-070)', () => {
             copyDirRecursive(bundleRoot, olderSource);
             fs.writeFileSync(path.join(olderSource, 'VERSION'), '1.0.0\n', 'utf8');
 
-            let thrown = null;
+            let thrown: Error | null = null;
             try {
                 await runRollback({
                     targetRoot: projectRoot,
@@ -641,8 +641,8 @@ describe('Rollback safety snapshot and failure paths (T-070)', () => {
                         throw new Error('INSTALL_FAIL_FOR_DOUBLE');
                     }
                 });
-            } catch (e) {
-                thrown = e;
+            } catch (e: unknown) {
+                thrown = e as Error;
             }
 
             assert.ok(thrown, 'Should throw on double failure');
@@ -1048,7 +1048,7 @@ describe('Uninstall failure and recovery paths (T-070)', () => {
     it('uninstall double failure: rollback also fails and error mentions both', () => {
         const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
         try {
-            let thrown = null;
+            let thrown: Error | null = null;
             try {
                 runUninstall({
                     targetRoot: projectRoot,
@@ -1074,8 +1074,8 @@ describe('Uninstall failure and recovery paths (T-070)', () => {
                         }
                     }
                 });
-            } catch (e) {
-                thrown = e;
+            } catch (e: unknown) {
+                thrown = e as Error;
             }
 
             assert.ok(thrown, 'Should throw on failure');

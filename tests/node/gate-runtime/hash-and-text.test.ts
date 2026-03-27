@@ -1,13 +1,13 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const { stringSha256, fileSha256 } = require('../../../src/gate-runtime/hash.ts');
-const { toStringArray, countTextChars, matchAnyRegex } = require('../../../src/gate-runtime/text-utils.ts');
+import { stringSha256, fileSha256 } from '../../../src/gate-runtime/hash';
+import { toStringArray, countTextChars, matchAnyRegex } from '../../../src/gate-runtime/text-utils';
 
 // --- stringSha256 ---
 
 test('stringSha256 returns null for null/undefined', () => {
-    assert.equal(stringSha256(null), null);
+    assert.equal(stringSha256(null as unknown as string), null);
     assert.equal(stringSha256(undefined), null);
 });
 
@@ -22,14 +22,14 @@ test('stringSha256 returns correct hash for "hello"', () => {
 });
 
 test('stringSha256 returns lowercase hex', () => {
-    const hash = stringSha256('test');
-    assert.match(hash, /^[0-9a-f]{64}$/);
+    const hash: string | null = stringSha256('test');
+    assert.match(hash!, /^[0-9a-f]{64}$/);
 });
 
 // --- fileSha256 ---
 
 test('fileSha256 returns null for null/missing path', () => {
-    assert.equal(fileSha256(null), null);
+    assert.equal(fileSha256(null as unknown as string), null);
     assert.equal(fileSha256(''), null);
     assert.equal(fileSha256('/nonexistent/path/file.txt'), null);
 });
@@ -89,7 +89,7 @@ test('matchAnyRegex returns false on no match', () => {
 });
 
 test('matchAnyRegex skips empty patterns', () => {
-    assert.equal(matchAnyRegex('test.js', ['', null, 'test']), true);
+    assert.equal(matchAnyRegex('test.js', ['', null as unknown as string, 'test']), true);
 });
 
 test('matchAnyRegex throws on invalid regex by default', () => {

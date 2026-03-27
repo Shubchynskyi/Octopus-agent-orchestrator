@@ -1,10 +1,10 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     FUZZY_ALIAS_GROUPS,
     MATCH_CATEGORIES,
     addSkillPack,
@@ -21,8 +21,10 @@ const {
     suggestSkills,
     textMatchesFuzzyVariant,
     validateSkillPacks,
-    writeSkillsIndex
-} = require('../../../src/runtime/skills.ts');
+    writeSkillsIndex,
+    SignalMatches,
+    SkillSuggestion
+} from '../../../src/runtime/skills';
 
 function findRepoRoot() {
     let current = __dirname;
@@ -35,7 +37,7 @@ function findRepoRoot() {
     throw new Error('Cannot resolve repo root.');
 }
 
-function copyDirRecursive(sourcePath, destinationPath) {
+function copyDirRecursive(sourcePath: string, destinationPath: string) {
     fs.mkdirSync(destinationPath, { recursive: true });
     for (const entry of fs.readdirSync(sourcePath, { withFileTypes: true })) {
         const sourceEntryPath = path.join(sourcePath, entry.name);
@@ -48,7 +50,7 @@ function copyDirRecursive(sourcePath, destinationPath) {
     }
 }
 
-function seedBaselineSkills(repoRoot, bundleRoot) {
+function seedBaselineSkills(repoRoot: string, bundleRoot: string) {
     copyDirRecursive(
         path.join(repoRoot, 'template', 'skills'),
         path.join(bundleRoot, 'live', 'skills')
@@ -76,7 +78,7 @@ test('built-in skill pack lifecycle installs, validates, lists, and removes pack
         const listing = listSkillPacks(bundleRoot);
         assert.deepEqual(listing.installedPackIds, ['node-backend']);
         assert.ok(listing.baselineSkillDirectories.includes('dependency-review'));
-        assert.equal(listing.builtinPacks.find((pack) => pack.id === 'node-backend').installed, true);
+        assert.equal(listing.builtinPacks.find((pack: { id: string; installed: boolean }) => pack.id === 'node-backend')!.installed, true);
 
         const validation = validateSkillPacks(bundleRoot);
         assert.equal(validation.passed, true);
@@ -107,12 +109,12 @@ test('addSkillPack synchronizes optional review capabilities for installed speci
         writeSkillsIndex(bundleRoot);
 
         const qualityResult = addSkillPack(bundleRoot, 'quality-architecture');
-        assert.equal(qualityResult.reviewCapabilities.api, true);
-        assert.equal(qualityResult.reviewCapabilities.test, true);
-        assert.equal(qualityResult.reviewCapabilities.performance, true);
+        assert.equal(qualityResult.reviewCapabilities!.api, true);
+        assert.equal(qualityResult.reviewCapabilities!.test, true);
+        assert.equal(qualityResult.reviewCapabilities!.performance, true);
 
         const infraResult = addSkillPack(bundleRoot, 'devops-k8s');
-        assert.equal(infraResult.reviewCapabilities.infra, true);
+        assert.equal(infraResult.reviewCapabilities!.infra, true);
 
         const persistedCapabilities = JSON.parse(fs.readFileSync(getReviewCapabilitiesConfigPath(bundleRoot), 'utf8'));
         assert.equal(persistedCapabilities.api, true);
@@ -122,10 +124,10 @@ test('addSkillPack synchronizes optional review capabilities for installed speci
         assert.equal(persistedCapabilities.dependency, true);
 
         const removeResult = removeSkillPack(bundleRoot, 'quality-architecture');
-        assert.equal(removeResult.reviewCapabilities.api, false);
-        assert.equal(removeResult.reviewCapabilities.test, false);
-        assert.equal(removeResult.reviewCapabilities.performance, false);
-        assert.equal(removeResult.reviewCapabilities.dependency, true);
+        assert.equal(removeResult.reviewCapabilities!.api, false);
+        assert.equal(removeResult.reviewCapabilities!.test, false);
+        assert.equal(removeResult.reviewCapabilities!.performance, false);
+        assert.equal(removeResult.reviewCapabilities!.dependency, true);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -340,22 +342,22 @@ test('getFuzzyAliasMap builds symmetric mappings', () => {
     assert.ok(map.size > 0);
 
     // k8s ↔ kubernetes
-    assert.ok(map.get('k8s').includes('kubernetes'));
-    assert.ok(map.get('kubernetes').includes('k8s'));
+    assert.ok(map.get('k8s')!.includes('kubernetes'));
+    assert.ok(map.get('kubernetes')!.includes('k8s'));
 
     // pg ↔ postgres ↔ postgresql
-    assert.ok(map.get('pg').includes('postgres'));
-    assert.ok(map.get('pg').includes('postgresql'));
-    assert.ok(map.get('postgresql').includes('pg'));
+    assert.ok(map.get('pg')!.includes('postgres'));
+    assert.ok(map.get('pg')!.includes('postgresql'));
+    assert.ok(map.get('postgresql')!.includes('pg'));
 
     // js ↔ javascript
-    assert.ok(map.get('js').includes('javascript'));
-    assert.ok(map.get('javascript').includes('js'));
+    assert.ok(map.get('js')!.includes('javascript'));
+    assert.ok(map.get('javascript')!.includes('js'));
 
     // dotnet ↔ .net ↔ csharp ↔ c#
-    assert.ok(map.get('dotnet').includes('.net'));
-    assert.ok(map.get('dotnet').includes('csharp'));
-    assert.ok(map.get('c#').includes('dotnet'));
+    assert.ok(map.get('dotnet')!.includes('.net'));
+    assert.ok(map.get('dotnet')!.includes('csharp'));
+    assert.ok(map.get('c#')!.includes('dotnet'));
 });
 
 test('containsAtWordBoundary matches terms at word boundaries only', () => {
@@ -480,7 +482,7 @@ test('fuzzy aliases are deterministic across repeated runs', () => {
 // T-080: Same-pack skill dedupe helpers
 // ---------------------------------------------------------------------------
 
-function makeSuggestion(id, pack, score, matches) {
+function makeSuggestion(id: string, pack: string, score: number, matches?: Partial<SignalMatches>) {
     return {
         id,
         name: id,
@@ -525,7 +527,7 @@ test('hasDistinctSignalCoverage returns true for changed_path_signals coverage g
 });
 
 test('hasDistinctSignalCoverage handles missing matches object gracefully', () => {
-    const primary = { id: 'a', pack: 'p', score: 100 };
+    const primary = { id: 'a', name: 'a', pack: 'p', summary: 'a', score: 100, installed: false, matches: { stack_signals: [], task_signals: [], changed_path_signals: [], project_path_signals: [], aliases_or_tags: [] } } as SkillSuggestion;
     const candidate = makeSuggestion('b', 'p', 80, { task_signals: ['review'] });
     assert.equal(hasDistinctSignalCoverage(primary, candidate), true);
 });

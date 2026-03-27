@@ -1,10 +1,10 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
-const {
+import {
     SKILL_TELEMETRY_ACTOR,
     SKILL_TELEMETRY_EVENT_TYPES,
     buildSkillTelemetryDetails,
@@ -12,9 +12,9 @@ const {
     emitSkillSuggestedEvent,
     emitSkillSelectedEvent,
     emitSkillReferenceLoadedEvent
-} = require('../../../src/runtime/skill-telemetry.ts');
+} from '../../../src/runtime/skill-telemetry';
 
-const { inspectTaskEventFile } = require('../../../src/gate-runtime/task-events.ts');
+import { inspectTaskEventFile } from '../../../src/gate-runtime/task-events';
 
 // ---- Constants & schema stability ----
 

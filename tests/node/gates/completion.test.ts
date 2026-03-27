@@ -1,14 +1,14 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     extractMarkdownSectionLines,
     normalizeReviewListText,
     isMeaningfulReviewEntry,
     getMarkdownMeaningfulEntries,
     getFindingsBySeverity,
     getReviewArtifactFindingsEvidence
-} = require('../../../src/gates/completion.ts');
+} from '../../../src/gates/completion';
 
 describe('gates/completion', () => {
     describe('extractMarkdownSectionLines', () => {

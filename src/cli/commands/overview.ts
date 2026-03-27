@@ -1,17 +1,14 @@
-const {
-    getStatusSnapshot,
-    formatStatusSnapshot
-} = require('../../validators/status.ts');
-
-const {
+import { getStatusSnapshot, formatStatusSnapshot } from '../../validators/status';
+import {
     buildBannerText,
     COMMAND_SUMMARY,
     normalizePathValue,
     padRight,
+    PackageJsonLike,
     printBanner,
     printCommandSummary,
     printStatus
-} = require('./cli-helpers.ts');
+} from './cli-helpers';
 
 // ---------------------------------------------------------------------------
 // Pure-function output builder (testable without stdout capture)
@@ -21,7 +18,7 @@ const {
  * Build the full overview text as a string.
  * Mirrors printOverview() but returns a string instead of writing to stdout.
  */
-function buildOverviewOutput(packageJson, targetRoot) {
+export function buildOverviewOutput(packageJson: PackageJsonLike, targetRoot?: string): string {
     if (targetRoot === undefined) targetRoot = normalizePathValue('.');
     const snapshot = getStatusSnapshot(targetRoot);
     const lines = [];
@@ -48,7 +45,7 @@ function buildOverviewOutput(packageJson, targetRoot) {
  *   - OCTOPUS_STATUS block
  *   - Available Commands
  */
-function printOverview(packageJson, targetRoot) {
+export function printOverview(packageJson: PackageJsonLike, targetRoot?: string): void {
     if (targetRoot === undefined) targetRoot = normalizePathValue('.');
     const snapshot = getStatusSnapshot(targetRoot);
     console.log('OCTOPUS_OVERVIEW');
@@ -60,12 +57,6 @@ function printOverview(packageJson, targetRoot) {
 /**
  * CLI handler: called when octopus is invoked with no arguments.
  */
-function handleOverview(packageJson, targetRoot) {
+export function handleOverview(packageJson: PackageJsonLike, targetRoot?: string): void {
     printOverview(packageJson, targetRoot);
 }
-
-module.exports = {
-    buildOverviewOutput,
-    handleOverview,
-    printOverview
-};

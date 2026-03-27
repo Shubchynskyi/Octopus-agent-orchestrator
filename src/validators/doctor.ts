@@ -1,14 +1,30 @@
-const path = require('node:path');
+import * as path from 'node:path';
+import { DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../core/constants';
+import { pathExists } from '../core/fs';
+import { validateManifest, formatManifestResult } from './validate-manifest';
+import { formatVerifyResult } from './verify';
+import { runVerify } from './verify';
+import { getBundlePath } from './workspace-layout';
 
-const { DEFAULT_INIT_ANSWERS_RELATIVE_PATH } = require('../core/constants.ts');
-const { pathExists } = require('../core/fs.ts');
+interface DoctorOptions {
+    targetRoot: string;
+    sourceOfTruth: string;
+    initAnswersPath?: string;
+}
 
-const { validateManifest, formatManifestResult } = require('./validate-manifest.ts');
-const { formatVerifyResult } = require('./verify.ts');
-const { runVerify } = require('./verify.ts');
-const { getBundlePath } = require('./workspace-layout.ts');
+interface DoctorResult {
+    passed: boolean;
+    targetRoot: string;
+    verifyResult: ReturnType<typeof runVerify>;
+    manifestResult: ReturnType<typeof validateManifest> | null;
+    manifestError: string | null;
+}
 
-function runDoctor(options) {
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+export function runDoctor(options: DoctorOptions): DoctorResult {
     var targetRoot = path.resolve(options.targetRoot);
     var initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
     var bundlePath = getBundlePath(targetRoot);
@@ -31,7 +47,7 @@ function runDoctor(options) {
     var manifestError = null;
 
     try { manifestResult = validateManifest(manifestPath, targetRoot); }
-    catch(err) { manifestError = err.message || String(err); }
+    catch (err: unknown) { manifestError = getErrorMessage(err); }
 
     var manifestPassed = manifestResult ? manifestResult.passed : false;
     var passed = verifyResult.passed && manifestPassed && !manifestError;
@@ -45,8 +61,8 @@ function runDoctor(options) {
     };
 }
 
-function formatDoctorResult(result) {
-    var lines = [];
+export function formatDoctorResult(result: DoctorResult): string {
+    var lines: string[] = [];
     lines.push(formatVerifyResult(result.verifyResult));
     lines.push('');
     if (result.manifestResult) lines.push(formatManifestResult(result.manifestResult));
@@ -56,8 +72,3 @@ function formatDoctorResult(result) {
     else { lines.push('Doctor: FAIL'); lines.push('Resolve listed issues and rerun doctor.'); }
     return lines.join('\n');
 }
-
-module.exports = {
-    formatDoctorResult,
-    runDoctor
-};

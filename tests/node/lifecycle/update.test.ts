@@ -1,11 +1,11 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const { runUpdate, getUpdateRollbackItems } = require('../../../src/lifecycle/update.ts');
-const { removePathRecursive } = require('../../../src/lifecycle/common.ts');
+import { runUpdate, getUpdateRollbackItems } from '../../../src/lifecycle/update';
+import { removePathRecursive } from '../../../src/lifecycle/common';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -18,7 +18,7 @@ function findRepoRoot() {
     throw new Error('Cannot find repo root');
 }
 
-function copyDirRecursive(src, dst) {
+function copyDirRecursive(src: string, dst: string) {
     fs.mkdirSync(dst, { recursive: true });
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
         const srcPath = path.join(src, entry.name);
@@ -31,7 +31,7 @@ function copyDirRecursive(src, dst) {
     }
 }
 
-function setupUpdateWorkspace(repoRoot) {
+function setupUpdateWorkspace(repoRoot: string) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-update-'));
     const bundle = path.join(tmpDir, 'Octopus-agent-orchestrator');
     fs.mkdirSync(bundle, { recursive: true });

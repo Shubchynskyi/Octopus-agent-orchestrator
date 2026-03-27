@@ -94,6 +94,9 @@ Full reference: **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopu
 ## Runtime Baseline
 
 - **Node.js 20 LTS is the only required runtime** for the public CLI, lifecycle commands, and gate commands.
+- **Compile-first runtime contract:** `src/**/*.ts` is the source of truth, `src/bin/octopus.ts` compiles into the public `bin/octopus.js` launcher, and that launcher executes compiled JavaScript from `dist/src/**/*.js` or the staged `.node-build/src/**/*.js` test build. Raw `src/**/*.ts` files are never executed directly.
+- **Strict TypeScript means compiler-enforced typing across all maintained code paths:** `tsconfig.build.json` runs `strict:true` for `src/**/*.ts`, and `tsconfig.tests.json` runs `strict:true` for `src/**/*.ts`, `tests/node/**/*.ts`, and `scripts/node-foundation/**/*.ts`.
+- **Release validation is explicit:** `npm run validate:release` proves `build -> test -> pack -> install/invoke` for the published CLI contract.
 - Root `tsconfig.json` extends `tsconfig.node-foundation.json`, so editors like IntelliJ IDEA or WebStorm can discover the repository without custom setup.
 
 ## Documentation
@@ -112,6 +115,9 @@ Full reference: **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopu
 
 ## Recent Changes
 
+- Completed the final TS-only source transition: `src/bin/octopus.ts` now owns the public CLI launcher and `bin/octopus.js` is build-generated only.
+- Source installs now self-build through `npm prepare`, so the generated launcher and compiled runtime are materialized before execution.
+- Packaging tests now build in isolated fixture repositories, removing cross-test races on shared `dist/` state.
 - Stabilized the Node gate router for scoped diff, review-context, task-event summary, and completion flows.
 - Added root `tsconfig.json` for standard editor/IDE TypeScript discovery and included it in the published package surface.
 - Full `tests/node/**` baseline now completes cleanly without temp workspace helper noise.
@@ -131,7 +137,7 @@ Full reference: **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopu
 - Optional skills are discovered from the compact `live/config/skills-index.json` index. After the user selects a built-in pack, it should be installed into `live/skills/**` without reading the full optional `SKILL.md` immediately. Full optional skill files should be opened only later, when the selected skill is actually activated for a task or a hard activation rule requires it.
 - `octopus` without arguments is now non-destructive and only prints overview/help.
 - The public CLI owns the validated runtime surface for lifecycle commands and gate routes.
-- In the source repository, `bin/octopus.js` runs JS-compatible `src/**/*.ts` directly; in packaged installs under `node_modules`, the same router switches to compiled `dist/src/**/*.js`.
+- `bin/octopus.js` is a generated launcher compiled from `src/bin/octopus.ts`; repository builds run from `dist/src/**/*.js`, tests can stage `.node-build/src/**/*.js`, and packaged installs invoke the same compiled contract from `node_modules`.
 - Root `tsconfig.json` is the editor-facing entrypoint and simply extends `tsconfig.node-foundation.json`.
 - Installer is non-destructive for existing project files outside managed blocks.
 - Commit message format is project-defined; conventional commits are optional.

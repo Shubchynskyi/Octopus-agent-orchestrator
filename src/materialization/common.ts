@@ -1,17 +1,34 @@
-const {
-    ALL_AGENT_ENTRYPOINT_FILES,
-    SOURCE_OF_TRUTH_VALUES,
-    SOURCE_TO_ENTRYPOINT_MAP
-} = require('../core/constants.ts');
+import { ALL_AGENT_ENTRYPOINT_FILES, SOURCE_OF_TRUTH_VALUES, SOURCE_TO_ENTRYPOINT_MAP } from '../core/constants';
+
+type SourceOfTruthValue = keyof typeof SOURCE_TO_ENTRYPOINT_MAP;
+
+const ACTIVE_AGENT_FILE_ALIAS_MAP: Record<string, string> = {
+    'claude': 'CLAUDE.md',
+    'claude.md': 'CLAUDE.md',
+    'codex': 'AGENTS.md',
+    'agents': 'AGENTS.md',
+    'agents.md': 'AGENTS.md',
+    'gemini': 'GEMINI.md',
+    'gemini.md': 'GEMINI.md',
+    'githubcopilot': '.github/copilot-instructions.md',
+    'copilot': '.github/copilot-instructions.md',
+    '.github/copilot-instructions.md': '.github/copilot-instructions.md',
+    'windsurf': '.windsurf/rules/rules.md',
+    '.windsurf/rules/rules.md': '.windsurf/rules/rules.md',
+    'junie': '.junie/guidelines.md',
+    '.junie/guidelines.md': '.junie/guidelines.md',
+    'antigravity': '.antigravity/rules.md',
+    '.antigravity/rules.md': '.antigravity/rules.md'
+};
 
 /**
  * Resolves a source-of-truth provider name to its canonical entrypoint file.
  */
-function getCanonicalEntrypointFile(sourceOfTruth) {
+export function getCanonicalEntrypointFile(sourceOfTruth: string): string {
     const key = String(sourceOfTruth).trim();
     const match = SOURCE_OF_TRUTH_VALUES.find(
         (v) => v.toLowerCase() === key.toLowerCase().replace(/\s+/g, '')
-    );
+    ) as SourceOfTruthValue | undefined;
     if (!match) {
         throw new Error(`Unsupported SourceOfTruth value '${sourceOfTruth}'.`);
     }
@@ -21,7 +38,7 @@ function getCanonicalEntrypointFile(sourceOfTruth) {
 /**
  * Normalizes a single agent entrypoint token (alias, number, or path) to a canonical file.
  */
-function normalizeAgentEntrypointToken(token) {
+export function normalizeAgentEntrypointToken(token: string): string | null {
     let trimmed = String(token).trim();
     trimmed = trimmed.replace(/^or\s+/i, '');
     if (!trimmed) {
@@ -39,27 +56,8 @@ function normalizeAgentEntrypointToken(token) {
     }
 
     const normalized = trimmed.toLowerCase().replace(/\\/g, '/');
-    const aliasMap = {
-        'claude': 'CLAUDE.md',
-        'claude.md': 'CLAUDE.md',
-        'codex': 'AGENTS.md',
-        'agents': 'AGENTS.md',
-        'agents.md': 'AGENTS.md',
-        'gemini': 'GEMINI.md',
-        'gemini.md': 'GEMINI.md',
-        'githubcopilot': '.github/copilot-instructions.md',
-        'copilot': '.github/copilot-instructions.md',
-        '.github/copilot-instructions.md': '.github/copilot-instructions.md',
-        'windsurf': '.windsurf/rules/rules.md',
-        '.windsurf/rules/rules.md': '.windsurf/rules/rules.md',
-        'junie': '.junie/guidelines.md',
-        '.junie/guidelines.md': '.junie/guidelines.md',
-        'antigravity': '.antigravity/rules.md',
-        '.antigravity/rules.md': '.antigravity/rules.md'
-    };
-
-    if (aliasMap[normalized]) {
-        return aliasMap[normalized];
+    if (ACTIVE_AGENT_FILE_ALIAS_MAP[normalized]) {
+        return ACTIVE_AGENT_FILE_ALIAS_MAP[normalized];
     }
 
     const caseMatch = ALL_AGENT_ENTRYPOINT_FILES.find(
@@ -78,8 +76,8 @@ function normalizeAgentEntrypointToken(token) {
  * Resolves active agent entrypoint files from a comma/semicolon-separated value
  * and/or a source-of-truth provider name. Returns ordered canonical array.
  */
-function getActiveAgentEntrypointFiles(value, sourceOfTruthValue) {
-    const selected = new Set();
+export function getActiveAgentEntrypointFiles(value: unknown, sourceOfTruthValue: unknown): string[] {
+    const selected = new Set<string>();
 
     if (value && String(value).trim()) {
         for (const token of String(value).split(/[,;]/)) {
@@ -91,10 +89,10 @@ function getActiveAgentEntrypointFiles(value, sourceOfTruthValue) {
     }
 
     if (sourceOfTruthValue && String(sourceOfTruthValue).trim()) {
-        selected.add(getCanonicalEntrypointFile(sourceOfTruthValue));
+        selected.add(getCanonicalEntrypointFile(String(sourceOfTruthValue)));
     }
 
-    const ordered = [];
+    const ordered: string[] = [];
     for (const allowed of ALL_AGENT_ENTRYPOINT_FILES) {
         if (selected.has(allowed)) {
             ordered.push(allowed);
@@ -107,13 +105,13 @@ function getActiveAgentEntrypointFiles(value, sourceOfTruthValue) {
 /**
  * Converts an array of active entrypoint files to a comma-separated string.
  */
-function convertActiveAgentEntrypointFilesToString(activeEntrypointFiles) {
+export function convertActiveAgentEntrypointFilesToString(activeEntrypointFiles: unknown): string | null {
     if (!activeEntrypointFiles || !Array.isArray(activeEntrypointFiles)) {
         return null;
     }
 
-    const normalized = [];
-    const selectedSet = new Set();
+    const normalized: string[] = [];
+    const selectedSet = new Set<string>();
     for (const entry of activeEntrypointFiles) {
         if (!entry || !String(entry).trim()) continue;
         const token = normalizeAgentEntrypointToken(entry);
@@ -134,7 +132,7 @@ function convertActiveAgentEntrypointFilesToString(activeEntrypointFiles) {
 /**
  * Returns provider orchestrator profile definitions.
  */
-function getProviderOrchestratorProfileDefinitions() {
+export function getProviderOrchestratorProfileDefinitions() {
     return [
         {
             entrypointFile: '.github/copilot-instructions.md',
@@ -166,7 +164,7 @@ function getProviderOrchestratorProfileDefinitions() {
 /**
  * Returns GitHub skill bridge profile definitions.
  */
-function getGitHubSkillBridgeProfileDefinitions() {
+export function getGitHubSkillBridgeProfileDefinitions() {
     return [
         {
             relativePath: '.github/agents/reviewer.md',
@@ -240,12 +238,3 @@ function getGitHubSkillBridgeProfileDefinitions() {
         }
     ];
 }
-
-module.exports = {
-    convertActiveAgentEntrypointFilesToString,
-    getActiveAgentEntrypointFiles,
-    getCanonicalEntrypointFile,
-    getGitHubSkillBridgeProfileDefinitions,
-    getProviderOrchestratorProfileDefinitions,
-    normalizeAgentEntrypointToken
-};

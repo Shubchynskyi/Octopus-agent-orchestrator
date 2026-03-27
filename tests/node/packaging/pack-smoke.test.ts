@@ -1,87 +1,125 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const childProcess = require('node:child_process');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
-function findRepoRoot(startDir) {
-    let current = path.resolve(startDir);
-    while (true) {
-        const buildScriptPath = path.join(current, 'scripts', 'node-foundation', 'build.ts');
-        const packageJsonPath = path.join(current, 'package.json');
-        if (fs.existsSync(buildScriptPath) && fs.existsSync(packageJsonPath)) {
-            return current;
-        }
-        const parent = path.dirname(current);
-        if (parent === current) {
-            throw new Error(`Could not resolve repository root from: ${startDir}`);
-        }
-        current = parent;
-    }
-}
+import { getRepoRoot } from '../../../scripts/node-foundation/build';
 
-if (!require.extensions['.ts']) {
-    require.extensions['.ts'] = require.extensions['.js'];
-}
-
-const {
-    getRepoRoot
-} = require(path.join(findRepoRoot(__dirname), 'scripts', 'node-foundation', 'build.ts'));
-
-function loadPackFixtureItems(repoRoot) {
+function loadPackFixtureItems(repoRoot: string): string[] {
     const pkgJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
-    const items = new Set(pkgJson.files || []);
+    const items = new Set<string>(pkgJson.files || []);
     items.delete('dist');
+    items.delete('bin');
     items.add('package.json');
     items.add('scripts/node-foundation');
+    items.add('tsconfig.build.json');
     return Array.from(items).sort();
 }
 
-function copyPackFixture(repoRoot, fixtureRoot) {
+function copyPackFixture(repoRoot: string, fixtureRoot: string): void {
     fs.mkdirSync(fixtureRoot, { recursive: true });
     for (const relativePath of loadPackFixtureItems(repoRoot)) {
-        fs.cpSync(path.join(repoRoot, relativePath), path.join(fixtureRoot, relativePath), { recursive: true });
+        const src = path.join(repoRoot, relativePath);
+        if (!fs.existsSync(src)) continue;
+        fs.cpSync(src, path.join(fixtureRoot, relativePath), { recursive: true });
+    }
+    // Symlink node_modules so tsc is available for the publish-runtime build
+    const realNodeModules = path.join(repoRoot, 'node_modules');
+    const fixtureNodeModules = path.join(fixtureRoot, 'node_modules');
+    if (fs.existsSync(realNodeModules) && !fs.existsSync(fixtureNodeModules)) {
+        fs.symlinkSync(realNodeModules, fixtureNodeModules, 'junction');
     }
 }
 
-function buildPublishRuntimeInRepo(repoRoot) {
-    const result = childProcess.spawnSync(
-        process.execPath,
-        [
-            '--input-type=commonjs',
-            '--eval',
-            "require.extensions['.ts']=require.extensions['.js'];require(process.argv[1]).runPublishRuntimeBuild()",
-            './scripts/node-foundation/build.ts'
-        ],
-        {
-            cwd: repoRoot,
-            encoding: 'utf8',
-            timeout: 120_000
+function getTypescriptCliPath(repoRoot: string): string {
+    return path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
+}
+
+function syncGeneratedCliEntrypoint(repoRoot: string): void {
+    const compiledCliPath = path.join(repoRoot, 'dist', 'src', 'bin', 'octopus.js');
+    if (!fs.existsSync(compiledCliPath)) {
+        throw new Error(`compiled CLI launcher not found: ${compiledCliPath}`);
+    }
+
+    const repoCliPath = path.join(repoRoot, 'bin', 'octopus.js');
+    fs.mkdirSync(path.dirname(repoCliPath), { recursive: true });
+    fs.copyFileSync(compiledCliPath, repoCliPath);
+}
+
+function quoteWindowsArgument(argument: string): string {
+    const text = String(argument || '');
+    if (!text || !/[ \t"]/u.test(text)) {
+        return text;
+    }
+
+    let escaped = '"';
+    let backslashCount = 0;
+    for (const character of text) {
+        if (character === '\\') {
+            backslashCount += 1;
+            continue;
         }
-    );
+        if (character === '"') {
+            escaped += '\\'.repeat(backslashCount * 2 + 1);
+            escaped += '"';
+            backslashCount = 0;
+            continue;
+        }
+        if (backslashCount > 0) {
+            escaped += '\\'.repeat(backslashCount);
+            backslashCount = 0;
+        }
+        escaped += character;
+    }
+    if (backslashCount > 0) {
+        escaped += '\\'.repeat(backslashCount * 2);
+    }
+    escaped += '"';
+    return escaped;
+}
+
+function spawnNpm(args: string[], cwd: string): childProcess.SpawnSyncReturns<string> {
+    if (process.platform === 'win32') {
+        const commandLine = ['npm.cmd', ...args].map(quoteWindowsArgument).join(' ');
+        return childProcess.spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', commandLine], {
+            cwd,
+            encoding: 'utf8',
+            timeout: 120_000,
+            windowsHide: true
+        });
+    }
+
+    return childProcess.spawnSync('npm', args, {
+        cwd,
+        encoding: 'utf8',
+        timeout: 120_000,
+        windowsHide: true
+    });
+}
+
+function buildPublishRuntimeInRepo(repoRoot: string): void {
+    const result = childProcess.spawnSync(process.execPath, [getTypescriptCliPath(repoRoot), '-p', 'tsconfig.build.json'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        timeout: 120_000,
+        windowsHide: true
+    });
 
     if (result.status !== 0) {
         throw new Error(`publish runtime build failed:\n${result.stderr || result.stdout}`);
     }
+
+    syncGeneratedCliEntrypoint(repoRoot);
 }
 
-function npmPack(repoRoot) {
+function npmPack(repoRoot: string): string {
     // Build dist/ explicitly in an isolated fixture repo so this smoke test
     // does not race with other packaging tests that also materialize dist/.
     buildPublishRuntimeInRepo(repoRoot);
 
-    const npmExe = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    const result = childProcess.spawnSync(
-        npmExe,
-        ['pack', '--ignore-scripts', '--pack-destination', repoRoot],
-        {
-            cwd: repoRoot,
-            encoding: 'utf8',
-            timeout: 120_000,
-            shell: true
-        }
-    );
+    const result = spawnNpm(['pack', '--ignore-scripts', '--pack-destination', repoRoot], repoRoot);
 
     if (result.status !== 0) {
         throw new Error(`npm pack failed:\n${result.stderr || result.stdout}`);
@@ -92,7 +130,7 @@ function npmPack(repoRoot) {
     return tarballFilename;
 }
 
-function npmInstallTarball(tarballPath, installDir) {
+function npmInstallTarball(tarballPath: string, installDir: string): void {
     fs.mkdirSync(installDir, { recursive: true });
     fs.writeFileSync(
         path.join(installDir, 'package.json'),
@@ -100,24 +138,14 @@ function npmInstallTarball(tarballPath, installDir) {
         'utf8'
     );
 
-    const npmExe = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    const result = childProcess.spawnSync(
-        npmExe,
-        ['install', '--no-fund', '--no-audit', '--no-progress', tarballPath],
-        {
-            cwd: installDir,
-            encoding: 'utf8',
-            timeout: 120_000,
-            shell: true
-        }
-    );
+    const result = spawnNpm(['install', '--no-fund', '--no-audit', '--no-progress', tarballPath], installDir);
 
     if (result.status !== 0) {
         throw new Error(`npm install failed:\n${result.stderr || result.stdout}`);
     }
 }
 
-function runCli(cliScriptPath, args, cwd) {
+function runCli(cliScriptPath: string, args: string[], cwd: string): childProcess.SpawnSyncReturns<string> {
     return childProcess.spawnSync(
         process.execPath,
         [cliScriptPath, ...args],

@@ -1,10 +1,9 @@
-const fs = require('node:fs');
-const path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { assertValidTaskId } from '../gate-runtime/task-events';
+import { fileSha256, normalizePath, joinOrchestratorPath, resolvePathInsideRepo } from './helpers';
 
-const { assertValidTaskId } = require('../gate-runtime/task-events.ts');
-const { fileSha256, normalizePath, joinOrchestratorPath, resolvePathInsideRepo } = require('./helpers.ts');
-
-const REVIEW_CONTRACTS = [
+export const REVIEW_CONTRACTS = [
     ['code', 'REVIEW PASSED'],
     ['db', 'DB REVIEW PASSED'],
     ['security', 'SECURITY REVIEW PASSED'],
@@ -16,7 +15,7 @@ const REVIEW_CONTRACTS = [
     ['dependency', 'DEPENDENCY REVIEW PASSED']
 ];
 
-const EMPTY_REVIEW_MARKERS = new Set([
+export const EMPTY_REVIEW_MARKERS = new Set([
     'none', 'n/a', 'na', 'no findings', 'no residual risks',
     'no deferred findings', 'no open findings', 'no outstanding findings'
 ]);
@@ -24,8 +23,8 @@ const EMPTY_REVIEW_MARKERS = new Set([
 /**
  * Extract lines from a markdown section by heading.
  */
-function extractMarkdownSectionLines(lines, heading) {
-    const sectionLines = [];
+export function extractMarkdownSectionLines(lines: string[], heading: string): string[] {
+    const sectionLines: string[] = [];
     let capture = false;
     for (const rawLine of lines) {
         const trimmed = rawLine.trim();
@@ -43,7 +42,7 @@ function extractMarkdownSectionLines(lines, heading) {
 /**
  * Normalize review list text: strip bullets, backticks.
  */
-function normalizeReviewListText(value) {
+export function normalizeReviewListText(value: unknown): string {
     if (value == null) return '';
     let text = String(value).trim();
     text = text.replace(/^(?:[-*+]\s+|\d+\.\s+)+/, '').trim();
@@ -56,7 +55,7 @@ function normalizeReviewListText(value) {
 /**
  * Check if a review entry is meaningful (not an empty marker).
  */
-function isMeaningfulReviewEntry(value) {
+export function isMeaningfulReviewEntry(value: unknown): boolean {
     const text = normalizeReviewListText(value);
     if (!text) return false;
     const normalized = text.trim().replace(/\.$/, '').trim().replace(/^`|`$/g, '').trim().toLowerCase();
@@ -66,9 +65,9 @@ function isMeaningfulReviewEntry(value) {
 /**
  * Get meaningful entries from a markdown section.
  */
-function getMarkdownMeaningfulEntries(sectionLines) {
-    const entries = [];
-    let currentEntry = null;
+export function getMarkdownMeaningfulEntries(sectionLines: string[]): string[] {
+    const entries: string[] = [];
+    let currentEntry: string | null = null;
 
     for (const rawLine of sectionLines) {
         const trimmed = rawLine.trim();
@@ -99,9 +98,11 @@ function getMarkdownMeaningfulEntries(sectionLines) {
 /**
  * Parse findings by severity from section lines.
  */
-function getFindingsBySeverity(sectionLines) {
-    const findings = { critical: [], high: [], medium: [], low: [] };
-    let currentSeverity = null;
+type SeverityLevel = 'critical' | 'high' | 'medium' | 'low';
+
+export function getFindingsBySeverity(sectionLines: string[]): Record<SeverityLevel, string[]> {
+    const findings: Record<SeverityLevel, string[]> = { critical: [], high: [], medium: [], low: [] };
+    let currentSeverity: SeverityLevel | null = null;
 
     for (const rawLine of sectionLines) {
         const trimmed = rawLine.trim();
@@ -109,7 +110,7 @@ function getFindingsBySeverity(sectionLines) {
 
         const severityMatch = /^(?:[-*+]\s*)?(Critical|High|Medium|Low)\s*:\s*(.*)$/i.exec(trimmed);
         if (severityMatch) {
-            currentSeverity = severityMatch[1].trim().toLowerCase();
+            currentSeverity = severityMatch[1].trim().toLowerCase() as SeverityLevel;
             const remainder = normalizeReviewListText(severityMatch[2]);
             if (isMeaningfulReviewEntry(remainder)) {
                 findings[currentSeverity].push(remainder);
@@ -145,9 +146,20 @@ function getFindingsBySeverity(sectionLines) {
  * Analyze review artifact for findings evidence.
  * Matches Python get_review_artifact_findings_evidence.
  */
-function getReviewArtifactFindingsEvidence(artifactPath, content) {
+export function getReviewArtifactFindingsEvidence(artifactPath: string, content: string) {
     const artifactPathNormalized = normalizePath(artifactPath);
-    const result = {
+    const result: {
+        status: string;
+        findings_section_present: boolean;
+        residual_risks_section_present: boolean;
+        deferred_findings_section_present: boolean;
+        findings_by_severity: Record<SeverityLevel, string[]>;
+        residual_risks: string[];
+        deferred_findings: string[];
+        missing_sections: string[];
+        invalid_deferred_findings: string[];
+        violations: string[];
+    } = {
         status: 'UNKNOWN',
         findings_section_present: false,
         residual_risks_section_present: false,
@@ -173,7 +185,7 @@ function getReviewArtifactFindingsEvidence(artifactPath, content) {
         result.findings_section_present = true;
         const findingsBySeverity = getFindingsBySeverity(findingsLines);
         result.findings_by_severity = findingsBySeverity;
-        for (const severity of ['critical', 'high', 'medium', 'low']) {
+        for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
             if (findingsBySeverity[severity].length > 0) {
                 const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
                 result.violations.push(
@@ -228,7 +240,7 @@ function getReviewArtifactFindingsEvidence(artifactPath, content) {
 /**
  * Validate preflight for completion gate.
  */
-function validatePreflightForCompletion(preflightPath, explicitTaskId) {
+export function validatePreflightForCompletion(preflightPath: string, explicitTaskId: string) {
     let preflight;
     try {
         preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
@@ -236,22 +248,24 @@ function validatePreflightForCompletion(preflightPath, explicitTaskId) {
         throw new Error(`Preflight artifact is not valid JSON: ${preflightPath}`);
     }
 
-    const errors = [];
-    let resolvedTaskId = null;
+    const errors: string[] = [];
+    let resolvedTaskId: string | null = null;
     if (explicitTaskId && explicitTaskId.trim()) {
         try {
             resolvedTaskId = assertValidTaskId(explicitTaskId);
-        } catch (exc) {
-            errors.push(String(exc.message || exc));
+        } catch (exc: unknown) {
+            const message = exc instanceof Error ? exc.message : String(exc);
+            errors.push(String(message));
         }
     }
 
-    let preflightTaskId = preflight.task_id != null ? String(preflight.task_id).trim() : '';
+    let preflightTaskId: string | null = preflight.task_id != null ? String(preflight.task_id).trim() : '';
     if (preflightTaskId) {
         try {
             preflightTaskId = assertValidTaskId(preflightTaskId);
-        } catch (exc) {
-            errors.push(`preflight.task_id: ${exc.message || exc}`);
+        } catch (exc: unknown) {
+            const message = exc instanceof Error ? exc.message : String(exc);
+            errors.push(`preflight.task_id: ${message}`);
             preflightTaskId = null;
         }
     } else {
@@ -275,7 +289,7 @@ function validatePreflightForCompletion(preflightPath, explicitTaskId) {
     };
 }
 
-function readJsonArtifact(artifactPath, label, errors, { required = true } = {}) {
+function readJsonArtifact(artifactPath: string, label: string, errors: string[], { required = true } = {}): Record<string, unknown> | null {
     const resolvedPath = path.resolve(String(artifactPath || ''));
     if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
         if (required) {
@@ -292,7 +306,7 @@ function readJsonArtifact(artifactPath, label, errors, { required = true } = {})
     }
 }
 
-function readTaskTimeline(timelinePath, errors) {
+function readTaskTimeline(timelinePath: string, errors: string[]): Record<string, unknown>[] {
     const resolvedPath = path.resolve(String(timelinePath || ''));
     if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
         errors.push(`Task timeline not found: ${normalizePath(resolvedPath)}`);
@@ -312,7 +326,7 @@ function readTaskTimeline(timelinePath, errors) {
     return events;
 }
 
-function ensurePassedArtifactStatus(artifact, label, errors) {
+function ensurePassedArtifactStatus(artifact: Record<string, unknown> | null, label: string, errors: string[]): void {
     if (!artifact) {
         return;
     }
@@ -324,27 +338,38 @@ function ensurePassedArtifactStatus(artifact, label, errors) {
     }
 }
 
-function runCompletionGate(options) {
+export interface RunCompletionGateOptions {
+    repoRoot?: string;
+    preflightPath: string;
+    taskId?: string;
+    reviewsRoot?: string;
+    compileEvidencePath?: string;
+    reviewEvidencePath?: string;
+    docImpactPath?: string;
+    timelinePath?: string;
+}
+
+export function runCompletionGate(options: RunCompletionGateOptions) {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
-    const preflightPath = resolvePathInsideRepo(options.preflightPath, repoRoot);
+    const preflightPath = resolvePathInsideRepo(options.preflightPath, repoRoot) as string;
     const validatedPreflight = validatePreflightForCompletion(preflightPath, options.taskId || '');
-    const errors = [...validatedPreflight.errors];
+    const errors: string[] = [...validatedPreflight.errors];
     const resolvedTaskId = validatedPreflight.resolved_task_id;
 
     const reviewsRoot = options.reviewsRoot
-        ? resolvePathInsideRepo(options.reviewsRoot, repoRoot, { allowMissing: true })
+        ? resolvePathInsideRepo(options.reviewsRoot, repoRoot, { allowMissing: true }) as string
         : path.dirname(preflightPath);
     const compileEvidencePath = options.compileEvidencePath
-        ? resolvePathInsideRepo(options.compileEvidencePath, repoRoot, { allowMissing: true })
+        ? resolvePathInsideRepo(options.compileEvidencePath, repoRoot, { allowMissing: true }) as string
         : path.join(reviewsRoot, `${resolvedTaskId}-compile-gate.json`);
     const reviewEvidencePath = options.reviewEvidencePath
-        ? resolvePathInsideRepo(options.reviewEvidencePath, repoRoot, { allowMissing: true })
+        ? resolvePathInsideRepo(options.reviewEvidencePath, repoRoot, { allowMissing: true }) as string
         : path.join(reviewsRoot, `${resolvedTaskId}-review-gate.json`);
     const docImpactPath = options.docImpactPath
-        ? resolvePathInsideRepo(options.docImpactPath, repoRoot, { allowMissing: true })
+        ? resolvePathInsideRepo(options.docImpactPath, repoRoot, { allowMissing: true }) as string
         : path.join(reviewsRoot, `${resolvedTaskId}-doc-impact.json`);
     const timelinePath = options.timelinePath
-        ? resolvePathInsideRepo(options.timelinePath, repoRoot, { allowMissing: true })
+        ? resolvePathInsideRepo(options.timelinePath, repoRoot, { allowMissing: true }) as string
         : joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`));
 
     const compileEvidence = readJsonArtifact(compileEvidencePath, 'Compile gate', errors);
@@ -367,7 +392,7 @@ function runCompletionGate(options) {
     const requiredReviews = validatedPreflight.preflight && typeof validatedPreflight.preflight.required_reviews === 'object'
         ? validatedPreflight.preflight.required_reviews
         : {};
-    const reviewArtifacts = {};
+    const reviewArtifacts: Record<string, { path: string; findings_evidence: ReturnType<typeof getReviewArtifactFindingsEvidence> }> = {};
 
     for (const [reviewKey] of REVIEW_CONTRACTS) {
         const artifactPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}.md`);
@@ -410,8 +435,8 @@ function runCompletionGate(options) {
     };
 }
 
-function formatCompletionGateResult(result) {
-    const lines = [
+export function formatCompletionGateResult(result: Record<string, unknown>): string {
+    const lines: string[] = [
         result.outcome === 'PASS' ? 'COMPLETION_GATE_PASSED' : 'COMPLETION_GATE_FAILED',
         `TaskId: ${result.task_id}`,
         `Status: ${result.status}`,
@@ -428,16 +453,3 @@ function formatCompletionGateResult(result) {
     return lines.join('\n');
 }
 
-module.exports = {
-    EMPTY_REVIEW_MARKERS,
-    REVIEW_CONTRACTS,
-    formatCompletionGateResult,
-    extractMarkdownSectionLines,
-    getFindingsBySeverity,
-    getMarkdownMeaningfulEntries,
-    getReviewArtifactFindingsEvidence,
-    isMeaningfulReviewEntry,
-    normalizeReviewListText,
-    runCompletionGate,
-    validatePreflightForCompletion
-};

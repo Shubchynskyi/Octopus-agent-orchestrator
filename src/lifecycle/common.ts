@@ -1,23 +1,56 @@
-const fs = require('node:fs');
-const path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-const ROLLBACK_RECORDS_FILE_NAME = 'rollback-records.json';
-const SYNC_BACKUP_METADATA_FILE_NAME = 'sync-backup-metadata.json';
-const UPDATE_SENTINEL_FILE_NAME = '.update-in-progress';
-const UNINSTALL_SENTINEL_FILE_NAME = '.uninstall-in-progress';
+type JsonObject = Record<string, unknown>;
+
+export interface RollbackRecord {
+    relativePath: string;
+    existed: boolean;
+    pathType: string;
+}
+
+export interface SyncBackupMetadata extends JsonObject {
+    preexistingMap: Record<string, unknown>;
+}
+
+export interface UpdateSentinelMetadata extends JsonObject {
+    startedAt?: string;
+    fromVersion?: string;
+    toVersion?: string;
+}
+
+export interface UninstallSentinelMetadata extends JsonObject {
+    startedAt?: string;
+    operation?: string;
+    rollbackSnapshotPath?: string;
+    timestamp?: string;
+    skipBackups?: boolean;
+    keepPrimaryEntrypoint?: boolean;
+    keepTaskFile?: boolean;
+    keepRuntimeArtifacts?: boolean;
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export const ROLLBACK_RECORDS_FILE_NAME = 'rollback-records.json';
+export const SYNC_BACKUP_METADATA_FILE_NAME = 'sync-backup-metadata.json';
+export const UPDATE_SENTINEL_FILE_NAME = '.update-in-progress';
+export const UNINSTALL_SENTINEL_FILE_NAME = '.uninstall-in-progress';
 
 // ---------------------------------------------------------------------------
 // Version comparison used by update flows.
 // ---------------------------------------------------------------------------
 
-function compareVersionStrings(current, latest) {
-    const normalize = (v) => String(v).trim().replace(/^[vV]/, '');
+export function compareVersionStrings(current: string, latest: string): number {
+    const normalize = (v: string): string => String(v).trim().replace(/^[vV]/, '');
     const a = normalize(current);
     const b = normalize(latest);
 
     // Separate core version from prerelease and build metadata.
     // Build metadata (+…) is always ignored per SemVer §10.
-    const splitVersion = (value) => {
+    const splitVersion = (value: string): { core: string; prerelease: string } => {
         const noBuild = value.split('+')[0];
         const dashIdx = noBuild.indexOf('-');
         if (dashIdx === -1) return { core: noBuild, prerelease: '' };
@@ -27,8 +60,8 @@ function compareVersionStrings(current, latest) {
     const aParts = splitVersion(a);
     const bParts = splitVersion(b);
 
-    const parseSegments = (value) =>
-        value.split('.').map((segment) => {
+    const parseSegments = (value: string): number[] =>
+        value.split('.').map((segment: string) => {
             const match = segment.match(/^(\d+)/);
             return match ? Number(match[1]) : 0;
         });
@@ -84,9 +117,9 @@ function compareVersionStrings(current, latest) {
 // Timestamp helper
 // ---------------------------------------------------------------------------
 
-function getTimestamp() {
+export function getTimestamp(): string {
     const now = new Date();
-    const pad2 = (n) => String(n).padStart(2, '0');
+    const pad2 = (n: number): string => String(n).padStart(2, '0');
     return (
         `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}-` +
         `${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`
@@ -97,7 +130,7 @@ function getTimestamp() {
 // Recursive file copy / directory helpers
 // ---------------------------------------------------------------------------
 
-function copyPathRecursive(sourcePath, destinationPath) {
+export function copyPathRecursive(sourcePath: string, destinationPath: string): void {
     const stats = fs.lstatSync(sourcePath);
     const parentDir = path.dirname(destinationPath);
     if (parentDir) fs.mkdirSync(parentDir, { recursive: true });
@@ -112,13 +145,13 @@ function copyPathRecursive(sourcePath, destinationPath) {
     fs.copyFileSync(sourcePath, destinationPath);
 }
 
-function removePathRecursive(targetPath) {
+export function removePathRecursive(targetPath: string): void {
     if (!fs.existsSync(targetPath)) return;
     fs.rmSync(targetPath, { recursive: true, force: true });
 }
 
-function readdirRecursiveFiles(dirPath) {
-    const results = [];
+export function readdirRecursiveFiles(dirPath: string): string[] {
+    const results: string[] = [];
     if (!fs.existsSync(dirPath)) return results;
     for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
         const full = path.join(dirPath, entry.name);
@@ -131,8 +164,8 @@ function readdirRecursiveFiles(dirPath) {
     return results;
 }
 
-function readdirRecursiveDirs(dirPath) {
-    const results = [];
+export function readdirRecursiveDirs(dirPath: string): string[] {
+    const results: string[] = [];
     if (!fs.existsSync(dirPath)) return results;
     for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
         const full = path.join(dirPath, entry.name);
@@ -148,7 +181,7 @@ function readdirRecursiveDirs(dirPath) {
 // Bundle sync items
 // ---------------------------------------------------------------------------
 
-const BUNDLE_SYNC_ITEMS = Object.freeze([
+export const BUNDLE_SYNC_ITEMS = Object.freeze([
     '.gitattributes',
     'bin',
     'package.json',
@@ -167,9 +200,13 @@ const BUNDLE_SYNC_ITEMS = Object.freeze([
 // Rollback snapshot (mirrors New-RollbackSnapshot / Restore-RollbackSnapshot)
 // ---------------------------------------------------------------------------
 
-function createRollbackSnapshot(rootPath, snapshotRoot, relativePaths) {
+export function createRollbackSnapshot(
+    rootPath: string,
+    snapshotRoot: string,
+    relativePaths: readonly string[]
+): RollbackRecord[] {
     const unique = [...new Set(relativePaths)].sort();
-    const records = [];
+    const records: RollbackRecord[] = [];
 
     for (const rel of unique) {
         const targetPath = path.join(rootPath, rel);
@@ -188,24 +225,24 @@ function createRollbackSnapshot(rootPath, snapshotRoot, relativePaths) {
     return records;
 }
 
-function getRollbackRecordsPath(snapshotRoot) {
+export function getRollbackRecordsPath(snapshotRoot: string): string {
     return path.join(snapshotRoot, ROLLBACK_RECORDS_FILE_NAME);
 }
 
-function writeRollbackRecords(snapshotRoot, records) {
+export function writeRollbackRecords(snapshotRoot: string, records: readonly RollbackRecord[]): string {
     const recordsPath = getRollbackRecordsPath(snapshotRoot);
     fs.mkdirSync(snapshotRoot, { recursive: true });
     fs.writeFileSync(recordsPath, JSON.stringify(records, null, 2), 'utf8');
     return recordsPath;
 }
 
-function readRollbackRecords(snapshotRoot) {
+export function readRollbackRecords(snapshotRoot: string): RollbackRecord[] {
     const recordsPath = getRollbackRecordsPath(snapshotRoot);
     if (!fs.existsSync(recordsPath)) {
         throw new Error(`Rollback records file not found: ${recordsPath}`);
     }
 
-    let parsed;
+    let parsed: unknown;
     try {
         parsed = JSON.parse(fs.readFileSync(recordsPath, 'utf8'));
     } catch (_error) {
@@ -216,58 +253,68 @@ function readRollbackRecords(snapshotRoot) {
         throw new Error(`Rollback records file must contain an array: ${recordsPath}`);
     }
 
-    return parsed.map((record, index) => {
-        const relativePath = String(record && record.relativePath ? record.relativePath : '').trim();
+    return parsed.map((record: unknown, index: number): RollbackRecord => {
+        const recordObject = isJsonObject(record) ? record : null;
+        const relativePath = typeof recordObject?.relativePath === 'string'
+            ? recordObject.relativePath.trim()
+            : '';
         if (!relativePath) {
             throw new Error(`Rollback record at index ${index} is missing relativePath.`);
         }
 
         return {
             relativePath,
-            existed: Boolean(record && record.existed),
-            pathType: String(record && record.pathType ? record.pathType : 'missing')
+            existed: Boolean(recordObject?.existed),
+            pathType: typeof recordObject?.pathType === 'string' && recordObject.pathType
+                ? recordObject.pathType
+                : 'missing'
         };
     });
 }
 
-function getSyncBackupMetadataPath(backupRoot) {
+export function getSyncBackupMetadataPath(backupRoot: string): string {
     return path.join(backupRoot, SYNC_BACKUP_METADATA_FILE_NAME);
 }
 
-function writeSyncBackupMetadata(backupRoot, metadata) {
+export function writeSyncBackupMetadata(backupRoot: string, metadata: SyncBackupMetadata): string {
     const metadataPath = getSyncBackupMetadataPath(backupRoot);
     fs.mkdirSync(backupRoot, { recursive: true });
     fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf8');
     return metadataPath;
 }
 
-function readSyncBackupMetadata(backupRoot) {
+export function readSyncBackupMetadata(backupRoot: string): SyncBackupMetadata {
     const metadataPath = getSyncBackupMetadataPath(backupRoot);
     if (!fs.existsSync(metadataPath)) {
         throw new Error(`Sync backup metadata file not found: ${metadataPath}`);
     }
 
-    let parsed;
+    let parsed: unknown;
     try {
         parsed = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
     } catch (_error) {
         throw new Error(`Sync backup metadata file is not valid JSON: ${metadataPath}`);
     }
 
-    const preexistingMap = parsed && parsed.preexistingMap && typeof parsed.preexistingMap === 'object'
-        ? parsed.preexistingMap
+    const parsedObject = isJsonObject(parsed) ? parsed : null;
+    const preexistingMap = parsedObject && isJsonObject(parsedObject.preexistingMap)
+        ? parsedObject.preexistingMap
         : null;
     if (!preexistingMap || Array.isArray(preexistingMap)) {
         throw new Error(`Sync backup metadata is missing preexistingMap: ${metadataPath}`);
     }
 
     return {
-        ...parsed,
+        ...(parsedObject ?? {}),
         preexistingMap
     };
 }
 
-function restoreRollbackSnapshot(rootPath, snapshotRoot, records) {
+export function restoreRollbackSnapshot(
+    rootPath: string,
+    snapshotRoot: string,
+    records: readonly RollbackRecord[]
+): void {
     for (const record of records) {
         const rel = record.relativePath;
         const targetPath = path.join(rootPath, rel);
@@ -292,19 +339,21 @@ function restoreRollbackSnapshot(rootPath, snapshotRoot, records) {
 // Copy-DirectoryContentMerge (mirrors the PS function exactly)
 // ---------------------------------------------------------------------------
 
-function copyDirectoryContentMerge(sourceDirectory, destinationDirectory, skipDestinationFiles) {
+export function copyDirectoryContentMerge(
+    sourceDirectory: string,
+    destinationDirectory: string,
+    skipDestinationFiles?: readonly string[] | null
+): void {
     if (!fs.existsSync(destinationDirectory)) {
         fs.mkdirSync(destinationDirectory, { recursive: true });
     }
 
     const skipSet = new Set(
-        (skipDestinationFiles || [])
-            .filter(Boolean)
-            .map((f) => path.resolve(f).toLowerCase())
+        (skipDestinationFiles ?? []).map((filePath: string) => path.resolve(filePath).toLowerCase())
     );
 
     const sourceRoot = path.resolve(sourceDirectory);
-    const expectedDestFiles = new Set();
+    const expectedDestFiles = new Set<string>();
 
     for (const sourceFile of readdirRecursiveFiles(sourceDirectory)) {
         const rel = path.relative(sourceRoot, sourceFile);
@@ -329,7 +378,7 @@ function copyDirectoryContentMerge(sourceDirectory, destinationDirectory, skipDe
     }
 
     // Remove empty directories bottom-up
-    const dirs = readdirRecursiveDirs(destinationDirectory).sort((a, b) => b.length - a.length);
+    const dirs = readdirRecursiveDirs(destinationDirectory).sort((a: string, b: string) => b.length - a.length);
     for (const dir of dirs) {
         const dirFull = path.resolve(dir).toLowerCase();
         if (skipSet.has(dirFull)) continue;
@@ -344,10 +393,15 @@ function copyDirectoryContentMerge(sourceDirectory, destinationDirectory, skipDe
 // Restore-SyncedItemsFromBackup (mirrors the PS function)
 // ---------------------------------------------------------------------------
 
-function restoreSyncedItemsFromBackup(targetBundleRoot, backupRoot, preexistingMap, runningScriptPath) {
+export function restoreSyncedItemsFromBackup(
+    targetBundleRoot: string,
+    backupRoot: string,
+    preexistingMap: Record<string, unknown>,
+    runningScriptPath: string | null
+): void {
     for (const item of Object.keys(preexistingMap)) {
         const destinationPath = path.join(targetBundleRoot, item);
-        const preexisting = preexistingMap[item];
+        const preexisting = Boolean(preexistingMap[item]);
 
         if (preexisting) {
             const backupPath = path.join(backupRoot, item);
@@ -380,7 +434,11 @@ function restoreSyncedItemsFromBackup(targetBundleRoot, backupRoot, preexistingM
 // Sync working-tree bundle items into a deployed workspace.
 // ---------------------------------------------------------------------------
 
-function syncWorkingTreeBundleItems(sourceBundleRoot, targetBundleRoot, relativeItems) {
+export function syncWorkingTreeBundleItems(
+    sourceBundleRoot: string,
+    targetBundleRoot: string,
+    relativeItems: readonly string[]
+): void {
     const unique = [...new Set(relativeItems)].sort();
     for (const item of unique) {
         const sourcePath = path.join(sourceBundleRoot, item);
@@ -401,32 +459,32 @@ function syncWorkingTreeBundleItems(sourceBundleRoot, targetBundleRoot, relative
 // Update sentinel (marks an in-progress update to detect interrupted runs)
 // ---------------------------------------------------------------------------
 
-function getUpdateSentinelPath(bundleRoot) {
+export function getUpdateSentinelPath(bundleRoot: string): string {
     return path.join(bundleRoot, 'runtime', UPDATE_SENTINEL_FILE_NAME);
 }
 
-function writeUpdateSentinel(bundleRoot, metadata) {
+export function writeUpdateSentinel(bundleRoot: string, metadata: UpdateSentinelMetadata): string {
     const sentinelPath = getUpdateSentinelPath(bundleRoot);
     fs.mkdirSync(path.dirname(sentinelPath), { recursive: true });
     fs.writeFileSync(sentinelPath, JSON.stringify(metadata, null, 2), 'utf8');
     return sentinelPath;
 }
 
-function removeUpdateSentinel(bundleRoot) {
+export function removeUpdateSentinel(bundleRoot: string): void {
     const sentinelPath = getUpdateSentinelPath(bundleRoot);
     if (fs.existsSync(sentinelPath)) {
         fs.rmSync(sentinelPath, { force: true });
     }
 }
 
-function readUpdateSentinel(bundleRoot) {
+export function readUpdateSentinel(bundleRoot: string): UpdateSentinelMetadata | null {
     const sentinelPath = getUpdateSentinelPath(bundleRoot);
     if (!fs.existsSync(sentinelPath)) {
         return null;
     }
 
     try {
-        return JSON.parse(fs.readFileSync(sentinelPath, 'utf8'));
+        return JSON.parse(fs.readFileSync(sentinelPath, 'utf8')) as UpdateSentinelMetadata;
     } catch (_error) {
         return null;
     }
@@ -436,27 +494,27 @@ function readUpdateSentinel(bundleRoot) {
 // Uninstall sentinel (marks an in-progress uninstall to detect interrupted runs)
 // ---------------------------------------------------------------------------
 
-function getUninstallSentinelPath(targetRoot) {
+export function getUninstallSentinelPath(targetRoot: string): string {
     return path.join(targetRoot, UNINSTALL_SENTINEL_FILE_NAME);
 }
 
-function writeUninstallSentinel(targetRoot, metadata) {
+export function writeUninstallSentinel(targetRoot: string, metadata: UninstallSentinelMetadata): string {
     const sentinelPath = getUninstallSentinelPath(targetRoot);
     fs.writeFileSync(sentinelPath, JSON.stringify(metadata, null, 2), 'utf8');
     return sentinelPath;
 }
 
-function readUninstallSentinel(targetRoot) {
+export function readUninstallSentinel(targetRoot: string): UninstallSentinelMetadata | null {
     const sentinelPath = getUninstallSentinelPath(targetRoot);
     if (!fs.existsSync(sentinelPath)) return null;
     try {
-        return JSON.parse(fs.readFileSync(sentinelPath, 'utf8'));
+        return JSON.parse(fs.readFileSync(sentinelPath, 'utf8')) as UninstallSentinelMetadata;
     } catch (_error) {
         return null;
     }
 }
 
-function removeUninstallSentinel(targetRoot) {
+export function removeUninstallSentinel(targetRoot: string): void {
     const sentinelPath = getUninstallSentinelPath(targetRoot);
     if (fs.existsSync(sentinelPath)) {
         fs.rmSync(sentinelPath, { force: true });
@@ -467,7 +525,7 @@ function removeUninstallSentinel(targetRoot) {
 // Validate target root
 // ---------------------------------------------------------------------------
 
-function validateTargetRoot(targetRoot, bundleRoot) {
+export function validateTargetRoot(targetRoot: string, bundleRoot: string): string {
     const normalizedTarget = path.resolve(targetRoot);
     const normalizedBundle = path.resolve(bundleRoot);
     if (normalizedTarget.toLowerCase() === normalizedBundle.toLowerCase()) {
@@ -477,37 +535,3 @@ function validateTargetRoot(targetRoot, bundleRoot) {
     }
     return normalizedTarget;
 }
-
-module.exports = {
-    BUNDLE_SYNC_ITEMS,
-    ROLLBACK_RECORDS_FILE_NAME,
-    SYNC_BACKUP_METADATA_FILE_NAME,
-    UNINSTALL_SENTINEL_FILE_NAME,
-    UPDATE_SENTINEL_FILE_NAME,
-    compareVersionStrings,
-    copyDirectoryContentMerge,
-    copyPathRecursive,
-    createRollbackSnapshot,
-    getRollbackRecordsPath,
-    getSyncBackupMetadataPath,
-    getTimestamp,
-    getUninstallSentinelPath,
-    getUpdateSentinelPath,
-    readRollbackRecords,
-    readSyncBackupMetadata,
-    readUninstallSentinel,
-    readUpdateSentinel,
-    readdirRecursiveDirs,
-    readdirRecursiveFiles,
-    removePathRecursive,
-    removeUninstallSentinel,
-    removeUpdateSentinel,
-    restoreRollbackSnapshot,
-    restoreSyncedItemsFromBackup,
-    syncWorkingTreeBundleItems,
-    validateTargetRoot,
-    writeRollbackRecords,
-    writeSyncBackupMetadata,
-    writeUninstallSentinel,
-    writeUpdateSentinel
-};

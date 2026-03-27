@@ -1,11 +1,11 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     parseSkipReviews,
     testExpectedVerdict,
     REVIEW_CONTRACTS
-} = require('../../../src/gates/required-reviews-check.ts');
+} from '../../../src/gates/required-reviews-check';
 
 describe('gates/required-reviews-check', () => {
     describe('parseSkipReviews', () => {
@@ -29,32 +29,32 @@ describe('gates/required-reviews-check', () => {
 
     describe('testExpectedVerdict', () => {
         it('adds error when required review not passed', () => {
-            const errors = [];
+            const errors: string[] = [];
             testExpectedVerdict(errors, "Review 'code'", true, false, 'NOT_REQUIRED', 'REVIEW PASSED');
             assert.equal(errors.length, 1);
             assert.ok(errors[0].includes("is required"));
         });
 
         it('accepts pass when required', () => {
-            const errors = [];
+            const errors: string[] = [];
             testExpectedVerdict(errors, "Review 'code'", true, false, 'REVIEW PASSED', 'REVIEW PASSED');
             assert.equal(errors.length, 0);
         });
 
         it('accepts NOT_REQUIRED when not required', () => {
-            const errors = [];
+            const errors: string[] = [];
             testExpectedVerdict(errors, "Review 'api'", false, false, 'NOT_REQUIRED', 'API REVIEW PASSED');
             assert.equal(errors.length, 0);
         });
 
         it('accepts SKIPPED_BY_OVERRIDE when overridden', () => {
-            const errors = [];
+            const errors: string[] = [];
             testExpectedVerdict(errors, "Review 'code'", true, true, 'SKIPPED_BY_OVERRIDE', 'REVIEW PASSED');
             assert.equal(errors.length, 0);
         });
 
         it('rejects unexpected verdict when overridden', () => {
-            const errors = [];
+            const errors: string[] = [];
             testExpectedVerdict(errors, "Review 'code'", true, true, 'FAILED', 'REVIEW PASSED');
             assert.equal(errors.length, 1);
             assert.ok(errors[0].includes('override'));
@@ -79,9 +79,9 @@ describe('gates/required-reviews-check', () => {
         });
         it('has matching pass tokens per review', () => {
             const codeContract = REVIEW_CONTRACTS.find(([k]) => k === 'code');
-            assert.equal(codeContract[1], 'REVIEW PASSED');
+            assert.equal(codeContract![1], 'REVIEW PASSED');
             const dbContract = REVIEW_CONTRACTS.find(([k]) => k === 'db');
-            assert.equal(dbContract[1], 'DB REVIEW PASSED');
+            assert.equal(dbContract![1], 'DB REVIEW PASSED');
         });
     });
 });

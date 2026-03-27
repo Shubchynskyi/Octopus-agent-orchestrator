@@ -1,26 +1,93 @@
-const { stringSha256 } = require('./hash.ts');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import { stringSha256 } from './hash';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 const DEFAULT_LOCK_TIMEOUT_MS = 5000;
 const DEFAULT_LOCK_RETRY_MS = 25;
 const DEFAULT_LOCK_STALE_MS = 30000;
 const LOCK_SLEEP_ARRAY = new Int32Array(new SharedArrayBuffer(4));
 
-function toPositiveInteger(value, fallback) {
+interface LockOptions {
+    timeoutMs?: unknown;
+    retryMs?: unknown;
+    staleMs?: unknown;
+}
+
+interface LockHandle {
+    lockPath: string;
+}
+
+interface TaskEventAppendState {
+    matching_events: number;
+    parse_errors: number;
+    last_integrity_sequence: number | null;
+    last_event_sha256: string | null;
+}
+
+interface InspectTaskEventResult {
+    source_path: string;
+    status: string;
+    events_scanned: number;
+    matching_events: number;
+    parse_errors: number;
+    task_id_mismatches: number;
+    legacy_event_count: number;
+    integrity_event_count: number;
+    first_integrity_sequence: number | null;
+    last_integrity_sequence: number | null;
+    duplicate_event_hashes: string[];
+    violations: string[];
+}
+
+interface AppendTaskEventOptions {
+    actor?: string;
+    passThru?: boolean;
+    eventsRoot?: string;
+    lockTimeoutMs?: unknown;
+    lockRetryMs?: unknown;
+    lockStaleMs?: unknown;
+    preWriteDelayMs?: unknown;
+}
+
+interface TaskEventIntegrity {
+    schema_version: number;
+    task_sequence: number;
+    prev_event_sha256: string | null;
+    event_sha256?: string;
+}
+
+interface TaskEvent {
+    timestamp_utc: string;
+    task_id: string;
+    event_type: string;
+    outcome: string;
+    actor: string;
+    message: string;
+    details: unknown;
+    integrity?: TaskEventIntegrity;
+}
+
+interface AppendTaskEventResult {
+    task_event_log_path: string;
+    all_tasks_log_path: string;
+    integrity: TaskEventIntegrity | null;
+    warnings: string[];
+}
+
+function toPositiveInteger(value: unknown, fallback: number): number {
     const parsed = Number.parseInt(String(value), 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function sleepMs(milliseconds) {
+function sleepMs(milliseconds: number): void {
     if (!milliseconds || milliseconds <= 0) {
         return;
     }
     Atomics.wait(LOCK_SLEEP_ARRAY, 0, 0, milliseconds);
 }
 
-function writeLockMetadata(lockPath) {
+function writeLockMetadata(lockPath: string): void {
     const metadataPath = path.join(lockPath, 'owner.json');
     const payload = {
         pid: process.pid,
@@ -30,11 +97,11 @@ function writeLockMetadata(lockPath) {
     fs.writeFileSync(metadataPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
 }
 
-function removeLockPath(lockPath) {
+function removeLockPath(lockPath: string): void {
     fs.rmSync(lockPath, { recursive: true, force: true });
 }
 
-function tryRemoveStaleLock(lockPath, staleMs) {
+function tryRemoveStaleLock(lockPath: string, staleMs: number): boolean {
     if (!staleMs || staleMs <= 0) {
         return false;
     }
@@ -57,7 +124,7 @@ function tryRemoveStaleLock(lockPath, staleMs) {
     }
 }
 
-function acquireFilesystemLock(lockPath, options = {}) {
+function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): LockHandle {
     const timeoutMs = toPositiveInteger(options.timeoutMs, DEFAULT_LOCK_TIMEOUT_MS);
     const retryMs = toPositiveInteger(options.retryMs, DEFAULT_LOCK_RETRY_MS);
     const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
@@ -68,8 +135,11 @@ function acquireFilesystemLock(lockPath, options = {}) {
             fs.mkdirSync(lockPath);
             writeLockMetadata(lockPath);
             return { lockPath };
-        } catch (error) {
-            if (!error || error.code !== 'EEXIST') {
+        } catch (error: unknown) {
+            const errCode = error != null && typeof error === 'object' && 'code' in error
+                ? (error as { code?: string }).code
+                : undefined;
+            if (errCode !== 'EEXIST') {
                 throw error;
             }
 
@@ -86,20 +156,32 @@ function acquireFilesystemLock(lockPath, options = {}) {
     }
 }
 
-function releaseFilesystemLock(lockHandle) {
+function releaseFilesystemLock(lockHandle: LockHandle | null): void {
     if (!lockHandle || !lockHandle.lockPath) {
         return;
     }
     removeLockPath(lockHandle.lockPath);
 }
 
-function withFilesystemLock(lockPath, options, callback) {
+function withFilesystemLock<T>(lockPath: string, options: LockOptions, callback: () => T): T {
     const lockHandle = acquireFilesystemLock(lockPath, options);
     try {
         return callback();
     } finally {
         releaseFilesystemLock(lockHandle);
     }
+}
+
+function toTrimmedString(value: unknown): string {
+    return value ? String(value).trim() : '';
+}
+
+function toTrimmedLowerCaseString(value: unknown): string {
+    return value ? String(value).trim().toLowerCase() : '';
+}
+
+function getErrorMessage(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -112,7 +194,7 @@ function withFilesystemLock(lockPath, options, callback) {
  *
  * Matches Python _normalize_integrity_value semantics.
  */
-function normalizeIntegrityValue(value) {
+export function normalizeIntegrityValue(value: unknown): unknown {
     if (value == null) {
         return value;
     }
@@ -126,10 +208,11 @@ function normalizeIntegrityValue(value) {
     }
 
     if (typeof value === 'object') {
-        const sorted = {};
-        const keys = Object.keys(value).sort();
+        const sorted: Record<string, unknown> = {};
+        const obj = value as Record<string, unknown>;
+        const keys = Object.keys(obj).sort();
         for (const key of keys) {
-            sorted[String(key)] = normalizeIntegrityValue(value[key]);
+            sorted[key] = normalizeIntegrityValue(obj[key]);
         }
         return sorted;
     }
@@ -148,11 +231,11 @@ function normalizeIntegrityValue(value) {
  *
  * Matches Python build_event_integrity_hash exactly.
  */
-function buildEventIntegrityHash(eventObj) {
-    const normalizedEvent = Object.assign({}, eventObj);
+export function buildEventIntegrityHash(eventObj: Record<string, unknown>): string | null {
+    const normalizedEvent: Record<string, unknown> = Object.assign({}, eventObj);
     const integrity = normalizedEvent.integrity;
     if (integrity && typeof integrity === 'object') {
-        const normalizedIntegrity = Object.assign({}, integrity);
+        const normalizedIntegrity: Record<string, unknown> = Object.assign({}, integrity as Record<string, unknown>);
         delete normalizedIntegrity.event_sha256;
         normalizedEvent.integrity = normalizedIntegrity;
     }
@@ -164,7 +247,7 @@ function buildEventIntegrityHash(eventObj) {
 /**
  * Parse a task ID, validating format. Matches Python assert_valid_task_id.
  */
-function assertValidTaskId(value) {
+export function assertValidTaskId(value: unknown): string {
     if (!value || !String(value).trim()) {
         throw new Error('TaskId must not be empty.');
     }
@@ -182,8 +265,7 @@ function assertValidTaskId(value) {
  * Read the last non-empty line from a JSONL file (fast path).
  * Matches Python _read_last_non_empty_line.
  */
-function readLastNonEmptyLine(filePath) {
-    const fs = require('node:fs');
+function readLastNonEmptyLine(filePath: string): string | null {
     try {
         if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
             return null;
@@ -205,20 +287,20 @@ function readLastNonEmptyLine(filePath) {
  * Fast-path: read append state from last event line.
  * Matches Python _read_task_event_append_state_fast.
  */
-function readTaskEventAppendStateFast(taskFilePath, taskId) {
+export function readTaskEventAppendStateFast(taskFilePath: string, taskId: string): TaskEventAppendState | null {
     const rawLine = readLastNonEmptyLine(taskFilePath);
     if (!rawLine || !rawLine.trim()) {
         return null;
     }
 
-    let event;
+    let event: Record<string, unknown>;
     try {
-        event = JSON.parse(rawLine);
+        event = JSON.parse(rawLine) as Record<string, unknown>;
     } catch {
         return null;
     }
 
-    const eventTaskId = String(event.task_id || '').trim();
+    const eventTaskId = toTrimmedString(event.task_id);
     if (eventTaskId && eventTaskId !== taskId) {
         return null;
     }
@@ -228,8 +310,9 @@ function readTaskEventAppendStateFast(taskFilePath, taskId) {
         return null;
     }
 
-    const sequence = integrity.task_sequence;
-    const eventSha256 = String(integrity.event_sha256 || '').trim().toLowerCase();
+    const integrityRecord = integrity as Record<string, unknown>;
+    const sequence = integrityRecord.task_sequence;
+    const eventSha256 = toTrimmedLowerCaseString(integrityRecord.event_sha256);
     if (typeof sequence !== 'number' || sequence <= 0 || !eventSha256) {
         return null;
     }
@@ -246,9 +329,8 @@ function readTaskEventAppendStateFast(taskFilePath, taskId) {
  * Full-scan: read append state by parsing all events.
  * Matches Python _read_task_event_append_state.
  */
-function readTaskEventAppendState(taskFilePath, taskId) {
-    const fs = require('node:fs');
-    const state = {
+export function readTaskEventAppendState(taskFilePath: string, taskId: string): TaskEventAppendState {
+    const state: TaskEventAppendState = {
         matching_events: 0,
         parse_errors: 0,
         last_integrity_sequence: null,
@@ -268,7 +350,7 @@ function readTaskEventAppendState(taskFilePath, taskId) {
         return fastState;
     }
 
-    let content;
+    let content: string;
     try {
         content = fs.readFileSync(taskFilePath, 'utf8');
     } catch {
@@ -280,15 +362,15 @@ function readTaskEventAppendState(taskFilePath, taskId) {
             continue;
         }
 
-        let event;
+        let event: Record<string, unknown>;
         try {
-            event = JSON.parse(rawLine);
+            event = JSON.parse(rawLine) as Record<string, unknown>;
         } catch {
             state.parse_errors++;
             continue;
         }
 
-        const eventTaskId = String(event.task_id || '').trim();
+        const eventTaskId = toTrimmedString(event.task_id);
         if (eventTaskId && eventTaskId !== taskId) {
             continue;
         }
@@ -299,8 +381,9 @@ function readTaskEventAppendState(taskFilePath, taskId) {
             continue;
         }
 
-        const sequence = integrity.task_sequence;
-        const eventSha256 = String(integrity.event_sha256 || '').trim().toLowerCase();
+        const integrityRecord = integrity as Record<string, unknown>;
+        const sequence = integrityRecord.task_sequence;
+        const eventSha256 = toTrimmedLowerCaseString(integrityRecord.event_sha256);
         if (typeof sequence === 'number' && sequence > 0 && eventSha256) {
             state.last_integrity_sequence = sequence;
             state.last_event_sha256 = eventSha256;
@@ -314,10 +397,9 @@ function readTaskEventAppendState(taskFilePath, taskId) {
  * Inspect a task event file for integrity violations.
  * Matches Python inspect_task_event_file exactly.
  */
-function inspectTaskEventFile(taskEventFile, taskId) {
-    const fs = require('node:fs');
+export function inspectTaskEventFile(taskEventFile: string, taskId: string): InspectTaskEventResult {
 
-    const result = {
+    const result: InspectTaskEventResult = {
         source_path: String(taskEventFile).replace(/\\/g, '/'),
         status: 'UNKNOWN',
         events_scanned: 0,
@@ -344,7 +426,7 @@ function inspectTaskEventFile(taskEventFile, taskId) {
         return result;
     }
 
-    let content;
+    let content: string;
     try {
         content = fs.readFileSync(taskEventFile, 'utf8');
     } catch {
@@ -353,10 +435,10 @@ function inspectTaskEventFile(taskEventFile, taskId) {
         return result;
     }
 
-    let lastEventHash = null;
-    let expectedSequence = null;
+    let lastEventHash: string | null = null;
+    let expectedSequence: number | null = null;
     let integrityStarted = false;
-    const seenHashes = new Set();
+    const seenHashes = new Set<string>();
 
     const lines = content.split('\n');
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
@@ -368,16 +450,16 @@ function inspectTaskEventFile(taskEventFile, taskId) {
         const lineNumber = lineIndex + 1;
         result.events_scanned++;
 
-        let event;
+        let event: Record<string, unknown>;
         try {
-            event = JSON.parse(rawLine);
+            event = JSON.parse(rawLine) as Record<string, unknown>;
         } catch {
             result.parse_errors++;
             result.violations.push(`Task timeline contains invalid JSON at line ${lineNumber}.`);
             continue;
         }
 
-        const eventTaskId = String(event.task_id || '').trim();
+        const eventTaskId = toTrimmedString(event.task_id);
         if (eventTaskId && eventTaskId !== taskId) {
             result.task_id_mismatches++;
             result.violations.push(
@@ -399,10 +481,11 @@ function inspectTaskEventFile(taskEventFile, taskId) {
             continue;
         }
 
-        const schemaVersion = integrity.schema_version;
-        const taskSequence = integrity.task_sequence;
-        let prevEventSha256 = integrity.prev_event_sha256;
-        const eventSha256 = String(integrity.event_sha256 || '').trim().toLowerCase();
+        const integrityRecord = integrity as Record<string, unknown>;
+        const schemaVersion = integrityRecord.schema_version;
+        const taskSequence = integrityRecord.task_sequence;
+        let prevEventSha256 = integrityRecord.prev_event_sha256;
+        const eventSha256 = toTrimmedLowerCaseString(integrityRecord.event_sha256);
 
         if (schemaVersion !== 1) {
             result.violations.push(
@@ -491,7 +574,15 @@ function inspectTaskEventFile(taskEventFile, taskId) {
  * Append a task event with integrity chain, matching Python append_task_event.
  * Uses filesystem lock directories to serialize per-task chain writes.
  */
-function appendTaskEvent(repoRoot, taskId, eventType, outcome, message, details, options = {}) {
+export function appendTaskEvent(
+    repoRoot: string,
+    taskId: string,
+    eventType: string,
+    outcome: string,
+    message: string,
+    details: unknown,
+    options: AppendTaskEventOptions = {}
+): AppendTaskEventResult | null {
     const actor = options.actor || 'gate';
     const passThru = options.passThru || false;
     const eventsRoot = options.eventsRoot
@@ -507,13 +598,13 @@ function appendTaskEvent(repoRoot, taskId, eventType, outcome, message, details,
     const allTasksPath = path.join(eventsRoot, 'all-tasks.jsonl');
     const taskLockPath = path.join(eventsRoot, `.${safeTaskId}.lock`);
     const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
-    const lockOptions = {
+    const lockOptions: LockOptions = {
         timeoutMs: options.lockTimeoutMs,
         retryMs: options.lockRetryMs,
         staleMs: options.lockStaleMs
     };
 
-    const event = {
+    const event: TaskEvent = {
         timestamp_utc: new Date().toISOString(),
         task_id: safeTaskId,
         event_type: eventType,
@@ -523,18 +614,18 @@ function appendTaskEvent(repoRoot, taskId, eventType, outcome, message, details,
         details: details
     };
 
-    const result = {
+    const result: AppendTaskEventResult = {
         task_event_log_path: taskFilePath.replace(/\\/g, '/'),
         all_tasks_log_path: allTasksPath.replace(/\\/g, '/'),
         integrity: null,
         warnings: []
     };
 
-    let line = null;
+    let line: string | null = null;
     try {
         fs.mkdirSync(eventsRoot, { recursive: true });
 
-        withFilesystemLock(taskLockPath, lockOptions, function () {
+        withFilesystemLock(taskLockPath, lockOptions, function (): void {
             const appendState = readTaskEventAppendState(taskFilePath, safeTaskId);
             const previousSequence = appendState.last_integrity_sequence;
             const previousHash = appendState.last_event_sha256;
@@ -547,43 +638,39 @@ function appendTaskEvent(repoRoot, taskId, eventType, outcome, message, details,
                 task_sequence: nextSequence,
                 prev_event_sha256: previousHash
             };
-            event.integrity.event_sha256 = buildEventIntegrityHash(event);
-            line = JSON.stringify(event);
+            const eventForHash: Record<string, unknown> = { ...event };
+            const eventSha256 = buildEventIntegrityHash(eventForHash);
+            if (eventSha256 == null) {
+                throw new Error('Failed to build event integrity hash.');
+            }
+            event.integrity.event_sha256 = eventSha256;
+            const serializedLine = JSON.stringify(event);
+            line = serializedLine;
 
             const preWriteDelayMs = toPositiveInteger(options.preWriteDelayMs, 0);
             if (preWriteDelayMs > 0) {
                 sleepMs(preWriteDelayMs);
             }
 
-            fs.appendFileSync(taskFilePath, line + '\n', 'utf8');
+            fs.appendFileSync(taskFilePath, serializedLine + '\n', 'utf8');
             result.integrity = Object.assign({}, event.integrity);
         });
-    } catch (err) {
-        const warning = `task-event append failed: ${err.message || err}`;
+    } catch (err: unknown) {
+        const warning = `task-event append failed: ${getErrorMessage(err)}`;
         result.warnings.push(warning);
         process.stderr.write(`WARNING: ${warning}\n`);
         return passThru ? result : null;
     }
 
     try {
-        withFilesystemLock(aggregateLockPath, lockOptions, function () {
+        withFilesystemLock(aggregateLockPath, lockOptions, function (): void {
             fs.appendFileSync(allTasksPath, (line || '') + '\n', 'utf8');
         });
-    } catch (err) {
-        const warning = `task-event aggregate append failed: ${err.message || err}`;
+    } catch (err: unknown) {
+        const warning = `task-event aggregate append failed: ${getErrorMessage(err)}`;
         result.warnings.push(warning);
         process.stderr.write(`WARNING: ${warning}\n`);
     }
 
     return passThru ? result : null;
 }
-
-module.exports = {
-    appendTaskEvent,
-    assertValidTaskId,
-    buildEventIntegrityHash,
-    inspectTaskEventFile,
-    normalizeIntegrityValue,
-    readTaskEventAppendState,
-    readTaskEventAppendStateFast
-};

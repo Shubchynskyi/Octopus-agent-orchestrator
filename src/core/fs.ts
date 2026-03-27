@@ -1,22 +1,26 @@
-const fs = require('node:fs');
-const path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { ensureTrailingLineEnding, normalizeLineEndings } from './line-endings';
 
-const { ensureTrailingLineEnding, normalizeLineEndings } = require('./line-endings.ts');
+export interface WriteTextFileOptions {
+    newline?: string;
+    trailingNewline?: boolean;
+}
 
-function ensureDirectory(directoryPath) {
+export function ensureDirectory(directoryPath: string): string {
     fs.mkdirSync(directoryPath, { recursive: true });
     return directoryPath;
 }
 
-function pathExists(targetPath) {
+export function pathExists(targetPath: string): boolean {
     return fs.existsSync(targetPath);
 }
 
-function readTextFile(filePath) {
+export function readTextFile(filePath: string): string {
     return fs.readFileSync(filePath, 'utf8');
 }
 
-function writeTextFile(filePath, content, options = {}) {
+export function writeTextFile(filePath: string, content: string, options: WriteTextFileOptions = {}): string {
     const newline = options.newline || '\n';
     const trailingNewline = options.trailingNewline === true;
     const directoryPath = path.dirname(filePath);
@@ -31,9 +35,3 @@ function writeTextFile(filePath, content, options = {}) {
     return filePath;
 }
 
-module.exports = {
-    ensureDirectory,
-    pathExists,
-    readTextFile,
-    writeTextFile
-};

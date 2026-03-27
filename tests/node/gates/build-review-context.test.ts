@@ -1,7 +1,7 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 
-const { getRulePack, toNonNegativeInt, resolveContextOutputPath, resolveScopedDiffMetadataPath } = require('../../../src/gates/build-review-context.ts');
+import { getRulePack, toNonNegativeInt, resolveContextOutputPath, resolveScopedDiffMetadataPath } from '../../../src/gates/build-review-context';
 
 describe('gates/build-review-context', () => {
     describe('getRulePack', () => {
@@ -66,14 +66,14 @@ describe('gates/build-review-context', () => {
     describe('resolveContextOutputPath', () => {
         it('derives from preflight path when explicit is empty', () => {
             const result = resolveContextOutputPath('', '/repo/reviews/T-001-preflight.json', 'code', '/repo');
-            assert.ok(result.includes('T-001-code-context.json'));
+            assert.ok(result!.includes('T-001-code-context.json'));
         });
     });
 
     describe('resolveScopedDiffMetadataPath', () => {
         it('derives from preflight path when explicit is empty', () => {
             const result = resolveScopedDiffMetadataPath('', '/repo/reviews/T-001-preflight.json', 'db', '/repo');
-            assert.ok(result.includes('T-001-db-scoped.json'));
+            assert.ok(result!.includes('T-001-db-scoped.json'));
         });
     });
 });

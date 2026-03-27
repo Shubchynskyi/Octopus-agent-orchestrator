@@ -1,10 +1,10 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const { runInstall } = require('../../../src/materialization/install.ts');
+import { runInstall } from '../../../src/materialization/install';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -17,7 +17,7 @@ function findRepoRoot() {
     throw new Error('Cannot find repo root');
 }
 
-function setupTestWorkspace(bundleRoot) {
+function setupTestWorkspace(bundleRoot: string) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-install-'));
 
     // Create a mock bundle inside the project root
@@ -45,7 +45,7 @@ function setupTestWorkspace(bundleRoot) {
     return { projectRoot: tmpDir, bundleRoot: bundle };
 }
 
-function copyDirRecursive(src, dst) {
+function copyDirRecursive(src: string, dst: string) {
     fs.mkdirSync(dst, { recursive: true });
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
         const srcPath = path.join(src, entry.name);
@@ -58,7 +58,7 @@ function copyDirRecursive(src, dst) {
     }
 }
 
-function writeInitAnswers(bundleRoot, answers) {
+function writeInitAnswers(bundleRoot: string, answers: Record<string, unknown>) {
     const answersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
     fs.mkdirSync(path.dirname(answersPath), { recursive: true });
     fs.writeFileSync(answersPath, JSON.stringify(answers, null, 2));
@@ -441,7 +441,7 @@ describe('runInstall', () => {
             assert.ok(installedContent.includes('Octopus-agent-orchestrator:managed-start'));
             assert.ok(!installedContent.includes('Legacy agent instructions'));
 
-            const backupPath = path.join(result.backupRoot, 'AGENTS.md');
+            const backupPath = path.join(result.backupRoot!, 'AGENTS.md');
             assert.ok(fs.existsSync(backupPath));
             assert.ok(fs.readFileSync(backupPath, 'utf8').includes('Legacy agent instructions'));
         } finally {
@@ -455,9 +455,9 @@ describe('runInstall', () => {
         const fixedNow = new RealDate('2026-03-22T12:00:00.123Z');
 
         class MockDate extends RealDate {
-            constructor(...args) {
+            constructor(...args: unknown[]) {
                 if (args.length > 0) {
-                    super(...args);
+                    super(...(args as [string]));
                     return;
                 }
                 super(fixedNow.getTime());
@@ -467,12 +467,12 @@ describe('runInstall', () => {
                 return fixedNow.getTime();
             }
 
-            static parse(value) {
+            static parse(value: string) {
                 return RealDate.parse(value);
             }
 
-            static UTC(...args) {
-                return RealDate.UTC(...args);
+            static UTC(...args: unknown[]) {
+                return RealDate.UTC(...(args as [number]));
             }
         }
 
@@ -487,7 +487,7 @@ describe('runInstall', () => {
                 CollectedVia: 'CLI_NONINTERACTIVE'
             });
 
-            global.Date = MockDate;
+            global.Date = MockDate as unknown as DateConstructor;
 
             const legacyEntrypointPath = path.join(projectRoot, 'AGENTS.md');
             fs.writeFileSync(legacyEntrypointPath, '# First legacy instructions\n', 'utf8');
@@ -513,8 +513,8 @@ describe('runInstall', () => {
             });
 
             assert.notEqual(firstInstall.backupRoot, secondInstall.backupRoot);
-            assert.ok(fs.readFileSync(path.join(firstInstall.backupRoot, 'AGENTS.md'), 'utf8').includes('First legacy instructions'));
-            assert.ok(fs.readFileSync(path.join(secondInstall.backupRoot, 'AGENTS.md'), 'utf8').includes('Second legacy instructions'));
+            assert.ok(fs.readFileSync(path.join(firstInstall.backupRoot!, 'AGENTS.md'), 'utf8').includes('First legacy instructions'));
+            assert.ok(fs.readFileSync(path.join(secondInstall.backupRoot!, 'AGENTS.md'), 'utf8').includes('Second legacy instructions'));
         } finally {
             global.Date = RealDate;
             fs.rmSync(projectRoot, { recursive: true, force: true });
@@ -583,8 +583,8 @@ describe('runInstall', () => {
             });
 
             // Snapshot the bundle directory to detect mutations
-            const snapshotDir = (dir) => {
-                const result = {};
+            const snapshotDir = (dir: string) => {
+                const result: Record<string, { size: number; mtime: number }> = {};
                 for (const entry of fs.readdirSync(dir, { withFileTypes: true, recursive: true })) {
                     const full = path.join(entry.parentPath || dir, entry.name);
                     const rel = path.relative(dir, full);

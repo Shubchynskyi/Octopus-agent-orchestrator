@@ -24,6 +24,8 @@ npx -y octopus-agent-orchestrator setup
 
 Preferred and required runtime surface is the Node CLI.
 
+If you install from a source checkout instead of npm registry artifacts, `npm install` runs `prepare` and builds the generated `bin/octopus.js` launcher plus compiled runtime before first use.
+
 This path:
 - deploys `./Octopus-agent-orchestrator/`;
 - asks or accepts the 6 init answers;

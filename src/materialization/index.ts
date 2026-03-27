@@ -1,9 +1,17 @@
-module.exports = {
-    common: require('./common.ts'),
-    contentBuilders: require('./content-builders.ts'),
-    init: require('./init.ts'),
-    install: require('./install.ts'),
-    projectDiscovery: require('./project-discovery.ts'),
-    reinit: require('./reinit.ts'),
-    ruleMaterialization: require('./rule-materialization.ts')
+import * as common from './common';
+import * as contentBuilders from './content-builders';
+import * as init from './init';
+import * as install from './install';
+import * as projectDiscovery from './project-discovery';
+import * as reinit from './reinit';
+import * as ruleMaterialization from './rule-materialization';
+
+export {
+    common,
+    contentBuilders,
+    init,
+    install,
+    projectDiscovery,
+    reinit,
+    ruleMaterialization
 };

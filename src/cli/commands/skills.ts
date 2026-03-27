@@ -1,28 +1,40 @@
-const path = require('node:path');
-
-const { DEFAULT_BUNDLE_NAME } = require('../../core/constants.ts');
-const {
+import * as path from 'node:path';
+import { DEFAULT_BUNDLE_NAME } from '../../core/constants';
+import {
     addSkillPack,
     listBuiltinSkillPacks,
     listSkillPacks,
     removeSkillPack,
     suggestSkills,
     validateSkillPacks
-} = require('../../runtime/skills.ts');
-
-const {
+} from '../../runtime/skills';
+import {
     normalizePathValue,
     padRight,
     parseOptions,
+    PackageJsonLike,
     printHelp
-} = require('./cli-helpers.ts');
+} from './cli-helpers';
 
-const SKILLS_SHARED_DEFINITIONS = {
+type ParsedOptionsRecord = Record<string, string | boolean | string[] | undefined>;
+type SkillListingResult = ReturnType<typeof listSkillPacks>;
+interface SkillPackMutationResult {
+    packId: string;
+    changed: boolean;
+    installedPackIds: string[];
+    configPath: string;
+    installedSkillDirectories?: string[];
+    removedSkillDirectories?: string[];
+}
+type SkillValidationResult = ReturnType<typeof validateSkillPacks>;
+type SkillSuggestResult = ReturnType<typeof suggestSkills>;
+
+export const SKILLS_SHARED_DEFINITIONS = {
     '--target-root': { key: 'targetRoot', type: 'string' },
     '--bundle-root': { key: 'bundleRoot', type: 'string' }
 };
 
-const SKILLS_SUGGEST_DEFINITIONS = {
+export const SKILLS_SUGGEST_DEFINITIONS = {
     ...SKILLS_SHARED_DEFINITIONS,
     '--task-text': { key: 'taskText', type: 'string' },
     '--changed-path': { key: 'changedPaths', type: 'string[]' },
@@ -30,16 +42,16 @@ const SKILLS_SUGGEST_DEFINITIONS = {
     '--pack-limit': { key: 'packLimit', type: 'string' }
 };
 
-function resolveBundleRoot(options) {
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    const bundleRoot = options.bundleRoot
+function resolveBundleRoot(options: ParsedOptionsRecord): { targetRoot: string; bundleRoot: string } {
+    const targetRoot = normalizePathValue(typeof options.targetRoot === 'string' ? options.targetRoot : '.');
+    const bundleRoot = typeof options.bundleRoot === 'string'
         ? normalizePathValue(options.bundleRoot)
         : path.join(targetRoot, DEFAULT_BUNDLE_NAME);
     return { targetRoot, bundleRoot };
 }
 
-function buildSkillsListOutput(listing, bundleRoot) {
-    const lines = [];
+export function buildSkillsListOutput(listing: SkillListingResult, bundleRoot: string): string {
+    const lines: string[] = [];
     lines.push('OCTOPUS_SKILLS');
     lines.push('Action: list');
     lines.push(`Bundle: ${bundleRoot}`);
@@ -76,8 +88,8 @@ function buildSkillsListOutput(listing, bundleRoot) {
     return lines.join('\n');
 }
 
-function buildSkillPackMutationOutput(action, result) {
-    const lines = [];
+export function buildSkillPackMutationOutput(action: string, result: SkillPackMutationResult): string {
+    const lines: string[] = [];
     lines.push('OCTOPUS_SKILLS');
     lines.push(`Action: ${action}`);
     lines.push(`Pack: ${result.packId}`);
@@ -93,8 +105,8 @@ function buildSkillPackMutationOutput(action, result) {
     return lines.join('\n');
 }
 
-function buildSkillValidationOutput(result, bundleRoot) {
-    const lines = [];
+export function buildSkillValidationOutput(result: SkillValidationResult, bundleRoot: string): string {
+    const lines: string[] = [];
     lines.push('OCTOPUS_SKILLS');
     lines.push('Action: validate');
     lines.push(`Bundle: ${bundleRoot}`);
@@ -112,8 +124,8 @@ function buildSkillValidationOutput(result, bundleRoot) {
     return lines.join('\n');
 }
 
-function buildSkillsSuggestOutput(result) {
-    const lines = [];
+export function buildSkillsSuggestOutput(result: SkillSuggestResult): string {
+    const lines: string[] = [];
     lines.push('OCTOPUS_SKILLS');
     lines.push('Action: suggest');
     lines.push(`Bundle: ${result.bundleRoot}`);
@@ -186,7 +198,7 @@ function buildSkillsSuggestOutput(result) {
     return lines.join('\n');
 }
 
-function handleSkills(commandArgv, packageJson) {
+export function handleSkills(commandArgv: string[], packageJson: PackageJsonLike) {
     const firstArg = String(commandArgv[0] || '').trim();
     const hasExplicitSubcommand = firstArg.length > 0 && !firstArg.startsWith('-');
     const subcommand = hasExplicitSubcommand ? firstArg : 'list';
@@ -217,12 +229,12 @@ function handleSkills(commandArgv, packageJson) {
     }
 
     if (subcommand === 'suggest') {
-        const targetRoot = normalizePathValue(options.targetRoot || '.');
+        const targetRoot = normalizePathValue(typeof options.targetRoot === 'string' ? options.targetRoot : '.');
         const result = suggestSkills(bundleRoot, targetRoot, {
-            taskText: options.taskText || '',
-            changedPaths: options.changedPaths || [],
-            limit: options.limit,
-            packLimit: options.packLimit
+            taskText: typeof options.taskText === 'string' ? options.taskText : '',
+            changedPaths: Array.isArray(options.changedPaths) ? options.changedPaths : [],
+            limit: typeof options.limit === 'string' ? options.limit : undefined,
+            packLimit: typeof options.packLimit === 'string' ? options.packLimit : undefined
         });
         console.log(buildSkillsSuggestOutput(result));
         return result;
@@ -248,13 +260,4 @@ function handleSkills(commandArgv, packageJson) {
     throw new Error(`Unknown skills action: ${subcommand}. Allowed values: list, suggest, add, remove, validate.`);
 }
 
-module.exports = {
-    SKILLS_SHARED_DEFINITIONS,
-    SKILLS_SUGGEST_DEFINITIONS,
-    buildSkillPackMutationOutput,
-    buildSkillsSuggestOutput,
-    buildSkillValidationOutput,
-    buildSkillsListOutput,
-    handleSkills,
-    listBuiltinSkillPacks
-};
+export { listBuiltinSkillPacks };

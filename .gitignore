@@ -24,12 +24,27 @@ __pycache__/
 pester-output.txt
 pester_output.txt
 testResults.xml
+tsc-errors-full.txt
+tsc-target-errors.txt
 node_modules/
 .node-build/
+.scripts-build/
 dist/
 .tmp_rtk_bin_*/
 /Octopus-agent-orchestrator/
 /TASK.md
+/AGENTS.md
+/CLAUDE.md
+/QWEN.md
+/bin/octopus.js
+/.github/copilot-instructions.md
+/.github/agents/
 
 # Test results
 scripts/test
+
+# Octopus-agent-orchestrator managed ignores
+.github/agents/
+.github/copilot-instructions.md
+Octopus-agent-orchestrator/
+TASK.md

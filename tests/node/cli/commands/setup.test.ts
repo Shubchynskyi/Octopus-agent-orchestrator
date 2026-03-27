@@ -1,18 +1,19 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     SETUP_DEFINITIONS,
     getSetupAnswerDefaults,
     buildSetupHandoffText,
     buildSetupStepsText
-} = require('../../../../src/cli/commands/setup.ts');
+} from '../../../../src/cli/commands/setup';
+import type { StatusSnapshot } from '../../../../src/validators/status';
 
-const { DEFAULT_BUNDLE_NAME, DEFAULT_INIT_ANSWERS_RELATIVE_PATH } = require('../../../../src/core/constants.ts');
-const { parseOptions, getBundlePath } = require('../../../../src/cli/commands/cli-helpers.ts');
+import { DEFAULT_BUNDLE_NAME, DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../../../../src/core/constants';
+import { parseOptions, getBundlePath } from '../../../../src/cli/commands/cli-helpers';
 
 // ---------------------------------------------------------------------------
 // SETUP_DEFINITIONS
@@ -216,7 +217,7 @@ test('buildSetupHandoffText includes agent initialization section', () => {
         bundlePath: '/workspace/Octopus-agent-orchestrator',
         activeAgentFiles: 'CLAUDE.md, AGENTS.md'
     };
-    const text = buildSetupHandoffText(snapshot);
+    const text = buildSetupHandoffText(snapshot as unknown as StatusSnapshot);
     assert.ok(text.includes('Agent Initialization'));
     assert.ok(text.includes('Primary setup is complete'));
     assert.ok(text.includes('Next stage: launch your agent'));
@@ -230,7 +231,7 @@ test('buildSetupHandoffText omits active agent files when null', () => {
         bundlePath: '/workspace/Octopus-agent-orchestrator',
         activeAgentFiles: null
     };
-    const text = buildSetupHandoffText(snapshot);
+    const text = buildSetupHandoffText(snapshot as unknown as StatusSnapshot);
     assert.ok(!text.includes('Active agent files'));
     assert.ok(text.includes('Agent Initialization'));
 });

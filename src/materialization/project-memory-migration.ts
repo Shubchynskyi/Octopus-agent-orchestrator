@@ -1,27 +1,53 @@
-const fs = require('node:fs');
-const path = require('node:path');
-const { pathExists, readTextFile } = require('../core/fs.ts');
-const {
-    extractNonEmptySections,
-    selectRuleSource,
-    stripHtmlComments
-} = require('./rule-materialization.ts');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { pathExists, readTextFile } from '../core/fs';
+import { extractNonEmptySections, selectRuleSource, stripHtmlComments } from './rule-materialization';
+
+interface MigrationMapping {
+    ruleFile: string;
+    memoryFile: string;
+    heading: string;
+}
+
+interface MigrationSection {
+    heading: string;
+    lines: string[];
+}
+
+interface MigrationOptions {
+    bundleRoot: string;
+    targetRoot: string;
+    templateRoot: string;
+    dryRun?: boolean;
+}
+
+export interface ProjectMemoryMigrationFile {
+    ruleFile: string;
+    memoryFile: string;
+    origin: string;
+    meaningfulLinesDetected: number;
+}
+
+export interface ProjectMemoryMigrationResult {
+    status: 'already_migrated' | 'no_project_memory_dir' | 'project_memory_has_content' | 'no_significant_content' | 'migrated';
+    migratedFiles: ProjectMemoryMigrationFile[];
+}
 
 /**
  * Marker file written after a successful migration so the process runs exactly once.
  */
-const MIGRATION_MARKER = '.migrated-from-rules';
+export const MIGRATION_MARKER = '.migrated-from-rules';
 
 /**
  * Minimum number of meaningful lines that must differ between a live/legacy
  * context rule and its template source before we treat the rule as user-authored.
  */
-const MEANINGFUL_DIFF_THRESHOLD = 5;
+export const MEANINGFUL_DIFF_THRESHOLD = 5;
 
 /**
  * Maps context rule files to their project-memory counterparts.
  */
-const MIGRATION_RULE_MAP = Object.freeze([
+export const MIGRATION_RULE_MAP: readonly MigrationMapping[] = Object.freeze([
     { ruleFile: '10-project-context.md', memoryFile: 'context.md', heading: 'Project Context' },
     { ruleFile: '20-architecture.md', memoryFile: 'architecture.md', heading: 'Architecture' },
     { ruleFile: '30-code-style.md', memoryFile: 'conventions.md', heading: 'Conventions' },
@@ -32,7 +58,7 @@ const MIGRATION_RULE_MAP = Object.freeze([
  * Sections in context rule files that are template boilerplate and should not
  * be migrated (they are auto-generated or purely instructional).
  */
-const BOILERPLATE_SECTIONS = new Set(['Purpose', 'Project Discovery Snapshot']);
+export const BOILERPLATE_SECTIONS: ReadonlySet<string> = new Set(['Purpose', 'Project Discovery Snapshot']);
 
 // ────────────────────────────────────────────────────────
 // Public API
@@ -66,7 +92,7 @@ const BOILERPLATE_SECTIONS = new Set(['Purpose', 'Project Discovery Snapshot']);
  * @param {boolean} [options.dryRun=false]
  * @returns {{ status: string, migratedFiles: Array }}
  */
-function migrateContextRulesToProjectMemory(options) {
+export function migrateContextRulesToProjectMemory(options: MigrationOptions): ProjectMemoryMigrationResult {
     const { bundleRoot, targetRoot, templateRoot, dryRun = false } = options;
     const projectMemoryDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
     const markerPath = path.join(projectMemoryDir, MIGRATION_MARKER);
@@ -88,7 +114,7 @@ function migrateContextRulesToProjectMemory(options) {
         return { status: 'project_memory_has_content', migratedFiles: [] };
     }
 
-    const migratedFiles = [];
+    const migratedFiles: ProjectMemoryMigrationFile[] = [];
 
     for (const mapping of MIGRATION_RULE_MAP) {
         const { ruleFile, memoryFile, heading } = mapping;
@@ -157,8 +183,8 @@ function migrateContextRulesToProjectMemory(options) {
  * README.md and the marker) contains only template seed content (headings and
  * HTML-comment placeholders with no real prose).
  */
-function isProjectMemoryOnlySeeds(projectMemoryDir) {
-    let entries;
+export function isProjectMemoryOnlySeeds(projectMemoryDir: string): boolean {
+    let entries: fs.Dirent[];
     try {
         entries = fs.readdirSync(projectMemoryDir, { withFileTypes: true });
     } catch {
@@ -166,12 +192,12 @@ function isProjectMemoryOnlySeeds(projectMemoryDir) {
     }
 
     const mdFiles = entries
-        .filter(e =>
+        .filter((e: fs.Dirent) =>
             e.isFile() &&
             e.name.toLowerCase().endsWith('.md') &&
             e.name.toLowerCase() !== 'readme.md'
         )
-        .map(e => e.name);
+        .map((e: fs.Dirent) => e.name);
 
     for (const fileName of mdFiles) {
         const content = readTextFile(path.join(projectMemoryDir, fileName));
@@ -188,42 +214,42 @@ function isProjectMemoryOnlySeeds(projectMemoryDir) {
  * Project Discovery Snapshot section stripped, lines trimmed) before
  * comparison.
  */
-function countMeaningfulAddedLines(liveContent, templateContent) {
+export function countMeaningfulAddedLines(liveContent: string, templateContent: string): number {
     const templateSet = new Set(getMeaningfulLines(templateContent));
     const liveLines = getMeaningfulLines(liveContent);
-    return liveLines.filter(l => !templateSet.has(l)).length;
+    return liveLines.filter((line: string) => !templateSet.has(line)).length;
 }
 
 /**
  * Extracts meaningful (non-blank, non-heading-only, non-boilerplate) lines
  * from markdown text after stripping comments and the discovery overlay.
  */
-function getMeaningfulLines(text) {
+export function getMeaningfulLines(text: string): string[] {
     let cleaned = stripHtmlComments(text);
     cleaned = removeSectionByHeading(cleaned, 'Project Discovery Snapshot');
 
     return cleaned
         .split(/\r?\n/)
-        .map(l => l.trim())
-        .filter(l =>
-            l.length > 0 &&
-            !l.match(/^#+\s/) &&         // headings
-            l !== '```' &&
-            l !== '```text' &&
-            l !== '```bash' &&
-            !l.match(/^\|[-:\s|]+\|$/) && // table separator rows
-            l !== '---' &&
-            l !== '`TODO`' &&
-            l !== 'TODO'
+        .map((line: string) => line.trim())
+        .filter((line: string) =>
+            line.length > 0 &&
+            !line.match(/^#+\s/) &&         // headings
+            line !== '```' &&
+            line !== '```text' &&
+            line !== '```bash' &&
+            !line.match(/^\|[-:\s|]+\|$/) && // table separator rows
+            line !== '---' &&
+            line !== '`TODO`' &&
+            line !== 'TODO'
         );
 }
 
 /**
  * Removes an entire H2 section (heading + body) from markdown text.
  */
-function removeSectionByHeading(markdown, sectionHeading) {
+function removeSectionByHeading(markdown: string, sectionHeading: string): string {
     const lines = markdown.split(/\r?\n/);
-    const result = [];
+    const result: string[] = [];
     let skipping = false;
 
     for (const line of lines) {
@@ -251,11 +277,11 @@ function removeSectionByHeading(markdown, sectionHeading) {
  * - Replaces the H1 heading with the project-memory target heading.
  * - Adds a migration provenance comment.
  */
-function extractMigrationContent(ruleContent, targetHeading) {
+export function extractMigrationContent(ruleContent: string, targetHeading: string): string {
     const lines = ruleContent.split(/\r?\n/);
-    const sections = [];
-    let current = null;
-    let preambleLines = [];
+    const sections: MigrationSection[] = [];
+    let current: MigrationSection | null = null;
+    let preambleLines: string[] = [];
 
     for (const line of lines) {
         const h2 = line.match(/^## (.+)$/);
@@ -271,9 +297,9 @@ function extractMigrationContent(ruleContent, targetHeading) {
     if (current) sections.push(current);
 
     // Keep only non-boilerplate sections that have real content after stripping comments
-    const kept = sections.filter(s => {
-        if (BOILERPLATE_SECTIONS.has(s.heading)) return false;
-        const body = stripHtmlComments(s.lines.join('\n')).trim();
+    const kept = sections.filter((section: MigrationSection) => {
+        if (BOILERPLATE_SECTIONS.has(section.heading)) return false;
+        const body = stripHtmlComments(section.lines.join('\n')).trim();
         return body.length > 0;
     });
 
@@ -306,7 +332,7 @@ function extractMigrationContent(ruleContent, targetHeading) {
 /**
  * Builds init-report lines describing the migration outcome.
  */
-function buildMigrationReportLines(migrationResult) {
+export function buildMigrationReportLines(migrationResult: ProjectMemoryMigrationResult): string[] {
     const lines = ['', '## Project-Memory Migration (T-075)'];
 
     if (migrationResult.status === 'already_migrated') {
@@ -344,16 +370,3 @@ function buildMigrationReportLines(migrationResult) {
 
     return lines;
 }
-
-module.exports = {
-    BOILERPLATE_SECTIONS,
-    buildMigrationReportLines,
-    countMeaningfulAddedLines,
-    extractMigrationContent,
-    getMeaningfulLines,
-    isProjectMemoryOnlySeeds,
-    MEANINGFUL_DIFF_THRESHOLD,
-    migrateContextRulesToProjectMemory,
-    MIGRATION_MARKER,
-    MIGRATION_RULE_MAP
-};

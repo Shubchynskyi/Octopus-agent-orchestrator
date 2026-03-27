@@ -1,18 +1,18 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     BOOTSTRAP_DEFINITIONS,
     buildBootstrapSuccessOutput,
     handleBootstrap
-} = require('../../../../src/cli/commands/bootstrap.ts');
+} from '../../../../src/cli/commands/bootstrap';
 
-const { DEFAULT_BUNDLE_NAME } = require('../../../../src/core/constants.ts');
+import { DEFAULT_BUNDLE_NAME } from '../../../../src/core/constants';
 
-function findRepoRoot(startDir) {
+function findRepoRoot(startDir: string): string {
     let current = path.resolve(startDir);
     while (true) {
         const packageJsonPath = path.join(current, 'package.json');
@@ -109,7 +109,7 @@ test('handleBootstrap deploys bundle to destination', async () => {
 
         // Capture console output
         const originalLog = console.log;
-        const lines = [];
+        const lines: string[] = [];
         console.log = function () {
             lines.push([...arguments].join(' '));
         };
@@ -138,7 +138,7 @@ test('handleBootstrap uses positional as destination fallback', async () => {
         const dest = path.join(tmpDir, 'my-bundle');
 
         const originalLog = console.log;
-        const lines = [];
+        const lines: string[] = [];
         console.log = function () { lines.push([...arguments].join(' ')); };
         try {
             await handleBootstrap([dest], { version: '1.0.8', name: 'octopus-agent-orchestrator' }, repoRoot);
@@ -155,7 +155,7 @@ test('handleBootstrap uses positional as destination fallback', async () => {
 
 test('handleBootstrap prints help on --help flag', async () => {
     const originalLog = console.log;
-    const lines = [];
+    const lines: string[] = [];
     console.log = function () { lines.push([...arguments].join(' ')); };
     try {
         await handleBootstrap(['--help'], { version: '1.0.8', name: 'octopus-agent-orchestrator' }, '/tmp');
@@ -167,7 +167,7 @@ test('handleBootstrap prints help on --help flag', async () => {
 
 test('handleBootstrap prints version on --version flag', async () => {
     const originalLog = console.log;
-    const lines = [];
+    const lines: string[] = [];
     console.log = function () { lines.push([...arguments].join(' ')); };
     try {
         await handleBootstrap(['--version'], { version: '1.0.8', name: 'octopus-agent-orchestrator' }, '/tmp');

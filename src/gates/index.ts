@@ -1,11 +1,21 @@
-module.exports = {
-    helpers: require('./helpers.ts'),
-    classifyChange: require('./classify-change.ts'),
-    compileGate: require('./compile-gate.ts'),
-    buildScopedDiff: require('./build-scoped-diff.ts'),
-    buildReviewContext: require('./build-review-context.ts'),
-    requiredReviewsCheck: require('./required-reviews-check.ts'),
-    docImpact: require('./doc-impact.ts'),
-    completion: require('./completion.ts'),
-    taskEventsSummary: require('./task-events-summary.ts')
+import * as helpers from './helpers';
+import * as classifyChange from './classify-change';
+import * as compileGate from './compile-gate';
+import * as buildScopedDiff from './build-scoped-diff';
+import * as buildReviewContext from './build-review-context';
+import * as requiredReviewsCheck from './required-reviews-check';
+import * as docImpact from './doc-impact';
+import * as completion from './completion';
+import * as taskEventsSummary from './task-events-summary';
+
+export {
+    helpers,
+    classifyChange,
+    compileGate,
+    buildScopedDiff,
+    buildReviewContext,
+    requiredReviewsCheck,
+    docImpact,
+    completion,
+    taskEventsSummary
 };

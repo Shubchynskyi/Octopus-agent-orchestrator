@@ -5,14 +5,16 @@
 This document records the TypeScript/Node foundation that now backs the active runtime.
 
 - baseline: **Node 20 LTS**
-- source of behavior: **`src/**/*.ts`**
-- public router: **`bin/octopus.js`**
+- source of truth: **`src/**/*.ts`**
+- executed runtime: **`dist/src/**/*.js`** (or staged **`.node-build/src/**/*.js`** in test fixtures)
+- public router: generated **`bin/octopus.js`** compiled from **`src/bin/octopus.ts`**
 - validation and gate logic run through the same Node runtime
 
 ## Source Layout
 
 | Path | Role |
 |---|---|
+| `src/bin/octopus.ts` | TypeScript source for the generated public CLI launcher |
 | `src/cli/index.ts` | Foundation descriptor for the active Node runtime |
 | `src/core/*.ts` | Shared constants, fs/path helpers, template utilities |
 | `src/materialization/*.ts` | Install/init materialization logic |
@@ -27,9 +29,10 @@ This document records the TypeScript/Node foundation that now backs the active r
 
 ## Execution Model
 
-- In the source repository, `bin/octopus.js` executes JS-compatible `src/**/*.ts` files directly by mapping `.ts` loading onto the Node `.js` loader.
-- In packaged installs under `node_modules`, `bin/octopus.js` switches to compiled `dist/src/**/*.js`.
-- `scripts/node-foundation/build.ts` produces `.node-build/` for staged contract tests and `dist/` for the published-package runtime.
+- `src/**/*.ts` is the strict TypeScript source of truth; it is compiled before execution.
+- `src/bin/octopus.ts` compiles into the public `bin/octopus.js` launcher; that generated launcher executes compiled JavaScript only, preferring `dist/src/**/*.js` and falling back to staged `.node-build/src/**/*.js` for test fixtures.
+- `scripts/node-foundation/build.ts` produces `.node-build/` for staged contract tests, `dist/` for the published-package runtime, and syncs the generated `bin/octopus.js` launcher from compiled TypeScript output.
+- Direct execution of raw `.ts` files is no longer part of the supported runtime.
 
 ## Validator Strategy
 
@@ -43,18 +46,29 @@ Validation stays in-repo and TypeScript-first:
 
 ## Build and Test
 
-### `npm run build:node-foundation`
+### `npm run build`
 
-Stages the TypeScript runtime into `.node-build/` and prints `NODE_FOUNDATION_BUILD_OK`.
+Compiles the strict TypeScript graph needed by the build harness into `.scripts-build/`, then publishes compiled runtime artifacts into `dist/`.
 
-### `npm run test:node-foundation`
+### `npm test`
 
-Rebuilds the staged runtime and executes `tests/node/**/*.test.js`, then prints `NODE_FOUNDATION_TEST_OK`.
+Compiles the strict runtime/test/build-script graph into `.scripts-build/`, rebuilds the staged `.node-build/` runtime, and executes the compiled `tests/node/**/*.test.js` suite.
+
+### `npm run validate:release`
+
+Runs the explicit release proof path:
+
+1. `npm run build`
+2. `npm test`
+3. compiled `tests/node/packaging/pack-smoke.test.js`, which performs `npm pack -> npm install <tarball> -> CLI invoke`
+
+This keeps the release contract explicit: the shipped package must build, pass the full test suite, pack cleanly, install, and execute from the packaged runtime.
 
 ## Current Runtime State
 
-- `bin/octopus.js` is the active runtime router.
+- `bin/octopus.js` is a generated runtime launcher; the maintained source of truth lives in `src/bin/octopus.ts`.
 - Lifecycle commands and gates are Node-only.
+- `TypeScript` means `strict:true` across runtime code, Node tests, and supporting build/test scripts.
 - Historical shell wrappers have been removed from the runtime surface.
 
 ## Repository Branch Note

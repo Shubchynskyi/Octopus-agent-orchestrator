@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 2.3.2
+
+- finished the TypeScript-only source contract: the public CLI launcher is now generated from `src/bin/octopus.ts`, and hand-written tracked `bin/octopus.js` source is gone
+- added `prepare` plus build-path sync so source checkouts and package builds materialize the generated launcher consistently before execution
+- stabilized packaging tests by isolating publish-runtime and pack smoke builds in fixture repos instead of racing on the shared repository `dist/`
+- documented the generated-launcher contract across runtime and user-facing docs
+
 ## 2.3.1
 
 - synchronized release metadata on `2.3.1`, including the root `package-lock.json` version/license fields with `package.json`, `VERSION`, and `LICENSE`

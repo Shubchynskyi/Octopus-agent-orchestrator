@@ -1,11 +1,11 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
-const { handleSkills } = require('../../../../src/cli/commands/skills.ts');
-const { getSkillPacksConfigPath, writeSkillsIndex } = require('../../../../src/runtime/skills.ts');
+import { handleSkills } from '../../../../src/cli/commands/skills';
+import { getSkillPacksConfigPath, writeSkillsIndex } from '../../../../src/runtime/skills';
 
 function findRepoRoot() {
     let current = __dirname;
@@ -22,9 +22,9 @@ test('handleSkills suggest prints deterministic recommendation output', () => {
     const repoRoot = findRepoRoot();
     const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-cli-skills-'));
     const workspaceRoot = path.join(bundleRoot, 'workspace');
-    const packageJson = { version: '1.0.8' };
+    const packageJson = { name: 'test-pkg', version: '1.0.8' };
     const originalLog = console.log;
-    const lines = [];
+    const lines: string[] = [];
 
     try {
         fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
@@ -38,7 +38,7 @@ test('handleSkills suggest prints deterministic recommendation output', () => {
         fs.writeFileSync(path.join(workspaceRoot, 'package.json'), '{"name":"web-app","dependencies":{"react":"18.0.0"}}', 'utf8');
         fs.writeFileSync(path.join(workspaceRoot, 'src', 'components', 'App.tsx'), 'export function App() { return null; }\n', 'utf8');
 
-        console.log = function (...items) {
+        console.log = function (...items: unknown[]) {
             lines.push(items.join(' '));
         };
 
@@ -50,8 +50,9 @@ test('handleSkills suggest prints deterministic recommendation output', () => {
             '--changed-path', 'src/components/App.tsx'
         ], packageJson);
 
-        assert.ok(result.suggestedPacks.some((pack) => pack.id === 'frontend-react'));
-        assert.ok(result.suggestedSkills.some((skill) => skill.id === 'frontend-react'));
+        assert.ok(result != null && 'suggestedPacks' in result);
+        assert.ok(result.suggestedPacks.some((pack: { id: string }) => pack.id === 'frontend-react'));
+        assert.ok(result.suggestedSkills.some((skill: { id: string }) => skill.id === 'frontend-react'));
         const output = lines.join('\n');
         assert.match(output, /OCTOPUS_SKILLS/);
         assert.match(output, /Action: suggest/);

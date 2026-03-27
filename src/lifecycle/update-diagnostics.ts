@@ -19,9 +19,32 @@ const DIAGNOSTIC_HINTS = Object.freeze({
     NPM_METADATA_INVALID: 'Ensure npm returned valid JSON metadata for the installed update package.',
     UPDATE_SOURCE_VERSION_MISSING: 'Ensure the selected update source points to a valid orchestrator bundle containing a VERSION file.',
     UPDATE_SOURCE_VERSION_EMPTY: 'Ensure the selected update source has a non-empty VERSION file.'
-});
+} as const);
 
-function normalizeDiagnosticText(value) {
+type KnownLifecycleDiagnosticCode = keyof typeof DIAGNOSTIC_HINTS;
+
+interface LifecycleDiagnosticOptions {
+    message?: unknown;
+    tool?: unknown;
+    code?: unknown;
+    sourceReference?: unknown;
+    hint?: unknown;
+    stderr?: unknown;
+    stdout?: unknown;
+    detailText?: unknown;
+}
+
+export interface LifecycleDiagnosticError extends Error {
+    diagnosticTool: string;
+    diagnosticCode: string;
+    diagnosticSource: string | null;
+    diagnosticHint: string | null;
+    diagnosticStderr: string;
+    diagnosticStdout: string;
+    diagnosticText: string;
+}
+
+export function normalizeDiagnosticText(value: unknown): string {
     const text = String(value || '')
         .replace(/\r\n/g, '\n')
         .replace(/\r/g, '\n')
@@ -52,7 +75,7 @@ function normalizeDiagnosticText(value) {
     return joined;
 }
 
-function matchesAnyPattern(text, patterns) {
+function matchesAnyPattern(text: string, patterns: readonly string[]): boolean {
     for (const pattern of patterns) {
         if (text.includes(pattern)) {
             return true;
@@ -61,7 +84,7 @@ function matchesAnyPattern(text, patterns) {
     return false;
 }
 
-function classifyGitDiagnostic(text) {
+export function classifyGitDiagnostic(text: string): string {
     const normalized = normalizeDiagnosticText(text).toLowerCase();
     if (!normalized) {
         return 'GIT_UNKNOWN';
@@ -115,7 +138,7 @@ function classifyGitDiagnostic(text) {
     return 'GIT_UNKNOWN';
 }
 
-function classifyNpmDiagnostic(text) {
+export function classifyNpmDiagnostic(text: string): string {
     const normalized = normalizeDiagnosticText(text).toLowerCase();
     if (!normalized) {
         return 'NPM_UNKNOWN';
@@ -161,11 +184,13 @@ function classifyNpmDiagnostic(text) {
     return 'NPM_UNKNOWN';
 }
 
-function getLifecycleDiagnosticHint(code) {
-    return DIAGNOSTIC_HINTS[code] || null;
+export function getLifecycleDiagnosticHint(code: string): string | null {
+    return code in DIAGNOSTIC_HINTS
+        ? DIAGNOSTIC_HINTS[code as KnownLifecycleDiagnosticCode]
+        : null;
 }
 
-function createLifecycleDiagnosticError(options) {
+export function createLifecycleDiagnosticError(options: LifecycleDiagnosticOptions): LifecycleDiagnosticError {
     const message = String(options && options.message ? options.message : 'Update diagnostic failure.');
     const tool = String(options && options.tool ? options.tool : 'update');
     const code = String(options && options.code ? options.code : 'UNKNOWN');
@@ -205,7 +230,7 @@ function createLifecycleDiagnosticError(options) {
         lines.push(detailText);
     }
 
-    const error = new Error(lines.join('\n'));
+    const error = new Error(lines.join('\n')) as LifecycleDiagnosticError;
     error.diagnosticTool = tool;
     error.diagnosticCode = code;
     error.diagnosticSource = sourceReference;
@@ -215,11 +240,3 @@ function createLifecycleDiagnosticError(options) {
     error.diagnosticText = diagnosticText;
     return error;
 }
-
-module.exports = {
-    classifyGitDiagnostic,
-    classifyNpmDiagnostic,
-    createLifecycleDiagnosticError,
-    getLifecycleDiagnosticHint,
-    normalizeDiagnosticText
-};

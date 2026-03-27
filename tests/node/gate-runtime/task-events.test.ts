@@ -1,33 +1,28 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { spawn } = require('node:child_process');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { spawn } from 'node:child_process';
 
-const {
+import {
     assertValidTaskId,
     buildEventIntegrityHash,
     normalizeIntegrityValue,
     inspectTaskEventFile,
     appendTaskEvent,
     readTaskEventAppendState
-} = require('../../../src/gate-runtime/task-events.ts');
-const { stringSha256 } = require('../../../src/gate-runtime/hash.ts');
+} from '../../../src/gate-runtime/task-events';
+import { stringSha256 } from '../../../src/gate-runtime/hash';
 
 function resolveTaskEventsModulePath() {
-    const tsPath = path.resolve(__dirname, '../../../src/gate-runtime/task-events.ts');
-    if (fs.existsSync(tsPath)) {
-        return tsPath;
-    }
     return path.resolve(__dirname, '../../../src/gate-runtime/task-events.js');
 }
 
-function runConcurrentAppendWorker(modulePath, orchestratorRoot, startSignalPath, attempts, delayMs) {
-    return new Promise((resolve, reject) => {
+function runConcurrentAppendWorker(modulePath: string, orchestratorRoot: string, startSignalPath: string, attempts: number, delayMs: number) {
+    return new Promise<void>((resolve, reject) => {
         const workerScript = [
             "const fs = require('node:fs');",
-            "require.extensions['.ts'] = require.extensions['.js'];",
             "const { appendTaskEvent } = require(process.argv[1]);",
             "const orchestratorRoot = process.argv[2];",
             "const startSignalPath = process.argv[3];",
@@ -94,14 +89,14 @@ test('assertValidTaskId rejects too-long IDs', () => {
 // --- normalizeIntegrityValue ---
 
 test('normalizeIntegrityValue sorts object keys', () => {
-    const result = normalizeIntegrityValue({ b: 2, a: 1 });
+    const result = normalizeIntegrityValue({ b: 2, a: 1 }) as Record<string, unknown>;
     assert.deepEqual(Object.keys(result), ['a', 'b']);
 });
 
 test('normalizeIntegrityValue handles nested objects', () => {
-    const result = normalizeIntegrityValue({ z: { b: 2, a: 1 }, a: 0 });
+    const result = normalizeIntegrityValue({ z: { b: 2, a: 1 }, a: 0 }) as Record<string, unknown>;
     assert.deepEqual(Object.keys(result), ['a', 'z']);
-    assert.deepEqual(Object.keys(result.z), ['a', 'b']);
+    assert.deepEqual(Object.keys(result.z as Record<string, unknown>), ['a', 'b']);
 });
 
 test('normalizeIntegrityValue handles arrays', () => {
@@ -111,7 +106,7 @@ test('normalizeIntegrityValue handles arrays', () => {
 
 test('normalizeIntegrityValue converts Date to ISO string', () => {
     const d = new Date('2024-01-15T10:30:00Z');
-    const result = normalizeIntegrityValue(d);
+    const result = normalizeIntegrityValue(d) as string;
     assert.equal(typeof result, 'string');
     assert.match(result, /2024-01-15/);
 });
@@ -136,11 +131,11 @@ test('normalizeIntegrityValue forward-slashes paths inside nested objects and ar
         nested: { deep: 'a\\b\\c' },
         list: ['x\\y', 'already/fine']
     };
-    const result = normalizeIntegrityValue(input);
+    const result = normalizeIntegrityValue(input) as Record<string, unknown>;
     assert.equal(result.path, 'src/gate-runtime/task-events.ts');
-    assert.equal(result.nested.deep, 'a/b/c');
-    assert.equal(result.list[0], 'x/y');
-    assert.equal(result.list[1], 'already/fine');
+    assert.equal((result.nested as Record<string, unknown>).deep, 'a/b/c');
+    assert.equal((result.list as unknown[])[0], 'x/y');
+    assert.equal((result.list as unknown[])[1], 'already/fine');
 });
 
 // --- cross-platform integrity hash regression ---
@@ -188,7 +183,7 @@ test('buildEventIntegrityHash produces a 64-char lowercase hex string', () => {
             prev_event_sha256: null
         }
     };
-    const hash = buildEventIntegrityHash(event);
+    const hash = buildEventIntegrityHash(event) as string;
     assert.match(hash, /^[0-9a-f]{64}$/);
 });
 
@@ -285,9 +280,9 @@ test('inspectTaskEventFile validates integrity chain', () => {
         const filePath = path.join(tempDir, 'test.jsonl');
 
         // Build a valid chain of 3 events
-        const events = [];
+        const events: Array<Record<string, unknown>> = [];
         for (let i = 0; i < 3; i++) {
-            const event = {
+            const event: Record<string, unknown> = {
                 timestamp_utc: new Date().toISOString(),
                 task_id: 'T-001',
                 event_type: 'test',
@@ -298,10 +293,10 @@ test('inspectTaskEventFile validates integrity chain', () => {
                 integrity: {
                     schema_version: 1,
                     task_sequence: i + 1,
-                    prev_event_sha256: i === 0 ? null : events[i - 1].integrity.event_sha256
-                }
+                    prev_event_sha256: i === 0 ? null : (events[i - 1].integrity as Record<string, unknown>).event_sha256
+                } as Record<string, unknown>
             };
-            event.integrity.event_sha256 = buildEventIntegrityHash(event);
+            (event.integrity as Record<string, unknown>).event_sha256 = buildEventIntegrityHash(event);
             events.push(event);
         }
 
@@ -324,7 +319,7 @@ test('inspectTaskEventFile detects tampered event', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-task-events-'));
     try {
         const filePath = path.join(tempDir, 'tampered.jsonl');
-        const event = {
+        const event: Record<string, unknown> = {
             timestamp_utc: new Date().toISOString(),
             task_id: 'T-001',
             event_type: 'test',
@@ -333,9 +328,9 @@ test('inspectTaskEventFile detects tampered event', () => {
                 schema_version: 1,
                 task_sequence: 1,
                 prev_event_sha256: null
-            }
+            } as Record<string, unknown>
         };
-        event.integrity.event_sha256 = buildEventIntegrityHash(event);
+        (event.integrity as Record<string, unknown>).event_sha256 = buildEventIntegrityHash(event);
         // Tamper
         event.message = 'tampered!';
 
@@ -352,12 +347,12 @@ test('inspectTaskEventFile detects foreign task_id', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-task-events-'));
     try {
         const filePath = path.join(tempDir, 'foreign.jsonl');
-        const event = {
+        const event: Record<string, unknown> = {
             task_id: 'T-999',
             event_type: 'test',
-            integrity: { schema_version: 1, task_sequence: 1, prev_event_sha256: null }
+            integrity: { schema_version: 1, task_sequence: 1, prev_event_sha256: null } as Record<string, unknown>
         };
-        event.integrity.event_sha256 = buildEventIntegrityHash(event);
+        (event.integrity as Record<string, unknown>).event_sha256 = buildEventIntegrityHash(event);
         fs.writeFileSync(filePath, JSON.stringify(event) + '\n', 'utf8');
 
         const result = inspectTaskEventFile(filePath, 'T-001');
@@ -389,12 +384,12 @@ test('inspectTaskEventFile handles PASS_WITH_LEGACY_PREFIX', () => {
         // Legacy event first
         const legacy = { task_id: 'T-001', event_type: 'legacy' };
         // Then integrity event
-        const integrityEvent = {
+        const integrityEvent: Record<string, unknown> = {
             task_id: 'T-001',
             event_type: 'test',
-            integrity: { schema_version: 1, task_sequence: 2, prev_event_sha256: null }
+            integrity: { schema_version: 1, task_sequence: 2, prev_event_sha256: null } as Record<string, unknown>
         };
-        integrityEvent.integrity.event_sha256 = buildEventIntegrityHash(integrityEvent);
+        (integrityEvent.integrity as Record<string, unknown>).event_sha256 = buildEventIntegrityHash(integrityEvent);
 
         const content = [JSON.stringify(legacy), JSON.stringify(integrityEvent)].join('\n') + '\n';
         fs.writeFileSync(filePath, content, 'utf8');

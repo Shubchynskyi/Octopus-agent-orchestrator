@@ -1,14 +1,14 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const childProcess = require('node:child_process');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import * as childProcess from 'node:child_process';
 
-const { runUpdateFromGit, buildGitCloneArgs } = require('../../../src/lifecycle/update-git.ts');
-const { removePathRecursive } = require('../../../src/lifecycle/common.ts');
+import { runUpdateFromGit, buildGitCloneArgs } from '../../../src/lifecycle/update-git';
+import { removePathRecursive } from '../../../src/lifecycle/common';
 
-function git(args, cwd) {
+function git(args: string[], cwd: string) {
     const result = childProcess.spawnSync('git', args, {
         cwd,
         stdio: 'pipe',
@@ -21,7 +21,7 @@ function git(args, cwd) {
     }
 }
 
-function createGitUpdateRepo(version) {
+function createGitUpdateRepo(version: string) {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-update-git-repo-'));
     fs.writeFileSync(path.join(repoRoot, 'VERSION'), `${version}\n`, 'utf8');
     fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({
@@ -38,7 +38,7 @@ function createGitUpdateRepo(version) {
     return repoRoot;
 }
 
-function createDeployedWorkspace(version) {
+function createDeployedWorkspace(version: string) {
     const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-update-git-target-'));
     const bundleRoot = path.join(targetRoot, 'Octopus-agent-orchestrator');
     fs.mkdirSync(bundleRoot, { recursive: true });
@@ -131,11 +131,11 @@ describe('runUpdateFromGit', () => {
                     trustOverride: true
                 }),
                 (error) => {
-                    assert.match(error.message, /DiagnosticTool: git/);
-                    assert.match(error.message, /DiagnosticCode: GIT_REF_NOT_FOUND/);
-                    assert.match(error.message, /DiagnosticSource:/);
-                    assert.match(error.message, /missing-branch/);
-                    assert.match(error.message, /DiagnosticStderr:/);
+                    assert.match((error as Error).message, /DiagnosticTool: git/);
+                    assert.match((error as Error).message, /DiagnosticCode: GIT_REF_NOT_FOUND/);
+                    assert.match((error as Error).message, /DiagnosticSource:/);
+                    assert.match((error as Error).message, /missing-branch/);
+                    assert.match((error as Error).message, /DiagnosticStderr:/);
                     return true;
                 }
             );

@@ -1,26 +1,42 @@
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-
-const { DEFAULT_BUNDLE_NAME } = require('../core/constants.ts');
-const {
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import {
     DEFAULT_GIT_CLONE_TIMEOUT_MS,
     DEFAULT_GIT_TIMEOUT_MS,
     spawnStreamed,
     spawnSyncWithTimeout
-} = require('../core/subprocess.ts');
-const { removePathRecursive } = require('./common.ts');
-const { runCheckUpdate } = require('./check-update.ts');
-const { validateGitSourceTrust } = require('./update-trust.ts');
-const {
-    classifyGitDiagnostic,
-    createLifecycleDiagnosticError
-} = require('./update-diagnostics.ts');
-const { registerTempRoot } = require('../cli/signal-handler.ts');
+} from '../core/subprocess';
+import { removePathRecursive } from './common';
+import { runCheckUpdate } from './check-update';
+import { validateGitSourceTrust } from './update-trust';
+import { classifyGitDiagnostic, createLifecycleDiagnosticError } from './update-diagnostics';
+import { registerTempRoot } from '../cli/signal-handler';
 
-const DEFAULT_GIT_UPDATE_REPO_URL = 'https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git';
+export const DEFAULT_GIT_UPDATE_REPO_URL = 'https://github.com/Shubchynskyi/Octopus-agent-orchestrator.git';
 
-function buildGitCloneArgs(repoUrl, branch, destinationPath) {
+interface GitCloneHandle {
+    clonePath: string;
+    cleanup: () => void;
+}
+
+interface RunUpdateFromGitOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    initAnswersPath?: string;
+    repoUrl?: string;
+    branch?: string | null;
+    checkOnly?: boolean;
+    noPrompt?: boolean;
+    dryRun?: boolean;
+    skipVerify?: boolean;
+    skipManifestValidation?: boolean;
+    trustOverride?: boolean;
+    updateRunner?: ((options: Record<string, unknown>) => unknown) | null;
+}
+
+export function buildGitCloneArgs(repoUrl: string, branch: string | null | undefined, destinationPath: string): string[] {
     const args = ['clone', '--depth', '1'];
     if (branch) {
         args.push('--branch', String(branch).trim(), '--single-branch');
@@ -48,7 +64,7 @@ function ensureGitAvailable() {
     }
 }
 
-async function cloneGitUpdateSource(repoUrl, branch) {
+export async function cloneGitUpdateSource(repoUrl: string, branch: string | null): Promise<GitCloneHandle> {
     ensureGitAvailable();
 
     const tempClonePath = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-update-git-'));
@@ -95,7 +111,7 @@ async function cloneGitUpdateSource(repoUrl, branch) {
     };
 }
 
-async function runUpdateFromGit(options) {
+export async function runUpdateFromGit(options: RunUpdateFromGitOptions) {
     const {
         targetRoot,
         bundleRoot,
@@ -148,10 +164,3 @@ async function runUpdateFromGit(options) {
         gitSource.cleanup();
     }
 }
-
-module.exports = {
-    DEFAULT_GIT_UPDATE_REPO_URL,
-    buildGitCloneArgs,
-    cloneGitUpdateSource,
-    runUpdateFromGit
-};

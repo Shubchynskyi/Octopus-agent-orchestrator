@@ -1,17 +1,17 @@
-const { describe, it, afterEach } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import { describe, it, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
-const {
+import {
     installSignalHandlers,
     uninstallSignalHandlers,
     registerCleanup,
     unregisterCleanup,
     registerTempRoot,
     getShutdownSignal
-} = require('../../../src/cli/signal-handler.ts');
+} from '../../../src/cli/signal-handler';
 
 afterEach(() => {
     uninstallSignalHandlers();

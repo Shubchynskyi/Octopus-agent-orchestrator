@@ -1,22 +1,19 @@
-const path = require('node:path');
-
-const {
-    DEFAULT_BUNDLE_NAME
-} = require('../../core/constants.ts');
-
-const {
+import * as path from 'node:path';
+import { DEFAULT_BUNDLE_NAME } from '../../core/constants';
+import {
     acquireSourceRoot,
     deployFreshBundle,
     normalizePathValue,
     parseOptions,
+    PackageJsonLike,
     printHelp
-} = require('./cli-helpers.ts');
+} from './cli-helpers';
 
 // ---------------------------------------------------------------------------
 // Flag definitions
 // ---------------------------------------------------------------------------
 
-const BOOTSTRAP_DEFINITIONS = {
+export const BOOTSTRAP_DEFINITIONS = {
     '--destination': { key: 'destination', type: 'string' },
     '--target': { key: 'destination', type: 'string' },
     '--repo-url': { key: 'repoUrl', type: 'string' },
@@ -31,7 +28,7 @@ const BOOTSTRAP_DEFINITIONS = {
  * Build the success output text for a completed bootstrap.
  * Returns a string matching the OCTOPUS_BOOTSTRAP_OK contract.
  */
-function buildBootstrapSuccessOutput(packageJson, bundleVersion, destinationPath) {
+export function buildBootstrapSuccessOutput(packageJson: PackageJsonLike, bundleVersion: string, destinationPath: string): string {
     const targetRoot = path.dirname(destinationPath);
     const bundleRelativePath = path.relative(targetRoot, destinationPath) || path.basename(destinationPath);
     const initPromptPath = path.join(destinationPath, 'AGENT_INIT_PROMPT.md');
@@ -64,7 +61,7 @@ function buildBootstrapSuccessOutput(packageJson, bundleVersion, destinationPath
 /**
  * Print bootstrap success to stdout.
  */
-function printBootstrapSuccess(packageJson, bundleVersion, destinationPath) {
+export function printBootstrapSuccess(packageJson: PackageJsonLike, bundleVersion: string, destinationPath: string): void {
     console.log(buildBootstrapSuccessOutput(packageJson, bundleVersion, destinationPath));
 }
 
@@ -80,7 +77,7 @@ function printBootstrapSuccess(packageJson, bundleVersion, destinationPath) {
  *   - OCTOPUS_BOOTSTRAP_OK on success
  *   - Exit code 0 on success
  */
-async function handleBootstrap(commandArgv, packageJson, packageRoot) {
+export async function handleBootstrap(commandArgv: string[], packageJson: PackageJsonLike, packageRoot: string): Promise<void> {
     const { options, positionals } = parseOptions(commandArgv, BOOTSTRAP_DEFINITIONS, {
         allowPositionals: true,
         maxPositionals: 1
@@ -89,8 +86,12 @@ async function handleBootstrap(commandArgv, packageJson, packageRoot) {
     if (options.help) { printHelp(packageJson); return; }
     if (options.version) { console.log(packageJson.version); return; }
 
-    const destinationPath = normalizePathValue(options.destination || positionals[0] || DEFAULT_BUNDLE_NAME);
-    const source = await acquireSourceRoot(options.repoUrl, options.branch, packageRoot);
+    const destinationOption = typeof options.destination === 'string' ? options.destination : undefined;
+    const repoUrl = typeof options.repoUrl === 'string' ? options.repoUrl : undefined;
+    const branch = typeof options.branch === 'string' ? options.branch : undefined;
+
+    const destinationPath = normalizePathValue(destinationOption || positionals[0] || DEFAULT_BUNDLE_NAME);
+    const source = await acquireSourceRoot(repoUrl, branch, packageRoot);
     try {
         deployFreshBundle(source.sourceRoot, destinationPath);
         printBootstrapSuccess(packageJson, source.bundleVersion, destinationPath);
@@ -98,10 +99,3 @@ async function handleBootstrap(commandArgv, packageJson, packageRoot) {
         source.cleanup();
     }
 }
-
-module.exports = {
-    BOOTSTRAP_DEFINITIONS,
-    buildBootstrapSuccessOutput,
-    handleBootstrap,
-    printBootstrapSuccess
-};

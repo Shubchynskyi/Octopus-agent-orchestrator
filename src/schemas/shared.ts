@@ -1,17 +1,14 @@
-const {
-    BOOLEAN_FALSE_VALUES,
-    BOOLEAN_TRUE_VALUES
-} = require('../core/constants.ts');
+import { BOOLEAN_FALSE_VALUES, BOOLEAN_TRUE_VALUES } from '../core/constants';
 
-function ensurePlainObject(value, subject) {
+export function ensurePlainObject(value: unknown, subject: string): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new Error(`${subject} must be a JSON object.`);
     }
 
-    return value;
+    return value as Record<string, unknown>;
 }
 
-function normalizeNonEmptyString(value, fieldName) {
+export function normalizeNonEmptyString(value: unknown, fieldName: string): string {
     if (value === null || value === undefined) {
         throw new Error(`${fieldName} is required.`);
     }
@@ -24,7 +21,7 @@ function normalizeNonEmptyString(value, fieldName) {
     return normalized;
 }
 
-function normalizeOptionalString(value) {
+export function normalizeOptionalString(value: unknown): string | undefined {
     if (value === null || value === undefined) {
         return undefined;
     }
@@ -32,7 +29,7 @@ function normalizeOptionalString(value) {
     return String(value).trim();
 }
 
-function normalizeEnum(value, allowedValues, fieldName) {
+export function normalizeEnum(value: unknown, allowedValues: readonly string[], fieldName: string): string {
     const normalized = normalizeNonEmptyString(value, fieldName);
     const match = allowedValues.find((candidate) => candidate.toLowerCase() === normalized.toLowerCase());
 
@@ -43,7 +40,7 @@ function normalizeEnum(value, allowedValues, fieldName) {
     return match;
 }
 
-function normalizeBooleanLike(value, fieldName) {
+export function normalizeBooleanLike(value: unknown, fieldName: string): boolean {
     if (typeof value === 'boolean') {
         return value;
     }
@@ -64,7 +61,12 @@ function normalizeBooleanLike(value, fieldName) {
     throw new Error(`${fieldName} must be boolean-like.`);
 }
 
-function normalizeInteger(value, fieldName, options = {}) {
+interface IntegerOptions {
+    minimum?: number;
+    maximum?: number;
+}
+
+export function normalizeInteger(value: unknown, fieldName: string, options: IntegerOptions = {}): number {
     let normalized;
 
     if (typeof value === 'number' && Number.isInteger(value)) {
@@ -89,7 +91,12 @@ function normalizeInteger(value, fieldName, options = {}) {
     return normalized;
 }
 
-function normalizeStringArray(value, fieldName, options = {}) {
+interface StringArrayOptions {
+    allowScalar?: boolean;
+    unique?: boolean;
+}
+
+export function normalizeStringArray(value: unknown, fieldName: string, options: StringArrayOptions = {}): string[] {
     const allowScalar = options.allowScalar === true;
     const unique = options.unique !== false;
     const items = Array.isArray(value) ? value : (allowScalar ? [value] : null);
@@ -98,7 +105,7 @@ function normalizeStringArray(value, fieldName, options = {}) {
         throw new Error(`${fieldName} must be an array.`);
     }
 
-    const normalized = [];
+    const normalized: string[] = [];
     for (const item of items) {
         const text = normalizeNonEmptyString(item, fieldName);
         if (!unique || !normalized.includes(text)) {
@@ -109,8 +116,8 @@ function normalizeStringArray(value, fieldName, options = {}) {
     return normalized;
 }
 
-function cloneUnknownProperties(input, knownKeys) {
-    const extras = {};
+export function cloneUnknownProperties(input: Record<string, unknown>, knownKeys: Set<string>): Record<string, unknown> {
+    const extras: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(input)) {
         if (!knownKeys.has(key)) {
             extras[key] = value;
@@ -120,13 +127,3 @@ function cloneUnknownProperties(input, knownKeys) {
     return extras;
 }
 
-module.exports = {
-    cloneUnknownProperties,
-    ensurePlainObject,
-    normalizeBooleanLike,
-    normalizeEnum,
-    normalizeInteger,
-    normalizeNonEmptyString,
-    normalizeOptionalString,
-    normalizeStringArray
-};

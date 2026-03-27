@@ -1,10 +1,10 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     buildBannerText,
     buildHelpText,
     COMMAND_SUMMARY,
@@ -38,7 +38,7 @@ const {
     tryNormalizeAssistantBrevity,
     tryNormalizeSourceOfTruth,
     tryParseBooleanText
-} = require('../../../../src/cli/commands/cli-helpers.ts');
+} from '../../../../src/cli/commands/cli-helpers';
 
 // ---------------------------------------------------------------------------
 // parseOptions
@@ -248,14 +248,14 @@ test('convertSourceOfTruthToEntrypoint returns null for unknown', () => {
 
 test('normalizeActiveAgentFiles includes canonical entrypoint for source', () => {
     const result = normalizeActiveAgentFiles(null, 'Claude');
-    assert.ok(result.includes('CLAUDE.md'));
+    assert.ok(result!.includes('CLAUDE.md'));
 });
 
 test('normalizeActiveAgentFiles merges comma-separated inputs with canonical', () => {
     const result = normalizeActiveAgentFiles('AGENTS.md, GEMINI.md', 'Claude');
-    assert.ok(result.includes('CLAUDE.md'));
-    assert.ok(result.includes('AGENTS.md'));
-    assert.ok(result.includes('GEMINI.md'));
+    assert.ok(result!.includes('CLAUDE.md'));
+    assert.ok(result!.includes('AGENTS.md'));
+    assert.ok(result!.includes('GEMINI.md'));
 });
 
 test('normalizeActiveAgentFiles supports numbered selections in non-interactive setup input', () => {
@@ -393,8 +393,8 @@ test('copyPath rejects symlink targets outside the bundle root', () => {
 
         try {
             fs.symlinkSync(outsideFile, linkPath);
-        } catch (error) {
-            if (error && ['EPERM', 'EACCES', 'UNKNOWN'].includes(error.code)) {
+        } catch (error: unknown) {
+            if (error && ['EPERM', 'EACCES', 'UNKNOWN'].includes((error as { code?: string }).code as string)) {
                 return;
             }
             throw error;
@@ -436,27 +436,40 @@ test('ensureSourceItemExists returns path for existing asset', () => {
 // deployFreshBundle
 // ---------------------------------------------------------------------------
 
+function writeCompiledRuntimeFixture(sourceRoot: string): void {
+    const runtimeRoot = path.join(sourceRoot, 'dist', 'src');
+    fs.mkdirSync(path.join(runtimeRoot, 'cli'), { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, 'index.js'), 'module.exports = {};\n', 'utf8');
+    fs.writeFileSync(path.join(runtimeRoot, 'cli', 'main.js'), 'module.exports = {};\n', 'utf8');
+}
+
+function writeDeploySourceFixture(sourceRoot: string): void {
+    fs.mkdirSync(sourceRoot, { recursive: true });
+    for (const item of DEPLOY_ITEMS) {
+        const itemPath = path.join(sourceRoot, item);
+        if (item.includes('/') || item === 'bin' || item === 'src' || item === 'template') {
+            fs.mkdirSync(itemPath, { recursive: true });
+            fs.writeFileSync(path.join(itemPath, 'marker.txt'), item, 'utf8');
+        } else {
+            fs.mkdirSync(path.dirname(itemPath), { recursive: true });
+            fs.writeFileSync(itemPath, item, 'utf8');
+        }
+    }
+    writeCompiledRuntimeFixture(sourceRoot);
+}
+
 test('deployFreshBundle copies DEPLOY_ITEMS to destination', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deploy-test-'));
     try {
         const sourceRoot = path.join(tmpDir, 'source');
         const destPath = path.join(tmpDir, 'bundle');
-        fs.mkdirSync(sourceRoot, { recursive: true });
-        for (const item of DEPLOY_ITEMS) {
-            const itemPath = path.join(sourceRoot, item);
-            if (item.includes('/') || item === 'bin' || item === 'src' || item === 'template') {
-                fs.mkdirSync(itemPath, { recursive: true });
-                fs.writeFileSync(path.join(itemPath, 'marker.txt'), item, 'utf8');
-            } else {
-                fs.mkdirSync(path.dirname(itemPath), { recursive: true });
-                fs.writeFileSync(itemPath, item, 'utf8');
-            }
-        }
+        writeDeploySourceFixture(sourceRoot);
         deployFreshBundle(sourceRoot, destPath);
         assert.ok(fs.existsSync(destPath));
         for (const item of DEPLOY_ITEMS) {
             assert.ok(fs.existsSync(path.join(destPath, item)), `Missing: ${item}`);
         }
+        assert.ok(fs.existsSync(path.join(destPath, 'dist', 'src', 'index.js')), 'Missing compiled runtime output');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -482,19 +495,36 @@ test('deployFreshBundle allows empty existing directory', () => {
     try {
         const sourceRoot = path.join(tmpDir, 'source');
         const destPath = path.join(tmpDir, 'empty-dest');
-        fs.mkdirSync(sourceRoot, { recursive: true });
+        writeDeploySourceFixture(sourceRoot);
         fs.mkdirSync(destPath, { recursive: true });
+        deployFreshBundle(sourceRoot, destPath);
+        assert.ok(fs.existsSync(destPath));
+        assert.ok(fs.existsSync(path.join(destPath, 'dist', 'src', 'index.js')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('deployFreshBundle throws when compiled runtime output is missing', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deploy-test-'));
+    try {
+        const sourceRoot = path.join(tmpDir, 'source');
+        const destPath = path.join(tmpDir, 'bundle');
+        fs.mkdirSync(sourceRoot, { recursive: true });
         for (const item of DEPLOY_ITEMS) {
             const itemPath = path.join(sourceRoot, item);
             if (item.includes('/') || item === 'bin' || item === 'src' || item === 'template') {
                 fs.mkdirSync(itemPath, { recursive: true });
                 fs.writeFileSync(path.join(itemPath, 'marker.txt'), item, 'utf8');
             } else {
+                fs.mkdirSync(path.dirname(itemPath), { recursive: true });
                 fs.writeFileSync(itemPath, item, 'utf8');
             }
         }
-        deployFreshBundle(sourceRoot, destPath);
-        assert.ok(fs.existsSync(destPath));
+        assert.throws(
+            () => deployFreshBundle(sourceRoot, destPath),
+            /Octopus runtime build output not found/
+        );
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -509,22 +539,15 @@ test('syncBundleItems replaces existing items', () => {
     try {
         const sourceRoot = path.join(tmpDir, 'source');
         const destPath = path.join(tmpDir, 'bundle');
-        fs.mkdirSync(sourceRoot, { recursive: true });
+        writeDeploySourceFixture(sourceRoot);
         fs.mkdirSync(destPath, { recursive: true });
-        for (const item of DEPLOY_ITEMS) {
-            const itemPath = path.join(sourceRoot, item);
-            if (item.includes('/') || item === 'bin' || item === 'src' || item === 'template') {
-                fs.mkdirSync(itemPath, { recursive: true });
-                fs.writeFileSync(path.join(itemPath, 'marker.txt'), 'new', 'utf8');
-            } else {
-                fs.writeFileSync(itemPath, 'new-' + item, 'utf8');
-            }
-        }
+        fs.writeFileSync(path.join(sourceRoot, 'VERSION'), 'new-VERSION', 'utf8');
         // Pre-populate with old data
         fs.writeFileSync(path.join(destPath, 'VERSION'), 'old', 'utf8');
 
         syncBundleItems(sourceRoot, destPath);
         assert.equal(fs.readFileSync(path.join(destPath, 'VERSION'), 'utf8'), 'new-VERSION');
+        assert.ok(fs.existsSync(path.join(destPath, 'dist', 'src', 'index.js')));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -670,7 +693,7 @@ test('readBundleVersion falls back to package.json', () => {
 // ---------------------------------------------------------------------------
 
 test('buildBannerText includes version and title', () => {
-    const pkg = { version: '1.0.8' };
+    const pkg = { name: 'test', version: '1.0.8' };
     const text = buildBannerText(pkg, 'Test title', 'Test subtitle');
     assert.ok(text.includes('v1.0.8'));
     assert.ok(text.includes('OCTOPUS AGENT ORCHESTRATOR'));
@@ -707,5 +730,5 @@ test('COMMAND_SUMMARY has expected commands', () => {
     assert.ok(names.includes('rollback'));
     assert.ok(names.includes('skills'));
     assert.ok(names.includes('gate'));
-    assert.equal(COMMAND_SUMMARY.find(function (c) { return c[0] === 'skills'; })[1], 'List, suggest, and manage optional skill packs');
+    assert.equal(COMMAND_SUMMARY.find(function (c) { return c[0] === 'skills'; })![1], 'List, suggest, and manage optional skill packs');
 });

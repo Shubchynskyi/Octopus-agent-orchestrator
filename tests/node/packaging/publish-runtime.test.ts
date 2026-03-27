@@ -1,11 +1,13 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const childProcess = require('node:child_process');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
-function findRepoRoot(startDir) {
+import { getRepoRoot } from '../../../scripts/node-foundation/build';
+
+function findRepoRoot(startDir: string): string {
     let current = path.resolve(startDir);
     while (true) {
         const buildScriptPath = path.join(current, 'scripts', 'node-foundation', 'build.ts');
@@ -22,20 +24,9 @@ function findRepoRoot(startDir) {
     }
 }
 
-if (!require.extensions['.ts']) {
-    require.extensions['.ts'] = require.extensions['.js'];
-}
-
-const {
-    buildPublishRuntime,
-    getRepoRoot
-} = require(path.join(findRepoRoot(__dirname), 'scripts', 'node-foundation', 'build.ts'));
-
-// Derive published package surface from the package.json files whitelist (single source of truth).
-// npm always includes package.json itself in published packages.
-function loadPackageSurfaceItems(repoRoot) {
+function loadPackageSurfaceItems(repoRoot: string): readonly string[] {
     const pkgJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
-    const items = Array.from(pkgJson.files || []);
+    const items = Array.from<string>((pkgJson.files || []) as string[]);
     if (!items.includes('package.json')) {
         items.push('package.json');
     }
@@ -44,33 +35,88 @@ function loadPackageSurfaceItems(repoRoot) {
 
 const PACKAGE_SURFACE_ITEMS = loadPackageSurfaceItems(findRepoRoot(__dirname));
 
-function copyPublishedPackageSurface(repoRoot, packageRoot) {
-    fs.mkdirSync(packageRoot, { recursive: true });
-    for (const relativePath of PACKAGE_SURFACE_ITEMS) {
-        fs.cpSync(path.join(repoRoot, relativePath), path.join(packageRoot, relativePath), { recursive: true });
+function loadBuildFixtureItems(repoRoot: string): readonly string[] {
+    const items = new Set<string>(loadPackageSurfaceItems(repoRoot));
+    items.delete('dist');
+    items.delete('bin');
+    items.add('scripts/node-foundation');
+    items.add('tsconfig.build.json');
+    return Object.freeze(Array.from(items).sort());
+}
+
+function copyPathSet(sourceRoot: string, targetRoot: string, relativePaths: readonly string[]): void {
+    fs.mkdirSync(targetRoot, { recursive: true });
+    for (const relativePath of relativePaths) {
+        fs.cpSync(path.join(sourceRoot, relativePath), path.join(targetRoot, relativePath), { recursive: true });
     }
 }
 
-function writeTextFile(filePath, content) {
+function copyPublishedPackageSurface(sourceRoot: string, packageRoot: string) {
+    copyPathSet(sourceRoot, packageRoot, PACKAGE_SURFACE_ITEMS);
+}
+
+function copyBuildFixture(repoRoot: string, fixtureRoot: string) {
+    copyPathSet(repoRoot, fixtureRoot, loadBuildFixtureItems(repoRoot));
+
+    const realNodeModules = path.join(repoRoot, 'node_modules');
+    const fixtureNodeModules = path.join(fixtureRoot, 'node_modules');
+    if (fs.existsSync(realNodeModules) && !fs.existsSync(fixtureNodeModules)) {
+        fs.symlinkSync(realNodeModules, fixtureNodeModules, 'junction');
+    }
+}
+
+function writeTextFile(filePath: string, content: string) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, content, 'utf8');
 }
 
-function readJson(filePath) {
+function readJson(filePath: string): Record<string, unknown> {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function getTypescriptCliPath(repoRoot: string): string {
+    return path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
+}
+
+function syncGeneratedCliEntrypoint(repoRoot: string): void {
+    const compiledCliPath = path.join(repoRoot, 'dist', 'src', 'bin', 'octopus.js');
+    if (!fs.existsSync(compiledCliPath)) {
+        throw new Error(`compiled CLI launcher not found: ${compiledCliPath}`);
+    }
+
+    const repoCliPath = path.join(repoRoot, 'bin', 'octopus.js');
+    fs.mkdirSync(path.dirname(repoCliPath), { recursive: true });
+    fs.copyFileSync(compiledCliPath, repoCliPath);
+}
+
+function buildPublishRuntimeInRepo(repoRoot: string): void {
+    const result = childProcess.spawnSync(process.execPath, [getTypescriptCliPath(repoRoot), '-p', 'tsconfig.build.json'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        timeout: 120_000,
+        windowsHide: true
+    });
+
+    if (result.status !== 0) {
+        throw new Error(`publish runtime build failed:\n${result.stderr || result.stdout}`);
+    }
+
+    syncGeneratedCliEntrypoint(repoRoot);
 }
 
 test('published runtime works when the package is executed from node_modules', () => {
     const repoRoot = getRepoRoot();
-    const buildResult = buildPublishRuntime();
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-publish-runtime-'));
+    const fixtureRoot = path.join(tempRoot, 'package-fixture');
     const packageRoot = path.join(tempRoot, 'node_modules', 'octopus-agent-orchestrator');
     const workspaceRoot = path.join(tempRoot, 'workspace');
 
     try {
-        assert.ok(fs.existsSync(path.join(buildResult.buildRoot, 'src', 'index.js')));
+        copyBuildFixture(repoRoot, fixtureRoot);
+        buildPublishRuntimeInRepo(fixtureRoot);
+        assert.ok(fs.existsSync(path.join(fixtureRoot, 'dist', 'src', 'index.js')));
 
-        copyPublishedPackageSurface(repoRoot, packageRoot);
+        copyPublishedPackageSurface(fixtureRoot, packageRoot);
         fs.mkdirSync(workspaceRoot, { recursive: true });
 
         const result = childProcess.spawnSync(
@@ -95,8 +141,8 @@ test('published runtime works when the package is executed from node_modules', (
 
 test('published runtime setup stays in agent handoff state and uninstall restores legacy files', () => {
     const repoRoot = getRepoRoot();
-    buildPublishRuntime();
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-publish-lifecycle-'));
+    const fixtureRoot = path.join(tempRoot, 'package-fixture');
     const packageRoot = path.join(tempRoot, 'node_modules', 'octopus-agent-orchestrator');
     const workspaceRoot = path.join(tempRoot, 'workspace');
 
@@ -111,7 +157,9 @@ test('published runtime setup stays in agent handoff state and uninstall restore
     ]);
 
     try {
-        copyPublishedPackageSurface(repoRoot, packageRoot);
+        copyBuildFixture(repoRoot, fixtureRoot);
+        buildPublishRuntimeInRepo(fixtureRoot);
+        copyPublishedPackageSurface(fixtureRoot, packageRoot);
         fs.mkdirSync(workspaceRoot, { recursive: true });
         for (const [relativePath, content] of legacyFiles) {
             writeTextFile(path.join(workspaceRoot, relativePath), content);

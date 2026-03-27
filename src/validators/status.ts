@@ -1,28 +1,44 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const {
-    DEFAULT_BUNDLE_NAME,
-    DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH,
-    DEFAULT_INIT_ANSWERS_RELATIVE_PATH
-} = require('../core/constants.ts');
-const { pathExists, readTextFile } = require('../core/fs.ts');
-const { isPathInsideRoot } = require('../core/paths.ts');
-const { validateInitAnswers } = require('../schemas/init-answers.ts');
-const {
-    doesAgentInitStateMatchAnswers,
-    readAgentInitStateSafe
-} = require('../runtime/agent-init-state.ts');
-
-const {
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type { StatusSnapshot as CliStatusSnapshot } from '../cli/commands/cli-helpers';
+import { DEFAULT_BUNDLE_NAME, DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH, DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../core/constants';
+import { pathExists, readTextFile } from '../core/fs';
+import { isPathInsideRoot } from '../core/paths';
+import { validateInitAnswers } from '../schemas/init-answers';
+import { doesAgentInitStateMatchAnswers, readAgentInitStateSafe } from '../runtime/agent-init-state';
+import {
     getBundlePath,
     getCanonicalEntrypoint,
     getCommandsRulePath,
     getMissingProjectCommands,
     readUtf8IfExists
-} = require('./workspace-layout.ts');
+} from './workspace-layout';
 
-function resolveInitAnswersPath(targetRoot, initAnswersPath) {
+type InitAnswers = ReturnType<typeof validateInitAnswers>;
+
+interface LiveVersionPayload {
+    Version?: unknown;
+    SourceOfTruth?: unknown;
+}
+
+type AgentInitStateResult = ReturnType<typeof readAgentInitStateSafe>;
+type AgentInitState = NonNullable<AgentInitStateResult['state']>;
+
+export interface StatusSnapshot extends CliStatusSnapshot {
+    initAnswersPathForDisplay: string;
+    initAnswersPresent: boolean;
+    taskPresent: boolean;
+    livePresent: boolean;
+    usagePresent: boolean;
+    agentInitStatePath: string;
+    agentInitState: AgentInitState | null;
+}
+
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+export function resolveInitAnswersPath(targetRoot: string, initAnswersPath?: string): string {
     var candidate = String(initAnswersPath || '').trim();
     if (!candidate) candidate = DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
     if (!path.isAbsolute(candidate)) candidate = path.join(targetRoot, candidate);
@@ -32,24 +48,23 @@ function resolveInitAnswersPath(targetRoot, initAnswersPath) {
     return fullPath;
 }
 
-function readInitAnswersSafe(targetRoot, initAnswersResolvedPath) {
+export function readInitAnswersSafe(targetRoot: string, initAnswersResolvedPath: string): { answers: InitAnswers | null; error: string | null } {
     if (!pathExists(initAnswersResolvedPath)) return { answers: null, error: null };
     try {
         var stats = fs.lstatSync(initAnswersResolvedPath);
         if (!stats.isFile()) return { answers: null, error: 'Init answers path is not a file: '+initAnswersResolvedPath };
-    } catch(e) { return { answers: null, error: 'Cannot stat init answers path: '+initAnswersResolvedPath }; }
+    } catch (_error: unknown) { return { answers: null, error: 'Cannot stat init answers path: '+initAnswersResolvedPath }; }
     try {
         var raw = readTextFile(initAnswersResolvedPath);
         if (!raw.trim()) return { answers: null, error: 'Init answers artifact is empty: '+initAnswersResolvedPath };
-        var parsed;
-        try { parsed = JSON.parse(raw); } catch(e2) { return { answers: null, error: 'Init answers artifact is not valid JSON: '+initAnswersResolvedPath }; }
+        var parsed: unknown;
+        try { parsed = JSON.parse(raw); } catch (_error: unknown) { return { answers: null, error: 'Init answers artifact is not valid JSON: '+initAnswersResolvedPath }; }
         var validated = validateInitAnswers(parsed);
         return { answers: validated, error: null };
-    } catch(err) { return { answers: null, error: err.message || String(err) }; }
+    } catch (err: unknown) { return { answers: null, error: getErrorMessage(err) }; }
 }
 
-function getStatusSnapshot(targetRoot, initAnswersPath) {
-    if (initAnswersPath === undefined) initAnswersPath = DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = DEFAULT_INIT_ANSWERS_RELATIVE_PATH): StatusSnapshot {
     var resolvedTargetRoot = path.resolve(targetRoot);
     var bundlePath = getBundlePath(resolvedTargetRoot);
     var bundlePresent = pathExists(bundlePath) && fs.lstatSync(bundlePath).isDirectory();
@@ -59,23 +74,23 @@ function getStatusSnapshot(targetRoot, initAnswersPath) {
     var commandsRulePath = getCommandsRulePath(bundlePath);
     var commandsContent = readUtf8IfExists(commandsRulePath);
     var missingProjectCommands = getMissingProjectCommands(commandsContent);
-    var agentInitStateResult = bundlePresent
+    var agentInitStateResult: AgentInitStateResult = bundlePresent
         ? readAgentInitStateSafe(resolvedTargetRoot, DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH)
         : { statePath: path.join(bundlePath, 'runtime', 'agent-init-state.json'), state: null, error: null };
     var initAnswersResolvedPath;
     try { initAnswersResolvedPath = resolveInitAnswersPath(resolvedTargetRoot, initAnswersPath); }
-    catch(e) { initAnswersResolvedPath = path.resolve(resolvedTargetRoot, initAnswersPath); }
+    catch (_error: unknown) { initAnswersResolvedPath = path.resolve(resolvedTargetRoot, initAnswersPath); }
     var initAnswersPresent = pathExists(initAnswersResolvedPath) && fs.lstatSync(initAnswersResolvedPath).isFile();
     var answersResult = initAnswersPresent ? readInitAnswersSafe(resolvedTargetRoot, initAnswersResolvedPath) : { answers: null, error: null };
     var answers = answersResult.answers;
     var initAnswersError = answersResult.error;
     var collectedVia = answers ? (answers.CollectedVia || null) : null;
     var liveVersionPath = path.join(livePath, 'version.json');
-    var liveVersion = null;
+    var liveVersion: LiveVersionPayload | null = null;
     var liveVersionError = null;
     if (pathExists(liveVersionPath)) {
-        try { liveVersion = JSON.parse(readTextFile(liveVersionPath)); }
-        catch(err) { liveVersionError = err.message || String(err); }
+        try { liveVersion = JSON.parse(readTextFile(liveVersionPath)) as LiveVersionPayload; }
+        catch (err: unknown) { liveVersionError = getErrorMessage(err); }
     }
     var sourceOfTruth = answers ? answers.SourceOfTruth
         : (liveVersion && String(liveVersion.SourceOfTruth || '').trim()) ? String(liveVersion.SourceOfTruth).trim() : null;
@@ -84,8 +99,8 @@ function getStatusSnapshot(targetRoot, initAnswersPath) {
     var taskPresent = pathExists(taskPath) && fs.lstatSync(taskPath).isFile();
     var usagePresent = pathExists(usagePath) && fs.lstatSync(usagePath).isFile();
     var primaryInitializationComplete = bundlePresent && initAnswersPresent && !initAnswersError && livePresent && taskPresent && usagePresent;
-    var agentInitializationPendingReason = null;
-    var currentActiveAgentFiles = [];
+    var agentInitializationPendingReason: CliStatusSnapshot['agentInitializationPendingReason'] = null;
+    var currentActiveAgentFiles: string[] = [];
     if (answers && answers.ActiveAgentFiles) {
         currentActiveAgentFiles = Array.isArray(answers.ActiveAgentFiles)
             ? answers.ActiveAgentFiles.slice()
@@ -148,15 +163,15 @@ function getStatusSnapshot(targetRoot, initAnswersPath) {
     };
 }
 
-function formatStatusSnapshot(snapshot, options) {
+export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { heading?: string }): string {
     var heading = (options && options.heading) || 'OCTOPUS_STATUS';
-    var lines = [];
+    var lines: string[] = [];
     var headlineText;
     if (snapshot.readyForTasks) headlineText = 'Workspace ready';
     else if (snapshot.primaryInitializationComplete) headlineText = 'Agent setup required';
     else if (snapshot.bundlePresent) headlineText = 'Primary setup required';
     else headlineText = 'Not installed';
-    function badge(c) { return c ? '[x]' : '[ ]'; }
+    function badge(c: boolean) { return c ? '[x]' : '[ ]'; }
     lines.push(heading);
     lines.push(headlineText);
     lines.push('Project: '+snapshot.targetRoot);
@@ -195,10 +210,3 @@ function formatStatusSnapshot(snapshot, options) {
     lines.push('RecommendedNextCommand: '+snapshot.recommendedNextCommand);
     return lines.join('\n');
 }
-
-module.exports = {
-    formatStatusSnapshot,
-    getStatusSnapshot,
-    readInitAnswersSafe,
-    resolveInitAnswersPath
-};

@@ -1,16 +1,16 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 
-const {
+import {
     getCompileCommandProfile,
     getCompileCommands,
     getOutputStats,
     getWorkspaceSnapshot
-} = require('../../../src/gates/compile-gate.ts');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+} from '../../../src/gates/compile-gate';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 describe('gates/compile-gate', () => {
     describe('getCompileCommandProfile', () => {

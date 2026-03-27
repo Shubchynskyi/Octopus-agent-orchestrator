@@ -1,14 +1,9 @@
-const path = require('node:path');
-
-const {
-    BOOLEAN_TRUE_VALUES,
-    BOOLEAN_FALSE_VALUES
-} = require('../core/constants.ts');
-const { pathExists, readTextFile } = require('../core/fs.ts');
-const { isPathInsideRoot } = require('../core/paths.ts');
-const { validateSkillPacks, validateSkillsIndex } = require('../runtime/skills.ts');
-
-const {
+import * as path from 'node:path';
+import { BOOLEAN_TRUE_VALUES, BOOLEAN_FALSE_VALUES } from '../core/constants';
+import { pathExists, readTextFile } from '../core/fs';
+import { isPathInsideRoot } from '../core/paths';
+import { validateSkillPacks, validateSkillsIndex } from '../runtime/skills';
+import {
     PROJECT_COMMAND_PLACEHOLDERS,
     RULE_FILES,
     buildRequiredPaths,
@@ -19,9 +14,67 @@ const {
     detectVersionViolations,
     extractManagedBlock,
     getCanonicalEntrypoint
-} = require('./workspace-layout.ts');
+} from './workspace-layout';
 
-function parseBooleanLike(value, defaultValue) {
+interface VerifyInitAnswersResult {
+    violations: string[];
+    assistantLanguage: string | null;
+    assistantBrevity: string | null;
+    enforceNoAutoCommit: boolean;
+    claudeOrchestratorFullAccess: boolean;
+    tokenEconomyEnabled: boolean;
+    activeAgentFiles: string[];
+}
+
+interface VerifyViolations {
+    missingPaths: string[];
+    initAnswersContractViolations: string[];
+    versionContractViolations: string[];
+    reviewCapabilitiesContractViolations: string[];
+    pathsContractViolations: string[];
+    tokenEconomyContractViolations: string[];
+    outputFiltersContractViolations: string[];
+    skillPacksConfigContractViolations: string[];
+    skillsIndexConfigContractViolations: string[];
+    ruleFileViolations: string[];
+    templatePlaceholderViolations: string[];
+    commandsContractViolations: string[];
+    manifestContractViolations: string[];
+    coreRuleContractViolations: string[];
+    entrypointContractViolations: string[];
+    taskContractViolations: string[];
+    qwenSettingsViolations: string[];
+    skillsIndexContractViolations: string[];
+    skillPackContractViolations: string[];
+    gitignoreMissing: string[];
+}
+
+interface VerifyResult {
+    passed: boolean;
+    targetRoot: string;
+    sourceOfTruth: string;
+    canonicalEntrypoint: string | null;
+    bundleVersion: string | null | undefined;
+    requiredPathsChecked: number;
+    violations: VerifyViolations;
+    totalViolationCount: number;
+}
+
+interface RunVerifyOptions {
+    targetRoot: string;
+    initAnswersPath: string;
+    sourceOfTruth: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+export function parseBooleanLike(value: unknown, defaultValue: boolean): boolean {
     if (value === null || value === undefined) return defaultValue;
     if (typeof value === 'boolean') return value;
     var normalized = String(value).trim().toLowerCase();
@@ -30,9 +83,9 @@ function parseBooleanLike(value, defaultValue) {
     return defaultValue;
 }
 
-function readVerifyInitAnswers(targetRoot, initAnswersPath, sourceOfTruth) {
-    var violations = [];
-    var defaults = {
+export function readVerifyInitAnswers(targetRoot: string, initAnswersPath: string, sourceOfTruth: string): VerifyInitAnswersResult {
+    var violations: string[] = [];
+    var defaults: VerifyInitAnswersResult = {
         violations: violations,
         assistantLanguage: null,
         assistantBrevity: null,
@@ -42,7 +95,7 @@ function readVerifyInitAnswers(targetRoot, initAnswersPath, sourceOfTruth) {
         activeAgentFiles: []
     };
 
-    var resolvedPath;
+    var resolvedPath = '';
     try {
         var candidate = String(initAnswersPath || '').trim();
         if (!path.isAbsolute(candidate)) {
@@ -53,8 +106,8 @@ function readVerifyInitAnswers(targetRoot, initAnswersPath, sourceOfTruth) {
             violations.push("InitAnswersPath must resolve inside TargetRoot '" + targetRoot + "'. Resolved path: " + resolvedPath);
             return defaults;
         }
-    } catch (err) {
-        violations.push(err.message || String(err));
+    } catch (err: unknown) {
+        violations.push(getErrorMessage(err));
         return defaults;
     }
 
@@ -74,14 +127,14 @@ function readVerifyInitAnswers(targetRoot, initAnswersPath, sourceOfTruth) {
         return defaults;
     }
 
-    var parsed;
+    var parsed: unknown;
     try { parsed = JSON.parse(raw); } catch (e) {
         violations.push('Init answers artifact is not valid JSON: ' + resolvedPath);
         return defaults;
     }
 
-    function getField(obj, key) {
-        if (!obj || typeof obj !== 'object') return undefined;
+    function getField(obj: unknown, key: string): string | undefined {
+        if (!isRecord(obj)) return undefined;
         return obj[key] !== undefined ? String(obj[key]) : undefined;
     }
 
@@ -116,9 +169,12 @@ function readVerifyInitAnswers(targetRoot, initAnswersPath, sourceOfTruth) {
     var tokenEconomyEnabled = parseBooleanLike(getField(parsed, 'TokenEconomyEnabled'), true);
 
     var aafRaw = getField(parsed, 'ActiveAgentFiles');
-    var activeAgentFiles = [];
+    var activeAgentFiles: string[] = [];
     if (aafRaw) {
-        activeAgentFiles = aafRaw.split(/[;,]/g).map(function(s){return s.trim();}).filter(function(s){return s.length>0;});
+        activeAgentFiles = aafRaw
+            .split(/[;,]/g)
+            .map(function (s: string): string { return s.trim(); })
+            .filter(function (s: string): boolean { return s.length > 0; });
     }
     var ce = getCanonicalEntrypoint(sourceOfTruth);
     if (activeAgentFiles.length === 0 && ce) { activeAgentFiles = [ce]; }
@@ -134,8 +190,8 @@ function readVerifyInitAnswers(targetRoot, initAnswersPath, sourceOfTruth) {
     };
 }
 
-function detectCommandsViolations(targetRoot) {
-    var violations = [];
+export function detectCommandsViolations(targetRoot: string): string[] {
+    var violations: string[] = [];
     var cp = path.join(targetRoot, 'Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md');
     if (!pathExists(cp)) return violations;
     var content = readTextFile(cp);
@@ -157,8 +213,12 @@ function detectCommandsViolations(targetRoot) {
     return violations;
 }
 
-function detectCoreRuleViolations(targetRoot, assistantLanguage, assistantBrevity) {
-    var violations = [];
+export function detectCoreRuleViolations(
+    targetRoot: string,
+    assistantLanguage: string | null,
+    assistantBrevity: string | null
+): string[] {
+    var violations: string[] = [];
     var cp = path.join(targetRoot, 'Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md');
     if (!pathExists(cp)) { violations.push('00-core.md missing; core contract validation failed.'); return violations; }
     var content = readTextFile(cp);
@@ -177,8 +237,8 @@ function detectCoreRuleViolations(targetRoot, assistantLanguage, assistantBrevit
     return violations;
 }
 
-function detectTaskViolations(targetRoot, canonicalEntrypoint) {
-    var violations = [];
+export function detectTaskViolations(targetRoot: string, canonicalEntrypoint: string | null): string[] {
+    var violations: string[] = [];
     var tp = path.join(targetRoot, 'TASK.md');
     if (!pathExists(tp)) { violations.push('TASK.md missing.'); return violations; }
     var content = readTextFile(tp);
@@ -195,8 +255,8 @@ function detectTaskViolations(targetRoot, canonicalEntrypoint) {
     return violations;
 }
 
-function detectEntrypointViolations(targetRoot, canonicalEntrypoint) {
-    var violations = [];
+export function detectEntrypointViolations(targetRoot: string, canonicalEntrypoint: string | null): string[] {
+    var violations: string[] = [];
     if (!canonicalEntrypoint) return violations;
     var ep = path.join(targetRoot, canonicalEntrypoint);
     if (!pathExists(ep)) { violations.push('Canonical entrypoint missing: '+canonicalEntrypoint); return violations; }
@@ -211,16 +271,26 @@ function detectEntrypointViolations(targetRoot, canonicalEntrypoint) {
     return violations;
 }
 
-function detectQwenSettingsViolations(targetRoot, canonicalEntrypoint) {
-    var violations = [];
+export function detectQwenSettingsViolations(targetRoot: string, canonicalEntrypoint: string | null): string[] {
+    var violations: string[] = [];
     var sp = path.join(targetRoot, '.qwen/settings.json');
     if (!pathExists(sp)) return violations;
-    var settings;
-    try { settings = JSON.parse(readTextFile(sp)); } catch(e) { violations.push('.qwen/settings.json is not valid JSON: '+e.message); return violations; }
-    var fn = [];
-    if (settings && settings.context && settings.context.fileName) {
-        var rf = Array.isArray(settings.context.fileName) ? settings.context.fileName : [settings.context.fileName];
-        for (var i=0;i<rf.length;i++) { if (rf[i] && typeof rf[i]==='string' && rf[i].trim()) fn.push(rf[i].trim()); }
+    var settings: unknown;
+    try {
+        settings = JSON.parse(readTextFile(sp));
+    } catch (e: unknown) {
+        violations.push('.qwen/settings.json is not valid JSON: ' + getErrorMessage(e));
+        return violations;
+    }
+    var fn: string[] = [];
+    if (isRecord(settings)) {
+        var contextValue = settings.context;
+        if (isRecord(contextValue) && contextValue.fileName) {
+            var rf = Array.isArray(contextValue.fileName) ? contextValue.fileName : [contextValue.fileName];
+            for (var i = 0; i < rf.length; i++) {
+                if (rf[i] && typeof rf[i] === 'string' && rf[i].trim()) fn.push(rf[i].trim());
+            }
+        }
     }
     var uf = Array.from(new Set(fn));
     if (canonicalEntrypoint && uf.indexOf(canonicalEntrypoint)===-1) violations.push('.qwen/settings.json must include context.fileName entry `'+canonicalEntrypoint+'`.');
@@ -228,8 +298,8 @@ function detectQwenSettingsViolations(targetRoot, canonicalEntrypoint) {
     return violations;
 }
 
-function detectManifestContractViolations(targetRoot) {
-    var violations = [];
+export function detectManifestContractViolations(targetRoot: string): string[] {
+    var violations: string[] = [];
     var mp = path.join(targetRoot, 'Octopus-agent-orchestrator/MANIFEST.md');
     if (!pathExists(mp)) return violations;
     var content = readTextFile(mp);
@@ -237,7 +307,7 @@ function detectManifestContractViolations(targetRoot) {
     return violations;
 }
 
-function runVerify(options) {
+export function runVerify(options: RunVerifyOptions): VerifyResult {
     var targetRoot = path.resolve(options.targetRoot);
     var sourceOfTruth = options.sourceOfTruth.trim();
     var canonicalEntrypoint = getCanonicalEntrypoint(sourceOfTruth);
@@ -259,14 +329,14 @@ function runVerify(options) {
     var qv = detectQwenSettingsViolations(targetRoot, canonicalEntrypoint);
     var skillPackValidation = validateSkillPacks(path.join(targetRoot, 'Octopus-agent-orchestrator'));
     var skillsIndexValidation = validateSkillsIndex(path.join(targetRoot, 'Octopus-agent-orchestrator'));
-    var ge = ['Octopus-agent-orchestrator/','TASK.md'];
+    var ge: string[] = ['Octopus-agent-orchestrator/','TASK.md'];
     if (pathExists(path.join(targetRoot, '.qwen/settings.json'))) {
         ge.push('.qwen/');
     }
     var gm = detectGitignoreViolations(targetRoot, ge);
     var mv = detectManifestContractViolations(targetRoot);
 
-    var violations = {
+    var violations: VerifyViolations = {
         missingPaths: mp,
         initAnswersContractViolations: iar.violations,
         versionContractViolations: vr.violations,
@@ -290,7 +360,7 @@ function runVerify(options) {
     };
 
     var total = 0;
-    var keys = Object.keys(violations);
+    var keys = Object.keys(violations) as Array<keyof VerifyViolations>;
     for (var i=0;i<keys.length;i++) total += violations[keys[i]].length;
 
     return {
@@ -305,8 +375,8 @@ function runVerify(options) {
     };
 }
 
-function formatVerifyResult(result) {
-    var lines = [];
+export function formatVerifyResult(result: VerifyResult): string {
+    var lines: string[] = [];
     lines.push('TargetRoot: '+result.targetRoot);
     lines.push('SourceOfTruth: '+result.sourceOfTruth);
     lines.push('CanonicalEntrypoint: '+(result.canonicalEntrypoint||'n/a'));
@@ -331,7 +401,7 @@ function formatVerifyResult(result) {
     lines.push('QwenSettingsViolationCount: '+result.violations.qwenSettingsViolations.length);
     lines.push('SkillsIndexContractViolationCount: '+result.violations.skillsIndexContractViolations.length);
     lines.push('SkillPackContractViolationCount: '+result.violations.skillPackContractViolations.length);
-    var keys = Object.keys(result.violations);
+    var keys = Object.keys(result.violations) as Array<keyof VerifyViolations>;
     for (var i=0;i<keys.length;i++) {
         var items = result.violations[keys[i]];
         if (items.length>0) {
@@ -343,16 +413,3 @@ function formatVerifyResult(result) {
     else lines.push('Verification: PASS');
     return lines.join('\n');
 }
-
-module.exports = {
-    detectCommandsViolations,
-    detectCoreRuleViolations,
-    detectEntrypointViolations,
-    detectManifestContractViolations,
-    detectQwenSettingsViolations,
-    detectTaskViolations,
-    formatVerifyResult,
-    parseBooleanLike,
-    readVerifyInitAnswers,
-    runVerify
-};

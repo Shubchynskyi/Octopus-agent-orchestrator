@@ -1,14 +1,14 @@
-const path = require('node:path');
+import * as path from 'node:path';
 
-function getPathModule(platform = process.platform) {
+export function getPathModule(platform: string = process.platform): typeof path.win32 | typeof path.posix {
     return platform === 'win32' ? path.win32 : path.posix;
 }
 
-function normalizeRelativePath(value) {
+export function normalizeRelativePath(value: string): string {
     return String(value).trim().replace(/[\\/]+/g, '/').replace(/^\.\//, '');
 }
 
-function normalizeComparisonPath(value, platform, includeTrailingSeparator = false) {
+function normalizeComparisonPath(value: string, platform: string, includeTrailingSeparator: boolean = false): string {
     const pathModule = getPathModule(platform);
     let normalized = pathModule.normalize(pathModule.resolve(String(value)));
     if (includeTrailingSeparator && !normalized.endsWith(pathModule.sep)) {
@@ -18,7 +18,7 @@ function normalizeComparisonPath(value, platform, includeTrailingSeparator = fal
     return platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
-function isPathInsideRoot(rootPath, candidatePath, platform = process.platform) {
+export function isPathInsideRoot(rootPath: string, candidatePath: string, platform: string = process.platform): boolean {
     const pathModule = getPathModule(platform);
     const resolvedRoot = pathModule.resolve(String(rootPath));
     const resolvedCandidate = pathModule.resolve(String(candidatePath));
@@ -28,7 +28,7 @@ function isPathInsideRoot(rootPath, candidatePath, platform = process.platform) 
     return comparableCandidate === comparableRoot.slice(0, -1) || comparableCandidate.startsWith(comparableRoot);
 }
 
-function resolvePathInsideRoot(rootPath, candidatePath, platform = process.platform) {
+export function resolvePathInsideRoot(rootPath: string, candidatePath: string, platform: string = process.platform): string {
     const pathModule = getPathModule(platform);
     const resolvedCandidate = pathModule.resolve(String(rootPath), String(candidatePath));
 
@@ -39,9 +39,3 @@ function resolvePathInsideRoot(rootPath, candidatePath, platform = process.platf
     return resolvedCandidate;
 }
 
-module.exports = {
-    getPathModule,
-    isPathInsideRoot,
-    normalizeRelativePath,
-    resolvePathInsideRoot
-};

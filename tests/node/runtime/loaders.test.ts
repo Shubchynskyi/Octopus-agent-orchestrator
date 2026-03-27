@@ -1,14 +1,14 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
-const { writeJsonFile } = require('../../../src/core/json.ts');
-const {
+import { writeJsonFile } from '../../../src/core/json';
+import {
     loadInitAnswersFile,
     loadManagedConfigFile
-} = require('../../../src/runtime/loaders.ts');
+} from '../../../src/runtime/loaders';
 
 test('loadInitAnswersFile reads and normalizes persisted init answers', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-node-foundation-'));
@@ -43,6 +43,6 @@ test('loadManagedConfigFile validates tracked template configs through the runti
     );
 
     assert.ok(Array.isArray(normalized.runtime_roots));
-    assert.ok(Array.isArray(normalized.triggers.db));
+    assert.ok(Array.isArray(((normalized as Record<string, unknown>).triggers as Record<string, unknown>).db));
     assert.ok(normalized.runtime_roots.includes('src/'));
 });

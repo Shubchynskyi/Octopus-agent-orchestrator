@@ -1,12 +1,12 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const { runAgentInit } = require('../../../src/lifecycle/agent-init.ts');
+import { runAgentInit } from '../../../src/lifecycle/agent-init';
 
-function writeJson(filePath, value) {
+function writeJson(filePath: string, value: unknown) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf8');
 }

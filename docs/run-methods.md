@@ -7,9 +7,12 @@ Current package version source in this repository: `VERSION`.
 ## 1. Run Directly From Source Tree
 
 Use this when testing the repository itself without packing or installing.
+Compile first so `src/bin/octopus.ts` is emitted as `bin/octopus.js` and can launch the built runtime.
 
 ```text
 cd D:\Projects\Octopus-agent-orchestrator
+
+npm run build
 
 node .\bin\octopus.js
 node .\bin\octopus.js --help
@@ -113,10 +116,19 @@ octopus status --target-root .
 ```text
 cd D:\Projects\Octopus-agent-orchestrator
 
-node --test "tests/node/**/*.test.ts"
+npm run validate:release
 node .\bin\octopus.js gate validate-manifest --manifest-path MANIFEST.md
-npm pack --dry-run
 ```
+
+`npm run validate:release` is the explicit release contract:
+
+```text
+npm run build
+npm test
+npm pack -> npm install <tarball> -> invoke the packaged CLI
+```
+
+The final `pack -> install -> invoke` proof is executed by `tests/node/packaging/pack-smoke.test.ts` after the strict TypeScript runtime, test suite, and supporting build scripts have already compiled and passed.
 
 ## 9. Update And Rollback In A Deployed Workspace
 
@@ -129,6 +141,7 @@ octopus rollback --target-root "."
 ```
 
 Notes:
+- Source-tree execution is compile-first: rebuild after changing `src/**/*.ts`, `tests/node/**/*.ts`, or `scripts/node-foundation/**/*.ts`.
 - `check-update` is compare-first.
 - `update` applies immediately.
 - `update git` uses a git clone source instead of npm; with no extra flags it uses the default GitHub repository.

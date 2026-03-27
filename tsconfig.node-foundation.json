@@ -7,11 +7,14 @@
     "allowJs": false,
     "checkJs": false,
     "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "strict": false,
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
     "types": [
       "node"
-    ]
+    ],
+    "resolveJsonModule": true
   },
   "include": [
     "src/**/*.ts",

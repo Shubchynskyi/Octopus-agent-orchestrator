@@ -1,6 +1,6 @@
 {
   "name": "octopus-agent-orchestrator",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "Bootstrap package for deploying the Octopus Agent Orchestrator bundle into a workspace.",
   "repository": {
     "type": "git",
@@ -18,9 +18,15 @@
     "octopus-agent-orchestrator": "bin/octopus.js"
   },
   "scripts": {
-    "build:publish-runtime": "node --input-type=commonjs --eval \"require.extensions['.ts']=require.extensions['.js'];require(process.argv[1]).runPublishRuntimeBuild()\" ./scripts/node-foundation/build.ts",
-    "build:node-foundation": "node --input-type=commonjs --eval \"require.extensions['.ts']=require.extensions['.js'];require(process.argv[1]).runNodeFoundationBuild()\" ./scripts/node-foundation/build.ts",
-    "test:node-foundation": "node --input-type=commonjs --eval \"require.extensions['.ts']=require.extensions['.js'];require(process.argv[1]).runNodeFoundationTests()\" ./scripts/node-foundation/test.ts",
+    "build:scripts": "tsc -p tsconfig.tests.json --outDir .scripts-build && node .scripts-build/scripts/node-foundation/build.js sync-repo-cli",
+    "build": "npm run build:scripts && node .scripts-build/scripts/node-foundation/build.js publish-runtime",
+    "build:publish-runtime": "npm run build:scripts && node .scripts-build/scripts/node-foundation/build.js publish-runtime",
+    "build:node-foundation": "npm run build:scripts && node .scripts-build/scripts/node-foundation/build.js node-foundation",
+    "test": "npm run build:scripts && node .scripts-build/scripts/node-foundation/test.js",
+    "test:node-foundation": "npm run build:scripts && node .scripts-build/scripts/node-foundation/test.js",
+    "validate:release": "npm run build && npm test && npm run build:scripts && node --test .scripts-build/tests/node/packaging/pack-smoke.test.js",
+    "prepare": "npm run build",
+    "typecheck": "tsc -p tsconfig.node-foundation.json",
     "prepack": "npm run build:publish-runtime"
   },
   "files": [
@@ -40,7 +46,8 @@
     "VERSION"
   ],
   "devDependencies": {
-    "@types/node": "^22.14.1"
+    "@types/node": "^22.14.1",
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=20.0.0"

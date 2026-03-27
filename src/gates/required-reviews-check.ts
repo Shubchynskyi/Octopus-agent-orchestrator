@@ -1,11 +1,10 @@
-const fs = require('node:fs');
-const path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { auditReviewArtifactCompaction } from '../gate-runtime/review-context';
+import { assertValidTaskId } from '../gate-runtime/task-events';
+import { fileSha256, normalizePath } from './helpers';
 
-const { auditReviewArtifactCompaction } = require('../gate-runtime/review-context.ts');
-const { assertValidTaskId } = require('../gate-runtime/task-events.ts');
-const { fileSha256, normalizePath } = require('./helpers.ts');
-
-const REVIEW_CONTRACTS = [
+export const REVIEW_CONTRACTS = [
     ['code', 'REVIEW PASSED'],
     ['db', 'DB REVIEW PASSED'],
     ['security', 'SECURITY REVIEW PASSED'],
@@ -20,7 +19,7 @@ const REVIEW_CONTRACTS = [
 /**
  * Parse skip-reviews value into a sorted unique array.
  */
-function parseSkipReviews(value) {
+export function parseSkipReviews(value: unknown): string[] {
     if (!value || !String(value).trim()) return [];
     const parts = String(value).trim().toLowerCase().split(/[,; ]+/).filter(s => s.trim());
     return [...new Set(parts)].sort();
@@ -30,7 +29,7 @@ function parseSkipReviews(value) {
  * Test expected verdict for a review type.
  * Matches Python test_expected_verdict.
  */
-function testExpectedVerdict(errors, label, required, skippedByOverride, actualVerdict, passVerdict) {
+export function testExpectedVerdict(errors: string[], label: string, required: boolean, skippedByOverride: boolean, actualVerdict: string, passVerdict: string): void {
     if (required && !skippedByOverride) {
         if (actualVerdict !== passVerdict) {
             errors.push(`${label} is required. Expected '${passVerdict}', got '${actualVerdict}'.`);
@@ -53,7 +52,7 @@ function testExpectedVerdict(errors, label, required, skippedByOverride, actualV
  * Validate preflight for required-reviews-check.
  * Validates preflight payload shape for the Node review gate.
  */
-function validatePreflightForReview(preflightPath, explicitTaskId) {
+export function validatePreflightForReview(preflightPath: string, explicitTaskId: string) {
     let preflight;
     try {
         preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
@@ -61,22 +60,24 @@ function validatePreflightForReview(preflightPath, explicitTaskId) {
         throw new Error(`Preflight artifact is not valid JSON: ${preflightPath}`);
     }
 
-    const errors = [];
-    let resolvedTaskId = null;
+    const errors: string[] = [];
+    let resolvedTaskId: string | null = null;
     if (explicitTaskId && explicitTaskId.trim()) {
         try {
             resolvedTaskId = assertValidTaskId(explicitTaskId);
-        } catch (exc) {
-            errors.push(String(exc.message || exc));
+        } catch (exc: unknown) {
+            const message = exc instanceof Error ? exc.message : String(exc);
+            errors.push(String(message));
         }
     }
 
-    let preflightTaskId = preflight.task_id != null ? String(preflight.task_id).trim() : '';
+    let preflightTaskId: string | null = preflight.task_id != null ? String(preflight.task_id).trim() : '';
     if (preflightTaskId) {
         try {
             preflightTaskId = assertValidTaskId(preflightTaskId);
-        } catch (exc) {
-            errors.push(`preflight.task_id: ${exc.message || exc}`);
+        } catch (exc: unknown) {
+            const message = exc instanceof Error ? exc.message : String(exc);
+            errors.push(`preflight.task_id: ${message}`);
             preflightTaskId = null;
         }
     } else {
@@ -92,7 +93,7 @@ function validatePreflightForReview(preflightPath, explicitTaskId) {
     }
 
     const requiredReviews = preflight.required_reviews;
-    const requiredFlags = {};
+    const requiredFlags: Record<string, boolean> = {};
     const requiredKeys = ['code', 'db', 'security', 'refactor', 'api', 'test', 'performance', 'infra', 'dependency'];
     if (!requiredReviews || typeof requiredReviews !== 'object') {
         errors.push('Preflight field `required_reviews` is required and must be an object.');
@@ -117,11 +118,31 @@ function validatePreflightForReview(preflightPath, explicitTaskId) {
     };
 }
 
+interface ReviewArtifactEntry {
+    path: string;
+    content: string;
+    reviewContext?: Record<string, unknown>;
+}
+
+export interface CheckRequiredReviewsOptions {
+    validatedPreflight: {
+        errors: string[];
+        resolved_task_id: string | null;
+        required_reviews: Record<string, boolean>;
+        preflight_path: string;
+        preflight_hash: string | null;
+    };
+    verdicts?: Record<string, string>;
+    skipReviews?: string[];
+    compileGateEvidence?: Record<string, unknown> | null;
+    reviewArtifacts?: Record<string, ReviewArtifactEntry>;
+}
+
 /**
  * Check required reviews validation.
  * Pure-logic core for the required reviews gate.
  */
-function checkRequiredReviews(options) {
+export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     const validatedPreflight = options.validatedPreflight;
     const verdicts = options.verdicts || {};
     const skipReviews = options.skipReviews || [];
@@ -140,7 +161,7 @@ function checkRequiredReviews(options) {
     }
 
     // Validate each review type
-    const reviewChecks = {};
+    const reviewChecks: Record<string, unknown> = {};
     for (const [reviewKey, passToken] of REVIEW_CONTRACTS) {
         const required = !!requiredReviews[reviewKey];
         const skippedByOverride = skipReviews.includes(reviewKey);
@@ -187,10 +208,3 @@ function checkRequiredReviews(options) {
     };
 }
 
-module.exports = {
-    REVIEW_CONTRACTS,
-    checkRequiredReviews,
-    parseSkipReviews,
-    testExpectedVerdict,
-    validatePreflightForReview
-};

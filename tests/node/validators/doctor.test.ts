@@ -1,13 +1,13 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     runDoctor,
     formatDoctorResult
-} = require('../../../src/validators/doctor.ts');
+} from '../../../src/validators/doctor';
 
 test('runDoctor throws for missing bundle', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-test-'));

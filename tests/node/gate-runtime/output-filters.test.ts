@@ -1,10 +1,10 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
-const {
+import {
     applyOutputFilterOperation,
     applyOutputFilterProfile,
     applyPassthroughCeiling,
@@ -14,7 +14,7 @@ const {
     selectTailLines,
     selectMatchingLines,
     getCompileFailureStrategyConfig
-} = require('../../../src/gate-runtime/output-filters.ts');
+} from '../../../src/gate-runtime/output-filters';
 
 // --- resolveFilterInt ---
 
@@ -56,11 +56,11 @@ test('resolveFilterStr resolves context_key', () => {
 });
 
 test('resolveFilterStr throws for null value', () => {
-    assert.throws(() => resolveFilterStr(null, null, 'test'), /non-empty string/);
+    assert.throws(() => resolveFilterStr(null as unknown, null, 'test'), /non-empty string/);
 });
 
 test('resolveFilterStr allows empty when option set', () => {
-    assert.equal(resolveFilterStr(null, null, 'test', { allowEmpty: true }), '');
+    assert.equal(resolveFilterStr(null as unknown, null, 'test', { allowEmpty: true }), '');
 });
 
 // --- selectHeadLines / selectTailLines ---
@@ -235,7 +235,7 @@ test('getCompileFailureStrategyConfig returns generic for unknown', () => {
 // --- applyOutputFilterProfile ---
 
 test('applyOutputFilterProfile returns passthrough for empty profile name', () => {
-    const result = applyOutputFilterProfile(['a', 'b'], null, '');
+    const result = applyOutputFilterProfile(['a', 'b'], null as unknown as string, '');
     assert.equal(result.filter_mode, 'passthrough');
     assert.deepEqual(result.lines, ['a', 'b']);
 });

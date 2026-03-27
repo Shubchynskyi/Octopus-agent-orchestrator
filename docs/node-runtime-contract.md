@@ -1,20 +1,23 @@
 # Node Runtime Contract
 
 Version source: VERSION
-Frozen: 2026-03-26
+Frozen: 2026-03-27
 
 This document captures the current Node-only runtime surface.
 
 ## Public Surface
 
 - CLI aliases: `octopus`, `oao`, `octopus-agent-orchestrator`
-- Entrypoint: `bin/octopus.js`
+- Entrypoint: generated `bin/octopus.js` (compiled from `src/bin/octopus.ts`)
 - Runtime baseline: `Node.js >=20.0.0`
 
 ## Execution Modes
 
-- Source-repository mode: `bin/octopus.js` loads JS-compatible `src/**/*.ts` directly.
-- Packaged-install mode: under `node_modules`, `bin/octopus.js` resolves to compiled `dist/src/**/*.js`.
+- Source-repository mode: run `npm run build`, which compiles `src/bin/octopus.ts` into `bin/octopus.js`; that launcher then resolves compiled `dist/src/**/*.js`.
+- Source-install mode: `npm install` from a source checkout runs `prepare`, which builds the generated launcher and compiled runtime before first use.
+- Test-staged mode: Node foundation tests may stage `.node-build/src/**/*.js`, and `bin/octopus.js` can resolve that compiled output when `dist/` is intentionally absent in the fixture.
+- Packaged-install mode: under `node_modules`, `bin/octopus.js` resolves only compiled `dist/src/**/*.js`.
+- Raw `src/**/*.ts` files are compile-time inputs only; direct `.ts` execution is not part of the supported runtime contract.
 - Public CLI commands, gate names, and verification markers are the same in both modes.
 
 ## Command Inventory
@@ -80,6 +83,7 @@ The deployed bundle keeps:
 ```text
 .gitattributes
 bin/
+dist/
 src/
 template/
 AGENT_INIT_PROMPT.md
@@ -140,5 +144,10 @@ Shipped gates:
 
 Contract coverage lives in:
 
+- strict runtime build config: `tsconfig.build.json`
+- strict test/build-harness config: `tsconfig.tests.json`
 - `tests/node/**`
-- `npm run test:node-foundation`
+- `npm test`
+- `npm run validate:release`
+
+`TypeScript` in this repository means compiler-enforced strict typing across the runtime (`src/**`), Node test suite (`tests/node/**`), and supporting build/test scripts (`scripts/node-foundation/**`). `npm run validate:release` proves the public release path as `build -> test -> pack -> install/invoke`.

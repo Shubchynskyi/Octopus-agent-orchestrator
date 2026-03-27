@@ -1,11 +1,69 @@
-const { toStringArray } = require('./text-utils.ts');
+import { toStringArray } from './text-utils';
+import * as fs from 'node:fs';
+
+interface ResolveFilterStrOptions {
+    allowEmpty?: boolean;
+}
+
+interface AddUniqueLinesOptions {
+    limit?: number;
+}
+
+interface SelectMatchingLinesOptions {
+    limit?: number;
+}
+
+interface CompileStrategyConfig {
+    display_name: string;
+    full_patterns: string[];
+    degraded_patterns: string[];
+}
+
+interface ParserResult {
+    lines: string[];
+    parser_mode: string;
+    parser_name: string | null;
+    parser_strategy: string | null;
+    fallback_mode: string;
+}
+
+interface FilterProfileResult {
+    lines: string[];
+    filter_mode: string;
+    fallback_mode: string;
+    parser_mode: string;
+    parser_name: string | null;
+    parser_strategy: string | null;
+}
+
+interface ApplyOutputFilterProfileOptions {
+    context?: Record<string, unknown> | null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object') {
+        return null;
+    }
+    return value as Record<string, unknown>;
+}
 
 /**
  * Resolve a context-lookup integer value, matching Python _resolve_filter_int.
  */
-function resolveFilterInt(value, context, fieldName, minimum = 0) {
-    let resolvedValue = value;
-    if (resolvedValue && typeof resolvedValue === 'object' && typeof resolvedValue.context_key === 'string' && resolvedValue.context_key.trim()) {
+export function resolveFilterInt(
+    value: unknown,
+    context: Record<string, unknown> | null | undefined,
+    fieldName: string,
+    minimum: number = 0
+): number {
+    let resolvedValue: unknown = value;
+    if (
+        resolvedValue
+        && typeof resolvedValue === 'object'
+        && 'context_key' in resolvedValue
+        && typeof resolvedValue.context_key === 'string'
+        && resolvedValue.context_key.trim()
+    ) {
         const contextKey = resolvedValue.context_key.trim();
         if (!context || typeof context !== 'object' || !(contextKey in context)) {
             throw new Error(`${fieldName} references missing context key '${contextKey}'.`);
@@ -16,7 +74,7 @@ function resolveFilterInt(value, context, fieldName, minimum = 0) {
     if (typeof resolvedValue === 'boolean') {
         throw new Error(`${fieldName} must resolve to integer >= ${minimum}.`);
     }
-    let result;
+    let result: number;
     if (typeof resolvedValue === 'number' && Number.isInteger(resolvedValue)) {
         result = resolvedValue;
     } else if (typeof resolvedValue === 'number' && Number.isFinite(resolvedValue) && resolvedValue === Math.floor(resolvedValue)) {
@@ -35,10 +93,21 @@ function resolveFilterInt(value, context, fieldName, minimum = 0) {
 /**
  * Resolve a context-lookup string value, matching Python _resolve_filter_str.
  */
-function resolveFilterStr(value, context, fieldName, options = {}) {
+export function resolveFilterStr(
+    value: unknown,
+    context: Record<string, unknown> | null | undefined,
+    fieldName: string,
+    options: ResolveFilterStrOptions = {}
+): string {
     const allowEmpty = options.allowEmpty || false;
-    let resolvedValue = value;
-    if (resolvedValue && typeof resolvedValue === 'object' && typeof resolvedValue.context_key === 'string' && resolvedValue.context_key.trim()) {
+    let resolvedValue: unknown = value;
+    if (
+        resolvedValue
+        && typeof resolvedValue === 'object'
+        && 'context_key' in resolvedValue
+        && typeof resolvedValue.context_key === 'string'
+        && resolvedValue.context_key.trim()
+    ) {
         const contextKey = resolvedValue.context_key.trim();
         if (!context || typeof context !== 'object' || !(contextKey in context)) {
             throw new Error(`${fieldName} references missing context key '${contextKey}'.`);
@@ -63,7 +132,7 @@ function resolveFilterStr(value, context, fieldName, options = {}) {
 /**
  * Get filter patterns from operation config, matching Python _get_filter_patterns.
  */
-function getFilterPatterns(operation) {
+function getFilterPatterns(operation: Record<string, unknown>): string[] {
     const patternsValue = operation.patterns || operation.pattern;
     const patterns = toStringArray(patternsValue, { trimValues: true });
     if (patterns.length === 0) {
@@ -75,17 +144,22 @@ function getFilterPatterns(operation) {
     return patterns;
 }
 
-function selectHeadLines(lines, count) {
+export function selectHeadLines(lines: string[], count: number): string[] {
     if (count <= 0) return [];
     return lines.slice(0, count);
 }
 
-function selectTailLines(lines, count) {
+export function selectTailLines(lines: string[], count: number): string[] {
     if (count <= 0) return [];
     return lines.slice(-count);
 }
 
-function addUniqueLines(destination, seen, lines, options = {}) {
+function addUniqueLines(
+    destination: string[],
+    seen: Set<string>,
+    lines: unknown,
+    options: AddUniqueLinesOptions = {}
+): void {
     const limit = options.limit || 0;
     for (const lineValue of toStringArray(lines)) {
         const lineText = String(lineValue);
@@ -100,12 +174,16 @@ function addUniqueLines(destination, seen, lines, options = {}) {
     }
 }
 
-function selectMatchingLines(lines, patterns, options = {}) {
+export function selectMatchingLines(
+    lines: string[],
+    patterns: string[],
+    options: SelectMatchingLinesOptions = {}
+): string[] {
     const limit = options.limit || 0;
-    const compiledPatterns = patterns.map(p => new RegExp(p));
-    const matches = [];
+    const compiledPatterns = patterns.map((pattern) => new RegExp(pattern));
+    const matches: string[] = [];
     for (const line of lines) {
-        if (compiledPatterns.some(p => p.test(line))) {
+        if (compiledPatterns.some((pattern) => pattern.test(line))) {
             matches.push(line);
             if (limit > 0 && matches.length >= limit) {
                 break;
@@ -192,10 +270,10 @@ const COMPILE_STRATEGY_CONFIGS = {
     }
 };
 
-function getCompileFailureStrategyConfig(strategy) {
+export function getCompileFailureStrategyConfig(strategy: string): CompileStrategyConfig {
     const normalized = (strategy || '').trim().toLowerCase();
-    if (COMPILE_STRATEGY_CONFIGS[normalized]) {
-        return COMPILE_STRATEGY_CONFIGS[normalized];
+    if (normalized in COMPILE_STRATEGY_CONFIGS) {
+        return COMPILE_STRATEGY_CONFIGS[normalized as keyof typeof COMPILE_STRATEGY_CONFIGS];
     }
     return {
         display_name: 'generic-compile',
@@ -204,7 +282,11 @@ function getCompileFailureStrategyConfig(strategy) {
     };
 }
 
-function invokeCompileFailureParser(lines, parserConfig, context) {
+function invokeCompileFailureParser(
+    lines: string[],
+    parserConfig: Record<string, unknown>,
+    context: Record<string, unknown> | null | undefined
+): ParserResult {
     let strategy = resolveFilterStr(parserConfig.strategy, context, 'parser.strategy', { allowEmpty: true });
     if (!strategy) {
         strategy = resolveFilterStr({ context_key: 'command_filter_strategy' }, context, 'parser.strategy_context', { allowEmpty: true });
@@ -219,8 +301,8 @@ function invokeCompileFailureParser(lines, parserConfig, context) {
 
     const fullMatches = selectMatchingLines(lines, config.full_patterns, { limit: maxMatches });
     if (fullMatches.length > 0) {
-        const summaryLines = [];
-        const seen = new Set();
+        const summaryLines: string[] = [];
+        const seen = new Set<string>();
         addUniqueLines(summaryLines, seen, [`CompactSummary: FULL | strategy=${config.display_name}`]);
         addUniqueLines(summaryLines, seen, fullMatches, { limit: maxMatches + 1 });
         if (tailCount > 0) {
@@ -237,8 +319,8 @@ function invokeCompileFailureParser(lines, parserConfig, context) {
 
     const degradedMatches = selectMatchingLines(lines, config.degraded_patterns, { limit: Math.max(maxMatches, 8) });
     if (degradedMatches.length > 0) {
-        const summaryLines = [];
-        const seen = new Set();
+        const summaryLines: string[] = [];
+        const seen = new Set<string>();
         addUniqueLines(summaryLines, seen, [`CompactSummary: DEGRADED | strategy=${config.display_name}`]);
         addUniqueLines(summaryLines, seen, degradedMatches, { limit: Math.max(maxMatches, 8) + 1 });
         if (tailCount > 0) {
@@ -262,7 +344,11 @@ function invokeCompileFailureParser(lines, parserConfig, context) {
     };
 }
 
-function invokeTestFailureParser(lines, parserConfig, context) {
+function invokeTestFailureParser(
+    lines: string[],
+    parserConfig: Record<string, unknown>,
+    context: Record<string, unknown> | null | undefined
+): ParserResult {
     const maxMatches = resolveFilterInt(parserConfig.max_matches, context, 'parser.max_matches', 1);
     const tailCount = resolveFilterInt(parserConfig.tail_count, context, 'parser.tail_count', 0);
     const patterns = [
@@ -279,8 +365,8 @@ function invokeTestFailureParser(lines, parserConfig, context) {
     ];
     const matches = selectMatchingLines(lines, patterns, { limit: maxMatches });
     if (matches.length > 0) {
-        const summaryLines = [];
-        const seen = new Set();
+        const summaryLines: string[] = [];
+        const seen = new Set<string>();
         addUniqueLines(summaryLines, seen, ['CompactSummary: FULL | strategy=test']);
         addUniqueLines(summaryLines, seen, matches, { limit: maxMatches + 1 });
         if (tailCount > 0) {
@@ -303,7 +389,11 @@ function invokeTestFailureParser(lines, parserConfig, context) {
     };
 }
 
-function invokeLintFailureParser(lines, parserConfig, context) {
+function invokeLintFailureParser(
+    lines: string[],
+    parserConfig: Record<string, unknown>,
+    context: Record<string, unknown> | null | undefined
+): ParserResult {
     const maxMatches = resolveFilterInt(parserConfig.max_matches, context, 'parser.max_matches', 1);
     const tailCount = resolveFilterInt(parserConfig.tail_count, context, 'parser.tail_count', 0);
     const patterns = [
@@ -316,8 +406,8 @@ function invokeLintFailureParser(lines, parserConfig, context) {
     ];
     const matches = selectMatchingLines(lines, patterns, { limit: maxMatches });
     if (matches.length > 0) {
-        const summaryLines = [];
-        const seen = new Set();
+        const summaryLines: string[] = [];
+        const seen = new Set<string>();
         addUniqueLines(summaryLines, seen, ['CompactSummary: FULL | strategy=lint']);
         addUniqueLines(summaryLines, seen, matches, { limit: maxMatches + 1 });
         if (tailCount > 0) {
@@ -340,7 +430,11 @@ function invokeLintFailureParser(lines, parserConfig, context) {
     };
 }
 
-function invokeReviewSummaryParser(lines, parserConfig, context) {
+function invokeReviewSummaryParser(
+    lines: string[],
+    parserConfig: Record<string, unknown>,
+    context: Record<string, unknown> | null | undefined
+): ParserResult {
     const maxLines = resolveFilterInt(parserConfig.max_lines, context, 'parser.max_lines', 1);
     const summaryLines = selectHeadLines(lines, maxLines);
     if (summaryLines.length === 0) {
@@ -361,7 +455,11 @@ function invokeReviewSummaryParser(lines, parserConfig, context) {
     };
 }
 
-function applyOutputParser(lines, parserConfig, context) {
+export function applyOutputParser(
+    lines: string[],
+    parserConfig: Record<string, unknown> | null | undefined,
+    context: Record<string, unknown> | null | undefined
+): ParserResult {
     if (parserConfig == null) {
         return {
             lines: [...lines],
@@ -395,7 +493,11 @@ function applyOutputParser(lines, parserConfig, context) {
 /**
  * Apply a single output filter operation, matching Python apply_output_filter_operation.
  */
-function applyOutputFilterOperation(lines, operation, context) {
+export function applyOutputFilterOperation(
+    lines: unknown,
+    operation: Record<string, unknown>,
+    context: Record<string, unknown> | null | undefined = null
+): string[] {
     if (!operation || typeof operation !== 'object') {
         throw new Error('Filter operation must be an object.');
     }
@@ -433,7 +535,7 @@ function applyOutputFilterOperation(lines, operation, context) {
     if (operationType === 'truncate_line_length') {
         const maxChars = resolveFilterInt(operation.max_chars, context, 'truncate_line_length.max_chars', 1);
         const suffix = String(operation.suffix != null ? operation.suffix : '...');
-        const result = [];
+        const result: string[] = [];
         for (const line of currentLines) {
             if (line.length <= maxChars) {
                 result.push(line);
@@ -468,14 +570,18 @@ function applyOutputFilterOperation(lines, operation, context) {
 /**
  * Apply passthrough ceiling, matching Python _apply_passthrough_ceiling.
  */
-function applyPassthroughCeiling(lines, config, fallbackMode) {
+export function applyPassthroughCeiling(
+    lines: string[],
+    config: Record<string, unknown> | null,
+    fallbackMode: string
+): string[] {
     const DEFAULT_MAX = 60;
     let maxLines = DEFAULT_MAX;
     let strategy = 'tail';
 
     if (config && typeof config === 'object') {
-        const ceilingCfg = config.passthrough_ceiling;
-        if (ceilingCfg && typeof ceilingCfg === 'object') {
+        const ceilingCfg = asRecord(config.passthrough_ceiling);
+        if (ceilingCfg) {
             if (typeof ceilingCfg.max_lines === 'number' && ceilingCfg.max_lines > 0) {
                 maxLines = ceilingCfg.max_lines;
             }
@@ -498,11 +604,15 @@ function applyPassthroughCeiling(lines, config, fallbackMode) {
 /**
  * Apply a named output filter profile, matching Python apply_output_filter_profile.
  */
-function applyOutputFilterProfile(lines, configPath, profileName, options = {}) {
-    const fs = require('node:fs');
+export function applyOutputFilterProfile(
+    lines: unknown,
+    configPath: string,
+    profileName: string,
+    options: ApplyOutputFilterProfileOptions = {}
+): FilterProfileResult {
     const context = options.context || null;
     const originalLines = toStringArray(lines);
-    const passthrough = {
+    const passthrough: FilterProfileResult = {
         lines: originalLines,
         filter_mode: 'passthrough',
         fallback_mode: 'none',
@@ -522,9 +632,10 @@ function applyOutputFilterProfile(lines, configPath, profileName, options = {}) 
         return passthrough;
     }
 
-    let config;
+    let config: Record<string, unknown> | null = null;
     try {
-        config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const parsedConfig: unknown = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        config = asRecord(parsedConfig) || {};
     } catch (err) {
         process.stderr.write(`WARNING: output filter config is invalid JSON for profile '${profileName}': ${err}\n`);
         passthrough.fallback_mode = 'invalid_config_passthrough';
@@ -532,8 +643,8 @@ function applyOutputFilterProfile(lines, configPath, profileName, options = {}) 
         return passthrough;
     }
 
-    const profiles = config.profiles;
-    if (!profiles || typeof profiles !== 'object') {
+    const profiles = config ? asRecord(config.profiles) : null;
+    if (!profiles) {
         process.stderr.write("WARNING: output filter config must contain object 'profiles'.\n");
         passthrough.fallback_mode = 'invalid_config_passthrough';
         passthrough.lines = applyPassthroughCeiling(originalLines, config, 'invalid_config_passthrough');
@@ -547,7 +658,8 @@ function applyOutputFilterProfile(lines, configPath, profileName, options = {}) 
         passthrough.lines = applyPassthroughCeiling(originalLines, config, 'missing_profile_passthrough');
         return passthrough;
     }
-    if (typeof profile !== 'object') {
+    const profileRecord = asRecord(profile);
+    if (!profileRecord) {
         process.stderr.write(`WARNING: output filter profile '${profileName}' must be an object.\n`);
         passthrough.fallback_mode = 'invalid_profile_passthrough';
         passthrough.lines = applyPassthroughCeiling(originalLines, config, 'invalid_profile_passthrough');
@@ -556,20 +668,24 @@ function applyOutputFilterProfile(lines, configPath, profileName, options = {}) 
 
     try {
         let filteredLines = [...originalLines];
-        const operations = profile.operations || [];
+        const operations = profileRecord.operations || [];
         if (typeof operations === 'string' || !Array.isArray(operations)) {
             throw new Error(`Profile '${profileName}' field 'operations' must be an array.`);
         }
         for (const operation of operations) {
-            filteredLines = applyOutputFilterOperation(filteredLines, operation, context);
+            filteredLines = applyOutputFilterOperation(filteredLines, operation as Record<string, unknown>, context);
         }
 
-        const parserResult = applyOutputParser(filteredLines, profile.parser, context);
+        const parserResult = applyOutputParser(
+            filteredLines,
+            profileRecord.parser as Record<string, unknown> | null | undefined,
+            context
+        );
         filteredLines = [...parserResult.lines];
         if (parserResult.parser_mode === 'PASSTHROUGH') {
             filteredLines = applyPassthroughCeiling(filteredLines, config, 'parser_passthrough');
         }
-        const emitWhenEmpty = String(profile.emit_when_empty || '').trim();
+        const emitWhenEmpty = String(profileRecord.emit_when_empty || '').trim();
         if (filteredLines.length === 0 && emitWhenEmpty) {
             filteredLines = [emitWhenEmpty];
         }
@@ -589,16 +705,3 @@ function applyOutputFilterProfile(lines, configPath, profileName, options = {}) 
         return passthrough;
     }
 }
-
-module.exports = {
-    applyOutputFilterOperation,
-    applyOutputFilterProfile,
-    applyOutputParser,
-    applyPassthroughCeiling,
-    getCompileFailureStrategyConfig,
-    resolveFilterInt,
-    resolveFilterStr,
-    selectHeadLines,
-    selectMatchingLines,
-    selectTailLines
-};

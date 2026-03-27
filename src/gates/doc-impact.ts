@@ -1,13 +1,12 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const { assertValidTaskId } = require('../gate-runtime/task-events.ts');
-const { fileSha256, normalizePath, parseBool, toStringArray } = require('./helpers.ts');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { assertValidTaskId } from '../gate-runtime/task-events';
+import { fileSha256, normalizePath, parseBool, toStringArray } from './helpers';
 
 /**
  * Validate preflight for doc-impact gate.
  */
-function validatePreflightForDocImpact(preflightPath, explicitTaskId) {
+export function validatePreflightForDocImpact(preflightPath: string, explicitTaskId: string) {
     let preflight;
     try {
         preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
@@ -15,22 +14,24 @@ function validatePreflightForDocImpact(preflightPath, explicitTaskId) {
         throw new Error(`Preflight artifact is not valid JSON: ${preflightPath}`);
     }
 
-    const errors = [];
-    let resolvedTaskId = null;
+    const errors: string[] = [];
+    let resolvedTaskId: string | null = null;
     if (explicitTaskId && explicitTaskId.trim()) {
         try {
             resolvedTaskId = assertValidTaskId(explicitTaskId);
-        } catch (exc) {
-            errors.push(String(exc.message || exc));
+        } catch (exc: unknown) {
+            const message = exc instanceof Error ? exc.message : String(exc);
+            errors.push(String(message));
         }
     }
 
-    let preflightTaskId = String(preflight.task_id || '').trim();
+    let preflightTaskId: string | null = String(preflight.task_id || '').trim();
     if (preflightTaskId) {
         try {
             preflightTaskId = assertValidTaskId(preflightTaskId);
-        } catch (exc) {
-            errors.push(`preflight.task_id: ${exc.message || exc}`);
+        } catch (exc: unknown) {
+            const message = exc instanceof Error ? exc.message : String(exc);
+            errors.push(`preflight.task_id: ${message}`);
             preflightTaskId = null;
         }
     } else {
@@ -54,11 +55,23 @@ function validatePreflightForDocImpact(preflightPath, explicitTaskId) {
     };
 }
 
+export interface AssessDocImpactOptions {
+    preflightPath: string;
+    taskId?: string;
+    decision?: string;
+    behaviorChanged?: unknown;
+    changelogUpdated?: unknown;
+    sensitiveReviewed?: unknown;
+    docsUpdated?: unknown;
+    rationale?: string;
+    repoRoot?: string;
+}
+
 /**
  * Run doc-impact gate assessment.
  * Produces the canonical doc-impact gate output shape.
  */
-function assessDocImpact(options) {
+export function assessDocImpact(options: AssessDocImpactOptions) {
     const preflightPath = options.preflightPath;
     const taskId = options.taskId || '';
     const decision = (options.decision || 'NO_DOC_UPDATES').trim().toUpperCase();
@@ -122,7 +135,3 @@ function assessDocImpact(options) {
     };
 }
 
-module.exports = {
-    assessDocImpact,
-    validatePreflightForDocImpact
-};

@@ -1,11 +1,11 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     buildManagedBlock,
     removeManagedBlock,
     upsertManagedBlock
-} = require('../../../src/core/managed-blocks.ts');
+} from '../../../src/core/managed-blocks';
 
 const START_MARKER = '<!-- managed-start -->';
 const END_MARKER = '<!-- managed-end -->';

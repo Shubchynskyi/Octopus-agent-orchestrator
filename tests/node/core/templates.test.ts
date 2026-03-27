@@ -1,10 +1,10 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     listTemplateTokens,
     replaceTemplateTokens
-} = require('../../../src/core/templates.ts');
+} from '../../../src/core/templates';
 
 test('listTemplateTokens returns unique placeholders in encounter order', () => {
     assert.deepEqual(

@@ -1,7 +1,11 @@
+interface ToStringArrayOptions {
+    trimValues?: boolean;
+}
+
 /**
  * Convert any value to a string array, matching Python/PS gate_utils.to_string_array.
  */
-function toStringArray(value, options = {}) {
+export function toStringArray(value: unknown, options: ToStringArrayOptions = {}): string[] {
     const trimValues = options.trimValues || false;
 
     if (value == null) {
@@ -38,7 +42,7 @@ function toStringArray(value, options = {}) {
 /**
  * Count total characters of lines joined by newlines, matching Python count_text_chars.
  */
-function countTextChars(lines) {
+export function countTextChars(lines: unknown): number {
     const normalized = toStringArray(lines);
     if (normalized.length === 0) {
         return 0;
@@ -51,10 +55,16 @@ function countTextChars(lines) {
     return total;
 }
 
+interface MatchAnyRegexOptions {
+    skipInvalidRegex?: boolean;
+    invalidRegexContext?: string;
+    caseInsensitive?: boolean;
+}
+
 /**
  * Test if a path matches any of the provided regex patterns.
  */
-function matchAnyRegex(pathValue, regexes, options = {}) {
+export function matchAnyRegex(pathValue: string, regexes: string[], options: MatchAnyRegexOptions = {}): boolean {
     const skipInvalid = options.skipInvalidRegex || false;
     const context = options.invalidRegexContext || '';
     const flags = options.caseInsensitive ? 'i' : '';
@@ -72,10 +82,9 @@ function matchAnyRegex(pathValue, regexes, options = {}) {
                 throw err;
             }
             const ctxStr = context ? ` for ${context}` : '';
-            process.stderr.write(`WARNING: invalid regex '${pattern}'${ctxStr}: ${err.message}\n`);
+            process.stderr.write(`WARNING: invalid regex '${pattern}'${ctxStr}: ${err instanceof Error ? err.message : String(err)}\n`);
         }
     }
     return false;
 }
 
-module.exports = { toStringArray, countTextChars, matchAnyRegex };

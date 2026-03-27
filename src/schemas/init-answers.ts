@@ -1,19 +1,18 @@
-const {
+import {
     ALL_AGENT_ENTRYPOINT_FILES,
     BREVITY_VALUES,
     COLLECTED_VIA_VALUES,
     SOURCE_OF_TRUTH_VALUES,
     SOURCE_TO_ENTRYPOINT_MAP
-} = require('../core/constants.ts');
-
-const {
+} from '../core/constants';
+import {
     ensurePlainObject,
     normalizeBooleanLike,
     normalizeEnum,
     normalizeNonEmptyString
-} = require('./shared.ts');
+} from './shared';
 
-function normalizeActiveAgentFiles(value) {
+function normalizeActiveAgentFiles(value: unknown): string[] {
     if (value === null || value === undefined || value === '') {
         return [];
     }
@@ -22,7 +21,7 @@ function normalizeActiveAgentFiles(value) {
         ? value
         : String(value).split(/[;,]/g);
 
-    const normalized = [];
+    const normalized: string[] = [];
     for (const part of parts) {
         const trimmed = normalizeNonEmptyString(part, 'ActiveAgentFiles');
         const match = ALL_AGENT_ENTRYPOINT_FILES.find((candidate) => candidate.toLowerCase() === trimmed.toLowerCase());
@@ -38,9 +37,20 @@ function normalizeActiveAgentFiles(value) {
     return normalized;
 }
 
-function validateInitAnswers(input) {
+interface NormalizedInitAnswers {
+    AssistantLanguage: string;
+    AssistantBrevity: string;
+    SourceOfTruth: string;
+    EnforceNoAutoCommit: boolean;
+    ClaudeOrchestratorFullAccess: boolean;
+    TokenEconomyEnabled: boolean;
+    CollectedVia: string;
+    ActiveAgentFiles?: string[];
+}
+
+export function validateInitAnswers(input: unknown): NormalizedInitAnswers {
     const raw = ensurePlainObject(input, 'Init answers');
-    const normalized = {
+    const normalized: NormalizedInitAnswers = {
         AssistantLanguage: normalizeNonEmptyString(raw.AssistantLanguage, 'AssistantLanguage'),
         AssistantBrevity: normalizeEnum(raw.AssistantBrevity, BREVITY_VALUES, 'AssistantBrevity'),
         SourceOfTruth: normalizeEnum(raw.SourceOfTruth, SOURCE_OF_TRUTH_VALUES, 'SourceOfTruth'),
@@ -60,9 +70,20 @@ function validateInitAnswers(input) {
     return normalized;
 }
 
-function serializeInitAnswers(input) {
+interface SerializedInitAnswers {
+    AssistantLanguage: string;
+    AssistantBrevity: string;
+    SourceOfTruth: string;
+    EnforceNoAutoCommit: string;
+    ClaudeOrchestratorFullAccess: string;
+    TokenEconomyEnabled: string;
+    CollectedVia: string;
+    ActiveAgentFiles?: string;
+}
+
+export function serializeInitAnswers(input: unknown): SerializedInitAnswers {
     const normalized = validateInitAnswers(input);
-    const serialized = {
+    const serialized: SerializedInitAnswers = {
         AssistantLanguage: normalized.AssistantLanguage,
         AssistantBrevity: normalized.AssistantBrevity,
         SourceOfTruth: normalized.SourceOfTruth,
@@ -79,13 +100,8 @@ function serializeInitAnswers(input) {
     return serialized;
 }
 
-function getCanonicalEntrypointForSource(sourceOfTruth) {
+export function getCanonicalEntrypointForSource(sourceOfTruth: unknown): string {
     const normalized = normalizeEnum(sourceOfTruth, SOURCE_OF_TRUTH_VALUES, 'SourceOfTruth');
-    return SOURCE_TO_ENTRYPOINT_MAP[normalized];
+    return SOURCE_TO_ENTRYPOINT_MAP[normalized as keyof typeof SOURCE_TO_ENTRYPOINT_MAP];
 }
 
-module.exports = {
-    getCanonicalEntrypointForSource,
-    serializeInitAnswers,
-    validateInitAnswers
-};

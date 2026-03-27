@@ -1,11 +1,11 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const {
+import {
     isPathInsideRoot,
     normalizeRelativePath,
     resolvePathInsideRoot
-} = require('../../../src/core/paths.ts');
+} from '../../../src/core/paths';
 
 test('normalizeRelativePath canonicalizes separators for repo-relative paths', () => {
     assert.equal(normalizeRelativePath('.\\src\\core\\paths.ts'), 'src/core/paths.ts');

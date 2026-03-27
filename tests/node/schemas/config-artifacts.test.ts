@@ -1,16 +1,16 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-const {
+import {
     getManagedConfigValidators,
     validateManagedConfigByName,
     validateOutputFiltersConfig,
     validateTokenEconomyConfig
-} = require('../../../src/schemas/config-artifacts.ts');
+} from '../../../src/schemas/config-artifacts';
 
-function readTemplateConfig(configName) {
+function readTemplateConfig(configName: string): Record<string, unknown> {
     return JSON.parse(
         fs.readFileSync(path.join(process.cwd(), 'template', 'config', `${configName}.json`), 'utf8')
     );
@@ -44,8 +44,9 @@ test('validateOutputFiltersConfig accepts context-driven parser controls from th
     const normalized = validateOutputFiltersConfig(readTemplateConfig('output-filters'));
 
     assert.equal(normalized.version, 2);
+    const profiles = (normalized as Record<string, unknown>).profiles as Record<string, { parser: { tail_count: { context_key: string } } }>;
     assert.equal(
-        normalized.profiles.compile_failure_console.parser.tail_count.context_key,
+        profiles.compile_failure_console.parser.tail_count.context_key,
         'fail_tail_lines'
     );
 });

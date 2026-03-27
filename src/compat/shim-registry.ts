@@ -2,7 +2,7 @@
  * Registry of public Node gate commands used by the CLI surface.
  */
 
-const GATE_COMMANDS = Object.freeze([
+export const GATE_COMMANDS = Object.freeze([
     'validate-manifest',
     'compile-gate',
     'completion-gate',
@@ -16,11 +16,7 @@ const GATE_COMMANDS = Object.freeze([
     'human-commit'
 ]);
 
-function getAllShimmedGateNames() {
+export function getAllShimmedGateNames() {
     return GATE_COMMANDS.slice();
 }
 
-module.exports = {
-    GATE_COMMANDS,
-    getAllShimmedGateNames
-};

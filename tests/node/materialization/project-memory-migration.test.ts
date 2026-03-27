@@ -1,10 +1,10 @@
-const { describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
-const {
+import {
     countMeaningfulAddedLines,
     extractMigrationContent,
     getMeaningfulLines,
@@ -14,8 +14,8 @@ const {
     MIGRATION_MARKER,
     MIGRATION_RULE_MAP,
     buildMigrationReportLines
-} = require('../../../src/materialization/project-memory-migration.ts');
-const { runInit } = require('../../../src/materialization/init.ts');
+} from '../../../src/materialization/project-memory-migration';
+import { runInit } from '../../../src/materialization/init';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -28,7 +28,7 @@ function findRepoRoot() {
     throw new Error('Cannot find repo root');
 }
 
-function setupTestWorkspace(bundleRoot) {
+function setupTestWorkspace(bundleRoot: string) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-mig-'));
     const bundle = path.join(tmpDir, 'Octopus-agent-orchestrator');
     fs.mkdirSync(bundle, { recursive: true });
@@ -39,7 +39,7 @@ function setupTestWorkspace(bundleRoot) {
     return { projectRoot: tmpDir, bundleRoot: bundle };
 }
 
-function copyDirRecursive(src, dst) {
+function copyDirRecursive(src: string, dst: string) {
     fs.mkdirSync(dst, { recursive: true });
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
         const srcPath = path.join(src, entry.name);

@@ -1,28 +1,97 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const { DEFAULT_BUNDLE_NAME } = require('../core/constants.ts');
-const { pathExists, readTextFile } = require('../core/fs.ts');
-const { readJsonFile } = require('../core/json.ts');
-const { isPathInsideRoot } = require('../core/paths.ts');
-const { validateInitAnswers } = require('../schemas/init-answers.ts');
-const { runInstall } = require('../materialization/install.ts');
-const { runInit } = require('../materialization/init.ts');
-
-const {
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { pathExists, readTextFile } from '../core/fs';
+import { readJsonFile } from '../core/json';
+import { isPathInsideRoot } from '../core/paths';
+import { validateInitAnswers } from '../schemas/init-answers';
+import { runInstall } from '../materialization/install';
+import { runInit } from '../materialization/init';
+import {
     createRollbackSnapshot,
     getTimestamp,
     getRollbackRecordsPath,
     restoreRollbackSnapshot,
     validateTargetRoot,
     writeRollbackRecords
-} = require('./common.ts');
+} from './common';
+
+interface LiveVersionPayload {
+    Version?: unknown;
+}
+
+interface RollbackRecord {
+    relativePath: string;
+    existed: boolean;
+    pathType: string;
+}
+
+interface InstallRunnerOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    dryRun?: boolean;
+    runInit?: boolean;
+    assistantLanguage: string;
+    assistantBrevity: string;
+    sourceOfTruth: string;
+    initAnswersPath: string;
+}
+
+interface MaterializationRunnerOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    dryRun?: boolean;
+    assistantLanguage: string;
+    assistantBrevity: string;
+    sourceOfTruth: string;
+    enforceNoAutoCommit: boolean;
+    tokenEconomyEnabled: boolean;
+}
+
+interface VerifyRunnerOptions {
+    targetRoot: string;
+    sourceOfTruth: string;
+    initAnswersPath: string;
+}
+
+interface ManifestRunnerOptions {
+    targetRoot: string;
+}
+
+interface ContractMigrationResult {
+    appliedCount?: number;
+    appliedFiles?: string[];
+}
+
+interface RunUpdateOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    initAnswersPath?: string;
+    dryRun?: boolean;
+    skipVerify?: boolean;
+    skipManifestValidation?: boolean;
+    installRunner?: ((options: InstallRunnerOptions) => void) | null;
+    materializationRunner?: ((options: MaterializationRunnerOptions) => void) | null;
+    verifyRunner?: ((options: VerifyRunnerOptions) => unknown) | null;
+    manifestRunner?: ((options: ManifestRunnerOptions) => unknown) | null;
+    contractMigrationRunner?: ((options: { rootPath: string }) => ContractMigrationResult) | null;
+}
+
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+function getLiveVersionPayload(value: unknown): LiveVersionPayload {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as LiveVersionPayload
+        : {};
+}
 
 /**
  * Computes the list of relative paths that should be included in an update rollback.
  * Returns the rollback item set for the Node update lifecycle.
  */
-function getUpdateRollbackItems(rootPath, initAnswersResolvedPath) {
+export function getUpdateRollbackItems(rootPath: string, initAnswersResolvedPath: string): string[] {
     const items = [
         'CLAUDE.md',
         'AGENTS.md',
@@ -83,7 +152,7 @@ function getUpdateRollbackItems(rootPath, initAnswersResolvedPath) {
  * @param {Function} [options.contractMigrationRunner] - Optional override for contract migration step
  * @returns {object} Update result
  */
-function runUpdate(options) {
+export function runUpdate(options: RunUpdateOptions) {
     const {
         targetRoot,
         bundleRoot,
@@ -128,12 +197,12 @@ function runUpdate(options) {
 
     // Detect previous version from live/version.json
     const liveVersionPath = path.join(normalizedTarget, DEFAULT_BUNDLE_NAME, 'live', 'version.json');
-    let existingLiveVersion = null;
+    let existingLiveVersion: LiveVersionPayload | null = null;
     let previousVersion = 'unknown';
     let previousVersionSource = 'missing';
     if (pathExists(liveVersionPath)) {
         try {
-            existingLiveVersion = readJsonFile(liveVersionPath);
+            existingLiveVersion = getLiveVersionPayload(readJsonFile(liveVersionPath));
             const parsedVersion = existingLiveVersion && existingLiveVersion.Version
                 ? String(existingLiveVersion.Version).trim()
                 : null;
@@ -176,7 +245,7 @@ function runUpdate(options) {
     let rollbackSnapshotCreated = false;
     let rollbackRecordCount = 0;
     let rollbackStatus = 'NOT_NEEDED';
-    let rollbackRecords = [];
+    let rollbackRecords: RollbackRecord[] = [];
 
     let installStatus = 'NOT_RUN';
     let materializationStatus = 'NOT_RUN';
@@ -185,13 +254,13 @@ function runUpdate(options) {
     let manifestStatus = 'NOT_RUN';
     let updatedVersion = bundleVersion;
     let contractMigrationCount = 0;
-    let contractMigrationFiles = [];
+    let contractMigrationFiles: string[] = [];
 
     // Create rollback snapshot (not in dry-run)
     if (!dryRun) {
         fs.mkdirSync(path.dirname(rollbackSnapshotPath), { recursive: true });
         const rollbackItems = getUpdateRollbackItems(normalizedTarget, initAnswersResolvedPath);
-        rollbackRecords = createRollbackSnapshot(normalizedTarget, rollbackSnapshotPath, rollbackItems);
+        rollbackRecords = createRollbackSnapshot(normalizedTarget, rollbackSnapshotPath, rollbackItems) as RollbackRecord[];
         writeRollbackRecords(rollbackSnapshotPath, rollbackRecords);
         rollbackRecordCount = rollbackRecords.length;
         rollbackSnapshotCreated = true;
@@ -297,7 +366,7 @@ function runUpdate(options) {
             // Re-read updated version
             if (pathExists(liveVersionPath)) {
                 try {
-                    const newLiveVersion = readJsonFile(liveVersionPath);
+                    const newLiveVersion = getLiveVersionPayload(readJsonFile(liveVersionPath));
                     if (newLiveVersion && newLiveVersion.Version) {
                         const newParsed = String(newLiveVersion.Version).trim();
                         if (newParsed) updatedVersion = newParsed;
@@ -307,8 +376,8 @@ function runUpdate(options) {
                 }
             }
         }
-    } catch (error) {
-        const errorMessage = error.message || String(error);
+    } catch (error: unknown) {
+        const errorMessage = getErrorMessage(error);
 
         switch (currentStage) {
             case 'INSTALL': installStatus = 'FAIL'; break;
@@ -323,8 +392,8 @@ function runUpdate(options) {
             try {
                 restoreRollbackSnapshot(normalizedTarget, rollbackSnapshotPath, rollbackRecords);
                 rollbackStatus = 'SUCCESS';
-            } catch (rollbackError) {
-                const rollbackMsg = rollbackError.message || String(rollbackError);
+            } catch (rollbackError: unknown) {
+                const rollbackMsg = getErrorMessage(rollbackError);
                 rollbackStatus = `FAILED: ${rollbackMsg}`;
                 throw new Error(`Update failed during ${currentStage}. Original error: ${errorMessage}. Rollback failed: ${rollbackMsg}`);
             }
@@ -398,8 +467,3 @@ function runUpdate(options) {
         updateReportPath: dryRun ? 'not-generated-in-dry-run' : updateReportRelativePath
     };
 }
-
-module.exports = {
-    getUpdateRollbackItems,
-    runUpdate
-};

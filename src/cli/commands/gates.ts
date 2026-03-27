@@ -1,70 +1,328 @@
-const childProcess = require('node:child_process');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-
-const {
+import * as childProcess from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import {
     DEFAULT_COMPILE_TIMEOUT_MS,
     DEFAULT_GIT_TIMEOUT_MS,
     spawnStreamed,
     spawnSyncWithTimeout
-} = require('../../core/subprocess.ts');
-
-const {
-    buildOutputTelemetry,
-    formatVisibleSavingsLine
-} = require('../../gate-runtime/token-telemetry.ts');
-const { applyOutputFilterProfile } = require('../../gate-runtime/output-filters.ts');
-const { auditReviewArtifactCompaction } = require('../../gate-runtime/review-context.ts');
-const {
-    appendTaskEvent,
-    assertValidTaskId
-} = require('../../gate-runtime/task-events.ts');
-const { auditCommandCompactness } = require('../../gates/task-events-summary.ts');
-const {
-    classifyChange,
-    getClassificationConfig,
-    getReviewCapabilities
-} = require('../../gates/classify-change.ts');
-const {
+} from '../../core/subprocess';
+import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../gate-runtime/token-telemetry';
+import { applyOutputFilterProfile } from '../../gate-runtime/output-filters';
+import { auditReviewArtifactCompaction } from '../../gate-runtime/review-context';
+import { appendTaskEvent, assertValidTaskId } from '../../gate-runtime/task-events';
+import { auditCommandCompactness } from '../../gates/task-events-summary';
+import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../gates/classify-change';
+import {
     getCompileCommandProfile,
     getCompileCommands,
     getOutputStats,
     getPreflightContext,
     getWorkspaceSnapshot
-} = require('../../gates/compile-gate.ts');
-const { assessDocImpact } = require('../../gates/doc-impact.ts');
-const {
+} from '../../gates/compile-gate';
+import { assessDocImpact } from '../../gates/doc-impact';
+import {
     checkRequiredReviews,
     parseSkipReviews,
     REVIEW_CONTRACTS,
     validatePreflightForReview
-} = require('../../gates/required-reviews-check.ts');
-const gateHelpers = require('../../gates/helpers.ts');
+} from '../../gates/required-reviews-check';
+import * as gateHelpers from '../../gates/helpers';
 
-function toStringArray(value, options = {}) {
+type ClassificationResult = ReturnType<typeof classifyChange>;
+type CompileCommandProfile = ReturnType<typeof getCompileCommandProfile>;
+type WorkspaceSnapshot = ReturnType<typeof getWorkspaceSnapshot>;
+type PreflightContext = ReturnType<typeof getPreflightContext>;
+type OutputTelemetry = ReturnType<typeof buildOutputTelemetry>;
+type ReviewCompactionAudit = ReturnType<typeof auditReviewArtifactCompaction>;
+type CommandPolicyAudit = ReturnType<typeof auditCommandCompactness>;
+type AppendedTaskEventResult = NonNullable<ReturnType<typeof appendTaskEvent>>;
+
+interface ExpandValueListOptions {
+    splitDelimiters?: boolean;
+}
+
+interface ExecuteCommandOptions {
+    cwd?: string;
+    envPath?: string;
+    timeoutMs?: number;
+    signal?: AbortSignal | null;
+}
+
+interface AsyncCommandExecutionResult {
+    exitCode: number;
+    outputLines: string[];
+    timedOut: boolean;
+    cancelled: boolean;
+}
+
+interface SyncCommandExecutionResult {
+    exitCode: number;
+    outputLines: string[];
+    timedOut: boolean;
+}
+
+interface ClassifyChangeCommandOptions {
+    repoRoot?: string;
+    changedFiles?: unknown;
+    includeUntracked?: unknown;
+    useStaged?: boolean;
+    taskIntent?: unknown;
+    fastPathMaxFiles?: unknown;
+    fastPathMaxChangedLines?: unknown;
+    performanceHeuristicMinLines?: unknown;
+    taskId?: unknown;
+    outputPath?: string;
+    metricsPath?: string;
+    emitMetrics?: unknown;
+}
+
+interface CompileGateCommandOptions {
+    repoRoot?: string;
+    taskId?: unknown;
+    failTailLines?: unknown;
+    metricsPath?: string;
+    outputFiltersPath?: string;
+    compileEvidencePath?: string;
+    compileOutputPath?: string;
+    commandsPath?: string;
+    preflightPath?: string;
+    emitMetrics?: unknown;
+}
+
+interface DocImpactGateCommandOptions {
+    repoRoot?: string;
+    preflightPath?: string;
+    docsUpdated?: unknown;
+    taskId?: unknown;
+    decision?: string;
+    behaviorChanged?: unknown;
+    changelogUpdated?: unknown;
+    sensitiveScopeReviewed?: unknown;
+    sensitiveReviewed?: unknown;
+    rationale?: unknown;
+    artifactPath?: string;
+    metricsPath?: string;
+    emitMetrics?: unknown;
+}
+
+interface LogTaskEventCommandOptions {
+    repoRoot?: string;
+    eventsRoot?: string;
+    taskId?: unknown;
+    eventType?: unknown;
+    outcome?: unknown;
+    actor?: unknown;
+    message?: unknown;
+    detailsJson?: unknown;
+}
+
+interface RequiredReviewsCheckCommandOptions {
+    repoRoot?: string;
+    preflightPath?: string;
+    taskId?: unknown;
+    metricsPath?: string;
+    outputFiltersPath?: string;
+    skipReviews?: unknown;
+    codeReviewVerdict?: string;
+    dbReviewVerdict?: string;
+    securityReviewVerdict?: string;
+    refactorReviewVerdict?: string;
+    apiReviewVerdict?: string;
+    testReviewVerdict?: string;
+    performanceReviewVerdict?: string;
+    infraReviewVerdict?: string;
+    dependencyReviewVerdict?: string;
+    compileEvidencePath?: string;
+    skipReason?: unknown;
+    reviewsRoot?: string;
+    reviewEvidencePath?: string;
+    overrideArtifactPath?: string;
+    emitMetrics?: unknown;
+}
+
+interface HumanCommitOptions {
+    cwd?: string;
+}
+
+interface CommandAuditPayload {
+    command_text: string;
+    mode: string;
+    justification: string;
+}
+
+interface TerminalLogCleanupResult {
+    triggered: boolean;
+    attempted_paths: number;
+    discovered_paths: string[];
+    deleted_paths: string[];
+    missing_paths: string[];
+    errors: string[];
+}
+
+interface OutputTelemetrySummary extends Record<string, unknown> {
+    filter_mode: string;
+    fallback_mode: string;
+    parser_mode: string;
+    parser_name: string | null;
+    parser_strategy: string | null;
+}
+
+interface ReviewArtifactCheckEntry {
+    review: string;
+    path: string;
+    pass_token: string;
+    present: boolean;
+    token_found: boolean;
+    sha256: string | null;
+    review_context_path: string | null;
+    review_context_present: boolean;
+    review_context_valid: boolean;
+    compaction_audit: ReviewCompactionAudit | null;
+}
+
+interface ReviewArtifactsAuditResult {
+    reviews_root: string;
+    checked: ReviewArtifactCheckEntry[];
+    violations: string[];
+    compaction_warnings: string[];
+    compaction_warning_count: number;
+}
+
+interface CompileGateEvidenceResult {
+    task_id: string | null;
+    evidence_path: string | null;
+    evidence_hash: string | null;
+    evidence_status: string | null;
+    evidence_outcome: string | null;
+    evidence_task_id: string | null;
+    evidence_preflight_path: string | null;
+    evidence_preflight_hash: string | null;
+    evidence_source: string | null;
+    evidence_scope_detection_source: string | null;
+    evidence_scope_include_untracked: boolean | null;
+    evidence_scope_changed_files: string[];
+    evidence_scope_changed_files_count: number;
+    evidence_scope_changed_lines_total: number;
+    evidence_scope_changed_files_sha256: string | null;
+    evidence_scope_sha256: string | null;
+    status: string;
+}
+
+interface CompileScopeDriftResult {
+    status: string;
+    detection_source: string | null;
+    include_untracked: boolean | null;
+    current_scope: WorkspaceSnapshot | null;
+    evidence_scope_sha256: string | null;
+    evidence_changed_files_sha256: string | null;
+    evidence_changed_lines_total: number | null;
+    violations: string[];
+}
+
+interface ReviewEvidenceContext extends Record<string, unknown> {
+    preflight_path: string;
+    preflight_hash_sha256: string | null;
+    mode: string;
+    compile_evidence_path: string | null;
+    compile_evidence_hash_sha256: string | null;
+    output_filters_path: string | null;
+    scope_drift: CompileScopeDriftResult | null;
+    required_reviews: Record<string, boolean>;
+    verdicts: Record<string, string>;
+    review_checks: Record<string, unknown>;
+    skip_reviews: string[];
+    skip_reason: string;
+    override_artifact: string | null;
+    artifact_evidence: ReviewArtifactsAuditResult;
+    output_telemetry?: OutputTelemetry;
+}
+
+interface LogTaskEventCommandResult {
+    status: string;
+    task_id: string;
+    event_type: string;
+    outcome: string;
+    actor: string;
+    task_event_log_path: string;
+    all_tasks_log_path: string;
+    integrity?: AppendedTaskEventResult['integrity'];
+    warnings?: string[];
+    command_policy_audit?: CommandPolicyAudit;
+    terminal_log_cleanup?: TerminalLogCleanupResult;
+}
+
+const reviewContracts = REVIEW_CONTRACTS as Array<[string, string]>;
+
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+function requireResolvedPath(resolvedPath: string | null, label: string): string {
+    if (!resolvedPath) {
+        throw new Error(`${label} must not be empty.`);
+    }
+    return resolvedPath;
+}
+
+function appendMetricsIfEnabled(metricsPath: string | null, eventObject: Record<string, unknown>, emitMetrics: boolean): void {
+    if (!metricsPath) {
+        return;
+    }
+    gateHelpers.appendMetricsEvent(metricsPath, eventObject, emitMetrics);
+}
+
+function toOutputTelemetrySummary(telemetry: OutputTelemetry): OutputTelemetrySummary {
+    return {
+        ...telemetry,
+        filter_mode: typeof telemetry.filter_mode === 'string' ? telemetry.filter_mode : 'passthrough',
+        fallback_mode: typeof telemetry.fallback_mode === 'string' ? telemetry.fallback_mode : 'none',
+        parser_mode: typeof telemetry.parser_mode === 'string' ? telemetry.parser_mode : 'NONE',
+        parser_name: typeof telemetry.parser_name === 'string' ? telemetry.parser_name : null,
+        parser_strategy: typeof telemetry.parser_strategy === 'string' ? telemetry.parser_strategy : null
+    };
+}
+
+function toReviewCompactionAuditSummary(audit: ReviewCompactionAudit): ReviewCompactionAudit & { warning_count: number; warnings: string[] } {
+    return {
+        ...audit,
+        warning_count: typeof audit.warning_count === 'number' ? audit.warning_count : 0,
+        warnings: toStringArray(audit.warnings)
+    };
+}
+
+function toCommandPolicyAuditSummary(audit: CommandPolicyAudit): CommandPolicyAudit & { warning_count: number; warnings: string[] } {
+    return {
+        ...audit,
+        warning_count: typeof audit.warning_count === 'number' ? audit.warning_count : 0,
+        warnings: toStringArray(audit.warnings)
+    };
+}
+
+function toStringArray(value: unknown, options: gateHelpers.ToStringArrayOptions = {}): string[] {
     return gateHelpers.toStringArray(value, options);
 }
 
-function resolveOrchestratorRoot(repoRoot) {
+function resolveOrchestratorRoot(repoRoot: string): string {
     return gateHelpers.joinOrchestratorPath(repoRoot, '');
 }
 
-function normalizeOptionalPath(pathValue) {
+function normalizeOptionalPath(pathValue: unknown): string | null {
     if (!pathValue) {
         return null;
     }
     return gateHelpers.normalizePath(pathValue);
 }
 
-function ensureParentDirectory(filePath) {
+function ensureParentDirectory(filePath: string | null | undefined): void {
     if (!filePath) {
         return;
     }
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
 }
 
-function writeJsonArtifact(filePath, payload) {
+function writeJsonArtifact(filePath: string | null | undefined, payload: unknown): void {
     if (!filePath) {
         return;
     }
@@ -72,19 +330,19 @@ function writeJsonArtifact(filePath, payload) {
     fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }
 
-function resolvePathForWrite(pathValue, repoRoot) {
+function resolvePathForWrite(pathValue: string, repoRoot: string): string | null {
     return gateHelpers.resolvePathInsideRepo(pathValue, repoRoot, { allowMissing: true });
 }
 
-function resolveDefaultReviewsPath(repoRoot, suffix) {
+function resolveDefaultReviewsPath(repoRoot: string, suffix: string): string {
     return gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', suffix));
 }
 
-function resolveDefaultMetricsPath(repoRoot) {
+function resolveDefaultMetricsPath(repoRoot: string): string {
     return gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'metrics.jsonl'));
 }
 
-function parseJsonOption(value, label) {
+function parseJsonOption(value: unknown, label: string): unknown {
     const text = String(value || '').trim();
     if (!text) {
         return null;
@@ -92,15 +350,15 @@ function parseJsonOption(value, label) {
     try {
         return JSON.parse(text);
     } catch (error) {
-        throw new Error(`${label} is not valid JSON: ${String((error && error.message) || error)}`);
+        throw new Error(`${label} is not valid JSON: ${getErrorMessage(error)}`);
     }
 }
 
-function isPlainObject(value) {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function toDetailsMap(detailsObject) {
+function toDetailsMap(detailsObject: unknown): Record<string, unknown> {
     if (detailsObject == null) {
         return {};
     }
@@ -112,7 +370,7 @@ function toDetailsMap(detailsObject) {
     };
 }
 
-function getCommandAuditPayload(detailsObject) {
+function getCommandAuditPayload(detailsObject: unknown): CommandAuditPayload | null {
     if (!isPlainObject(detailsObject)) {
         return null;
     }
@@ -136,8 +394,8 @@ function getCommandAuditPayload(detailsObject) {
     };
 }
 
-function cleanupTerminalCompileLogs(repoRoot, taskId) {
-    const result = {
+function cleanupTerminalCompileLogs(repoRoot: string, taskId: string): TerminalLogCleanupResult {
+    const result: TerminalLogCleanupResult = {
         triggered: true,
         attempted_paths: 0,
         discovered_paths: [],
@@ -146,7 +404,7 @@ function cleanupTerminalCompileLogs(repoRoot, taskId) {
         errors: []
     };
     const reviewsRoot = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
-    const candidatePaths = new Set();
+    const candidatePaths = new Set<string>();
 
     if (fs.existsSync(reviewsRoot) && fs.statSync(reviewsRoot).isDirectory()) {
         const prefix = `${taskId}-compile-output`;
@@ -164,27 +422,35 @@ function cleanupTerminalCompileLogs(repoRoot, taskId) {
     if (fs.existsSync(compileEvidencePath) && fs.statSync(compileEvidencePath).isFile()) {
         try {
             const compileEvidence = JSON.parse(fs.readFileSync(compileEvidencePath, 'utf8'));
-            const compileOutputPath = compileEvidence && typeof compileEvidence.compile_output_path === 'string'
-                ? compileEvidence.compile_output_path
+            const compileEvidenceRecord = isPlainObject(compileEvidence) ? compileEvidence : {};
+            const compileOutputPath = typeof compileEvidenceRecord.compile_output_path === 'string'
+                ? compileEvidenceRecord.compile_output_path
                 : '';
             if (compileOutputPath.trim()) {
-                candidatePaths.add(gateHelpers.resolvePathInsideRepo(compileOutputPath, repoRoot, { allowMissing: true }));
+                const resolvedCompileOutputPath = gateHelpers.resolvePathInsideRepo(compileOutputPath, repoRoot, { allowMissing: true });
+                if (resolvedCompileOutputPath) {
+                    candidatePaths.add(resolvedCompileOutputPath);
+                }
             }
         } catch (error) {
             result.errors.push(
-                `Failed to read compile evidence '${gateHelpers.normalizePath(compileEvidencePath)}': ${String((error && error.message) || error)}`
+                `Failed to read compile evidence '${gateHelpers.normalizePath(compileEvidencePath)}': ${getErrorMessage(error)}`
             );
         }
     }
 
     for (const candidatePath of [...candidatePaths].sort()) {
-        let resolvedCandidatePath;
+        let resolvedCandidatePath: string | null;
         try {
             resolvedCandidatePath = gateHelpers.resolvePathInsideRepo(candidatePath, repoRoot, { allowMissing: true });
         } catch (error) {
             result.errors.push(
-                `Compile output path is invalid '${String(candidatePath)}': ${String((error && error.message) || error)}`
+                `Compile output path is invalid '${String(candidatePath)}': ${getErrorMessage(error)}`
             );
+            continue;
+        }
+        if (!resolvedCandidatePath) {
+            result.errors.push(`Compile output path is invalid '${String(candidatePath)}': resolved path is empty.`);
             continue;
         }
 
@@ -202,7 +468,7 @@ function cleanupTerminalCompileLogs(repoRoot, taskId) {
             result.deleted_paths.push(normalizedPath);
         } catch (error) {
             result.errors.push(
-                `Failed to delete compile output '${normalizedPath}': ${String((error && error.message) || error)}`
+                `Failed to delete compile output '${normalizedPath}': ${getErrorMessage(error)}`
             );
         }
     }
@@ -210,7 +476,7 @@ function cleanupTerminalCompileLogs(repoRoot, taskId) {
     return result;
 }
 
-function parseIntOption(value, fallback, minimum = 0) {
+function parseIntOption(value: unknown, fallback: number, minimum = 0): number {
     if (value == null || String(value).trim() === '') {
         return fallback;
     }
@@ -221,16 +487,16 @@ function parseIntOption(value, fallback, minimum = 0) {
     return parsed;
 }
 
-function parseBooleanOption(value, fallback) {
+function parseBooleanOption(value: unknown, fallback: boolean): boolean {
     if (value == null || String(value).trim() === '') {
         return fallback;
     }
     return gateHelpers.parseBool(value, fallback);
 }
 
-function expandValueList(value, options = {}) {
+function expandValueList(value: unknown, options: ExpandValueListOptions = {}): string[] {
     const splitDelimiters = options.splitDelimiters || false;
-    const values = [];
+    const values: string[] = [];
     for (const item of toStringArray(value)) {
         if (!splitDelimiters) {
             values.push(String(item).trim());
@@ -246,7 +512,7 @@ function expandValueList(value, options = {}) {
     return [...new Set(values.filter(Boolean))];
 }
 
-function splitOutputLines(text) {
+function splitOutputLines(text: unknown): string[] {
     if (!text) {
         return [];
     }
@@ -257,7 +523,13 @@ function splitOutputLines(text) {
     return lines;
 }
 
-function appendCompileOutputEntry(outputPath, commandIndex, totalCommands, command, outputLines) {
+function appendCompileOutputEntry(
+    outputPath: string | null | undefined,
+    commandIndex: number,
+    totalCommands: number,
+    command: string,
+    outputLines: string[]
+): void {
     if (!outputPath) {
         return;
     }
@@ -274,13 +546,13 @@ function appendCompileOutputEntry(outputPath, commandIndex, totalCommands, comma
     fs.appendFileSync(outputPath, `${lines.join(os.EOL)}${os.EOL}`, 'utf8');
 }
 
-function splitCommandLine(commandText) {
+export function splitCommandLine(commandText: unknown): string[] {
     const text = String(commandText || '').trim();
     if (!text) {
         return [];
     }
 
-    const tokens = [];
+    const tokens: string[] = [];
     let current = '';
     let quote = '';
     let escaping = false;
@@ -333,7 +605,7 @@ function splitCommandLine(commandText) {
     return tokens;
 }
 
-function findExecutableCandidate(candidatePath, extensions) {
+function findExecutableCandidate(candidatePath: string, extensions: string[]): string | null {
     if (path.extname(candidatePath)) {
         return fs.existsSync(candidatePath) && fs.statSync(candidatePath).isFile() ? candidatePath : null;
     }
@@ -346,7 +618,7 @@ function findExecutableCandidate(candidatePath, extensions) {
     return null;
 }
 
-function resolveExecutablePath(executableName, cwd, envPath) {
+export function resolveExecutablePath(executableName: unknown, cwd?: string, envPath?: string): string {
     const requested = String(executableName || '').trim();
     if (!requested) {
         throw new Error('Executable name must not be empty.');
@@ -384,7 +656,7 @@ function resolveExecutablePath(executableName, cwd, envPath) {
     throw new Error(`${requested} is required but was not found in PATH.`);
 }
 
-function quoteWindowsArgument(argument) {
+function quoteWindowsArgument(argument: string): string {
     const text = String(argument || '');
     if (!text || !/[ \t"]/u.test(text)) {
         return text;
@@ -427,7 +699,7 @@ function quoteWindowsArgument(argument) {
  * @param {AbortSignal}  [options.signal]     External cancellation signal
  * @returns {Promise<{exitCode: number, outputLines: string[], timedOut: boolean, cancelled: boolean}>}
  */
-async function executeCommandAsync(commandText, options = {}) {
+export async function executeCommandAsync(commandText: string, options: ExecuteCommandOptions = {}): Promise<AsyncCommandExecutionResult> {
     const cwd = options.cwd || process.cwd();
     const tokens = splitCommandLine(commandText);
     if (tokens.length === 0) {
@@ -438,12 +710,15 @@ async function executeCommandAsync(commandText, options = {}) {
     const args = tokens.slice(1);
     const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_COMPILE_TIMEOUT_MS;
 
-    let spawnCommand;
-    let spawnArgs;
+    let spawnCommand: string;
+    let spawnArgs: string[];
+    let useShell = false;
     if (process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(executablePath)) {
-        const commandLine = [quoteWindowsArgument(executablePath), ...args.map(quoteWindowsArgument)].join(' ');
-        spawnCommand = process.env.ComSpec || 'cmd.exe';
-        spawnArgs = ['/d', '/s', '/c', commandLine];
+        // On Windows, use shell mode with a pre-quoted command line so
+        // paths with spaces (e.g. C:\Program Files\nodejs\npm.CMD) work.
+        spawnCommand = `"${executablePath}" ${args.map(quoteWindowsArgument).join(' ')}`;
+        spawnArgs = [];
+        useShell = true;
     } else {
         spawnCommand = executablePath;
         spawnArgs = args;
@@ -452,7 +727,8 @@ async function executeCommandAsync(commandText, options = {}) {
     const result = await spawnStreamed(spawnCommand, spawnArgs, {
         cwd,
         timeoutMs,
-        signal: options.signal || null
+        signal: options.signal ?? undefined,
+        shell: useShell
     });
 
     if (result.timedOut) {
@@ -492,7 +768,7 @@ async function executeCommandAsync(commandText, options = {}) {
     };
 }
 
-function executeCommand(commandText, options = {}) {
+export function executeCommand(commandText: string, options: ExecuteCommandOptions = {}): SyncCommandExecutionResult {
     const cwd = options.cwd || process.cwd();
     const tokens = splitCommandLine(commandText);
     if (tokens.length === 0) {
@@ -503,15 +779,16 @@ function executeCommand(commandText, options = {}) {
     const args = tokens.slice(1);
     const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_COMPILE_TIMEOUT_MS;
 
-    let result;
+    let result: ReturnType<typeof spawnSyncWithTimeout>;
     if (process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(executablePath)) {
-        const commandLine = [quoteWindowsArgument(executablePath), ...args.map(quoteWindowsArgument)].join(' ');
-        result = spawnSyncWithTimeout(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', commandLine], {
+        const commandLine = `"${executablePath}" ${args.map(quoteWindowsArgument).join(' ')}`;
+        result = spawnSyncWithTimeout(commandLine, [], {
             cwd,
             windowsHide: true,
             encoding: 'utf8',
             stdio: ['ignore', 'pipe', 'pipe'],
-            timeoutMs
+            timeoutMs,
+            shell: true
         });
     } else {
         result = spawnSyncWithTimeout(executablePath, args, {
@@ -537,7 +814,8 @@ function executeCommand(commandText, options = {}) {
     }
 
     if (result.error) {
-        if (result.error.code === 'ENOENT') {
+        const errorCode = 'code' in result.error ? (result.error as NodeJS.ErrnoException).code : undefined;
+        if (errorCode === 'ENOENT') {
             throw new Error(`${tokens[0]} is required but was not found in PATH.`);
         }
         throw result.error;
@@ -550,7 +828,7 @@ function executeCommand(commandText, options = {}) {
     };
 }
 
-function getRenameCount(repoRoot, detectionSource, explicitChangedFiles) {
+function getRenameCount(repoRoot: string, detectionSource: string, explicitChangedFiles: string[]): number {
     const args = ['-C', repoRoot, 'diff', '--name-status', '--diff-filter=ACMRTUXB'];
     if (detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked') {
         args.push('--cached');
@@ -570,19 +848,29 @@ function getRenameCount(repoRoot, detectionSource, explicitChangedFiles) {
     if (result.error || result.status !== 0) {
         return 0;
     }
-    return splitOutputLines(result.stdout).filter(function (line) {
+    return splitOutputLines(result.stdout).filter(function (line: string) {
         return /^R\d*\t/i.test(line);
     }).length;
 }
 
-function resolveOutputFiltersPath(repoRoot, explicitPath) {
+function resolveOutputFiltersPath(repoRoot: string, explicitPath: string): string {
     if (explicitPath) {
-        return gateHelpers.resolvePathInsideRepo(explicitPath, repoRoot, { allowMissing: true });
+        return requireResolvedPath(
+            gateHelpers.resolvePathInsideRepo(explicitPath, repoRoot, { allowMissing: true }),
+            'OutputFiltersPath'
+        );
     }
     return gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'config', 'output-filters.json'));
 }
 
-function writeCompileEvidence(evidencePath, resolvedTaskId, gateContext, status, outcome, errorMessage) {
+function writeCompileEvidence(
+    evidencePath: string | null | undefined,
+    resolvedTaskId: string | null | undefined,
+    gateContext: Record<string, unknown>,
+    status: string,
+    outcome: string,
+    errorMessage: string | null
+): void {
     if (!evidencePath || !resolvedTaskId) {
         return;
     }
@@ -598,14 +886,14 @@ function writeCompileEvidence(evidencePath, resolvedTaskId, gateContext, status,
     writeJsonArtifact(evidencePath, payload);
 }
 
-function resolvePreflightPath(repoRoot, explicitPath, taskId) {
+function resolvePreflightPath(repoRoot: string, explicitPath: string, taskId: string): string {
     if (explicitPath) {
-        return gateHelpers.resolvePathInsideRepo(explicitPath, repoRoot);
+        return requireResolvedPath(gateHelpers.resolvePathInsideRepo(explicitPath, repoRoot), 'PreflightPath');
     }
     return resolveDefaultReviewsPath(repoRoot, `${taskId}-preflight.json`);
 }
 
-function runClassifyChangeCommand(options) {
+export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions): { outputText: string } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const explicitChangedFiles = expandValueList(options.changedFiles, { splitDelimiters: true });
@@ -617,7 +905,7 @@ function runClassifyChangeCommand(options) {
     const renameCount = getRenameCount(repoRoot, workspaceSnapshot.detection_source, workspaceSnapshot.changed_files);
     const classificationConfig = getClassificationConfig(repoRoot);
     const reviewCapabilities = getReviewCapabilities(repoRoot);
-    const result = classifyChange({
+    const result: ClassificationResult & { task_id?: string } = classifyChange({
         normalizedFiles: workspaceSnapshot.changed_files,
         taskIntent: String(options.taskIntent || ''),
         fastPathMaxFiles: parseIntOption(options.fastPathMaxFiles, 2, 1),
@@ -646,7 +934,7 @@ function runClassifyChangeCommand(options) {
     const metricsPath = options.metricsPath
         ? resolvePathForWrite(options.metricsPath, repoRoot)
         : resolvePathForWrite(classificationConfig.metrics_path, repoRoot);
-    gateHelpers.appendMetricsEvent(metricsPath, {
+    appendMetricsIfEnabled(metricsPath, {
         timestamp_utc: new Date().toISOString(),
         event_type: 'preflight_classification',
         repo_root: gateHelpers.normalizePath(repoRoot),
@@ -677,53 +965,57 @@ function runClassifyChangeCommand(options) {
     };
 }
 
-async function runCompileGateCommand(options) {
+export async function runCompileGateCommand(options: CompileGateCommandOptions): Promise<{ outputLines: string[]; exitCode: number }> {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const resolvedTaskId = assertValidTaskId(String(options.taskId || '').trim());
     const failTailLines = parseIntOption(options.failTailLines, 50, 1);
     const metricsPath = options.metricsPath
-        ? resolvePathForWrite(options.metricsPath, repoRoot)
+        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
         : resolveDefaultMetricsPath(repoRoot);
     const outputFiltersPath = resolveOutputFiltersPath(repoRoot, options.outputFiltersPath || '');
     const compileEvidencePath = options.compileEvidencePath
-        ? resolvePathForWrite(options.compileEvidencePath, repoRoot)
+        ? requireResolvedPath(resolvePathForWrite(options.compileEvidencePath, repoRoot), 'CompileEvidencePath')
         : resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-compile-gate.json`);
     const compileOutputPath = options.compileOutputPath
-        ? resolvePathForWrite(options.compileOutputPath, repoRoot)
+        ? requireResolvedPath(resolvePathForWrite(options.compileOutputPath, repoRoot), 'CompileOutputPath')
         : resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-compile-output.log`);
 
-    let resolvedCommandsPath = null;
-    let compileCommands = [];
-    let resolvedPreflightPath = null;
-    let preflightHash = null;
-    let preflightContext = null;
-    let workspaceSnapshot = null;
+    let resolvedCommandsPath: string | null = null;
+    let compileCommands: string[] = [];
+    let resolvedPreflightPath: string | null = null;
+    let preflightHash: string | null = null;
+    let preflightContext: PreflightContext | null = null;
+    let workspaceSnapshot: WorkspaceSnapshot | null = null;
     let warningCount = 0;
     let errorCount = 0;
     let exitCode = 0;
-    let exceptionMessage = null;
-    let selectedCommandProfile = null;
+    let exceptionMessage: string | null = null;
+    let selectedCommandProfile: CompileCommandProfile | null = null;
     let selectedCommandIndex = 0;
-    const compileOutputLines = [];
+    const compileOutputLines: string[] = [];
     const startedAt = Date.now();
 
     try {
         const commandsPathValue = options.commandsPath
             ? options.commandsPath
             : gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'docs', 'agent-rules', '40-commands.md'));
-        resolvedCommandsPath = gateHelpers.resolvePathInsideRepo(commandsPathValue, repoRoot);
+        resolvedCommandsPath = requireResolvedPath(
+            gateHelpers.resolvePathInsideRepo(commandsPathValue, repoRoot),
+            'CommandsPath'
+        );
         compileCommands = getCompileCommands(resolvedCommandsPath);
         resolvedPreflightPath = resolvePreflightPath(repoRoot, options.preflightPath || '', resolvedTaskId);
         preflightContext = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
+        const preflightChangedFiles = expandValueList(preflightContext.changed_files, { splitDelimiters: false });
         workspaceSnapshot = getWorkspaceSnapshot(
             repoRoot,
             preflightContext.detection_source,
             preflightContext.include_untracked,
-            preflightContext.changed_files
+            preflightChangedFiles
         );
 
-        const scopeViolations = [];
+        const scopeViolations: string[] = [];
         if (workspaceSnapshot.changed_files_sha256 !== preflightContext.changed_files_sha256) {
             scopeViolations.push('Preflight changed_files differ from current workspace snapshot.');
         }
@@ -766,7 +1058,7 @@ async function runCompileGateCommand(options) {
             }
         }
     } catch (error) {
-        exceptionMessage = String((error && error.message) || error);
+        exceptionMessage = getErrorMessage(error);
         if (exitCode === 0) {
             exitCode = 1;
         }
@@ -795,12 +1087,13 @@ async function runCompileGateCommand(options) {
         filterMode: filteredOutput.filter_mode,
         fallbackMode: filteredOutput.fallback_mode,
         parserMode: filteredOutput.parser_mode,
-        parserName: filteredOutput.parser_name,
-        parserStrategy: filteredOutput.parser_strategy
+        parserName: filteredOutput.parser_name ?? undefined,
+        parserStrategy: filteredOutput.parser_strategy ?? undefined
     });
+    const telemetrySummary = toOutputTelemetrySummary(outputTelemetry);
     const visibleSavingsLine = formatVisibleSavingsLine(outputTelemetry);
 
-    const gateContext = {
+    const gateContext: Record<string, unknown> = {
         commands_path: normalizeOptionalPath(resolvedCommandsPath),
         compile_commands: compileCommands,
         compile_command: compileCommands.length > 0 ? compileCommands[0] : null,
@@ -844,7 +1137,7 @@ async function runCompileGateCommand(options) {
             error: exceptionMessage,
             ...gateContext
         };
-        gateHelpers.appendMetricsEvent(metricsPath, failureEvent, parseBooleanOption(options.emitMetrics, true));
+        appendMetricsIfEnabled(metricsPath, failureEvent, parseBooleanOption(options.emitMetrics, true));
         writeCompileEvidence(compileEvidencePath, resolvedTaskId, gateContext, 'FAILED', 'FAIL', exceptionMessage);
         appendTaskEvent(orchestratorRoot, resolvedTaskId, 'COMPILE_GATE_FAILED', 'FAIL', 'Compile gate failed.', failureEvent);
 
@@ -856,12 +1149,12 @@ async function runCompileGateCommand(options) {
             outputLines.push(`CompileOutputPath: ${gateHelpers.normalizePath(compileOutputPath)}`);
         }
         if (filteredOutput.lines.length > 0) {
-            if (outputTelemetry.parser_mode === 'FULL' || outputTelemetry.parser_mode === 'DEGRADED') {
+            if (telemetrySummary.parser_mode === 'FULL' || telemetrySummary.parser_mode === 'DEGRADED') {
                 outputLines.push(
-                    `CompileOutputCompactSummary: parser=${outputTelemetry.parser_name} mode=${outputTelemetry.parser_mode} strategy=${outputTelemetry.parser_strategy}`
+                    `CompileOutputCompactSummary: parser=${telemetrySummary.parser_name} mode=${telemetrySummary.parser_mode} strategy=${telemetrySummary.parser_strategy}`
                 );
-            } else if (outputTelemetry.filter_mode.startsWith('profile:') && outputTelemetry.fallback_mode === 'none') {
-                outputLines.push(`CompileOutputFilteredLines: profile=${outputTelemetry.filter_mode}`);
+            } else if (telemetrySummary.filter_mode.startsWith('profile:') && telemetrySummary.fallback_mode === 'none') {
+                outputLines.push(`CompileOutputFilteredLines: profile=${telemetrySummary.filter_mode}`);
             } else {
                 outputLines.push('CompileOutputFilteredLines:');
             }
@@ -881,7 +1174,7 @@ async function runCompileGateCommand(options) {
         task_id: resolvedTaskId,
         ...gateContext
     };
-    gateHelpers.appendMetricsEvent(metricsPath, successEvent, parseBooleanOption(options.emitMetrics, true));
+    appendMetricsIfEnabled(metricsPath, successEvent, parseBooleanOption(options.emitMetrics, true));
     writeCompileEvidence(compileEvidencePath, resolvedTaskId, gateContext, 'PASSED', 'PASS', null);
     appendTaskEvent(orchestratorRoot, resolvedTaskId, 'COMPILE_GATE_PASSED', 'PASS', 'Compile gate passed.', successEvent);
 
@@ -898,12 +1191,15 @@ async function runCompileGateCommand(options) {
     return { outputLines, exitCode: 0 };
 }
 
-function runDocImpactGateCommand(options) {
+export function runDocImpactGateCommand(options: DocImpactGateCommandOptions): { outputLines: string[]; exitCode: number } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
-    const resolvedPreflightPath = gateHelpers.resolvePathInsideRepo(String(options.preflightPath || '').trim(), repoRoot);
+    const resolvedPreflightPath = requireResolvedPath(
+        gateHelpers.resolvePathInsideRepo(String(options.preflightPath || '').trim(), repoRoot),
+        'PreflightPath'
+    );
     const docsUpdated = expandValueList(options.docsUpdated, { splitDelimiters: false });
-    const artifact = assessDocImpact({
+    const docImpactOptions = {
         preflightPath: resolvedPreflightPath,
         taskId: String(options.taskId || ''),
         decision: options.decision || 'NO_DOC_UPDATES',
@@ -913,20 +1209,21 @@ function runDocImpactGateCommand(options) {
         docsUpdated,
         rationale: String(options.rationale || ''),
         repoRoot
-    });
+    };
+    const artifact = assessDocImpact(docImpactOptions);
 
     const resolvedTaskId = artifact.task_id || null;
     const artifactPath = options.artifactPath
-        ? resolvePathForWrite(options.artifactPath, repoRoot)
+        ? requireResolvedPath(resolvePathForWrite(options.artifactPath, repoRoot), 'ArtifactPath')
         : (resolvedTaskId ? resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-doc-impact.json`) : null);
     if (artifactPath) {
         writeJsonArtifact(artifactPath, artifact);
     }
 
     const metricsPath = options.metricsPath
-        ? resolvePathForWrite(options.metricsPath, repoRoot)
+        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
         : resolveDefaultMetricsPath(repoRoot);
-    gateHelpers.appendMetricsEvent(metricsPath, {
+    appendMetricsIfEnabled(metricsPath, {
         timestamp_utc: new Date().toISOString(),
         event_type: 'doc_impact_gate_check',
         status: artifact.status,
@@ -951,7 +1248,7 @@ function runDocImpactGateCommand(options) {
             outputLines: [
                 'DOC_IMPACT_GATE_FAILED',
                 'Violations:',
-                ...artifact.violations.map(function (item) { return `- ${item}`; })
+                ...artifact.violations.map(function (item: string) { return `- ${item}`; })
             ],
             exitCode: 1
         };
@@ -964,11 +1261,11 @@ function runDocImpactGateCommand(options) {
     return { outputLines, exitCode: 0 };
 }
 
-function runLogTaskEventCommand(options) {
+export function runLogTaskEventCommand(options: LogTaskEventCommandOptions): { outputText: string; exitCode: number } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const eventsRoot = options.eventsRoot
-        ? resolvePathForWrite(options.eventsRoot, repoRoot)
+        ? requireResolvedPath(resolvePathForWrite(options.eventsRoot, repoRoot), 'EventsRoot')
         : gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
     const eventType = String(options.eventType || '').trim();
@@ -989,8 +1286,8 @@ function runLogTaskEventCommand(options) {
 
     fs.mkdirSync(eventsRoot, { recursive: true });
 
-    let eventDetails = details;
-    let terminalLogCleanup = {
+    let eventDetails: unknown = details;
+    let terminalLogCleanup: TerminalLogCleanupResult = {
         triggered: false,
         attempted_paths: 0,
         discovered_paths: [],
@@ -1006,7 +1303,7 @@ function runLogTaskEventCommand(options) {
         eventDetails = detailsMap;
     }
 
-    let commandCompactnessAudit = null;
+    let commandCompactnessAudit: CommandPolicyAudit | null = null;
     const auditPayload = getCommandAuditPayload(eventDetails);
     if (auditPayload) {
         commandCompactnessAudit = auditCommandCompactness(auditPayload.command_text, {
@@ -1031,7 +1328,7 @@ function runLogTaskEventCommand(options) {
             eventsRoot
         }
     );
-    const result = {
+    const result: LogTaskEventCommandResult = {
         status: 'TASK_EVENT_LOGGED',
         task_id: taskId,
         event_type: eventType,
@@ -1049,8 +1346,9 @@ function runLogTaskEventCommand(options) {
     }
     if (commandCompactnessAudit) {
         result.command_policy_audit = commandCompactnessAudit;
-        if (commandCompactnessAudit.warning_count > 0) {
-            result.warnings = [...(result.warnings || []), ...(commandCompactnessAudit.warnings || [])];
+        const auditSummary = toCommandPolicyAuditSummary(commandCompactnessAudit);
+        if (auditSummary.warning_count > 0) {
+            result.warnings = [...(result.warnings || []), ...auditSummary.warnings];
         }
     }
     if (isTerminalEvent) {
@@ -1068,7 +1366,7 @@ function runLogTaskEventCommand(options) {
     };
 }
 
-function resolveReviewContextPath(reviewsRoot, taskId, reviewKey) {
+function resolveReviewContextPath(reviewsRoot: string, taskId: string | null, reviewKey: string): string {
     const preferred = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
     if (fs.existsSync(preferred) && fs.statSync(preferred).isFile()) {
         return preferred;
@@ -1076,20 +1374,30 @@ function resolveReviewContextPath(reviewsRoot, taskId, reviewKey) {
     return path.join(reviewsRoot, `${taskId}-${reviewKey}-context.json`);
 }
 
-function testReviewArtifacts(repoRoot, resolvedTaskId, requiredReviews, verdicts, skipReviewsList, reviewsRootValue) {
+function testReviewArtifacts(
+    repoRoot: string,
+    resolvedTaskId: string | null,
+    requiredReviews: Record<string, boolean>,
+    verdicts: Record<string, string>,
+    skipReviewsList: string[],
+    reviewsRootValue: string
+): ReviewArtifactsAuditResult {
     const reviewsRoot = reviewsRootValue
-        ? gateHelpers.resolvePathInsideRepo(reviewsRootValue, repoRoot, { allowMissing: true })
+        ? requireResolvedPath(
+            gateHelpers.resolvePathInsideRepo(reviewsRootValue, repoRoot, { allowMissing: true }),
+            'ReviewsRoot'
+        )
         : gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
-    const result = {
+    const result: ReviewArtifactsAuditResult = {
         reviews_root: gateHelpers.normalizePath(reviewsRoot),
         checked: [],
         violations: [],
         compaction_warnings: [],
         compaction_warning_count: 0
     };
-    const skipSet = new Set(skipReviewsList.map(function (item) { return String(item || '').toLowerCase(); }));
+    const skipSet = new Set(skipReviewsList.map(function (item: string) { return String(item || '').toLowerCase(); }));
 
-    for (const [reviewKey, passToken] of REVIEW_CONTRACTS) {
+    for (const [reviewKey, passToken] of reviewContracts) {
         if (!requiredReviews[reviewKey]) {
             continue;
         }
@@ -1099,7 +1407,7 @@ function testReviewArtifacts(repoRoot, resolvedTaskId, requiredReviews, verdicts
         }
 
         const artifactPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}.md`);
-        const entry = {
+        const entry: ReviewArtifactCheckEntry = {
             review: reviewKey,
             path: gateHelpers.normalizePath(artifactPath),
             pass_token: passToken,
@@ -1128,15 +1436,16 @@ function testReviewArtifacts(repoRoot, resolvedTaskId, requiredReviews, verdicts
 
         const reviewContextPath = resolveReviewContextPath(reviewsRoot, resolvedTaskId, reviewKey);
         entry.review_context_path = gateHelpers.normalizePath(reviewContextPath);
-        let reviewContext = null;
+        let reviewContext: Record<string, unknown> | undefined;
         if (fs.existsSync(reviewContextPath) && fs.statSync(reviewContextPath).isFile()) {
             entry.review_context_present = true;
             try {
-                reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+                const parsedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+                reviewContext = isPlainObject(parsedReviewContext) ? parsedReviewContext : undefined;
                 entry.review_context_valid = true;
             } catch (error) {
                 result.compaction_warnings.push(
-                    `Review context artifact '${entry.review_context_path}' is invalid JSON: ${String((error && error.message) || error)}`
+                    `Review context artifact '${entry.review_context_path}' is invalid JSON: ${getErrorMessage(error)}`
                 );
             }
         }
@@ -1147,8 +1456,9 @@ function testReviewArtifacts(repoRoot, resolvedTaskId, requiredReviews, verdicts
             reviewContext
         });
         entry.compaction_audit = compactionAudit;
-        if (compactionAudit.warning_count > 0) {
-            result.compaction_warnings.push(...compactionAudit.warnings);
+        const compactionSummary = toReviewCompactionAuditSummary(compactionAudit);
+        if (compactionSummary.warning_count > 0) {
+            result.compaction_warnings.push(...compactionSummary.warnings);
         }
 
         result.checked.push(entry);
@@ -1158,8 +1468,14 @@ function testReviewArtifacts(repoRoot, resolvedTaskId, requiredReviews, verdicts
     return result;
 }
 
-function getCompileGateEvidence(repoRoot, resolvedTaskId, preflightPathValue, preflightHashValue, compileEvidencePathValue) {
-    const result = {
+function getCompileGateEvidence(
+    repoRoot: string,
+    resolvedTaskId: string | null,
+    preflightPathValue: string,
+    preflightHashValue: string | null,
+    compileEvidencePathValue: string
+): CompileGateEvidenceResult {
+    const result: CompileGateEvidenceResult = {
         task_id: resolvedTaskId,
         evidence_path: null,
         evidence_hash: null,
@@ -1185,7 +1501,10 @@ function getCompileGateEvidence(repoRoot, resolvedTaskId, preflightPathValue, pr
     }
 
     const resolvedEvidencePath = compileEvidencePathValue
-        ? gateHelpers.resolvePathInsideRepo(compileEvidencePathValue, repoRoot, { allowMissing: true })
+        ? requireResolvedPath(
+            gateHelpers.resolvePathInsideRepo(compileEvidencePathValue, repoRoot, { allowMissing: true }),
+            'CompileEvidencePath'
+        )
         : resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-compile-gate.json`);
     result.evidence_path = gateHelpers.normalizePath(resolvedEvidencePath);
 
@@ -1196,9 +1515,10 @@ function getCompileGateEvidence(repoRoot, resolvedTaskId, preflightPathValue, pr
 
     result.evidence_hash = gateHelpers.fileSha256(resolvedEvidencePath);
 
-    let evidenceObject;
+    let evidenceObject: Record<string, unknown>;
     try {
-        evidenceObject = JSON.parse(fs.readFileSync(resolvedEvidencePath, 'utf8'));
+        const parsedEvidence = JSON.parse(fs.readFileSync(resolvedEvidencePath, 'utf8'));
+        evidenceObject = isPlainObject(parsedEvidence) ? parsedEvidence : {};
     } catch (_error) {
         result.status = 'EVIDENCE_INVALID_JSON';
         return result;
@@ -1213,20 +1533,20 @@ function getCompileGateEvidence(repoRoot, resolvedTaskId, preflightPathValue, pr
     result.evidence_scope_detection_source = String(evidenceObject.scope_detection_source || '');
     result.evidence_scope_include_untracked = evidenceObject.scope_include_untracked == null ? true : !!evidenceObject.scope_include_untracked;
     result.evidence_scope_changed_files = expandValueList(evidenceObject.scope_changed_files || [], { splitDelimiters: false });
-    result.evidence_scope_changed_files_count = Number.parseInt(evidenceObject.scope_changed_files_count || 0, 10) || 0;
-    result.evidence_scope_changed_lines_total = Number.parseInt(evidenceObject.scope_changed_lines_total || 0, 10) || 0;
+    result.evidence_scope_changed_files_count = Number.parseInt(String(evidenceObject.scope_changed_files_count || 0), 10) || 0;
+    result.evidence_scope_changed_lines_total = Number.parseInt(String(evidenceObject.scope_changed_lines_total || 0), 10) || 0;
     result.evidence_scope_changed_files_sha256 = String(evidenceObject.scope_changed_files_sha256 || '');
     result.evidence_scope_sha256 = String(evidenceObject.scope_sha256 || '');
 
-    if (result.evidence_task_id.trim() !== resolvedTaskId) {
+    if ((result.evidence_task_id || '').trim() !== resolvedTaskId) {
         result.status = 'EVIDENCE_TASK_MISMATCH';
         return result;
     }
-    if (result.evidence_source.trim().toLowerCase() !== 'compile-gate') {
+    if ((result.evidence_source || '').trim().toLowerCase() !== 'compile-gate') {
         result.status = 'EVIDENCE_SOURCE_INVALID';
         return result;
     }
-    if (result.evidence_preflight_hash.trim().toLowerCase() !== String(preflightHashValue || '').trim().toLowerCase()) {
+    if ((result.evidence_preflight_hash || '').trim().toLowerCase() !== String(preflightHashValue || '').trim().toLowerCase()) {
         result.status = 'EVIDENCE_PREFLIGHT_HASH_MISMATCH';
         return result;
     }
@@ -1241,7 +1561,7 @@ function getCompileGateEvidence(repoRoot, resolvedTaskId, preflightPathValue, pr
         result.status = 'EVIDENCE_SCOPE_MISSING';
         return result;
     }
-    if (result.evidence_status.trim().toUpperCase() === 'PASSED' && result.evidence_outcome.trim().toUpperCase() === 'PASS') {
+    if ((result.evidence_status || '').trim().toUpperCase() === 'PASSED' && (result.evidence_outcome || '').trim().toUpperCase() === 'PASS') {
         result.status = 'PASS';
         return result;
     }
@@ -1249,8 +1569,8 @@ function getCompileGateEvidence(repoRoot, resolvedTaskId, preflightPathValue, pr
     return result;
 }
 
-function testCompileScopeDrift(repoRoot, compileEvidence) {
-    const result = {
+function testCompileScopeDrift(repoRoot: string, compileEvidence: CompileGateEvidenceResult | null): CompileScopeDriftResult {
+    const result: CompileScopeDriftResult = {
         status: 'UNKNOWN',
         detection_source: null,
         include_untracked: null,
@@ -1298,7 +1618,14 @@ function testCompileScopeDrift(repoRoot, compileEvidence) {
     return result;
 }
 
-function writeReviewEvidence(evidencePath, resolvedTaskId, context, status, outcome, violations) {
+function writeReviewEvidence(
+    evidencePath: string | null | undefined,
+    resolvedTaskId: string | null | undefined,
+    context: Record<string, unknown>,
+    status: string,
+    outcome: string,
+    violations: string[] | null | undefined
+): void {
     if (!evidencePath || !resolvedTaskId) {
         return;
     }
@@ -1313,28 +1640,32 @@ function writeReviewEvidence(evidencePath, resolvedTaskId, context, status, outc
     });
 }
 
-function runRequiredReviewsCheckCommand(options) {
+export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckCommandOptions): { outputLines: string[]; exitCode: number } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
-    const resolvedPreflightPath = gateHelpers.resolvePathInsideRepo(String(options.preflightPath || '').trim(), repoRoot);
+    const resolvedPreflightPath = requireResolvedPath(
+        gateHelpers.resolvePathInsideRepo(String(options.preflightPath || '').trim(), repoRoot),
+        'PreflightPath'
+    );
     const validatedBase = validatePreflightForReview(resolvedPreflightPath, String(options.taskId || ''));
-    const preflight = validatedBase.preflight || {};
+    const preflight = isPlainObject(validatedBase.preflight) ? validatedBase.preflight : {};
+    const preflightMetrics = isPlainObject(preflight.metrics) ? preflight.metrics : null;
     const validatedPreflight = {
         ...validatedBase,
         mode: String(preflight.mode || 'FULL_PATH').trim() || 'FULL_PATH',
         changed_files_count: Array.isArray(preflight.changed_files) ? preflight.changed_files.length : 0,
-        changed_lines_total: preflight.metrics && typeof preflight.metrics.changed_lines_total === 'number'
-            ? preflight.metrics.changed_lines_total
+        changed_lines_total: preflightMetrics && typeof preflightMetrics.changed_lines_total === 'number'
+            ? preflightMetrics.changed_lines_total
             : 0
     };
 
     const resolvedTaskId = validatedPreflight.resolved_task_id;
     const metricsPath = options.metricsPath
-        ? resolvePathForWrite(options.metricsPath, repoRoot)
+        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
         : resolveDefaultMetricsPath(repoRoot);
     const outputFiltersPath = resolveOutputFiltersPath(repoRoot, options.outputFiltersPath || '');
     const skipReviewsList = parseSkipReviews(options.skipReviews || '');
-    const verdicts = {
+    const verdicts: Record<string, string> = {
         code: options.codeReviewVerdict || 'NOT_REQUIRED',
         db: options.dbReviewVerdict || 'NOT_REQUIRED',
         security: options.securityReviewVerdict || 'NOT_REQUIRED',
@@ -1453,11 +1784,11 @@ function runRequiredReviewsCheckCommand(options) {
     const allViolations = [...baseResult.violations, ...artifactEvidence.violations];
     const status = allViolations.length > 0 ? 'FAILED' : 'PASSED';
     const reviewEvidencePath = options.reviewEvidencePath
-        ? resolvePathForWrite(options.reviewEvidencePath, repoRoot)
+        ? requireResolvedPath(resolvePathForWrite(options.reviewEvidencePath, repoRoot), 'ReviewEvidencePath')
         : (resolvedTaskId ? resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-review-gate.json`) : null);
 
     let overrideArtifactPath = options.overrideArtifactPath
-        ? resolvePathForWrite(options.overrideArtifactPath, repoRoot)
+        ? requireResolvedPath(resolvePathForWrite(options.overrideArtifactPath, repoRoot), 'OverrideArtifactPath')
         : '';
 
     if (status === 'PASSED' && skipCode && resolvedTaskId) {
@@ -1488,7 +1819,7 @@ function runRequiredReviewsCheckCommand(options) {
         });
     }
 
-    const reviewEvidenceContext = {
+    const reviewEvidenceContext: ReviewEvidenceContext = {
         preflight_path: gateHelpers.normalizePath(validatedPreflight.preflight_path),
         preflight_hash_sha256: validatedPreflight.preflight_hash,
         mode: validatedPreflight.mode,
@@ -1510,15 +1841,15 @@ function runRequiredReviewsCheckCommand(options) {
             'REVIEW_GATE_FAILED',
             `Mode: ${validatedPreflight.mode}`,
             'Violations:',
-            ...allViolations.map(function (item) { return `- ${item}`; })
+            ...allViolations.map(function (item: string) { return `- ${item}`; })
         ];
         const filteredFailureOutput = applyOutputFilterProfile(failureOutputLines, outputFiltersPath, 'review_gate_failure_console');
         const failureTelemetry = buildOutputTelemetry(failureOutputLines, filteredFailureOutput.lines, {
             filterMode: filteredFailureOutput.filter_mode,
             fallbackMode: filteredFailureOutput.fallback_mode,
             parserMode: filteredFailureOutput.parser_mode,
-            parserName: filteredFailureOutput.parser_name,
-            parserStrategy: filteredFailureOutput.parser_strategy
+            parserName: filteredFailureOutput.parser_name ?? undefined,
+            parserStrategy: filteredFailureOutput.parser_strategy ?? undefined
         });
         const failureVisibleSavingsLine = formatVisibleSavingsLine(failureTelemetry);
         reviewEvidenceContext.output_telemetry = failureTelemetry;
@@ -1540,7 +1871,7 @@ function runRequiredReviewsCheckCommand(options) {
             violations: allViolations,
             ...failureTelemetry
         };
-        gateHelpers.appendMetricsEvent(metricsPath, failureEvent, parseBooleanOption(options.emitMetrics, true));
+        appendMetricsIfEnabled(metricsPath, failureEvent, parseBooleanOption(options.emitMetrics, true));
         if (resolvedTaskId) {
             appendTaskEvent(orchestratorRoot, resolvedTaskId, 'REVIEW_GATE_FAILED', 'FAIL', 'Required reviews gate failed.', {
                 review_evidence_path: normalizeOptionalPath(reviewEvidencePath),
@@ -1580,8 +1911,8 @@ function runRequiredReviewsCheckCommand(options) {
         filterMode: filteredSuccessOutput.filter_mode,
         fallbackMode: filteredSuccessOutput.fallback_mode,
         parserMode: filteredSuccessOutput.parser_mode,
-        parserName: filteredSuccessOutput.parser_name,
-        parserStrategy: filteredSuccessOutput.parser_strategy
+        parserName: filteredSuccessOutput.parser_name ?? undefined,
+        parserStrategy: filteredSuccessOutput.parser_strategy ?? undefined
     });
     const successVisibleSavingsLine = formatVisibleSavingsLine(successTelemetry);
     reviewEvidenceContext.output_telemetry = successTelemetry;
@@ -1603,7 +1934,7 @@ function runRequiredReviewsCheckCommand(options) {
         artifact_evidence: artifactEvidence,
         ...successTelemetry
     };
-    gateHelpers.appendMetricsEvent(metricsPath, successEvent, parseBooleanOption(options.emitMetrics, true));
+    appendMetricsIfEnabled(metricsPath, successEvent, parseBooleanOption(options.emitMetrics, true));
     if (resolvedTaskId) {
         appendTaskEvent(
             orchestratorRoot,
@@ -1631,8 +1962,8 @@ function runRequiredReviewsCheckCommand(options) {
     return { outputLines, exitCode: 0 };
 }
 
-async function runHumanCommitCommand(gitArgs, options = {}) {
-    const finalArgs = toStringArray(gitArgs).filter(function (item) {
+export async function runHumanCommitCommand(gitArgs: unknown, options: HumanCommitOptions = {}): Promise<number> {
+    const finalArgs = toStringArray(gitArgs).filter(function (item: string) {
         return String(item || '').trim() !== '';
     });
     if (finalArgs.length === 0) {
@@ -1648,16 +1979,3 @@ async function runHumanCommitCommand(gitArgs, options = {}) {
 
     return result.exitCode;
 }
-
-module.exports = {
-    executeCommand,
-    executeCommandAsync,
-    resolveExecutablePath,
-    runClassifyChangeCommand,
-    runCompileGateCommand,
-    runDocImpactGateCommand,
-    runHumanCommitCommand,
-    runLogTaskEventCommand,
-    runRequiredReviewsCheckCommand,
-    splitCommandLine
-};

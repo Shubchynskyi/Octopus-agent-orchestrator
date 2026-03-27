@@ -1,9 +1,8 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const { assertValidTaskId, inspectTaskEventFile } = require('../gate-runtime/task-events.ts');
-const { coerceIntLike } = require('../gate-runtime/token-telemetry.ts');
-const { resolvePathInsideRepo, toPosix } = require('./helpers.ts');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-events';
+import { coerceIntLike } from '../gate-runtime/token-telemetry';
+import { resolvePathInsideRepo, toPosix } from './helpers';
 
 const REVIEW_CONTEXT_LABELS = Object.freeze({
     code: 'code review context',
@@ -20,7 +19,7 @@ const REVIEW_CONTEXT_LABELS = Object.freeze({
 /**
  * Parse an ISO 8601 timestamp to a Date, matching Python parse_timestamp.
  */
-function parseTimestamp(value) {
+export function parseTimestamp(value: unknown): Date {
     if (value == null) return new Date(0);
     const text = String(value).trim();
     if (!text) return new Date(0);
@@ -37,7 +36,7 @@ function parseTimestamp(value) {
 /**
  * Format a timestamp to ISO 8601 UTC string.
  */
-function formatTimestamp(value) {
+export function formatTimestamp(value: unknown): string | null {
     if (value == null) return null;
     if (value instanceof Date) {
         if (isNaN(value.getTime())) return null;
@@ -54,14 +53,19 @@ function formatTimestamp(value) {
     }
 }
 
+interface AuditCommandOptions {
+    mode?: string;
+    justification?: string;
+}
+
 /**
  * Audit command compactness (simple policy check).
  * Matches Python audit_command_compactness shape.
  */
-function auditCommandCompactness(commandText, options = {}) {
+export function auditCommandCompactness(commandText: string, options: AuditCommandOptions = {}) {
     const mode = options.mode || 'scan';
     const justification = options.justification || '';
-    const warnings = [];
+    const warnings: string[] = [];
 
     if (!commandText || !commandText.trim()) {
         return { command: commandText, mode, justification, warnings, warning_count: 0 };
@@ -101,11 +105,11 @@ function auditCommandCompactness(commandText, options = {}) {
 /**
  * Extract command audit from event details, matching Python get_command_audit_from_details.
  */
-function getCommandAuditFromDetails(details) {
+export function getCommandAuditFromDetails(details: Record<string, unknown> | null | undefined) {
     if (!details || typeof details !== 'object') return null;
 
     const existing = details.command_policy_audit;
-    if (existing && typeof existing === 'object') return existing;
+    if (existing && typeof existing === 'object') return existing as Record<string, unknown>;
 
     let commandText = '';
     for (const key of ['command', 'command_text', 'shell_command']) {
@@ -122,7 +126,7 @@ function getCommandAuditFromDetails(details) {
     return auditCommandCompactness(commandText, { mode, justification });
 }
 
-function resolveArtifactPathForRead(pathValue, repoRoot) {
+function resolveArtifactPathForRead(pathValue: unknown, repoRoot: string | null): string | null {
     if (pathValue == null) {
         return null;
     }
@@ -143,7 +147,7 @@ function resolveArtifactPathForRead(pathValue, repoRoot) {
     return null;
 }
 
-function readJsonArtifactForSummary(pathValue, repoRoot) {
+function readJsonArtifactForSummary(pathValue: unknown, repoRoot: string | null): { path: string; payload: Record<string, unknown> } | null {
     const resolvedPath = resolveArtifactPathForRead(pathValue, repoRoot);
     if (!resolvedPath) {
         return null;
@@ -161,13 +165,13 @@ function readJsonArtifactForSummary(pathValue, repoRoot) {
     }
 }
 
-function getOutputTelemetryFromPayload(payload) {
+export function getOutputTelemetryFromPayload(payload: Record<string, unknown> | null | undefined) {
     if (!payload || typeof payload !== 'object') {
         return null;
     }
-    const candidate = payload.output_telemetry && typeof payload.output_telemetry === 'object'
+    const candidate = (payload.output_telemetry && typeof payload.output_telemetry === 'object'
         ? payload.output_telemetry
-        : payload;
+        : payload) as Record<string, unknown>;
     const savedTokens = coerceIntLike(candidate.estimated_saved_tokens);
     if (savedTokens == null || savedTokens <= 0) {
         return null;
@@ -182,15 +186,15 @@ function getOutputTelemetryFromPayload(payload) {
     };
 }
 
-function getReviewContextSummary(payload) {
+function getReviewContextSummary(payload: Record<string, unknown> | null | undefined) {
     if (!payload || typeof payload !== 'object') {
         return null;
     }
-    const ruleContext = payload.rule_context;
+    const ruleContext = payload.rule_context as Record<string, unknown> | null | undefined;
     if (!ruleContext || typeof ruleContext !== 'object') {
         return null;
     }
-    const summary = ruleContext.summary;
+    const summary = ruleContext.summary as Record<string, unknown> | null | undefined;
     if (!summary || typeof summary !== 'object') {
         return null;
     }
@@ -208,12 +212,12 @@ function getReviewContextSummary(payload) {
     };
 }
 
-function getReviewContextLabel(reviewType) {
+function getReviewContextLabel(reviewType: string): string {
     const normalized = String(reviewType || '').trim().toLowerCase();
-    return REVIEW_CONTEXT_LABELS[normalized] || 'review context';
+    return (REVIEW_CONTEXT_LABELS as Record<string, string>)[normalized] || 'review context';
 }
 
-function getCommandOutputLabel(eventType) {
+function getCommandOutputLabel(eventType: string): string {
     const normalized = String(eventType || '').trim().toUpperCase();
     if (normalized.startsWith('COMPILE_GATE_')) {
         return 'compile gate output';
@@ -224,7 +228,19 @@ function getCommandOutputLabel(eventType) {
     return 'gate output';
 }
 
-function addTokenEconomyContribution(breakdown, seenKeys, contribution) {
+interface TokenContributionEntry {
+    label: string;
+    estimated_saved_tokens: number;
+    raw_token_count_estimate: number;
+    output_token_count_estimate: number | null;
+    source_kind: string;
+    source_key: string;
+    source_path?: string | null;
+    source_event_type?: string | null;
+    source_index?: number | null;
+}
+
+function addTokenEconomyContribution(breakdown: TokenContributionEntry[], seenKeys: Set<string>, contribution: Partial<TokenContributionEntry> & { estimated_saved_tokens: number; source_key?: string; label?: string }): void {
     if (!contribution || contribution.estimated_saved_tokens <= 0) {
         return;
     }
@@ -234,11 +250,11 @@ function addTokenEconomyContribution(breakdown, seenKeys, contribution) {
     }
     seenKeys.add(sourceKey);
     breakdown.push({
-        label: contribution.label,
+        label: contribution.label || '',
         estimated_saved_tokens: contribution.estimated_saved_tokens,
-        raw_token_count_estimate: contribution.raw_token_count_estimate,
-        output_token_count_estimate: contribution.output_token_count_estimate,
-        source_kind: contribution.source_kind,
+        raw_token_count_estimate: contribution.raw_token_count_estimate || 0,
+        output_token_count_estimate: contribution.output_token_count_estimate ?? null,
+        source_kind: contribution.source_kind || '',
         source_key: sourceKey,
         source_path: contribution.source_path || null,
         source_event_type: contribution.source_event_type || null,
@@ -246,13 +262,13 @@ function addTokenEconomyContribution(breakdown, seenKeys, contribution) {
     });
 }
 
-function collectReviewContextContributions(container, repoRoot, breakdown, seenKeys) {
+function collectReviewContextContributions(container: Record<string, unknown>, repoRoot: string | null, breakdown: TokenContributionEntry[], seenKeys: Set<string>): void {
     if (!container || typeof container !== 'object') {
         return;
     }
-    const artifactEvidence = container.artifact_evidence;
-    const checked = artifactEvidence && Array.isArray(artifactEvidence.checked)
-        ? artifactEvidence.checked
+    const artifactEvidence = container.artifact_evidence as Record<string, unknown> | null | undefined;
+    const checked = artifactEvidence && Array.isArray((artifactEvidence as Record<string, unknown>).checked)
+        ? (artifactEvidence as Record<string, unknown>).checked as Record<string, unknown>[]
         : [];
     for (const entry of checked) {
         if (!entry || typeof entry !== 'object' || !entry.review_context_path) {
@@ -267,7 +283,7 @@ function collectReviewContextContributions(container, repoRoot, breakdown, seenK
             continue;
         }
         addTokenEconomyContribution(breakdown, seenKeys, {
-            label: getReviewContextLabel(reviewContextArtifact.payload.review_type || entry.review),
+            label: getReviewContextLabel(String(reviewContextArtifact.payload.review_type || entry.review || '')),
             estimated_saved_tokens: summary.estimated_saved_tokens,
             raw_token_count_estimate: summary.raw_token_count_estimate,
             output_token_count_estimate: summary.output_token_count_estimate,
@@ -278,19 +294,20 @@ function collectReviewContextContributions(container, repoRoot, breakdown, seenK
     }
 }
 
-function buildTokenEconomySummary(events, repoRoot) {
-    const breakdown = [];
-    const seenKeys = new Set();
+function buildTokenEconomySummary(events: Record<string, unknown>[], repoRoot: string | null) {
+    const breakdown: TokenContributionEntry[] = [];
+    const seenKeys = new Set<string>();
 
     for (let index = 0; index < events.length; index += 1) {
         const event = events[index];
-        const details = event && typeof event === 'object' ? event.details : null;
-        if (!details || typeof details !== 'object') {
+        const rawDetails = event && typeof event === 'object' ? event.details : null;
+        if (!rawDetails || typeof rawDetails !== 'object') {
             continue;
         }
+        const details = rawDetails as Record<string, unknown>;
 
         const eventType = String(event.event_type || 'UNKNOWN');
-        let reviewEvidencePayload = null;
+        let reviewEvidencePayload: Record<string, unknown> | null = null;
 
         if (typeof details.review_evidence_path === 'string' && details.review_evidence_path.trim()) {
             const reviewEvidence = readJsonArtifactForSummary(details.review_evidence_path, repoRoot);
@@ -369,11 +386,17 @@ function buildTokenEconomySummary(events, repoRoot) {
     };
 }
 
+export interface BuildTaskEventsSummaryOptions {
+    taskId: string;
+    eventsRoot: string;
+    repoRoot?: string | null;
+}
+
 /**
  * Build task events summary.
  * Produces the canonical task-events summary output shape.
  */
-function buildTaskEventsSummary(options) {
+export function buildTaskEventsSummary(options: BuildTaskEventsSummaryOptions) {
     const taskId = options.taskId;
     const eventsRoot = options.eventsRoot;
     const repoRoot = options.repoRoot ? path.resolve(String(options.repoRoot)) : null;
@@ -386,7 +409,7 @@ function buildTaskEventsSummary(options) {
     }
 
     const rawLines = fs.readFileSync(taskEventFile, 'utf8').split('\n').filter(function (line) { return line.trim(); });
-    const events = [];
+    const events: Record<string, unknown>[] = [];
     let parseErrors = 0;
     const integrityReport = inspectTaskEventFile(taskEventFile, safeTaskId);
 
@@ -405,7 +428,30 @@ function buildTaskEventsSummary(options) {
         return ta.getTime() - tb.getTime();
     });
 
-    const summary = {
+    interface TimelineEntry {
+        index: number;
+        timestamp_utc: string | null;
+        event_type: string;
+        outcome: string;
+        actor: string | null;
+        message: string;
+        details: unknown;
+        command_policy_audit: ReturnType<typeof getCommandAuditFromDetails>;
+    }
+
+    const summary: {
+        task_id: string;
+        source_path: string;
+        events_count: number;
+        parse_errors: number;
+        integrity: ReturnType<typeof inspectTaskEventFile>;
+        command_policy_warnings: string[];
+        command_policy_warning_count: number;
+        first_event_utc: string | null;
+        last_event_utc: string | null;
+        token_economy: ReturnType<typeof buildTokenEconomySummary> | null;
+        timeline: TimelineEntry[];
+    } = {
         task_id: safeTaskId,
         source_path: toPosix(taskEventFile),
         events_count: events.length,
@@ -422,10 +468,10 @@ function buildTaskEventsSummary(options) {
     for (let i = 0; i < events.length; i++) {
         const event = events[i];
         const index = i + 1;
-        const details = event.details;
-        const commandPolicyAudit = getCommandAuditFromDetails(details);
-        if (commandPolicyAudit && typeof commandPolicyAudit === 'object' && parseInt(commandPolicyAudit.warning_count || 0, 10) > 0) {
-            summary.command_policy_warnings.push(...(commandPolicyAudit.warnings || []));
+        const details = event.details as Record<string, unknown> | null | undefined;
+        const commandPolicyAudit = getCommandAuditFromDetails(details) as Record<string, unknown> | null;
+        if (commandPolicyAudit && typeof commandPolicyAudit === 'object' && parseInt(String(commandPolicyAudit.warning_count || 0), 10) > 0) {
+            summary.command_policy_warnings.push(...((commandPolicyAudit.warnings as string[]) || []));
         }
         summary.timeline.push({
             index,
@@ -444,11 +490,40 @@ function buildTaskEventsSummary(options) {
     return summary;
 }
 
+export interface TaskEventsSummaryResult {
+    task_id: string;
+    source_path: string;
+    events_count: number;
+    parse_errors: number;
+    integrity: {
+        status: string;
+        integrity_event_count: number;
+        legacy_event_count: number;
+        violations: string[];
+    };
+    command_policy_warnings: string[];
+    command_policy_warning_count: number;
+    first_event_utc: string | null;
+    last_event_utc: string | null;
+    token_economy: {
+        visible_summary_line: string | null;
+    } | null;
+    timeline: {
+        index: number;
+        timestamp_utc: string | null;
+        event_type: string;
+        outcome: string;
+        actor: string | null;
+        message: string;
+        details: unknown;
+    }[];
+}
+
 /**
  * Format task events summary as text.
  */
-function formatTaskEventsSummaryText(summary, includeDetails = false) {
-    const lines = [
+export function formatTaskEventsSummaryText(summary: TaskEventsSummaryResult, includeDetails = false): string {
+    const lines: string[] = [
         `Task: ${summary.task_id}`,
         `Source: ${summary.source_path}`,
         `Events: ${summary.events_count}`,
@@ -495,12 +570,3 @@ function formatTaskEventsSummaryText(summary, includeDetails = false) {
     return lines.join('\n');
 }
 
-module.exports = {
-    auditCommandCompactness,
-    buildTaskEventsSummary,
-    formatTaskEventsSummaryText,
-    formatTimestamp,
-    getCommandAuditFromDetails,
-    getOutputTelemetryFromPayload,
-    parseTimestamp
-};

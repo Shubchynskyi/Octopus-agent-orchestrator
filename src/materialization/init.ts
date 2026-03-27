@@ -1,37 +1,88 @@
-const fs = require('node:fs');
-const path = require('node:path');
-
-const { ensureDirectory, pathExists, readTextFile } = require('../core/fs.ts');
-const { readJsonFile } = require('../core/json.ts');
-const { ALL_AGENT_ENTRYPOINT_FILES } = require('../core/constants.ts');
-const { syncReviewCapabilities, writeSkillsIndex } = require('../runtime/skills.ts');
-const {
-    getCanonicalEntrypointFile,
-    getGitHubSkillBridgeProfileDefinitions,
-    getProviderOrchestratorProfileDefinitions
-} = require('./common.ts');
-const {
-    getProjectDiscovery,
-    buildProjectDiscoveryLines,
-    buildDiscoveryOverlaySection
-} = require('./project-discovery.ts');
-const {
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
+import { readJsonFile } from '../core/json';
+import { ALL_AGENT_ENTRYPOINT_FILES } from '../core/constants';
+import { syncReviewCapabilities, writeSkillsIndex } from '../runtime/skills';
+import { getCanonicalEntrypointFile, getGitHubSkillBridgeProfileDefinitions, getProviderOrchestratorProfileDefinitions } from './common';
+import { getProjectDiscovery, buildProjectDiscoveryLines, buildDiscoveryOverlaySection } from './project-discovery';
+import {
     RULE_FILES,
     GENERATED_RULE_FILES,
     selectRuleSource,
     applyContextDefaults,
     applyAssistantDefaults,
     generateProjectMemorySummary
-} = require('./rule-materialization.ts');
-const {
-    NODE_HUMAN_COMMIT_COMMAND,
-    NODE_INTERACTIVE_UPDATE_COMMAND,
-    NODE_NON_INTERACTIVE_UPDATE_COMMAND
-} = require('./command-constants.ts');
-const {
-    migrateContextRulesToProjectMemory,
-    buildMigrationReportLines
-} = require('./project-memory-migration.ts');
+} from './rule-materialization';
+import { NODE_HUMAN_COMMIT_COMMAND, NODE_INTERACTIVE_UPDATE_COMMAND, NODE_NON_INTERACTIVE_UPDATE_COMMAND } from './command-constants';
+import { migrateContextRulesToProjectMemory, buildMigrationReportLines } from './project-memory-migration';
+
+interface RunInitOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    dryRun?: boolean;
+    assistantLanguage?: string;
+    assistantBrevity?: string;
+    sourceOfTruth?: string;
+    enforceNoAutoCommit?: boolean;
+    tokenEconomyEnabled?: boolean;
+}
+
+interface RuleSourceMapEntry {
+    ruleFile: string;
+    source: string;
+    origin: string;
+    destination: string;
+}
+
+interface SourceInventoryEntry {
+    path: string;
+    exists: boolean;
+}
+
+interface SourceInventory {
+    projectRoot: string;
+    legacyEntrypoints: SourceInventoryEntry[];
+    legacyRuleRoot: string;
+    legacyRuleFiles: string[];
+    docsMarkdownFiles: string[];
+}
+
+type ProjectDiscovery = ReturnType<typeof getProjectDiscovery>;
+type ReviewCapabilitiesSyncResult = ReturnType<typeof syncReviewCapabilities>;
+
+interface BuildInitReportOptions {
+    timestampIso: string;
+    projectName: string;
+    targetRoot: string;
+    ruleSourceMap: RuleSourceMapEntry[];
+    ruleFiles: readonly string[];
+    copiedSupportDirs: number;
+    configMergeStatuses: Record<string, string>;
+    lang: string;
+    brevity: string;
+    trimmedSoT: string;
+    enforceNoAutoCommit: boolean;
+    tokenEconomyEnabled: boolean;
+    discovery: ProjectDiscovery;
+    sourceInventory: SourceInventory;
+    reviewCapabilitiesSync: ReviewCapabilitiesSyncResult | null;
+}
+
+interface BuildUsageOptions {
+    lang: string;
+    brevity: string;
+    canonicalEntrypoint: string;
+    enforceNoAutoCommit: boolean;
+}
+
+function cloneJsonValue<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
 
 /**
  * Runs the init materialization pipeline.
@@ -48,7 +99,7 @@ const {
  * @param {boolean} [options.tokenEconomyEnabled=true]
  * @returns {object} Init result metrics
  */
-function runInit(options) {
+export function runInit(options: RunInitOptions) {
     const {
         targetRoot,
         bundleRoot,
@@ -126,7 +177,7 @@ function runInit(options) {
     });
 
     // Materialize rule files
-    const ruleSourceMap = [];
+    const ruleSourceMap: RuleSourceMapEntry[] = [];
     for (const ruleFile of RULE_FILES) {
         if (GENERATED_RULE_FILES.includes(ruleFile)) continue;
 
@@ -195,7 +246,7 @@ function runInit(options) {
 
     // Handle managed config merge (token-economy enabled flag)
     const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs'];
-    const configMergeStatuses = {};
+    const configMergeStatuses: Record<string, string> = {};
 
     for (const configName of managedConfigNames) {
         const templateConfigPath = path.join(templateRoot, `config/${configName}.json`);
@@ -207,12 +258,15 @@ function runInit(options) {
         }
 
         try {
-            const templateConfig = readJsonFile(templateConfigPath);
-            let existingConfig = null;
+            const templateConfig = cloneJsonValue(readJsonFile(templateConfigPath) as Record<string, unknown>);
+            let existingConfig: Record<string, unknown> | null = null;
 
             if (pathExists(destConfigPath)) {
                 try {
-                    existingConfig = readJsonFile(destConfigPath);
+                    const parsedExistingConfig = readJsonFile(destConfigPath);
+                    existingConfig = isPlainObject(parsedExistingConfig)
+                        ? parsedExistingConfig
+                        : null;
                 } catch {
                     existingConfig = null;
                 }
@@ -311,42 +365,41 @@ function runInit(options) {
 /**
  * Simple recursive config merge: template keys are baseline, existing values take precedence.
  */
-function mergeConfig(template, existing) {
-    if (!existing || typeof existing !== 'object') {
-        return JSON.parse(JSON.stringify(template));
+export function mergeConfig(template: Record<string, unknown>, existing: Record<string, unknown> | null): Record<string, unknown> {
+    if (!isPlainObject(existing)) {
+        return cloneJsonValue(template);
     }
 
     if (Array.isArray(template)) {
-        return Array.isArray(existing) ? JSON.parse(JSON.stringify(existing)) : JSON.parse(JSON.stringify(template));
+        return Array.isArray(existing) ? cloneJsonValue(existing) as unknown as Record<string, unknown> : cloneJsonValue(template);
     }
 
-    const result = {};
+    const result: Record<string, unknown> = {};
     // Copy all template keys, using existing values where present
     for (const key of Object.keys(template)) {
         const existingKey = Object.keys(existing).find((k) => k.toLowerCase() === key.toLowerCase());
         if (existingKey !== undefined && existing[existingKey] !== undefined) {
-            if (typeof template[key] === 'object' && template[key] !== null && !Array.isArray(template[key]) &&
-                typeof existing[existingKey] === 'object' && existing[existingKey] !== null && !Array.isArray(existing[existingKey])) {
-                result[key] = mergeConfig(template[key], existing[existingKey]);
+            if (isPlainObject(template[key]) && isPlainObject(existing[existingKey])) {
+                result[key] = mergeConfig(template[key] as Record<string, unknown>, existing[existingKey] as Record<string, unknown>);
             } else {
-                result[key] = JSON.parse(JSON.stringify(existing[existingKey]));
+                result[key] = cloneJsonValue(existing[existingKey]);
             }
         } else {
-            result[key] = JSON.parse(JSON.stringify(template[key]));
+            result[key] = cloneJsonValue(template[key]);
         }
     }
 
     // Preserve unknown keys from existing
     for (const key of Object.keys(existing)) {
         if (!Object.keys(result).find((k) => k.toLowerCase() === key.toLowerCase())) {
-            result[key] = JSON.parse(JSON.stringify(existing[key]));
+            result[key] = cloneJsonValue(existing[key]);
         }
     }
 
     return result;
 }
 
-function copyDirectoryRecursive(srcDir, destDir) {
+function copyDirectoryRecursive(srcDir: string, destDir: string): void {
     ensureDirectory(destDir);
     const entries = fs.readdirSync(srcDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -360,16 +413,19 @@ function copyDirectoryRecursive(srcDir, destDir) {
     }
 }
 
-function collectMarkdownFiles(rootPath, targetRoot) {
+function collectMarkdownFiles(rootPath: string, targetRoot: string): string[] {
     if (!pathExists(rootPath)) {
         return [];
     }
 
-    const discovered = [];
-    const stack = [rootPath];
+    const discovered: string[] = [];
+    const stack: string[] = [rootPath];
 
     while (stack.length > 0) {
         const currentPath = stack.pop();
+        if (!currentPath) {
+            continue;
+        }
         const entries = fs.readdirSync(currentPath, { withFileTypes: true });
 
         for (const entry of entries) {
@@ -390,7 +446,7 @@ function collectMarkdownFiles(rootPath, targetRoot) {
     return discovered.sort();
 }
 
-function collectSourceInventory(targetRoot) {
+export function collectSourceInventory(targetRoot: string): SourceInventory {
     const entrypointCandidates = new Set([
         ...ALL_AGENT_ENTRYPOINT_FILES,
         'TASK.md',
@@ -423,7 +479,7 @@ function collectSourceInventory(targetRoot) {
     };
 }
 
-function buildSourceInventoryLines(inventory, timestampIso) {
+function buildSourceInventoryLines(inventory: SourceInventory, timestampIso: string): string[] {
     return [
         '# Source Inventory', '',
         `Generated at: ${timestampIso}`,
@@ -441,12 +497,12 @@ function buildSourceInventoryLines(inventory, timestampIso) {
     ];
 }
 
-function buildInitReportLines(opts) {
+function buildInitReportLines(opts: BuildInitReportOptions): string[] {
     const { timestampIso, projectName, targetRoot, ruleSourceMap, ruleFiles,
         copiedSupportDirs, configMergeStatuses, lang, brevity, trimmedSoT,
         enforceNoAutoCommit, tokenEconomyEnabled, discovery,
         sourceInventory, reviewCapabilitiesSync } = opts;
-    const normalized = targetRoot.replace ? targetRoot.replace(/\\/g, '/') : String(targetRoot);
+    const normalized = targetRoot.replace(/\\/g, '/');
     const tick = '`';
     const stackSummary = discovery.detectedStacks.length > 0
         ? discovery.detectedStacks.join(', ') : 'none detected';
@@ -506,7 +562,7 @@ function buildInitReportLines(opts) {
     return lines;
 }
 
-function buildUsageLines(opts) {
+function buildUsageLines(opts: BuildUsageOptions): string[] {
     const { lang, brevity, canonicalEntrypoint, enforceNoAutoCommit } = opts;
     const commitGuardLine = enforceNoAutoCommit
         ? `Hard no-auto-commit guard is enabled. It blocks detected agent-session commits while normal human commits remain available; for intentional manual commits from the same agent shell use: \`${NODE_HUMAN_COMMIT_COMMAND}\`.`
@@ -536,9 +592,3 @@ function buildUsageLines(opts) {
         'This file can be replaced by the setup agent with project-specific instructions.'
     ];
 }
-
-module.exports = {
-    collectSourceInventory,
-    mergeConfig,
-    runInit
-};

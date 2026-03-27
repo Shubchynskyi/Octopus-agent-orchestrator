@@ -1,28 +1,81 @@
-const path = require('node:path');
+import * as path from 'node:path';
+import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { pathExists } from '../core/fs';
+import { readJsonFile, writeJsonFile } from '../core/json';
+import { validateInitAnswers, serializeInitAnswers } from '../schemas/init-answers';
+import { convertActiveAgentEntrypointFilesToString, getActiveAgentEntrypointFiles } from '../materialization/common';
+import { runInstall } from '../materialization/install';
+import { runVerify } from '../validators/verify';
+import { validateManifest } from '../validators/validate-manifest';
+import { createAgentInitState, writeAgentInitState } from '../runtime/agent-init-state';
 
-const { DEFAULT_BUNDLE_NAME } = require('../core/constants.ts');
-const { pathExists } = require('../core/fs.ts');
-const { readJsonFile, writeJsonFile } = require('../core/json.ts');
-const { validateInitAnswers, serializeInitAnswers } = require('../schemas/init-answers.ts');
-const {
-    convertActiveAgentEntrypointFilesToString,
-    getActiveAgentEntrypointFiles
-} = require('../materialization/common.ts');
-const { runInstall } = require('../materialization/install.ts');
-const { runVerify } = require('../validators/verify.ts');
-const { validateManifest } = require('../validators/validate-manifest.ts');
-const {
-    createAgentInitState,
-    writeAgentInitState
-} = require('../runtime/agent-init-state.ts');
+interface AgentInitState {
+    AssistantLanguage: string | null;
+    SourceOfTruth: string | null;
+    AssistantLanguageConfirmed: boolean;
+    ActiveAgentFilesConfirmed: boolean;
+    ProjectRulesUpdated: boolean;
+    SkillsPromptCompleted: boolean;
+    VerificationPassed: boolean;
+    ManifestValidationPassed: boolean;
+    ActiveAgentFiles: string[];
+}
 
-function resolvePathInsideTarget(targetRoot, relativeOrAbsolutePath) {
+interface AgentInitInstallOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    preserveExisting: boolean;
+    alignExisting: boolean;
+    runInit: boolean;
+    answerDependentOnly: boolean;
+    skipBackups: boolean;
+    assistantLanguage: string;
+    assistantBrevity: string;
+    sourceOfTruth: string;
+    initAnswersPath: string;
+}
+
+interface AgentInitVerifyOptions {
+    targetRoot: string;
+    sourceOfTruth: string;
+    initAnswersPath: string;
+}
+
+interface RunAgentInitOptions {
+    targetRoot: string;
+    bundleRoot?: string;
+    initAnswersPath?: string;
+    activeAgentFiles: string | string[] | null | undefined;
+    projectRulesUpdated: unknown;
+    skillsPrompted: unknown;
+    installRunner?: (options: AgentInitInstallOptions) => void;
+    verifyRunner?: (options: AgentInitVerifyOptions) => { passed: boolean };
+    manifestRunner?: (manifestPath: string) => { passed: boolean };
+}
+
+export interface AgentInitResult {
+    targetRoot: string;
+    bundleRoot: string;
+    initAnswersPath: string;
+    agentInitStatePath: string;
+    activeAgentFiles: string[];
+    projectRulesUpdated: boolean;
+    skillsPromptCompleted: boolean;
+    verifyPassed: boolean;
+    manifestPassed: boolean;
+    readyForTasks: boolean;
+    verifyResult: { passed: boolean };
+    manifestResult: { passed: boolean };
+    state: AgentInitState;
+}
+
+function resolvePathInsideTarget(targetRoot: string, relativeOrAbsolutePath: string): string {
     return path.isAbsolute(relativeOrAbsolutePath)
         ? relativeOrAbsolutePath
         : path.resolve(targetRoot, relativeOrAbsolutePath);
 }
 
-function parseBooleanYesNo(value, fieldName) {
+function parseBooleanYesNo(value: unknown, fieldName: string): boolean {
     if (value === true || value === false) {
         return value;
     }
@@ -37,7 +90,7 @@ function parseBooleanYesNo(value, fieldName) {
     throw new Error(`${fieldName} must be yes or no.`);
 }
 
-function runAgentInit(options) {
+export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
     const {
         targetRoot,
         bundleRoot = path.join(targetRoot, DEFAULT_BUNDLE_NAME),
@@ -105,7 +158,7 @@ function runAgentInit(options) {
         VerificationPassed: verifyResult.passed,
         ManifestValidationPassed: manifestResult.passed,
         ActiveAgentFiles: normalizedActiveFiles
-    });
+    }) as AgentInitState;
     const statePath = writeAgentInitState(normalizedTargetRoot, state);
 
     return {
@@ -131,7 +184,3 @@ function runAgentInit(options) {
         state
     };
 }
-
-module.exports = {
-    runAgentInit
-};

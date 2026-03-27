@@ -1,7 +1,7 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const { describeFoundation } = require('../../../src/cli/index.ts');
+import { describeFoundation } from '../../../src/cli/index';
 
 test('describeFoundation exposes the staged Node-only runtime', () => {
     const foundation = describeFoundation();
