@@ -140,6 +140,7 @@ export const GITIGNORE_MANAGED_COMMENT = '# Octopus-agent-orchestrator managed i
 export const GITIGNORE_MANAGED_ENTRIES = Object.freeze([
     'Octopus-agent-orchestrator/',
     'AGENTS.md',
+    'QWEN.md',
     'TASK.md',
     '.qwen/',
     '.github/agents/',

@@ -202,6 +202,52 @@ describe('runInstall', () => {
         }
     });
 
+    it('supports Qwen as canonical source-of-truth and keeps QWEN.md in qwen context', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Qwen',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE',
+                ActiveAgentFiles: 'QWEN.md, AGENTS.md'
+            });
+
+            fs.mkdirSync(path.join(projectRoot, '.qwen'), { recursive: true });
+            fs.writeFileSync(
+                path.join(projectRoot, '.qwen', 'settings.json'),
+                JSON.stringify({ context: { fileName: ['README.md'] } }, null, 2)
+            );
+
+            const result = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Qwen',
+                initAnswersPath: answersPath
+            });
+
+            assert.equal(result.canonicalEntrypoint, 'QWEN.md');
+            assert.ok(fs.existsSync(path.join(projectRoot, 'QWEN.md')));
+            assert.ok(fs.existsSync(path.join(projectRoot, 'AGENTS.md')));
+            const qwenEntrypoint = fs.readFileSync(path.join(projectRoot, 'QWEN.md'), 'utf8');
+            assert.ok(qwenEntrypoint.includes('# QWEN.md'));
+            assert.ok(qwenEntrypoint.includes('Rule Index'));
+            const settings = JSON.parse(fs.readFileSync(path.join(projectRoot, '.qwen', 'settings.json'), 'utf8'));
+            assert.ok(settings.context.fileName.includes('TASK.md'));
+            assert.ok(settings.context.fileName.includes('QWEN.md'));
+            const gitignore = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+            assert.ok(gitignore.includes('QWEN.md'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('updates .gitignore', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

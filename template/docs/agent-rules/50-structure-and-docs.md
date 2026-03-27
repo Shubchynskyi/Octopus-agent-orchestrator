@@ -8,8 +8,9 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 ├── AGENTS.md                     # Codex entrypoint; canonical only when source-of-truth=Codex (recommended gitignore)
 ├── CLAUDE.md                     # Claude entrypoint; canonical only when source-of-truth=Claude
 ├── GEMINI.md                     # Gemini entrypoint; canonical only when source-of-truth=Gemini
+├── QWEN.md                       # Qwen entrypoint; canonical only when source-of-truth=Qwen
 ├── .claude/settings.local.json   # Optional (when ClaudeOrchestratorFullAccess=true): Claude Code local permission allowlist for the Node CLI
-├── .qwen/settings.json           # Optional (only when already present): Qwen context bootstrap (`AGENTS.md` + `TASK.md`)
+├── .qwen/settings.json           # Optional (only when already present): Qwen context bootstrap (`TASK.md` + current canonical entrypoint)
 ├── TASK.md                       # Task queue for orchestration (recommended gitignore)
 ├── .antigravity/rules.md         # Platform instruction file (recommended gitignore)
 ├── .github/copilot-instructions.md
@@ -60,9 +61,9 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 
 ## Core Documents
 - Source-of-truth entrypoint file (selected at install): canonical routing index for agent rules.
-- `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` - supported root entrypoint files; only the selected source-of-truth file is canonical.
+- `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `QWEN.md` - supported root entrypoint files; only the selected source-of-truth file is canonical.
 - `.claude/settings.local.json` - optional (when `ClaudeOrchestratorFullAccess=true`): Claude Code local permission allowlist for the Node CLI.
-- `.qwen/settings.json` - optional Qwen context bootstrap (only updated when the file already exists).
+- `.qwen/settings.json` - optional Qwen context bootstrap for `TASK.md` plus the current canonical entrypoint (only updated when the file already exists).
 - `TASK.md` - canonical task list for agent execution workflow.
 - `.github/agents/orchestrator.md` - mandatory orchestration profile for GitHub Agents task execution.
 - `.github/agents/reviewer.md` and `.github/agents/*-review.md` - GitHub review-profile bridges to canonical `live/skills/*`.

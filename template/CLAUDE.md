@@ -5,7 +5,7 @@
 # Octopus Agent Orchestrator Rule Index
 
 This file can serve as the source of truth for agent workflow rules.
-At setup, source of truth is selected via `-SourceOfTruth` (`Claude`, `Codex`, `Gemini`, `GitHubCopilot`, `Windsurf`, `Junie`, or `Antigravity`).
+At setup, source of truth is selected via `-SourceOfTruth` (`Claude`, `Codex`, `Gemini`, `Qwen`, `GitHubCopilot`, `Windsurf`, `Junie`, or `Antigravity`).
 Non-selected entrypoint files must only redirect to the selected source-of-truth file.
 
 ## How To Use This File
@@ -51,4 +51,3 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 - `Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md`
 - `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md`
 <!-- Octopus-agent-orchestrator:managed-end -->
-

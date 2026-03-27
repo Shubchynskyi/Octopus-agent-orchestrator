@@ -173,7 +173,7 @@ test('getSetupAnswerDefaults normalizes numbered active agent file selections', 
     try {
         const defaults = getSetupAnswerDefaults(tmpDir, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {
             sourceOfTruth: 'Claude',
-            activeAgentFiles: '1, 2, 7'
+            activeAgentFiles: '1, 2, 8'
         });
         assert.equal(defaults.activeAgentFiles, 'CLAUDE.md, AGENTS.md, .antigravity/rules.md');
     } finally {

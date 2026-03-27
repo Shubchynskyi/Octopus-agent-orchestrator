@@ -46,6 +46,7 @@ Zero-argument invocation prints the safe overview. Unknown first positional fall
 | Claude | `CLAUDE.md` |
 | Codex | `AGENTS.md` |
 | Gemini | `GEMINI.md` |
+| Qwen | `QWEN.md` |
 | GitHubCopilot | `.github/copilot-instructions.md` |
 | Windsurf | `.windsurf/rules/rules.md` |
 | Junie | `.junie/guidelines.md` |

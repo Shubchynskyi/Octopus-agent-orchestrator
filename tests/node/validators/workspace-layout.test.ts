@@ -50,6 +50,7 @@ test('PROJECT_COMMAND_PLACEHOLDERS contains expected placeholders', () => {
 test('getCanonicalEntrypoint maps known source-of-truth values', () => {
     assert.equal(getCanonicalEntrypoint('Claude'), 'CLAUDE.md');
     assert.equal(getCanonicalEntrypoint('Codex'), 'AGENTS.md');
+    assert.equal(getCanonicalEntrypoint('Qwen'), 'QWEN.md');
     assert.equal(getCanonicalEntrypoint('GitHubCopilot'), '.github/copilot-instructions.md');
     assert.equal(getCanonicalEntrypoint('Windsurf'), '.windsurf/rules/rules.md');
     assert.equal(getCanonicalEntrypoint('Junie'), '.junie/guidelines.md');
@@ -65,6 +66,7 @@ test('getCanonicalEntrypoint returns null for unknown values', () => {
 test('getCanonicalEntrypoint is case-insensitive', () => {
     assert.equal(getCanonicalEntrypoint('claude'), 'CLAUDE.md');
     assert.equal(getCanonicalEntrypoint('CLAUDE'), 'CLAUDE.md');
+    assert.equal(getCanonicalEntrypoint('qwen'), 'QWEN.md');
     assert.equal(getCanonicalEntrypoint('githubcopilot'), '.github/copilot-instructions.md');
 });
 

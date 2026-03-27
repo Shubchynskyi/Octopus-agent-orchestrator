@@ -38,6 +38,7 @@ bin/octopus.js
 | `CLAUDE.md` | Claude Code entrypoint |
 | `AGENTS.md` | Codex entrypoint |
 | `GEMINI.md` | Gemini entrypoint |
+| `QWEN.md` | Qwen entrypoint |
 | `.github/copilot-instructions.md` | GitHub Copilot entrypoint |
 | `.windsurf/rules/rules.md` | Windsurf entrypoint |
 | `.junie/guidelines.md` | Junie entrypoint |
@@ -62,7 +63,7 @@ One entrypoint is canonical. Additional entrypoints are created only when they w
 | File | Condition |
 |---|---|
 | `.claude/settings.local.json` | `ClaudeOrchestratorFullAccess=true` |
-| `.qwen/settings.json` | Only when the project already contains this file |
+| `.qwen/settings.json` | Only when the project already contains this file; managed entries mirror `TASK.md` plus the current canonical entrypoint |
 | `.git/hooks/pre-commit` | `EnforceNoAutoCommit=true` |
 | `.gitignore` | Managed entries for agent artifacts |
 

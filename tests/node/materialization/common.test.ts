@@ -15,6 +15,7 @@ describe('getCanonicalEntrypointFile', () => {
         assert.equal(getCanonicalEntrypointFile('Claude'), 'CLAUDE.md');
         assert.equal(getCanonicalEntrypointFile('Codex'), 'AGENTS.md');
         assert.equal(getCanonicalEntrypointFile('Gemini'), 'GEMINI.md');
+        assert.equal(getCanonicalEntrypointFile('Qwen'), 'QWEN.md');
         assert.equal(getCanonicalEntrypointFile('GitHubCopilot'), '.github/copilot-instructions.md');
         assert.equal(getCanonicalEntrypointFile('Windsurf'), '.windsurf/rules/rules.md');
         assert.equal(getCanonicalEntrypointFile('Junie'), '.junie/guidelines.md');
@@ -37,11 +38,14 @@ describe('normalizeAgentEntrypointToken', () => {
         assert.equal(normalizeAgentEntrypointToken('codex'), 'AGENTS.md');
         assert.equal(normalizeAgentEntrypointToken('copilot'), '.github/copilot-instructions.md');
         assert.equal(normalizeAgentEntrypointToken('windsurf'), '.windsurf/rules/rules.md');
+        assert.equal(normalizeAgentEntrypointToken('qwen'), 'QWEN.md');
+        assert.equal(normalizeAgentEntrypointToken('qwen.md'), 'QWEN.md');
     });
 
     it('resolves numeric selections', () => {
         assert.equal(normalizeAgentEntrypointToken('1'), 'CLAUDE.md');
         assert.equal(normalizeAgentEntrypointToken('2'), 'AGENTS.md');
+        assert.equal(normalizeAgentEntrypointToken('4'), 'QWEN.md');
     });
 
     it('strips leading "or" prefix', () => {

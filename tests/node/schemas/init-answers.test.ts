@@ -11,19 +11,19 @@ test('validateInitAnswers normalizes booleans and canonical entrypoint selection
     const normalized = validateInitAnswers({
         AssistantLanguage: 'English',
         AssistantBrevity: 'concise',
-        SourceOfTruth: 'claude',
+        SourceOfTruth: 'qwen',
         EnforceNoAutoCommit: 'да',
         ClaudeOrchestratorFullAccess: 'no',
         TokenEconomyEnabled: 1,
         CollectedVia: 'cli_noninteractive',
-        ActiveAgentFiles: 'agents.md, CLAUDE.md'
+        ActiveAgentFiles: 'QWEN.md, AGENTS.md'
     });
 
     assert.equal(normalized.EnforceNoAutoCommit, true);
     assert.equal(normalized.ClaudeOrchestratorFullAccess, false);
     assert.equal(normalized.TokenEconomyEnabled, true);
-    assert.deepEqual(normalized.ActiveAgentFiles, ['AGENTS.md', 'CLAUDE.md']);
-    assert.equal(getCanonicalEntrypointForSource(normalized.SourceOfTruth), 'CLAUDE.md');
+    assert.deepEqual(normalized.ActiveAgentFiles, ['QWEN.md', 'AGENTS.md']);
+    assert.equal(getCanonicalEntrypointForSource(normalized.SourceOfTruth), 'QWEN.md');
 });
 
 test('serializeInitAnswers returns the persisted string-backed contract shape', () => {

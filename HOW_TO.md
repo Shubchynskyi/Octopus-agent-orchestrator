@@ -68,8 +68,8 @@ Only if answers are still missing, the agent will ask you the missing questions.
 |---|---|---|
 | 1 | Assistant response language | Any language (e.g. English, Russian) |
 | 2 | Default response brevity | `concise` or `detailed` |
-| Required during agent init | Active agent files | Multiple values such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` |
-| 3 | Source-of-truth entrypoint | Claude, Codex, Gemini, GitHubCopilot, Windsurf, Junie, Antigravity |
+| Required during agent init | Active agent files | Multiple values such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `QWEN.md` |
+| 3 | Source-of-truth entrypoint | Claude, Codex, Gemini, Qwen, GitHubCopilot, Windsurf, Junie, Antigravity |
 | 4 | Hard no-auto-commit guard | `yes` or `no` |
 | 5 | Claude full access to orchestrator | `yes` or `no` |
 | 6 | Token economy enabled | `yes` or `no` |
@@ -161,7 +161,7 @@ octopus verify --target-root "." --source-of-truth "<provider>" --init-answers-p
 octopus gate validate-manifest --manifest-path "Octopus-agent-orchestrator/MANIFEST.md"
 ```
 
-**Provider values:** `Claude`, `Codex`, `Gemini`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
+**Provider values:** `Claude`, `Codex`, `Gemini`, `Qwen`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
 
 For day-to-day validation, prefer `octopus doctor`, `octopus verify`, and `octopus gate validate-manifest`.
 

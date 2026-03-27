@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- added full Qwen root-entrypoint support: `Qwen` is now a canonical source-of-truth option mapped to `QWEN.md`, with active-entrypoint normalization, bootstrap/install/uninstall coverage, and `.qwen/settings.json` synchronization to the current canonical entrypoint plus `TASK.md`
+
 ## 2.3.2
 
 - finished the TypeScript-only source contract: the public CLI launcher is now generated from `src/bin/octopus.ts`, and hand-written tracked `bin/octopus.js` source is gone

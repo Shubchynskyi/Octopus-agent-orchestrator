@@ -16,7 +16,7 @@ export const COMMIT_GUARD_AGENT_MARKERS = Object.freeze([
 ]);
 
 export const INSTALL_BACKUP_CANDIDATE_PATHS = Object.freeze([
-    'CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'TASK.md',
+    'CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'QWEN.md', 'TASK.md',
     '.antigravity/rules.md', '.github/copilot-instructions.md',
     '.junie/guidelines.md', '.windsurf/rules/rules.md',
     '.qwen/settings.json', '.claude/settings.local.json',
@@ -535,6 +535,7 @@ export function buildGitignoreEntries(
     for (const entryFile of activeEntryFiles) {
         const normalized = entryFile.replace(/\\/g, '/');
         if (normalized === 'AGENTS.md') entries.push('AGENTS.md');
+        if (normalized === 'QWEN.md') entries.push('QWEN.md');
         if (normalized === '.github/copilot-instructions.md') entries.push('.github/copilot-instructions.md');
     }
 

@@ -27,6 +27,7 @@ export const SOURCE_OF_TRUTH_VALUES: readonly string[] = Object.freeze([
     'Claude',
     'Codex',
     'Gemini',
+    'Qwen',
     'GitHubCopilot',
     'Windsurf',
     'Junie',
@@ -66,6 +67,7 @@ export const SOURCE_TO_ENTRYPOINT_MAP = Object.freeze({
     Claude: 'CLAUDE.md',
     Codex: 'AGENTS.md',
     Gemini: 'GEMINI.md',
+    Qwen: 'QWEN.md',
     GitHubCopilot: '.github/copilot-instructions.md',
     Windsurf: '.windsurf/rules/rules.md',
     Junie: '.junie/guidelines.md',
@@ -81,4 +83,3 @@ export const MANAGED_CONFIG_NAMES: readonly string[] = Object.freeze([
     'output-filters',
     'skill-packs'
 ]);
-

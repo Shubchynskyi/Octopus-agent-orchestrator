@@ -95,6 +95,7 @@ test('buildBootstrapSuccessOutput uses Node CLI for custom bundle paths', () => 
     assert.ok(output.includes('octopus.js'));
     assert.ok(output.includes('install'));
     assert.ok(output.includes('node'));
+    assert.ok(output.includes('Qwen'));
 });
 
 // ---------------------------------------------------------------------------

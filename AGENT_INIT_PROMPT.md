@@ -19,7 +19,7 @@ Create a fully working agent orchestration workspace where canonical rules live 
      - do not silently infer or expand `ActiveAgentFiles` on the user's behalf;
      - let the user explicitly confirm either canonical-only usage or a broader set such as `CLAUDE.md, AGENTS.md`;
      - present supported entrypoint files as explicit ready-made selectable options, not only as prose inside the question;
-     - the visible supported option set must include: `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.windsurf/rules/rules.md`, `.junie/guidelines.md`, and `.antigravity/rules.md`;
+     - the visible supported option set must include: `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `QWEN.md`, `.github/copilot-instructions.md`, `.windsurf/rules/rules.md`, `.junie/guidelines.md`, and `.antigravity/rules.md`;
      - if the client supports multi-select UI, use it for the supported option set;
      - if the client only supports single-choice plus free-text, ask in two steps:
        1. `Do you use only the canonical file, or multiple agent entrypoint files?`
@@ -35,12 +35,12 @@ Create a fully working agent orchestration workspace where canonical rules live 
    - Immediately switch all subsequent user-facing messages to `<assistant-language>`, starting with the next question.
    - In `<assistant-language>`, ask: `What response brevity should be default: concise or detailed?`
    - Wait for answer and store as `<assistant-brevity>`.
-   - In `<assistant-language>`, ask: `Which agent entrypoint files do you actively use in this project? You may select multiple from CLAUDE.md, AGENTS.md, GEMINI.md, .github/copilot-instructions.md, .windsurf/rules/rules.md, .junie/guidelines.md, and .antigravity/rules.md. Recommendation: include the agent files you work with most often.`
+   - In `<assistant-language>`, ask: `Which agent entrypoint files do you actively use in this project? You may select multiple from CLAUDE.md, AGENTS.md, GEMINI.md, QWEN.md, .github/copilot-instructions.md, .windsurf/rules/rules.md, .junie/guidelines.md, and .antigravity/rules.md. Recommendation: include the agent files you work with most often.`
    - For that question, visibly present the supported files themselves as selectable options; do not leave them hidden only inside the sentence text.
    - If the UI supports multi-select, show the full supported option set directly.
    - If the UI does not support multi-select, first ask whether the user wants `canonical-only` or `multiple active files`, then show the full supported option set and allow comma-separated selection.
    - Store the answer as `<active-agent-files>`. If the user wants canonical-only usage, save exactly that canonical entrypoint as the explicit answer.
-   - In `<assistant-language>`, ask: `Which source-of-truth file should be canonical for rules: Claude (CLAUDE.md), Codex (AGENTS.md), Gemini (GEMINI.md), GitHubCopilot (.github/copilot-instructions.md), Windsurf (.windsurf/rules/rules.md), Junie (.junie/guidelines.md), or Antigravity (.antigravity/rules.md)? All non-selected entrypoint files will redirect to this selected file. Recommendation: choose the agent file you work with most often, ideally from the active files you just selected.`
+   - In `<assistant-language>`, ask: `Which source-of-truth file should be canonical for rules: Claude (CLAUDE.md), Codex (AGENTS.md), Gemini (GEMINI.md), Qwen (QWEN.md), GitHubCopilot (.github/copilot-instructions.md), Windsurf (.windsurf/rules/rules.md), Junie (.junie/guidelines.md), or Antigravity (.antigravity/rules.md)? All non-selected entrypoint files will redirect to this selected file. Recommendation: choose the agent file you work with most often, ideally from the active files you just selected.`
    - Wait for answer and store as `<source-of-truth>`.
    - In `<assistant-language>`, ask (4th mandatory question): a localized equivalent of `Should the no-auto-commit guard be strengthened? (yes/no)`
    - Wait for answer and store as `<enforce-no-auto-commit>`.

@@ -3,7 +3,7 @@
 # Octopus Agent Orchestrator
 
 Deterministic task orchestration for AI coding agents.
-Deploys canonical rules, mandatory quality gates, and token-usage optimization into any project — works with Claude, Codex, Copilot, Gemini, Windsurf, Junie, and Antigravity.
+Deploys canonical rules, mandatory quality gates, and token-usage optimization into any project — works with Claude, Codex, Copilot, Gemini, Qwen, Windsurf, Junie, and Antigravity.
 
 **[Quick Start](#quick-start)** · **[User Guide](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/HOW_TO.md)** · **[CLI Reference](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md)** · **[Architecture](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/architecture.md)** · **[Configuration](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/configuration.md)** · **[Work Example](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/work-example.md)** · **[Changelog](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/CHANGELOG.md)**
 
@@ -37,7 +37,7 @@ If you want persistent commands, install globally.
 
 | Feature | Description |
 |---|---|
-| **7 Provider Bridges** | Claude, Codex, Copilot, Gemini, Windsurf, Junie, Antigravity — single canonical rule set |
+| **8 Supported Providers** | Claude, Codex, Copilot, Gemini, Qwen, Windsurf, Junie, Antigravity — single canonical rule set |
 | **Mandatory Quality Gates** | Preflight → Compile → Review → Doc-Impact → Completion |
 | **Token Economy** | Reviewer-context compaction, scoped diffs, gate output filtering — saves 60–100% on green builds |
 | **Task Lifecycle** | `TODO → IN_PROGRESS → IN_REVIEW → DONE` with hash-chain integrity |
@@ -51,8 +51,9 @@ If you want persistent commands, install globally.
 |---|---|---|
 | Claude | `CLAUDE.md` | `.claude/settings.local.json` |
 | Codex | `AGENTS.md` | — |
-| GitHub Copilot | `.github/copilot-instructions.md` | `.github/agents/*.md` |
 | Gemini | `GEMINI.md` | — |
+| Qwen | `QWEN.md` | optional `.qwen/settings.json` context bootstrap |
+| GitHub Copilot | `.github/copilot-instructions.md` | `.github/agents/*.md` |
 | Windsurf | `.windsurf/rules/rules.md` | `.windsurf/agents/orchestrator.md` |
 | Junie | `.junie/guidelines.md` | `.junie/agents/orchestrator.md` |
 | Antigravity | `.antigravity/rules.md` | `.antigravity/agents/orchestrator.md` |

@@ -248,6 +248,11 @@ describe('buildGitignoreEntries', () => {
         assert.ok(entries.includes('AGENTS.md'));
     });
 
+    it('adds QWEN.md when active', () => {
+        const entries = buildGitignoreEntries(['QWEN.md'], [], false);
+        assert.ok(entries.includes('QWEN.md'));
+    });
+
     it('adds .claude/ when claude access enabled', () => {
         const entries = buildGitignoreEntries(['CLAUDE.md'], [], true);
         assert.ok(entries.includes('.claude/'));

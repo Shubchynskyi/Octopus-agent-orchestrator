@@ -108,7 +108,7 @@ Validate deployment consistency and rule contracts.
 octopus verify --target-root "." --source-of-truth "Codex" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
-Provider values: `Claude`, `Codex`, `Gemini`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
+Provider values: `Claude`, `Codex`, `Gemini`, `Qwen`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
 
 ### `octopus check-update`
 

@@ -165,6 +165,7 @@ test('tryParseBooleanText returns fallback for invalid', () => {
 test('normalizeSourceOfTruth normalizes case-insensitive values', () => {
     assert.equal(normalizeSourceOfTruth('claude'), 'Claude');
     assert.equal(normalizeSourceOfTruth('CODEX'), 'Codex');
+    assert.equal(normalizeSourceOfTruth('qwen'), 'Qwen');
     assert.equal(normalizeSourceOfTruth('GitHubCopilot'), 'GitHubCopilot');
 });
 
@@ -208,6 +209,8 @@ test('normalizeAgentEntrypointToken maps shorthand names', () => {
     assert.equal(normalizeAgentEntrypointToken('claude'), 'CLAUDE.md');
     assert.equal(normalizeAgentEntrypointToken('codex'), 'AGENTS.md');
     assert.equal(normalizeAgentEntrypointToken('gemini'), 'GEMINI.md');
+    assert.equal(normalizeAgentEntrypointToken('qwen'), 'QWEN.md');
+    assert.equal(normalizeAgentEntrypointToken('qwen.md'), 'QWEN.md');
     assert.equal(normalizeAgentEntrypointToken('githubcopilot'), '.github/copilot-instructions.md');
     assert.equal(normalizeAgentEntrypointToken('copilot'), '.github/copilot-instructions.md');
     assert.equal(normalizeAgentEntrypointToken('windsurf'), '.windsurf/rules/rules.md');
@@ -227,7 +230,8 @@ test('normalizeAgentEntrypointToken strips "or" prefix', () => {
 test('normalizeAgentEntrypointToken resolves numbered selections', () => {
     assert.equal(normalizeAgentEntrypointToken('1'), 'CLAUDE.md');
     assert.equal(normalizeAgentEntrypointToken('2'), 'AGENTS.md');
-    assert.equal(normalizeAgentEntrypointToken('7'), '.antigravity/rules.md');
+    assert.equal(normalizeAgentEntrypointToken('4'), 'QWEN.md');
+    assert.equal(normalizeAgentEntrypointToken('8'), '.antigravity/rules.md');
 });
 
 test('normalizeAgentEntrypointToken returns null for unknown', () => {
@@ -238,6 +242,7 @@ test('normalizeAgentEntrypointToken returns null for unknown', () => {
 test('convertSourceOfTruthToEntrypoint maps known values', () => {
     assert.equal(convertSourceOfTruthToEntrypoint('Claude'), 'CLAUDE.md');
     assert.equal(convertSourceOfTruthToEntrypoint('Codex'), 'AGENTS.md');
+    assert.equal(convertSourceOfTruthToEntrypoint('Qwen'), 'QWEN.md');
     assert.equal(convertSourceOfTruthToEntrypoint('GitHubCopilot'), '.github/copilot-instructions.md');
 });
 
@@ -259,8 +264,8 @@ test('normalizeActiveAgentFiles merges comma-separated inputs with canonical', (
 });
 
 test('normalizeActiveAgentFiles supports numbered selections in non-interactive setup input', () => {
-    const result = normalizeActiveAgentFiles('1, 2, 7', 'Claude');
-    assert.equal(result, 'CLAUDE.md, AGENTS.md, .antigravity/rules.md');
+    const result = normalizeActiveAgentFiles('1, 2, 4, 8', 'Claude');
+    assert.equal(result, 'CLAUDE.md, AGENTS.md, QWEN.md, .antigravity/rules.md');
 });
 
 test('normalizeActiveAgentFiles returns null for empty input and unknown source', () => {

@@ -19,6 +19,7 @@ test('AGENT_INIT_PROMPT requires explicit active-agent-files confirmation', () =
     assert.match(content, /you must ask the user which agent entrypoint files are actively used/i);
     assert.match(content, /Never silently infer or expand `ActiveAgentFiles`\./);
     assert.match(content, /present supported entrypoint files as explicit ready-made selectable options/i);
+    assert.match(content, /QWEN\.md/i);
     assert.match(content, /do not collapse this required question into only `Only <canonical>` plus a generic `Type your answer` fallback/i);
     assert.doesNotMatch(content, /decide yourself whether additional managed entrypoint files are actually needed/i);
 });

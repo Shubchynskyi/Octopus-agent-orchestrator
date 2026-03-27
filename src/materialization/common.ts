@@ -10,6 +10,8 @@ const ACTIVE_AGENT_FILE_ALIAS_MAP: Record<string, string> = {
     'agents.md': 'AGENTS.md',
     'gemini': 'GEMINI.md',
     'gemini.md': 'GEMINI.md',
+    'qwen': 'QWEN.md',
+    'qwen.md': 'QWEN.md',
     'githubcopilot': '.github/copilot-instructions.md',
     'copilot': '.github/copilot-instructions.md',
     '.github/copilot-instructions.md': '.github/copilot-instructions.md',
@@ -68,7 +70,7 @@ export function normalizeAgentEntrypointToken(token: string): string | null {
     }
 
     throw new Error(
-        `Unsupported ActiveAgentFiles entry '${token}'. Allowed values: ${ALL_AGENT_ENTRYPOINT_FILES.join(', ')}. You may also use provider aliases such as Claude, Codex, Gemini, Copilot, Windsurf, Junie, or Antigravity.`
+        `Unsupported ActiveAgentFiles entry '${token}'. Allowed values: ${ALL_AGENT_ENTRYPOINT_FILES.join(', ')}. You may also use provider aliases such as Claude, Codex, Gemini, Qwen, Copilot, Windsurf, Junie, or Antigravity.`
     );
 }
 

@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { DEFAULT_BUNDLE_NAME } from '../../core/constants';
+import { DEFAULT_BUNDLE_NAME, SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
 import {
     acquireSourceRoot,
     deployFreshBundle,
@@ -34,6 +34,7 @@ export function buildBootstrapSuccessOutput(packageJson: PackageJsonLike, bundle
     const initPromptPath = path.join(destinationPath, 'AGENT_INIT_PROMPT.md');
     const bundleCliPath = path.join(destinationPath, 'bin', 'octopus.js');
     const initAnswersRelativePath = path.join(bundleRelativePath, 'runtime', 'init-answers.json');
+    const sourceOfTruthOptions = SOURCE_OF_TRUTH_VALUES.join('|');
 
     const lines = [];
     lines.push('OCTOPUS_BOOTSTRAP_OK');
@@ -52,7 +53,7 @@ export function buildBootstrapSuccessOutput(packageJson: PackageJsonLike, bundle
         lines.push(`   npx ${packageJson.name} install --target-root "${targetRoot}" --init-answers-path "${initAnswersRelativePath}"`);
     } else {
         lines.push('3. Custom bundle paths should still use the Node CLI:');
-        lines.push(`   node "${bundleCliPath}" install --target-root "${targetRoot}" --assistant-language "<language>" --assistant-brevity "<concise|detailed>" --source-of-truth "<Claude|Codex|Gemini|GitHubCopilot|Windsurf|Junie|Antigravity>" --init-answers-path "${initAnswersRelativePath}"`);
+        lines.push(`   node "${bundleCliPath}" install --target-root "${targetRoot}" --assistant-language "<language>" --assistant-brevity "<concise|detailed>" --source-of-truth "<${sourceOfTruthOptions}>" --init-answers-path "${initAnswersRelativePath}"`);
     }
 
     return lines.join('\n');
