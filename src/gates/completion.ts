@@ -5,6 +5,211 @@ import { fileSha256, normalizePath, joinOrchestratorPath, resolvePathInsideRepo 
 import { getRulePackEvidence, getRulePackEvidenceViolations } from './rule-pack';
 import { collectTaskTimelineEventTypes, getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
 
+/**
+ * Canonical stage ordering for code-changing tasks.
+ * Each entry is the earliest-allowed position (0-based) in the lifecycle.
+ * Completion gate fails when a required stage event appears before its prerequisites.
+ */
+export const STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze([
+    'TASK_MODE_ENTERED',
+    'RULE_PACK_LOADED',
+    'PREFLIGHT_CLASSIFIED',
+    'COMPILE_GATE_PASSED',
+    'REVIEW_GATE_PASSED'
+]);
+
+export interface TimelineEventEntry {
+    event_type: string;
+    timestamp_utc: string;
+    sequence: number;
+}
+
+export interface StageSequenceEvidence {
+    observed_order: string[];
+    expected_order: string[];
+    code_changed: boolean;
+    review_skill_ids: string[];
+    review_artifact_keys: string[];
+    violations: string[];
+}
+
+/**
+ * Read ordered timeline events from a JSONL file.
+ * Returns events in file order (integrity-sequence order) with their event types.
+ */
+export function collectOrderedTimelineEvents(timelinePath: string, errors: string[]): TimelineEventEntry[] {
+    const entries: TimelineEventEntry[] = [];
+    const resolvedPath = path.resolve(String(timelinePath || ''));
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+        errors.push(`Task timeline not found: ${normalizePath(resolvedPath)}`);
+        return entries;
+    }
+
+    const lines = fs.readFileSync(resolvedPath, 'utf8').split('\n').filter(line => line.trim().length > 0);
+    let seq = 0;
+    for (const line of lines) {
+        try {
+            const parsed = JSON.parse(line) as Record<string, unknown>;
+            const eventType = String(parsed.event_type || '').trim().toUpperCase();
+            const timestampUtc = String(parsed.timestamp_utc || '').trim();
+            if (eventType) {
+                entries.push({ event_type: eventType, timestamp_utc: timestampUtc, sequence: seq });
+            }
+            seq++;
+        } catch {
+            errors.push(`Task timeline contains invalid JSON line: ${normalizePath(resolvedPath)}`);
+            break;
+        }
+    }
+
+    return entries;
+}
+
+/**
+ * Validate that required stage events occurred in the canonical order.
+ * Returns the first position of each required stage event in the timeline
+ * and reports violations when ordering constraints are broken.
+ */
+export function validateStageSequence(
+    events: TimelineEventEntry[],
+    codeChanged: boolean,
+    timelinePath: string
+): StageSequenceEvidence {
+    const normalizedTimelinePath = normalizePath(timelinePath);
+    const violations: string[] = [];
+    const observedOrder: string[] = [];
+    const expectedStages = codeChanged
+        ? [...STAGE_SEQUENCE_ORDER]
+        : ['TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'COMPILE_GATE_PASSED', 'REVIEW_GATE_PASSED'];
+
+    const firstOccurrence = new Map<string, number>();
+    for (const entry of events) {
+        if (!firstOccurrence.has(entry.event_type)) {
+            firstOccurrence.set(entry.event_type, entry.sequence);
+        }
+    }
+
+    for (const stage of STAGE_SEQUENCE_ORDER) {
+        if (firstOccurrence.has(stage)) {
+            observedOrder.push(stage);
+        }
+    }
+
+    // Verify each expected stage occurs after its predecessor
+    for (let i = 1; i < expectedStages.length; i++) {
+        const prev = expectedStages[i - 1];
+        const curr = expectedStages[i];
+        const prevSeq = firstOccurrence.get(prev);
+        const currSeq = firstOccurrence.get(curr);
+        if (prevSeq === undefined || currSeq === undefined) {
+            continue; // Missing events are caught by other checks
+        }
+        if (currSeq < prevSeq) {
+            violations.push(
+                `Stage sequence violation in '${normalizedTimelinePath}': ` +
+                `'${curr}' (seq ${currSeq}) appears before '${prev}' (seq ${prevSeq}). ` +
+                `Expected order: ${expectedStages.join(' → ')}.`
+            );
+        }
+    }
+
+    // For code-changing tasks, PREFLIGHT_CLASSIFIED is mandatory
+    if (codeChanged && !firstOccurrence.has('PREFLIGHT_CLASSIFIED')) {
+        violations.push(
+            `Task timeline '${normalizedTimelinePath}' is missing PREFLIGHT_CLASSIFIED. ` +
+            'Code-changing tasks must carry preflight classification evidence.'
+        );
+    }
+
+    return {
+        observed_order: observedOrder,
+        expected_order: expectedStages,
+        code_changed: codeChanged,
+        review_skill_ids: [],
+        review_artifact_keys: [],
+        violations
+    };
+}
+
+/**
+ * Detect whether a task changed code, based on the preflight artifact.
+ * Returns true when the preflight indicates runtime code changes (changed_lines_total > 0
+ * and the task is classified as FULL_PATH or required reviews include code).
+ */
+export function detectCodeChanged(preflight: Record<string, unknown> | null): boolean {
+    if (!preflight) return false;
+    const metrics = preflight.metrics as Record<string, unknown> | undefined;
+    const changedLinesTotal = metrics?.changed_lines_total;
+    if (typeof changedLinesTotal === 'number' && changedLinesTotal > 0) {
+        return true;
+    }
+    const changedFiles = preflight.changed_files;
+    if (Array.isArray(changedFiles) && changedFiles.length > 0) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Validate review-skill evidence for code-changing tasks.
+ * When code changed but the review-gate artifact does not carry evidence
+ * of actual review-skill invocations (review_checks with non-NOT_REQUIRED verdicts),
+ * the completion gate fails.
+ */
+export function validateReviewSkillEvidence(
+    reviewEvidence: Record<string, unknown> | null,
+    requiredReviews: Record<string, unknown>,
+    reviewArtifacts: Record<string, unknown>,
+    codeChanged: boolean
+): { skill_ids: string[]; artifact_keys: string[]; violations: string[] } {
+    const result = { skill_ids: [] as string[], artifact_keys: [] as string[], violations: [] as string[] };
+    if (!codeChanged) return result;
+
+    // Collect which review types were actually required and had artifacts
+    const requiredKeys: string[] = [];
+    for (const [key, value] of Object.entries(requiredReviews)) {
+        if (value === true) {
+            requiredKeys.push(key);
+        }
+    }
+
+    // Verify review-gate artifact contains review_checks with actual invocation evidence
+    if (reviewEvidence) {
+        const reviewChecks = reviewEvidence.review_checks as Record<string, Record<string, unknown>> | undefined;
+        if (reviewChecks && typeof reviewChecks === 'object') {
+            for (const [key, check] of Object.entries(reviewChecks)) {
+                if (check && check.required === true) {
+                    result.skill_ids.push(key);
+                    const verdict = String(check.verdict || '').trim();
+                    if (verdict && verdict !== 'NOT_REQUIRED') {
+                        result.artifact_keys.push(key);
+                    }
+                }
+            }
+        }
+    }
+
+    // When code changed, at least one review skill must have been invoked
+    if (requiredKeys.length > 0 && result.artifact_keys.length === 0) {
+        result.violations.push(
+            'Code-changing task has required reviews but no review-skill invocation evidence found in review-gate artifact. ' +
+            `Expected evidence for: ${requiredKeys.join(', ')}.`
+        );
+    }
+
+    // Verify that each required review has a corresponding review artifact
+    for (const key of requiredKeys) {
+        if (!reviewArtifacts[key]) {
+            result.violations.push(
+                `Code-changing task is missing review artifact for required review '${key}'. ` +
+                'Review skill must be invoked and produce a review artifact before completion.'
+            );
+        }
+    }
+
+    return result;
+}
+
 export const REVIEW_CONTRACTS = [
     ['code', 'REVIEW PASSED'],
     ['db', 'DB REVIEW PASSED'],
@@ -372,7 +577,14 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     errors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
     errors.push(...getRulePackEvidenceViolations(rulePackEvidence));
 
-    const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, errors);
+    // --- T-003: ordered timeline + stage-sequence enforcement ---
+    const timelineErrors: string[] = [];
+    const orderedEvents = collectOrderedTimelineEvents(timelinePath, timelineErrors);
+    const timelineEventTypes = new Set(orderedEvents.map(e => e.event_type));
+
+    // Propagate timeline parse errors
+    errors.push(...timelineErrors);
+
     if (!timelineEventTypes.has('TASK_MODE_ENTERED')) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing TASK_MODE_ENTERED.`);
     }
@@ -385,6 +597,13 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     if (!timelineEventTypes.has('REVIEW_GATE_PASSED')) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing REVIEW_GATE_PASSED.`);
     }
+
+    // Detect code changes from preflight
+    const codeChanged = detectCodeChanged(validatedPreflight.preflight);
+
+    // Validate stage sequence ordering
+    const stageSequence = validateStageSequence(orderedEvents, codeChanged, timelinePath);
+    errors.push(...stageSequence.violations);
 
     const requiredReviews = validatedPreflight.preflight && typeof validatedPreflight.preflight.required_reviews === 'object'
         ? validatedPreflight.preflight.required_reviews
@@ -414,6 +633,19 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         }
     }
 
+    // T-003: review-skill invocation evidence for code-changing tasks
+    const reviewSkillEvidence = validateReviewSkillEvidence(
+        reviewEvidence,
+        requiredReviews,
+        reviewArtifacts,
+        codeChanged
+    );
+    errors.push(...reviewSkillEvidence.violations);
+
+    // Merge skill evidence into stage-sequence record
+    stageSequence.review_skill_ids = reviewSkillEvidence.skill_ids;
+    stageSequence.review_artifact_keys = reviewSkillEvidence.artifact_keys;
+
     const status = errors.length > 0 ? 'FAILED' : 'PASSED';
     const outcome = errors.length > 0 ? 'FAIL' : 'PASS';
 
@@ -430,6 +662,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         doc_impact_path: normalizePath(docImpactPath),
         timeline_path: normalizePath(timelinePath),
         review_artifacts: reviewArtifacts,
+        stage_sequence_evidence: stageSequence,
         violations: errors
     };
 }

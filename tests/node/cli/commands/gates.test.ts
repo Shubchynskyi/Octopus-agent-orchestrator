@@ -17,6 +17,7 @@ import {
     executeCommand
 } from '../../../../src/cli/commands/gates';
 import { runCompletionGate } from '../../../../src/gates/completion';
+import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import * as childProcess from 'node:child_process';
 
 function createTempRepo(): string {
@@ -379,6 +380,16 @@ describe('cli/commands/gates', () => {
         loadTaskEntryRulePack(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
+        // T-003: code-changing tasks must carry PREFLIGHT_CLASSIFIED evidence
+        appendTaskEvent(
+            repoRoot,
+            taskId,
+            'PREFLIGHT_CLASSIFIED',
+            'INFO',
+            'Preflight completed with mode FULL_PATH.',
+            { mode: 'FULL_PATH', changed_files_count: 1, changed_lines_total: 3, required_reviews: { code: true } }
+        );
+
         await runCompileGateCommand({
             repoRoot,
             taskId,
@@ -420,6 +431,11 @@ describe('cli/commands/gates', () => {
         assert.equal(completionResult.outcome, 'PASS');
         assert.equal(completionResult.status, 'PASSED');
         assert.match(String(completionResult.task_mode_path || ''), /T-903a-task-mode\.json$/);
+        // T-003: verify stage_sequence_evidence is present
+        assert.ok(completionResult.stage_sequence_evidence);
+        assert.equal(completionResult.stage_sequence_evidence.code_changed, true);
+        assert.ok(completionResult.stage_sequence_evidence.observed_order.includes('PREFLIGHT_CLASSIFIED'));
+        assert.equal(completionResult.stage_sequence_evidence.violations.length, 0);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
