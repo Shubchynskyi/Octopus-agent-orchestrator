@@ -42,6 +42,9 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Final user report contract is mandatory on resume too.
 
 ## Mandatory Gate Contract
+- Task-mode entry command must pass before preflight or implementation:
+  `node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode`.
+- Task-mode entry must produce `runtime/reviews/<task-id>-task-mode.json` and task-timeline event `TASK_MODE_ENTERED`.
 - Preflight artifact must exist before review stage.
 - Preflight classification must run with explicit `--output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
 - Compile gate command must pass before `IN_REVIEW`:
@@ -54,12 +57,13 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Review gate command must pass before `DONE`:
   `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check`.
 - Review gate command validates compile evidence (`COMPILE_GATE_PASSED`) from task timeline for the same task id.
+- Review gate command validates task-mode entry evidence (`TASK_MODE_ENTERED`) for the same task id.
 - Review gate command validates no workspace drift after compile evidence; post-compile edits require compile gate rerun.
 - Documentation impact gate command must pass before `DONE`:
   `node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate`.
 - Completion gate command must pass before `DONE`:
   `node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate`.
-- Completion gate validates compile evidence, review-gate evidence, doc-impact evidence, timeline integrity (`COMPILE_GATE_PASSED`, review pass evidence, `REWORK_STARTED` after latest `REVIEW_GATE_FAILED`), best-effort task-event hash-chain integrity, required review artifacts, and final findings-resolution state in PASS review artifacts.
+- Completion gate validates task-mode entry evidence, compile evidence, review-gate evidence, doc-impact evidence, timeline integrity (`TASK_MODE_ENTERED`, `COMPILE_GATE_PASSED`, review pass evidence, `REWORK_STARTED` after latest `REVIEW_GATE_FAILED`), best-effort task-event hash-chain integrity, required review artifacts, and final findings-resolution state in PASS review artifacts.
 - Final PASS review artifacts must keep active `Findings by Severity` and `Residual Risks` empty (`none`). Non-blocking follow-ups may remain only in `Deferred Findings`, and every deferred entry must include `Justification:`.
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
   `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.

@@ -28,6 +28,14 @@ import {
     REVIEW_CONTRACTS,
     validatePreflightForReview
 } from '../../gates/required-reviews-check';
+import {
+    buildTaskModeArtifact,
+    collectTaskTimelineEventTypes,
+    getTaskModeEvidence,
+    getTaskModeEvidenceViolations,
+    parseTaskModeDepth,
+    resolveTaskModeArtifactPath
+} from '../../gates/task-mode';
 import * as gateHelpers from '../../gates/helpers';
 
 type ClassificationResult = ReturnType<typeof classifyChange>;
@@ -81,6 +89,7 @@ interface ClassifyChangeCommandOptions {
 interface CompileGateCommandOptions {
     repoRoot?: string;
     taskId?: unknown;
+    taskModePath?: string;
     failTailLines?: unknown;
     metricsPath?: string;
     outputFiltersPath?: string;
@@ -88,6 +97,19 @@ interface CompileGateCommandOptions {
     compileOutputPath?: string;
     commandsPath?: string;
     preflightPath?: string;
+    emitMetrics?: unknown;
+}
+
+interface EnterTaskModeCommandOptions {
+    repoRoot?: string;
+    taskId?: unknown;
+    entryMode?: unknown;
+    requestedDepth?: unknown;
+    effectiveDepth?: unknown;
+    taskSummary?: unknown;
+    actor?: unknown;
+    artifactPath?: string;
+    metricsPath?: string;
     emitMetrics?: unknown;
 }
 
@@ -122,6 +144,7 @@ interface RequiredReviewsCheckCommandOptions {
     repoRoot?: string;
     preflightPath?: string;
     taskId?: unknown;
+    taskModePath?: string;
     metricsPath?: string;
     outputFiltersPath?: string;
     skipReviews?: unknown;
@@ -225,6 +248,7 @@ interface ReviewEvidenceContext extends Record<string, unknown> {
     preflight_path: string;
     preflight_hash_sha256: string | null;
     mode: string;
+    task_mode: unknown;
     compile_evidence_path: string | null;
     compile_evidence_hash_sha256: string | null;
     output_filters_path: string | null;
@@ -544,6 +568,64 @@ function appendCompileOutputEntry(
         ''
     ];
     fs.appendFileSync(outputPath, `${lines.join(os.EOL)}${os.EOL}`, 'utf8');
+}
+
+export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): { outputLines: string[]; exitCode: number } {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
+    const taskId = assertValidTaskId(String(options.taskId || '').trim());
+    const artifactPath = resolveTaskModeArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
+    const taskModeArtifact = buildTaskModeArtifact({
+        taskId,
+        entryMode: options.entryMode,
+        requestedDepth: parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2),
+        effectiveDepth: parseTaskModeDepth(options.effectiveDepth, 'EffectiveDepth', parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2)),
+        taskSummary: String(options.taskSummary || ''),
+        actor: String(options.actor || 'orchestrator')
+    });
+    writeJsonArtifact(artifactPath, taskModeArtifact);
+
+    const metricsPath = options.metricsPath
+        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
+        : resolveDefaultMetricsPath(repoRoot);
+    appendMetricsIfEnabled(metricsPath, {
+        timestamp_utc: taskModeArtifact.timestamp_utc,
+        event_type: 'task_mode_entered',
+        status: taskModeArtifact.status,
+        task_id: taskModeArtifact.task_id,
+        artifact_path: normalizeOptionalPath(artifactPath),
+        entry_mode: taskModeArtifact.entry_mode,
+        requested_depth: taskModeArtifact.requested_depth,
+        effective_depth: taskModeArtifact.effective_depth,
+        actor: taskModeArtifact.actor
+    }, parseBooleanOption(options.emitMetrics, true));
+
+    appendTaskEvent(
+        orchestratorRoot,
+        taskModeArtifact.task_id,
+        'TASK_MODE_ENTERED',
+        'PASS',
+        `Task mode entered via ${taskModeArtifact.entry_mode}.`,
+        {
+            artifact_path: normalizeOptionalPath(artifactPath),
+            entry_mode: taskModeArtifact.entry_mode,
+            requested_depth: taskModeArtifact.requested_depth,
+            effective_depth: taskModeArtifact.effective_depth,
+            task_summary: taskModeArtifact.task_summary,
+            actor: taskModeArtifact.actor
+        }
+    );
+
+    return {
+        outputLines: [
+            'TASK_MODE_ENTERED',
+            `TaskModeArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
+            `EntryMode: ${taskModeArtifact.entry_mode}`,
+            `RequestedDepth: ${taskModeArtifact.requested_depth}`,
+            `EffectiveDepth: ${taskModeArtifact.effective_depth}`
+        ],
+        exitCode: 0
+    };
 }
 
 export function splitCommandLine(commandText: unknown): string[] {
@@ -987,6 +1069,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     let preflightHash: string | null = null;
     let preflightContext: PreflightContext | null = null;
     let workspaceSnapshot: WorkspaceSnapshot | null = null;
+    let taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
     let warningCount = 0;
     let errorCount = 0;
     let exitCode = 0;
@@ -1007,6 +1090,11 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         compileCommands = getCompileCommands(resolvedCommandsPath);
         resolvedPreflightPath = resolvePreflightPath(repoRoot, options.preflightPath || '', resolvedTaskId);
         preflightContext = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
+        const taskModeViolations = getTaskModeEvidenceViolations(taskModeEvidence);
+        if (taskModeViolations.length > 0) {
+            exitCode = 1;
+            exceptionMessage = taskModeViolations.join(' ');
+        }
         const preflightChangedFiles = expandValueList(preflightContext.changed_files, { splitDelimiters: false });
         workspaceSnapshot = getWorkspaceSnapshot(
             repoRoot,
@@ -1024,10 +1112,10 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                 `Preflight changed_lines_total=${preflightContext.changed_lines_total} differs from current snapshot changed_lines_total=${workspaceSnapshot.changed_lines_total}.`
             );
         }
-        if (scopeViolations.length > 0) {
+        if (!exceptionMessage && scopeViolations.length > 0) {
             exitCode = 1;
             exceptionMessage = `Preflight scope drift detected. Re-run classify-change before compile gate. ${scopeViolations.join(' ')}`;
-        } else {
+        } else if (!exceptionMessage) {
             preflightHash = gateHelpers.fileSha256(resolvedPreflightPath);
             ensureParentDirectory(compileOutputPath);
             fs.writeFileSync(compileOutputPath, '', 'utf8');
@@ -1104,6 +1192,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         preflight_changed_files_count: preflightContext ? preflightContext.changed_files_count : null,
         preflight_changed_lines_total: preflightContext ? preflightContext.changed_lines_total : null,
         preflight_changed_files_sha256: preflightContext ? preflightContext.changed_files_sha256 : null,
+        task_mode: taskModeEvidence,
         scope_detection_source: workspaceSnapshot ? workspaceSnapshot.detection_source : null,
         scope_use_staged: workspaceSnapshot ? !!workspaceSnapshot.use_staged : null,
         scope_include_untracked: workspaceSnapshot ? !!workspaceSnapshot.include_untracked : null,
@@ -1280,7 +1369,7 @@ export function runLogTaskEventCommand(options: LogTaskEventCommandOptions): { o
     if (!['INFO', 'PASS', 'FAIL', 'BLOCKED'].includes(outcome)) {
         throw new Error(`Outcome must be one of INFO, PASS, FAIL, BLOCKED. Got '${outcome}'.`);
     }
-    if (/^(COMPILE_GATE_|REVIEW_GATE_|PREFLIGHT_)/.test(eventType)) {
+    if (eventType === 'TASK_MODE_ENTERED' || /^(COMPILE_GATE_|REVIEW_GATE_|PREFLIGHT_)/.test(eventType)) {
         throw new Error(`EventType '${eventType}' is reserved and cannot be emitted via log-task-event.`);
     }
 
@@ -1684,6 +1773,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         validatedPreflight.preflight_hash,
         options.compileEvidencePath || ''
     );
+    const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
     const scopeDrift = compileGateEvidence.status === 'PASS'
         ? testCompileScopeDrift(repoRoot, compileGateEvidence)
         : null;
@@ -1702,6 +1792,8 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
     if (skipReason && skipReason.length < 12) {
         errors.push('Skip-review reason is too short. Provide a concrete justification (>= 12 chars).');
     }
+
+    errors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
 
     switch (compileGateEvidence.status) {
         case 'TASK_ID_MISSING':
@@ -1741,6 +1833,18 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         } else if (scopeDrift.status === 'DRIFT_DETECTED') {
             errors.push('Workspace changed after compile gate; rerun compile-gate before review gate.');
             errors.push(...scopeDrift.violations);
+        }
+    }
+
+    const timelinePath = resolvedTaskId
+        ? gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`))
+        : null;
+    if (timelinePath) {
+        const timelineErrors: string[] = [];
+        const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, timelineErrors);
+        errors.push(...timelineErrors);
+        if (timelineErrors.length === 0 && !timelineEventTypes.has('TASK_MODE_ENTERED')) {
+            errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing TASK_MODE_ENTERED. Run enter-task-mode before review gate.`);
         }
     }
 
@@ -1823,6 +1927,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         preflight_path: gateHelpers.normalizePath(validatedPreflight.preflight_path),
         preflight_hash_sha256: validatedPreflight.preflight_hash,
         mode: validatedPreflight.mode,
+        task_mode: taskModeEvidence,
         compile_evidence_path: compileGateEvidence.evidence_path,
         compile_evidence_hash_sha256: compileGateEvidence.evidence_hash,
         output_filters_path: normalizeOptionalPath(outputFiltersPath),

@@ -4,6 +4,7 @@
 
 export const GATE_COMMANDS = Object.freeze([
     'validate-manifest',
+    'enter-task-mode',
     'compile-gate',
     'completion-gate',
     'classify-change',
@@ -19,4 +20,3 @@ export const GATE_COMMANDS = Object.freeze([
 export function getAllShimmedGateNames() {
     return GATE_COMMANDS.slice();
 }
-

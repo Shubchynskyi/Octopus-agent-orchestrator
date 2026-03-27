@@ -141,6 +141,7 @@ At `depth=1`:
 ```
  1. Read task + rules (compact)     → PLAN_CREATED
  2. Classify changes                → PREFLIGHT_CLASSIFIED
+    octopus gate enter-task-mode --task-id "T-501" --task-summary "Add --verbose flag"
     octopus gate classify-change --use-staged --task-id "T-501" --task-intent "Add --verbose flag"
     Result: FAST_PATH, reviews: [code]
  3. Implement + test                → (working…)

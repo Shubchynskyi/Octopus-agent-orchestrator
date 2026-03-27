@@ -41,6 +41,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - after a pack is installed, full optional skills live under `Octopus-agent-orchestrator/live/skills/**`.
 
 ## Preflight Gate (Mandatory)
+- Before preflight, enter task mode explicitly:
+  `node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode --task-id "<task-id>" --task-summary "<task summary>"`
 - Run before review stage:
   `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change --changed-file "<planned-file-1>" --changed-file "<planned-file-2>" --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
 - In dirty workspaces prefer staged mode:
@@ -103,6 +105,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Every override must produce an override artifact and be recorded in `TASK.md`.
 
 ## Enforcement
+- Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.
 - Missing preflight artifact blocks progression.
 - Missing compile-gate pass (`COMPILE_GATE_PASSED`) blocks progression to `IN_REVIEW` and `DONE`.
 - Missing required skill invocation blocks progression.

@@ -318,11 +318,12 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 1. Read \`${canonicalFile}\` and its routing links before making changes.
 2. Read \`TASK.md\` and select/create a task row before implementation.
 3. Execute task workflow only in orchestrator mode: \`Execute task <task-id> depth=<1|2|3>\`.
-4. Run preflight classification before implementation via \`${NODE_GATE_COMMAND_PREFIX} classify-change ...\`.
-5. Run compile gate before review via \`${NODE_GATE_COMMAND_PREFIX} compile-gate --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"\`.
-6. Run required independent reviews and gates via \`${NODE_GATE_COMMAND_PREFIX} required-reviews-check ...\`, then \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
-7. Update task status and artifacts in \`TASK.md\`.
-8. Log lifecycle events by task id via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` into \`Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl\`.
+4. Enter task mode explicitly via \`${NODE_GATE_COMMAND_PREFIX} enter-task-mode --task-id "<task-id>" --task-summary "<summary>" ...\`.
+5. Run preflight classification before implementation via \`${NODE_GATE_COMMAND_PREFIX} classify-change ...\`.
+6. Run compile gate before review via \`${NODE_GATE_COMMAND_PREFIX} compile-gate --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"\`.
+7. Run required independent reviews and gates via \`${NODE_GATE_COMMAND_PREFIX} required-reviews-check ...\`, then \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
+8. Update task status and artifacts in \`TASK.md\`.
+9. Log lifecycle events by task id via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` into \`Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl\`.
 
 ## Reviewer Launch Mapping (Required)
 - Claude Code: launch clean-context reviewers via Agent tool (\`fork_context=false\`).

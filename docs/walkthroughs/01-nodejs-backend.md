@@ -167,6 +167,7 @@ Execute task T-101 depth=2
 ```
  1. Read task + rules                → PLAN_CREATED
  2. Classify changes                 → PREFLIGHT_CLASSIFIED
+    octopus gate enter-task-mode --task-id "T-101" --task-summary "Add PDF export endpoint"
     octopus gate classify-change --use-staged --task-id "T-101" --task-intent "Add PDF export endpoint"
     Result: STANDARD_PATH, reviews: [code]
  3. Implement code + tests           → (working…)

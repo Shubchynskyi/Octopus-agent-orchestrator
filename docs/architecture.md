@@ -101,14 +101,15 @@ TODO -> IN_PROGRESS -> IN_REVIEW -> DONE
 Gate pipeline:
 
 ```text
-1. classify-change
-2. implementation
-3. compile-gate
-4. independent reviews
-5. required-reviews-check
-6. doc-impact-gate
-7. completion-gate
-8. DONE
+1. enter-task-mode
+2. classify-change
+3. implementation
+4. compile-gate
+5. independent reviews
+6. required-reviews-check
+7. doc-impact-gate
+8. completion-gate
+9. DONE
 ```
 
 All gate events are logged to `runtime/task-events/<task-id>.jsonl` with hash-chain integrity.

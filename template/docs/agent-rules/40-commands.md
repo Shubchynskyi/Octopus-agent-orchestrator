@@ -175,6 +175,7 @@ Examples that must not be first pass without a reason:
 Canonical gate surface is the Node CLI router.
 
 ```bash
+node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode --task-id "<task-id>" --entry-mode "<EXPLICIT_TASK_EXECUTION|TASK_CREATED_FROM_REQUEST>" --requested-depth "<1|2|3>" --task-summary "<task summary>" --artifact-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-task-mode.json" --metrics-path "Octopus-agent-orchestrator/runtime/metrics.jsonl"
 node Octopus-agent-orchestrator/bin/octopus.js gate classify-change --changed-file "src/<example-file>" --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --metrics-path "Octopus-agent-orchestrator/runtime/metrics.jsonl"
 node Octopus-agent-orchestrator/bin/octopus.js gate classify-change --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --metrics-path "Octopus-agent-orchestrator/runtime/metrics.jsonl"
 node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"
@@ -192,6 +193,7 @@ node Octopus-agent-orchestrator/bin/octopus.js gate human-commit --message "<mes
 ```
 
 Notes:
+- Enter task mode explicitly before preflight; downstream compile/review/completion gates fail without `runtime/reviews/<task-id>-task-mode.json` and timeline event `TASK_MODE_ENTERED`.
 - In a dirty workspace, prefer `--use-staged` after staging task-related tracked files.
 - `--use-staged` includes untracked files by default, so new files are classified even before `git add`.
 - Do not use `git add -f` for ignored orchestration control-plane files (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`); their absence from staged diff is expected.
@@ -199,11 +201,13 @@ Notes:
 - In a clean workspace, `classify-change` can auto-detect changed files from git without additional flags.
 - Compile gate is mandatory before review phase; run `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate` and treat non-zero result as blocking.
 - Compile gate is strict: preflight scope drift blocks execution. Re-run `classify-change` when scope changes.
+- Compile gate additionally validates explicit task-mode entry evidence from `enter-task-mode`.
 - `required-reviews-check` additionally validates compile evidence in `runtime/task-events/<task-id>.jsonl`; without `COMPILE_GATE_PASSED` the review gate fails.
+- `required-reviews-check` additionally validates explicit task-mode entry evidence (`TASK_MODE_ENTERED`) before review pass can succeed.
 - `required-reviews-check` validates workspace drift against compile evidence scope snapshot; any post-compile changes require re-run of compile gate.
 - `required-reviews-check` supports audited override only for code review in tiny low-risk scopes; all other review overrides are rejected.
 - `doc-impact-gate` is mandatory before completion; it writes `runtime/reviews/<task-id>-doc-impact.json`. When the preflight detected `api`, `security`, `infra`, `dependency`, or `db` triggers, `NO_DOC_UPDATES` requires `--sensitive-scope-reviewed true` with a rationale explaining why no documentation updates are needed.
-- `completion-gate` validates compile evidence, review-gate evidence, doc-impact evidence, rework-after-failure evidence, required review artifacts, and best-effort task-event integrity before `DONE`.
+- `completion-gate` validates task-mode evidence, compile evidence, review-gate evidence, doc-impact evidence, rework-after-failure evidence, required review artifacts, and best-effort task-event integrity before `DONE`.
 - `build-scoped-diff` can also write `runtime/reviews/<task-id>-<review-type>-scoped.json` so reviewer prompts know whether scoped diff fell back to full diff.
 - `build-review-context` writes `runtime/reviews/<task-id>-<review-type>-review-context.json` plus a sibling markdown snapshot referenced by `rule_context.artifact_path`; the JSON records selected rule pack, omitted sections, sanitized rule-context metadata, and scoped-diff fallback evidence for token economy mode.
 - Classification roots and trigger regexes are configurable in `Octopus-agent-orchestrator/live/config/paths.json`.

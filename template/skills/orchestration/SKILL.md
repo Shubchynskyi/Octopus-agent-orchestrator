@@ -94,27 +94,30 @@ Canonical gate surface is `node Octopus-agent-orchestrator/bin/octopus.js gate <
 1. Select highest-priority `TODO` task in `TASK.md` and move to `IN_PROGRESS`.
 2. If no `TODO` exists, create a task from current user request, then move it to `IN_PROGRESS`.
 3. Resolve requested depth and record requested/effective depth in `TASK.md` notes.
-4. Build concise plan: scope, files, risks, tests or validation strategy.
+4. Enter task mode explicitly before preflight:
+   - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode --task-id "<task-id>" --entry-mode "<EXPLICIT_TASK_EXECUTION|TASK_CREATED_FROM_REQUEST>" --requested-depth "<1|2|3>" --task-summary "<task summary>"`
+   - `enter-task-mode` writes task-scoped event `TASK_MODE_ENTERED` automatically and persists `runtime/reviews/<task-id>-task-mode.json`.
+5. Build concise plan: scope, files, risks, tests or validation strategy.
    - Log event: `PLAN_CREATED`.
-5. Run preflight with explicit `--output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`:
+6. Run preflight with explicit `--output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`:
    - `classify-change` with repeated `--changed-file` for precise scope, or
    - `--use-staged` in dirty workspaces.
    - canonical invocation: `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change ...`.
    - `classify-change` writes task-scoped event `PREFLIGHT_CLASSIFIED` automatically.
-6. Apply depth escalation from preflight output when required.
-7. Execute implementation path:
+7. Apply depth escalation from preflight output when required.
+8. Execute implementation path:
    - `FULL_PATH` runtime => tests first, then implementation.
    - non-runtime or `FAST_PATH` runtime => objective validations, then implementation.
-8. Run compile gate (mandatory) before review phase:
+9. Run compile gate (mandatory) before review phase:
    - Resolve `fail_tail_lines` from `Octopus-agent-orchestrator/live/config/token-economy.json`; when missing/invalid, fallback to `50`.
    - Gate output filter profiles are loaded from `Octopus-agent-orchestrator/live/config/output-filters.json`; invalid config must warn and fall back to passthrough output.
    - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" --fail-tail-lines "<fail_tail_lines>"`
    - Compile gate writes task-scoped event `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED` automatically.
    - Compile gate is strict about preflight scope freshness and fails on scope drift; rerun preflight when scope changes.
    - On failure, do not move to review phase; fix and rerun until pass.
-9. Move task to `IN_REVIEW`.
+10. Move task to `IN_REVIEW`.
    - Log event: `REVIEW_PHASE_STARTED`.
-10. Run only required independent reviews from preflight:
+11. Run only required independent reviews from preflight:
     - preferred when available: clean-context reviewer agents
     - fallback for single-agent platforms: sequential independent review passes with explicit reviewer role prompt and isolated checklist per pass.
     - fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewer and do not require extra user confirmation to start review passes.
@@ -123,29 +126,31 @@ Canonical gate surface is `node Octopus-agent-orchestrator/bin/octopus.js gate <
     - when token economy mode is active, generate review-context artifact and attach both the JSON metadata artifact and its `rule_context.artifact_path` markdown snapshot to the reviewer prompt.
     - when `scoped_diffs=true` and required reviewer is `db`, `security`, or `refactor`, run scoped diff helper and attach scoped artifact path plus scoped metadata fallback flag to reviewer prompt.
     - Log event per reviewer invocation: `REVIEW_REQUESTED`.
-11. Run `required-reviews-check` and treat result as release gate.
+12. Run `required-reviews-check` and treat result as release gate.
    - `required-reviews-check` writes task-scoped event `REVIEW_GATE_PASSED` or `REVIEW_GATE_FAILED` automatically.
+   - `required-reviews-check` fails if explicit task-mode entry evidence is missing (missing `TASK_MODE_ENTERED` / missing `runtime/reviews/<task-id>-task-mode.json`).
    - `required-reviews-check` fails if compile evidence is missing in `runtime/task-events/<task-id>.jsonl` (missing `COMPILE_GATE_PASSED`).
    - `required-reviews-check` fails if workspace changed after compile evidence; rerun compile gate after post-compile edits.
-12. Resolve every review finding before `DONE` and repeat required reviews + gate check until the final PASS artifacts are clean.
+13. Resolve every review finding before `DONE` and repeat required reviews + gate check until the final PASS artifacts are clean.
    - blocking findings must be fixed before rerun.
    - non-blocking findings may be deferred only in `Deferred Findings` with `Justification:` after the active `Findings by Severity` and `Residual Risks` sections are cleared to `none`.
    - On failed gate and return to coding, log event: `REWORK_STARTED`.
-13. Run doc impact gate before completion:
+14. Run doc impact gate before completion:
    - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
    - Doc impact gate writes task-scoped event `DOC_IMPACT_ASSESSED` or `DOC_IMPACT_ASSESSMENT_FAILED`.
-14. Run completion gate and treat result as final readiness gate before `DONE`.
+15. Run completion gate and treat result as final readiness gate before `DONE`.
    - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"`
    - Completion gate writes task-scoped event `COMPLETION_GATE_PASSED` or `COMPLETION_GATE_FAILED` automatically.
+   - Completion gate fails if task-mode entry evidence is missing.
    - Completion gate fails if a PASS review artifact still contains active findings or residual risks, or if any deferred entry omits `Justification:`.
-15. Update required docs and changelog when behavior changed.
+16. Update required docs and changelog when behavior changed.
    - Internal orchestration artifacts (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) may remain gitignored in deployed workspaces; update them on disk but do not `git add -f` them unless the user explicitly asks to version orchestrator internals.
-16. Record artifacts and evidence in `TASK.md`.
-17. Set final status:
+17. Record artifacts and evidence in `TASK.md`.
+18. Set final status:
     - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed.
     - `BLOCKED` when any mandatory gate failed or cannot run.
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
-18. Report to user in exact order:
+19. Report to user in exact order:
     1. implementation summary (include depth, path mode, review verdicts, docs updated)
        - at `depth=1` and `depth=2`, include a token-economy savings line; at `depth=3` it is optional;
        - format savings as `Saved tokens: ~<total> (~<percent>%) (<part> <label> + <part> <label> + ...)` when the baseline is known;
@@ -153,8 +158,8 @@ Canonical gate surface is `node Octopus-agent-orchestrator/bin/octopus.js gate <
        - localized summaries may translate the wording, but must preserve the numeric structure; example: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`
     2. commit suggestion as exact command form: `git commit -m "<message>"`
     3. explicit follow-up question: `Do you want me to commit now? (yes/no)`
-19. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
-20. Never commit unless user explicitly requests commit.
+20. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
+21. Never commit unless user explicitly requests commit.
 
 ## Reviewer Agent Execution (Platform-Agnostic)
 - Apply this section on every platform.
@@ -223,6 +228,7 @@ Canonical gate surface is `node Octopus-agent-orchestrator/bin/octopus.js gate <
 
 ## Hard Stops
 - Do not assign `FAST_PATH` / `FULL_PATH` manually.
+- Do not skip explicit task-mode entry via `enter-task-mode` before preflight and implementation.
 - Do not skip preflight classification with explicit `--output-path`.
 - Do not move to implementation without plan.
 - Do not move to `IN_REVIEW` without passing compile gate (`COMPILE_GATE_PASSED`).
@@ -235,6 +241,7 @@ Canonical gate surface is `node Octopus-agent-orchestrator/bin/octopus.js gate <
 
 ## Mandatory Outputs
 - Updated task row and status transitions in `TASK.md`.
+- Task-mode artifact: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-task-mode.json`.
 - Preflight artifact: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json`.
 - Compile gate result: `COMPILE_GATE_PASSED`.
 - Compile gate evidence: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-compile-gate.json`.

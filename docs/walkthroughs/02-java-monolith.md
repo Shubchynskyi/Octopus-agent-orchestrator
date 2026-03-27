@@ -154,6 +154,7 @@ Execute task T-301 depth=3
 ```
  1. Read task + rules                → PLAN_CREATED
  2. Classify changes                 → PREFLIGHT_CLASSIFIED
+    octopus gate enter-task-mode --task-id "T-301" --task-summary "Add late-payment fee calculation"
     octopus gate classify-change --use-staged --task-id "T-301" --task-intent "Add late-payment fee calculation"
     Result: FULL_PATH, reviews: [code, db, security]
  3. Implement code + tests           → (working…)

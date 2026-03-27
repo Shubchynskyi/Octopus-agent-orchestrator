@@ -120,6 +120,7 @@ node Octopus-agent-orchestrator/bin/octopus.js gate <name>
 
 Shipped gates:
 
+- `enter-task-mode`
 - `classify-change`
 - `compile-gate`
 - `required-reviews-check`

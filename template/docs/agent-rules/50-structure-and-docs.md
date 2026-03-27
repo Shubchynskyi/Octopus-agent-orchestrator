@@ -79,6 +79,7 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 - `Octopus-agent-orchestrator/live/config/skill-packs.json` - installed built-in domain packs managed by `octopus skills`.
 - `Octopus-agent-orchestrator/live/USAGE.md` - post-init usage instructions rendered in the selected assistant language.
 - `node Octopus-agent-orchestrator/bin/octopus.js agent-init` - hard code-level onboarding gate that records active agent files and final validation state.
+- `node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode` - explicit task-mode boundary gate before preflight and implementation.
 - `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change` - path mode and required review preflight gate.
 - `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate` - mandatory compile gate before review phase.
 - `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check` - mandatory post-review gate checker.

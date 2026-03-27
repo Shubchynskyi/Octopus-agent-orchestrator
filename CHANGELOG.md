@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- added explicit `enter-task-mode` gate and hard task-mode evidence enforcement so compile, review, and completion gates fail when code execution starts without a declared `TASK.md` orchestration boundary
 - added full Qwen root-entrypoint support: `Qwen` is now a canonical source-of-truth option mapped to `QWEN.md`, with active-entrypoint normalization, bootstrap/install/uninstall coverage, and `.qwen/settings.json` synchronization to the current canonical entrypoint plus `TASK.md`
 
 ## 2.3.2

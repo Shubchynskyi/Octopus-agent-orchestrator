@@ -8,12 +8,14 @@ import {
     runClassifyChangeCommand,
     runCompileGateCommand,
     runDocImpactGateCommand,
+    runEnterTaskModeCommand,
     runHumanCommitCommand,
     runLogTaskEventCommand,
     runRequiredReviewsCheckCommand,
     splitCommandLine,
     executeCommand
 } from '../../../../src/cli/commands/gates';
+import { runCompletionGate } from '../../../../src/gates/completion';
 import * as childProcess from 'node:child_process';
 
 function createTempRepo(): string {
@@ -24,7 +26,9 @@ function createTempRepo(): string {
 }
 
 function writePreflight(repoRoot: string, taskId: string, overrides: Record<string, unknown> = {}): string {
-    const preflightPath = path.join(repoRoot, `${taskId}-preflight.json`);
+    const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
     const payload = {
         task_id: taskId,
         detection_source: 'explicit_changed_files',
@@ -47,6 +51,28 @@ function writePreflight(repoRoot: string, taskId: string, overrides: Record<stri
     };
     fs.writeFileSync(preflightPath, JSON.stringify(payload, null, 2), 'utf8');
     return preflightPath;
+}
+
+function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: string, verdict: string): void {
+    const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-${reviewKey}.md`), [
+        '# Review',
+        '',
+        verdict,
+        '',
+        '## Findings by Severity',
+        'Critical: None',
+        'High: None',
+        'Medium: None',
+        'Low: None',
+        '',
+        '## Residual Risks',
+        'None',
+        '',
+        '## Deferred Findings',
+        'None'
+    ].join('\n'), 'utf8');
 }
 
 describe('cli/commands/gates', () => {
@@ -91,6 +117,14 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
+        const taskModeResult = runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Update app flow'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(taskModeResult.outputLines[0], 'TASK_MODE_ENTERED');
+
         const result = await runCompileGateCommand({
             repoRoot,
             taskId,
@@ -106,6 +140,35 @@ describe('cli/commands/gates', () => {
         assert.equal(result.outputLines[0], 'COMPILE_GATE_PASSED');
         assert.equal(evidence.status, 'PASSED');
         assert.equal(evidence.event_source, 'compile-gate');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when task mode entry evidence is missing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901a';
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, 1);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some(line => line.includes('Task-mode entry evidence missing')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -148,6 +211,12 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Update app flow'
+        });
+
         await runCompileGateCommand({
             repoRoot,
             taskId,
@@ -158,24 +227,7 @@ describe('cli/commands/gates', () => {
         });
 
         const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
-        fs.mkdirSync(reviewsRoot, { recursive: true });
-        fs.writeFileSync(path.join(reviewsRoot, `${taskId}-code.md`), [
-            '# Review',
-            '',
-            'REVIEW PASSED',
-            '',
-            '## Findings by Severity',
-            'Critical: None',
-            'High: None',
-            'Medium: None',
-            'Low: None',
-            '',
-            '## Residual Risks',
-            'None',
-            '',
-            '## Deferred Findings',
-            'None'
-        ].join('\n'), 'utf8');
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
 
         const result = runRequiredReviewsCheckCommand({
             repoRoot,
@@ -192,6 +244,70 @@ describe('cli/commands/gates', () => {
         assert.equal(result.outputLines[0], 'REVIEW_GATE_PASSED');
         assert.equal(evidence.status, 'PASSED');
         assert.equal(evidence.event_source, 'required-reviews-check');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('passes completion gate only after task mode entry, review gate, and doc impact gate', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a';
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Update app flow'
+        });
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Internal cleanup only, no public behavior change.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.outcome, 'PASS');
+        assert.equal(completionResult.status, 'PASSED');
+        assert.match(String(completionResult.task_mode_path || ''), /T-903a-task-mode\.json$/);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

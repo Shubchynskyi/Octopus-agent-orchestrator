@@ -7,6 +7,7 @@ import * as requiredReviewsCheck from './required-reviews-check';
 import * as docImpact from './doc-impact';
 import * as completion from './completion';
 import * as taskEventsSummary from './task-events-summary';
+import * as taskMode from './task-mode';
 
 export {
     helpers,
@@ -17,5 +18,6 @@ export {
     requiredReviewsCheck,
     docImpact,
     completion,
-    taskEventsSummary
+    taskEventsSummary,
+    taskMode
 };

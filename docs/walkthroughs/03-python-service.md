@@ -172,6 +172,7 @@ Execute task T-401 depth=2
 ```
  1. Read task + rules                → PLAN_CREATED
  2. Classify changes                 → PREFLIGHT_CLASSIFIED
+    octopus gate enter-task-mode --task-id "T-401" --task-summary "Add order cancellation with refund"
     octopus gate classify-change --use-staged --task-id "T-401" --task-intent "Add order cancellation with refund"
     Result: STANDARD_PATH, reviews: [code, security]
  3. Implement code + tests           → (working…)

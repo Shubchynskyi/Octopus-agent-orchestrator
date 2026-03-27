@@ -223,6 +223,7 @@ Canonical gate surface is `octopus gate <name>` or `node bin/octopus.js gate <na
 
 | Gate | Canonical invocation |
 |---|---|
+| Enter task mode | `octopus gate enter-task-mode --task-id "T-001" --task-summary "..."` |
 | Classify change | `octopus gate classify-change --use-staged --task-intent "..."` |
 | Compile gate | `octopus gate compile-gate --task-id "T-001"` |
 | Review gate | `octopus gate required-reviews-check --task-id "T-001" --code-review-verdict "..."` |

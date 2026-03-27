@@ -25,6 +25,7 @@ test('GATE_COMMANDS is non-empty and contains only kebab-case strings', () => {
 
 test('GATE_COMMANDS includes representative well-known gate names', () => {
     assert.ok(GATE_COMMANDS.includes('validate-manifest'));
+    assert.ok(GATE_COMMANDS.includes('enter-task-mode'));
     assert.ok(GATE_COMMANDS.includes('compile-gate'));
     assert.ok(GATE_COMMANDS.includes('completion-gate'));
     assert.ok(GATE_COMMANDS.includes('log-task-event'));
