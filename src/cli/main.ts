@@ -15,6 +15,7 @@ import { getStatusSnapshot } from '../validators/status';
 import { formatManifestResult, validateManifest } from '../validators/validate-manifest';
 import { formatVerifyResult, runVerify } from '../validators/verify';
 import { runCheckUpdate } from '../lifecycle/check-update';
+import { runContractMigrations } from '../lifecycle/contract-migrations';
 import { runRollback } from '../lifecycle/rollback';
 import { runUninstall } from '../lifecycle/uninstall';
 import { runUpdate } from '../lifecycle/update';
@@ -158,7 +159,29 @@ function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: boolean 
             initAnswersPath: runnerOptions.initAnswersPath,
             dryRun: fallbackDryRun,
             skipVerify: runnerOptions.skipVerify,
-            skipManifestValidation: runnerOptions.skipManifestValidation
+            skipManifestValidation: runnerOptions.skipManifestValidation,
+            contractMigrationRunner(options) {
+                return runContractMigrations(options);
+            },
+            verifyRunner(options) {
+                const result = runVerify({
+                    targetRoot: options.targetRoot,
+                    initAnswersPath: options.initAnswersPath,
+                    sourceOfTruth: options.sourceOfTruth
+                });
+                if (!result.passed) {
+                    throw new Error(formatVerifyResult(result));
+                }
+                return result;
+            },
+            manifestRunner(options) {
+                const manifestPath = path.join(options.targetRoot, 'Octopus-agent-orchestrator', 'MANIFEST.md');
+                const result = validateManifest(manifestPath, options.targetRoot);
+                if (!result.passed) {
+                    throw new Error(formatManifestResult(result));
+                }
+                return result;
+            }
         }) as UpdateLifecycleResult;
     };
 }

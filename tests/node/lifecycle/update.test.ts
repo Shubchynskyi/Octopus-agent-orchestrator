@@ -5,7 +5,10 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import { runUpdate, getUpdateRollbackItems } from '../../../src/lifecycle/update';
+import { runContractMigrations } from '../../../src/lifecycle/contract-migrations';
 import { removePathRecursive } from '../../../src/lifecycle/common';
+import { formatManifestResult, validateManifest } from '../../../src/validators/validate-manifest';
+import { formatVerifyResult, runVerify } from '../../../src/validators/verify';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -64,6 +67,54 @@ function setupUpdateWorkspace(repoRoot: string) {
 
     // Create .git dir for install
     fs.mkdirSync(path.join(tmpDir, '.git', 'hooks'), { recursive: true });
+
+    return {
+        projectRoot: tmpDir,
+        bundleRoot: bundle,
+        answersPath: path.relative(tmpDir, answersPath).replace(/\\/g, '/')
+    };
+}
+
+function setupSyncedUpdateWorkspace(repoRoot: string) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-update-synced-'));
+    const bundle = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    fs.mkdirSync(bundle, { recursive: true });
+
+    const exactFiles = [
+        '.gitattributes',
+        'AGENT_INIT_PROMPT.md',
+        'CHANGELOG.md',
+        'HOW_TO.md',
+        'LICENSE',
+        'MANIFEST.md',
+        'README.md',
+        'VERSION',
+        'package.json'
+    ];
+    for (const relativePath of exactFiles) {
+        fs.copyFileSync(path.join(repoRoot, relativePath), path.join(bundle, relativePath));
+    }
+
+    copyDirRecursive(path.join(repoRoot, 'bin'), path.join(bundle, 'bin'));
+    copyDirRecursive(path.join(repoRoot, 'src'), path.join(bundle, 'src'));
+    copyDirRecursive(path.join(repoRoot, 'template'), path.join(bundle, 'template'));
+
+    fs.mkdirSync(path.join(bundle, 'live', 'config'), { recursive: true });
+    fs.mkdirSync(path.join(bundle, 'live', 'docs', 'agent-rules'), { recursive: true });
+    fs.mkdirSync(path.join(bundle, 'runtime'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, '.git', 'hooks'), { recursive: true });
+
+    const answers = {
+        AssistantLanguage: 'English',
+        AssistantBrevity: 'concise',
+        SourceOfTruth: 'Claude',
+        EnforceNoAutoCommit: 'false',
+        ClaudeOrchestratorFullAccess: 'false',
+        TokenEconomyEnabled: 'true',
+        CollectedVia: 'CLI_NONINTERACTIVE'
+    };
+    const answersPath = path.join(bundle, 'runtime', 'init-answers.json');
+    fs.writeFileSync(answersPath, JSON.stringify(answers, null, 2));
 
     return {
         projectRoot: tmpDir,
@@ -432,6 +483,89 @@ describe('runUpdate', () => {
             assert.equal(result.contractMigrationStatus, 'PASS');
             assert.equal(result.contractMigrationCount, 1);
             assert.deepEqual(result.contractMigrationFiles, ['test-migration.js']);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('migrates stale live task-mode rule contracts before verify and manifest validation', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupSyncedUpdateWorkspace(repoRoot);
+        try {
+            const liveRuleDir = path.join(bundleRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(liveRuleDir, { recursive: true });
+            fs.writeFileSync(path.join(liveRuleDir, '40-commands.md'), [
+                '# Commands',
+                '',
+                '## Agent Gates',
+                '```bash',
+                'node Octopus-agent-orchestrator/bin/octopus.js gate classify-change --changed-file "src/example.ts"',
+                '```'
+            ].join('\n'), 'utf8');
+            fs.writeFileSync(path.join(liveRuleDir, '80-task-workflow.md'), [
+                '# Task Workflow',
+                '',
+                '## Mandatory Gate Contract',
+                '- Preflight artifact must exist before review stage.',
+                '- Compile gate command must pass before `IN_REVIEW`.'
+            ].join('\n'), 'utf8');
+            fs.writeFileSync(path.join(liveRuleDir, '90-skill-catalog.md'), [
+                '# Skill Catalog',
+                '',
+                '## Preflight Gate (Mandatory)',
+                '- Run before review stage:',
+                '  `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change --task-intent "<task summary>"`',
+                '',
+                '## Enforcement',
+                '- Missing preflight artifact blocks progression.'
+            ].join('\n'), 'utf8');
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: false,
+                skipManifestValidation: false,
+                contractMigrationRunner: (options) => runContractMigrations(options),
+                verifyRunner: (options) => {
+                    const verifyResult = runVerify({
+                        targetRoot: options.targetRoot,
+                        sourceOfTruth: options.sourceOfTruth,
+                        initAnswersPath: options.initAnswersPath
+                    });
+                    if (!verifyResult.passed) {
+                        throw new Error(formatVerifyResult(verifyResult));
+                    }
+                    return verifyResult;
+                },
+                manifestRunner: (options) => {
+                    const manifestPath = path.join(options.targetRoot, 'Octopus-agent-orchestrator', 'MANIFEST.md');
+                    const manifestResult = validateManifest(manifestPath, options.targetRoot);
+                    if (!manifestResult.passed) {
+                        throw new Error(formatManifestResult(manifestResult));
+                    }
+                    return manifestResult;
+                }
+            });
+
+            assert.equal(result.installStatus, 'PASS');
+            assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(result.contractMigrationStatus, 'PASS');
+            assert.equal(result.verifyStatus, 'PASS');
+            assert.equal(result.manifestValidationStatus, 'PASS');
+            assert.equal(result.contractMigrationCount, 3);
+            assert.deepEqual(result.contractMigrationFiles, [
+                'Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md',
+                'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
+                'Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md'
+            ]);
+
+            const commandsContent = fs.readFileSync(path.join(liveRuleDir, '40-commands.md'), 'utf8');
+            const taskWorkflowContent = fs.readFileSync(path.join(liveRuleDir, '80-task-workflow.md'), 'utf8');
+            const skillCatalogContent = fs.readFileSync(path.join(liveRuleDir, '90-skill-catalog.md'), 'utf8');
+
+            assert.ok(commandsContent.includes('node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode'));
+            assert.ok(taskWorkflowContent.includes('TASK_MODE_ENTERED'));
+            assert.ok(skillCatalogContent.includes('Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.'));
         } finally {
             removePathRecursive(projectRoot);
         }

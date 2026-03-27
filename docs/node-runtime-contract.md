@@ -110,6 +110,13 @@ The runtime materializes:
 - `runtime/reviews/**`
 - `runtime/task-events/**`
 
+Ordinary `update` and `check-update --apply` additionally:
+
+- sync the new bundle into place
+- re-run install and live materialization
+- apply built-in migrations for mandatory live rule contracts in existing workspaces
+- run verify plus manifest validation before the update is considered successful
+
 ## Gate Inventory
 
 Canonical gate surface:

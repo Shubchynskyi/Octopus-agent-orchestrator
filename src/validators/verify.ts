@@ -3,6 +3,7 @@ import { BOOLEAN_TRUE_VALUES, BOOLEAN_FALSE_VALUES } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import { isPathInsideRoot } from '../core/paths';
 import { validateSkillPacks, validateSkillsIndex } from '../runtime/skills';
+import { TASK_MODE_RULE_SECTION_MIGRATIONS } from '../materialization/rule-contracts';
 import {
     PROJECT_COMMAND_PLACEHOLDERS,
     RULE_FILES,
@@ -214,6 +215,27 @@ export function detectCommandsViolations(targetRoot: string): string[] {
     return violations;
 }
 
+export function detectTaskModeRuleContractViolations(targetRoot: string): string[] {
+    const violations: string[] = [];
+
+    for (const migration of TASK_MODE_RULE_SECTION_MIGRATIONS) {
+        const fullPath = path.join(targetRoot, migration.liveRelativePath);
+        if (!pathExists(fullPath)) {
+            continue;
+        }
+
+        const content = readTextFile(fullPath);
+        const fileLabel = path.basename(migration.liveRelativePath);
+        for (const snippet of migration.requiredSnippets) {
+            if (!content.includes(snippet)) {
+                violations.push(`${fileLabel} must include task-mode contract snippet '${snippet}'.`);
+            }
+        }
+    }
+
+    return violations;
+}
+
 export function detectCoreRuleViolations(
     targetRoot: string,
     assistantLanguage: string | null,
@@ -323,6 +345,7 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
     var spv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/skill-packs.json');
     var six = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/skills-index.json');
     var rfr = detectRuleFileViolations(targetRoot);
+    var tmv = detectTaskModeRuleContractViolations(targetRoot);
     var cv = detectCommandsViolations(targetRoot);
     var crv = detectCoreRuleViolations(targetRoot, iar.assistantLanguage, iar.assistantBrevity);
     var tv = detectTaskViolations(targetRoot, canonicalEntrypoint);
@@ -347,7 +370,7 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
         outputFiltersContractViolations: ofv,
         skillPacksConfigContractViolations: spv,
         skillsIndexConfigContractViolations: six,
-        ruleFileViolations: rfr.ruleFileViolations,
+        ruleFileViolations: rfr.ruleFileViolations.concat(tmv),
         templatePlaceholderViolations: rfr.templatePlaceholderViolations,
         commandsContractViolations: cv,
         manifestContractViolations: mv,

@@ -126,7 +126,7 @@ Notes:
 - By default `check-update` uses the deployed package name from `Octopus-agent-orchestrator/package.json` with the npm `latest` tag.
 - `--package-spec` accepts npm specs such as `octopus-agent-orchestrator@<target-version>`, dist-tags like `@latest`, and local tarballs like `.\octopus-agent-orchestrator-<target-version>.tgz`.
 - `--source-path` is for local testing against an unpacked repo or bundle directory.
-- `--apply` runs the full update lifecycle after bundle sync, re-materializes `live/`, defers `VERSION` until lifecycle success, and creates rollback artifacts for the last applied update.
+- `--apply` runs the full update lifecycle after bundle sync, re-materializes `live/`, applies built-in live-rule contract migrations for existing workspaces, runs verify plus manifest validation, defers `VERSION` until lifecycle success, and creates rollback artifacts for the last applied update.
 
 ### `octopus update`
 
@@ -141,7 +141,7 @@ octopus update --target-root "." --init-answers-path "Octopus-agent-orchestrator
 
 Notes:
 - `update` always applies the update workflow unless `--dry-run` is used.
-- Successful applies sync bundle files, run install, re-materialize `live/`, and only then write the final `VERSION` marker.
+- Successful applies sync bundle files, run install, re-materialize `live/`, apply built-in live-rule contract migrations for existing workspaces, run verify plus manifest validation, and only then write the final `VERSION` marker.
 - Successful applies create rollback artifacts under `Octopus-agent-orchestrator/runtime/update-rollbacks/` and `Octopus-agent-orchestrator/runtime/bundle-backups/`.
 - Update reports now reflect actual execution status; steps with no configured runner are reported as skipped rather than pass.
 - Use `octopus check-update --apply` when you want a compare-first flow with optional apply.

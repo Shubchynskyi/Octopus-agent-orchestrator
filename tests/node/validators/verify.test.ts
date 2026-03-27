@@ -10,6 +10,7 @@ import {
     runVerify,
     formatVerifyResult,
     detectCommandsViolations,
+    detectTaskModeRuleContractViolations,
     detectCoreRuleViolations,
     detectEntrypointViolations,
     detectTaskViolations,
@@ -151,6 +152,74 @@ test('detectCommandsViolations returns empty for missing file', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
     try {
         const violations = detectCommandsViolations(tmpDir);
+        assert.deepEqual(violations, []);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectTaskModeRuleContractViolations reports stale task-mode rule snippets', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    const rulesDir = path.join(
+        tmpDir,
+        'Octopus-agent-orchestrator', 'live', 'docs', 'agent-rules'
+    );
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, '40-commands.md'), '# Commands\n\n## Agent Gates\n```bash\nnode Octopus-agent-orchestrator/bin/octopus.js gate classify-change\n```\n', 'utf8');
+    fs.writeFileSync(path.join(rulesDir, '80-task-workflow.md'), '# Task Workflow\n\n## Mandatory Gate Contract\n- Preflight artifact must exist before review stage.\n', 'utf8');
+    fs.writeFileSync(path.join(rulesDir, '90-skill-catalog.md'), '# Skill Catalog\n\n## Preflight Gate (Mandatory)\n- Run before review stage.\n\n## Enforcement\n- Missing preflight artifact blocks progression.\n', 'utf8');
+
+    try {
+        const violations = detectTaskModeRuleContractViolations(tmpDir);
+        assert.ok(violations.some(v => v.includes("40-commands.md must include task-mode contract snippet 'node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode'")));
+        assert.ok(violations.some(v => v.includes("80-task-workflow.md must include task-mode contract snippet 'Task-mode entry command must pass before preflight or implementation:'")));
+        assert.ok(violations.some(v => v.includes("90-skill-catalog.md must include task-mode contract snippet 'Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.'")));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectTaskModeRuleContractViolations accepts current task-mode contract snippets', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    const rulesDir = path.join(
+        tmpDir,
+        'Octopus-agent-orchestrator', 'live', 'docs', 'agent-rules'
+    );
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, '40-commands.md'), [
+        '# Commands',
+        '',
+        '### Compile Gate (Mandatory)',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate',
+        '',
+        '## Agent Gates',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode',
+        'Compile gate additionally validates explicit task-mode entry evidence from `enter-task-mode`.',
+        '`required-reviews-check` additionally validates explicit task-mode entry evidence (`TASK_MODE_ENTERED`) before review pass can succeed.'
+    ].join('\n'), 'utf8');
+    fs.writeFileSync(path.join(rulesDir, '80-task-workflow.md'), [
+        '# Task Workflow',
+        '',
+        '## Mandatory Gate Contract',
+        'Task-mode entry command must pass before preflight or implementation:',
+        'TASK_MODE_ENTERED',
+        'Review gate command validates task-mode entry evidence (`TASK_MODE_ENTERED`) for the same task id.',
+        'Completion gate validates task-mode entry evidence',
+        'HARD STOP: do not skip `enter-task-mode`'
+    ].join('\n'), 'utf8');
+    fs.writeFileSync(path.join(rulesDir, '90-skill-catalog.md'), [
+        '# Skill Catalog',
+        '',
+        '## Preflight Gate (Mandatory)',
+        'Before preflight, enter task mode explicitly:',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode',
+        '',
+        '## Enforcement',
+        'Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.'
+    ].join('\n'), 'utf8');
+
+    try {
+        const violations = detectTaskModeRuleContractViolations(tmpDir);
         assert.deepEqual(violations, []);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
