@@ -109,14 +109,14 @@ export function buildNodeFoundation(): BuildResult {
 
     resetBuildRoot(buildRoot);
 
-    // Compile src/ + tests/ + scripts/ with tsc (single type-checked graph)
+    // Compile the maintained runtime/test/build graph into .node-build.
     runTsc(['-p', 'tsconfig.tests.json'], repoRoot);
     const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
 
     // Collect compiled files from all source roots
     const allFiles: string[] = [];
 
-    for (const subdir of ['src', 'tests/node', 'scripts/node-foundation', 'scripts/test']) {
+    for (const subdir of ['src', 'tests/node', 'scripts/node-foundation']) {
         const compiledRoot = path.join(buildRoot, ...subdir.split('/'));
         if (fs.existsSync(compiledRoot)) {
             for (const absPath of collectFiles(compiledRoot, '.js')) {
@@ -130,7 +130,7 @@ export function buildNodeFoundation(): BuildResult {
         manifestPath,
         JSON.stringify({
             nodeEngineRange: getNodeEngineRange(),
-            sourceRoots: ['src', 'tests/node', 'scripts/node-foundation', 'scripts/test'],
+            sourceRoots: ['src', 'tests/node', 'scripts/node-foundation'],
             files: allFiles
         }, null, 2) + '\n',
         'utf8'

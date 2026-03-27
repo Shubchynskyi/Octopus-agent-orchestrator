@@ -18,13 +18,13 @@
     "octopus-agent-orchestrator": "bin/octopus.js"
   },
   "scripts": {
-    "build:scripts": "tsc -p tsconfig.tests.json --outDir .scripts-build && node .scripts-build/scripts/node-foundation/build.js sync-repo-cli",
+    "build:scripts": "tsc -p tsconfig.scripts.json --outDir .scripts-build && node .scripts-build/scripts/node-foundation/build.js sync-repo-cli",
     "build": "npm run build:scripts && node .scripts-build/scripts/node-foundation/build.js publish-runtime",
     "build:publish-runtime": "npm run build:scripts && node .scripts-build/scripts/node-foundation/build.js publish-runtime",
     "build:node-foundation": "npm run build:scripts && node .scripts-build/scripts/node-foundation/build.js node-foundation",
     "test": "npm run build:scripts && node .scripts-build/scripts/node-foundation/test.js",
     "test:node-foundation": "npm run build:scripts && node .scripts-build/scripts/node-foundation/test.js",
-    "validate:release": "npm run build && npm test && npm run build:scripts && node --test .scripts-build/tests/node/packaging/pack-smoke.test.js",
+    "validate:release": "npm run build && npm test && node --test .node-build/tests/node/packaging/pack-smoke.test.js",
     "prepare": "npm run build",
     "typecheck": "tsc -p tsconfig.node-foundation.json",
     "prepack": "npm run build:publish-runtime"

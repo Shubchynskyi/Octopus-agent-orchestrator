@@ -6,13 +6,15 @@
 
 - finished the TypeScript-only source contract: the public CLI launcher is now generated from `src/bin/octopus.ts`, and hand-written tracked `bin/octopus.js` source is gone
 - added `prepare` plus build-path sync so source checkouts and package builds materialize the generated launcher consistently before execution
+- aligned `typecheck` with the full maintained TypeScript graph used by the runtime, Node tests, and build/test harness
+- reduced hot-path recompilation by splitting lightweight helper compilation (`build:scripts`) from the wider staged test/runtime graph
 - stabilized packaging tests by isolating publish-runtime and pack smoke builds in fixture repos instead of racing on the shared repository `dist/`
-- documented the generated-launcher contract across runtime and user-facing docs
+- cleaned repo ignores/docs to match the current compile-first Node/TypeScript contract
 
 ## 2.3.1
 
 - synchronized release metadata on `2.3.1`, including the root `package-lock.json` version/license fields with `package.json`, `VERSION`, and `LICENSE`
-- clarified the runtime execution model: the source repository runs JS-compatible `src/**/*.ts` directly through `bin/octopus.js`, while packaged installs under `node_modules` use compiled `dist/src/**/*.js`
+- clarified the compile-first runtime execution model: source-repo usage runs through compiled runtime output, and packaged installs under `node_modules` use compiled `dist/src/**/*.js`
 - refreshed internal token-economy planning docs to describe the current Node-only runtime instead of obsolete PowerShell or shell/Python implementation paths
 - documented `feat/node-runtime-migration` as a historical branch alias rather than a separate active runtime line
 
@@ -23,7 +25,7 @@
 - aligned CLI contracts for `update` / `update git`, added signal-aware temp-root cleanup, and improved top-level failure markers for automation
 - added real `npm pack -> install -> invoke` release smoke coverage plus stronger compat, contract-smoke, lifecycle, and packaging tests
 - refreshed release docs and manifest ownership contracts, added walkthrough docs, and distilled skill-authoring guidance into the `skill-builder` references
-- removed the remaining PowerShell/Pester compatibility traces so the public runtime surface is unambiguously Node-only
+- removed the remaining PowerShell/Pester compatibility traces from the public runtime surface so execution is unambiguously Node-only
 - normalized release/install/update docs to version-safe placeholders, replaced packaged local doc links with GitHub links, and renamed the runtime contract doc to `docs/node-runtime-contract.md`
 - isolated the `npm pack -> install -> invoke` smoke test from shared repo build state to make release validation deterministic
 

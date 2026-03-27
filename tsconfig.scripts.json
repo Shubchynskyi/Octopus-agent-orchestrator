@@ -11,15 +11,14 @@
     "types": [
       "node"
     ],
-    "outDir": ".node-build",
+    "outDir": ".scripts-build",
     "rootDir": ".",
     "declaration": false,
     "sourceMap": false,
     "resolveJsonModule": true
   },
   "include": [
-    "src/**/*.ts",
-    "tests/node/**/*.ts",
+    "src/bin/**/*.ts",
     "scripts/node-foundation/**/*.ts"
   ]
 }

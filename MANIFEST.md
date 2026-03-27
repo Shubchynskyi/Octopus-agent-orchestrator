@@ -4,7 +4,7 @@ Bundle root: `Octopus-agent-orchestrator`
 Template root: `Octopus-agent-orchestrator/template`
 Live root: `Octopus-agent-orchestrator/live`
 
-Managed in project root by `node Octopus-agent-orchestrator/bin/octopus.js install`, depending on source-of-truth, active agent files, and provider bridges:
+Managed in project root by `octopus install` (or `node Octopus-agent-orchestrator/bin/octopus.js install`), depending on source-of-truth, active agent files, and provider bridges:
 - CLAUDE.md
 - AGENTS.md
 - GEMINI.md
@@ -62,7 +62,7 @@ Generated during updates:
 - runtime/update-rollbacks/**
 - runtime/bundle-backups/**
 
-Removed by `node Octopus-agent-orchestrator/bin/octopus.js uninstall`:
+Removed by `octopus uninstall` (or `node Octopus-agent-orchestrator/bin/octopus.js uninstall`):
 - the deployed `Octopus-agent-orchestrator/` bundle directory
 - all redirect entrypoints and provider bridge agent files created by install
 - the selected primary entrypoint only when the user chooses delete during uninstall

@@ -23,7 +23,7 @@ This document records the TypeScript/Node foundation that now backs the active r
 | `src/gates/*.ts` | Gate implementations and task-event summaries |
 | `src/gate-runtime/*.ts` | Shared gate runtime helpers |
 | `tests/node/**` | Node-native unit and integration coverage |
-| `scripts/node-foundation/*.ts` | Build/test harness for staged `.node-build/` output |
+| `scripts/node-foundation/*.ts` | Repository-only build/test harness for staged `.node-build/` output |
 | `tsconfig.json` | Editor-facing entrypoint |
 | `tsconfig.node-foundation.json` | Tooling contract for the Node foundation |
 
@@ -48,11 +48,11 @@ Validation stays in-repo and TypeScript-first:
 
 ### `npm run build`
 
-Compiles the strict TypeScript graph needed by the build harness into `.scripts-build/`, then publishes compiled runtime artifacts into `dist/`.
+Compiles the lightweight helper graph (`src/bin/**/*.ts` plus `scripts/node-foundation/**/*.ts`) into `.scripts-build/`, then publishes compiled runtime artifacts into `dist/`.
 
 ### `npm test`
 
-Compiles the strict runtime/test/build-script graph into `.scripts-build/`, rebuilds the staged `.node-build/` runtime, and executes the compiled `tests/node/**/*.test.js` suite.
+Compiles the lightweight helper graph into `.scripts-build/`, rebuilds the wider staged `.node-build/` graph from `tsconfig.tests.json`, and executes the compiled `tests/node/**/*.test.js` suite.
 
 ### `npm run validate:release`
 
@@ -68,7 +68,7 @@ This keeps the release contract explicit: the shipped package must build, pass t
 
 - `bin/octopus.js` is a generated runtime launcher; the maintained source of truth lives in `src/bin/octopus.ts`.
 - Lifecycle commands and gates are Node-only.
-- `TypeScript` means `strict:true` across runtime code, Node tests, and supporting build/test scripts.
+- `TypeScript` means `strict:true` across runtime code, Node tests, and the repository build/test harness.
 - Historical shell wrappers have been removed from the runtime surface.
 
 ## Repository Branch Note

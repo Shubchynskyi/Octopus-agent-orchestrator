@@ -95,7 +95,7 @@ Full reference: **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopu
 
 - **Node.js 20 LTS is the only required runtime** for the public CLI, lifecycle commands, and gate commands.
 - **Compile-first runtime contract:** `src/**/*.ts` is the source of truth, `src/bin/octopus.ts` compiles into the public `bin/octopus.js` launcher, and that launcher executes compiled JavaScript from `dist/src/**/*.js` or the staged `.node-build/src/**/*.js` test build. Raw `src/**/*.ts` files are never executed directly.
-- **Strict TypeScript means compiler-enforced typing across all maintained code paths:** `tsconfig.build.json` runs `strict:true` for `src/**/*.ts`, and `tsconfig.tests.json` runs `strict:true` for `src/**/*.ts`, `tests/node/**/*.ts`, and `scripts/node-foundation/**/*.ts`.
+- **Strict TypeScript means compiler-enforced typing across all maintained code paths:** `tsconfig.build.json` runs `strict:true` for `src/**/*.ts`, and the wider repo graph (`tsconfig.node-foundation.json` / `tsconfig.tests.json`) covers `src/**/*.ts`, `tests/node/**/*.ts`, and `scripts/node-foundation/**/*.ts`.
 - **Release validation is explicit:** `npm run validate:release` proves `build -> test -> pack -> install/invoke` for the published CLI contract.
 - Root `tsconfig.json` extends `tsconfig.node-foundation.json`, so editors like IntelliJ IDEA or WebStorm can discover the repository without custom setup.
 
