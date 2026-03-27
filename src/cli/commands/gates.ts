@@ -29,6 +29,13 @@ import {
     validatePreflightForReview
 } from '../../gates/required-reviews-check';
 import {
+    buildRulePackArtifact,
+    getRulePackEvidence,
+    getRulePackEvidenceViolations,
+    resolveRulePackArtifactPath,
+    type RulePackStageLabel
+} from '../../gates/rule-pack';
+import {
     buildTaskModeArtifact,
     collectTaskTimelineEventTypes,
     getTaskModeEvidence,
@@ -81,6 +88,7 @@ interface ClassifyChangeCommandOptions {
     fastPathMaxChangedLines?: unknown;
     performanceHeuristicMinLines?: unknown;
     taskId?: unknown;
+    rulePackPath?: string;
     outputPath?: string;
     metricsPath?: string;
     emitMetrics?: unknown;
@@ -90,6 +98,7 @@ interface CompileGateCommandOptions {
     repoRoot?: string;
     taskId?: unknown;
     taskModePath?: string;
+    rulePackPath?: string;
     failTailLines?: unknown;
     metricsPath?: string;
     outputFiltersPath?: string;
@@ -107,6 +116,19 @@ interface EnterTaskModeCommandOptions {
     requestedDepth?: unknown;
     effectiveDepth?: unknown;
     taskSummary?: unknown;
+    actor?: unknown;
+    artifactPath?: string;
+    metricsPath?: string;
+    emitMetrics?: unknown;
+}
+
+interface LoadRulePackCommandOptions {
+    repoRoot?: string;
+    taskId?: unknown;
+    stage?: unknown;
+    preflightPath?: string;
+    taskModePath?: string;
+    loadedRuleFiles?: unknown;
     actor?: unknown;
     artifactPath?: string;
     metricsPath?: string;
@@ -145,6 +167,7 @@ interface RequiredReviewsCheckCommandOptions {
     preflightPath?: string;
     taskId?: unknown;
     taskModePath?: string;
+    rulePackPath?: string;
     metricsPath?: string;
     outputFiltersPath?: string;
     skipReviews?: unknown;
@@ -628,6 +651,113 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     };
 }
 
+function normalizeRulePackStage(value: unknown): RulePackStageLabel {
+    const rawValue = String(value || '').trim();
+    if (!rawValue) {
+        return 'TASK_ENTRY';
+    }
+    const normalized = rawValue.toLowerCase().replace(/[\s-]+/g, '_');
+    switch (normalized) {
+        case 'task_entry':
+        case 'entry':
+            return 'TASK_ENTRY';
+        case 'post_preflight':
+        case 'preflight':
+        case 'post_classify':
+            return 'POST_PREFLIGHT';
+        default:
+            throw new Error("Stage must be one of: TASK_ENTRY, POST_PREFLIGHT. Supported aliases: entry, preflight.");
+    }
+}
+
+export function runLoadRulePackCommand(options: LoadRulePackCommandOptions): { outputLines: string[]; exitCode: number } {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
+    const taskId = assertValidTaskId(String(options.taskId || '').trim());
+    const stage = normalizeRulePackStage(options.stage);
+    const artifactPath = resolveRulePackArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
+    const artifact = buildRulePackArtifact({
+        repoRoot,
+        taskId,
+        stage,
+        loadedRuleFiles: expandValueList(options.loadedRuleFiles || [], { splitDelimiters: true }),
+        preflightPath: String(options.preflightPath || ''),
+        taskModePath: String(options.taskModePath || ''),
+        actor: String(options.actor || 'orchestrator'),
+        artifactPath
+    });
+    const stageArtifact = stage === 'TASK_ENTRY'
+        ? artifact.stages.task_entry
+        : artifact.stages.post_preflight;
+    if (!stageArtifact) {
+        throw new Error(`Rule-pack artifact did not produce stage '${stage}'.`);
+    }
+
+    writeJsonArtifact(artifactPath, artifact);
+
+    const metricsPath = options.metricsPath
+        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
+        : resolveDefaultMetricsPath(repoRoot);
+    appendMetricsIfEnabled(metricsPath, {
+        timestamp_utc: stageArtifact.timestamp_utc,
+        event_type: 'rule_pack_loaded',
+        status: stageArtifact.status,
+        task_id: taskId,
+        stage,
+        artifact_path: normalizeOptionalPath(artifactPath),
+        preflight_path: stageArtifact.preflight_path,
+        required_rule_count: stageArtifact.required_rule_count,
+        loaded_rule_count: stageArtifact.loaded_rule_count,
+        missing_rule_files: stageArtifact.missing_rule_files,
+        actor: stageArtifact.actor
+    }, parseBooleanOption(options.emitMetrics, true));
+
+    appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        stageArtifact.status === 'PASSED' ? 'RULE_PACK_LOADED' : 'RULE_PACK_LOAD_FAILED',
+        stageArtifact.outcome,
+        stageArtifact.status === 'PASSED'
+            ? `Rule pack loaded for ${stage}.`
+            : `Rule pack load failed for ${stage}.`,
+        {
+            stage,
+            artifact_path: normalizeOptionalPath(artifactPath),
+            preflight_path: stageArtifact.preflight_path,
+            required_rule_files: stageArtifact.required_rule_files,
+            loaded_rule_files: stageArtifact.loaded_rule_files,
+            missing_rule_files: stageArtifact.missing_rule_files,
+            effective_depth: stageArtifact.effective_depth,
+            required_reviews: stageArtifact.required_reviews,
+            actor: stageArtifact.actor
+        }
+    );
+
+    if (stageArtifact.status !== 'PASSED') {
+        return {
+            outputLines: [
+                'RULE_PACK_LOAD_FAILED',
+                `Stage: ${stage}`,
+                `RulePackArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
+                'Violations:',
+                ...stageArtifact.violations.map(function (item) { return `- ${item}`; })
+            ],
+            exitCode: 1
+        };
+    }
+
+    return {
+        outputLines: [
+            'RULE_PACK_LOADED',
+            `Stage: ${stage}`,
+            `RulePackArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
+            `RequiredRuleCount: ${stageArtifact.required_rule_count}`,
+            `LoadedRuleCount: ${stageArtifact.loaded_rule_count}`
+        ],
+        exitCode: 0
+    };
+}
+
 export function splitCommandLine(commandText: unknown): string[] {
     const text = String(commandText || '').trim();
     if (!text) {
@@ -1006,6 +1136,33 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     if (resolvedTaskId) {
         assertValidTaskId(resolvedTaskId);
         result.task_id = resolvedTaskId;
+
+        const preflightErrors: string[] = [];
+        const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, '');
+        preflightErrors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
+
+        const rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'TASK_ENTRY', {
+            artifactPath: String(options.rulePackPath || '')
+        });
+        preflightErrors.push(...getRulePackEvidenceViolations(rulePackEvidence));
+
+        const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`));
+        const timelineErrors: string[] = [];
+        const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, timelineErrors);
+        preflightErrors.push(...timelineErrors);
+        if (timelineErrors.length === 0 && !timelineEventTypes.has('TASK_MODE_ENTERED')) {
+            preflightErrors.push(
+                `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing TASK_MODE_ENTERED. Run enter-task-mode before preflight.`
+            );
+        }
+        if (timelineErrors.length === 0 && !timelineEventTypes.has('RULE_PACK_LOADED')) {
+            preflightErrors.push(
+                `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing RULE_PACK_LOADED. Run load-rule-pack before preflight.`
+            );
+        }
+        if (preflightErrors.length > 0) {
+            throw new Error(preflightErrors.join(' '));
+        }
     }
 
     const outputPath = options.outputPath ? resolvePathForWrite(options.outputPath, repoRoot) : null;
@@ -1070,6 +1227,9 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     let preflightContext: PreflightContext | null = null;
     let workspaceSnapshot: WorkspaceSnapshot | null = null;
     let taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
+    let rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'TASK_ENTRY', {
+        artifactPath: String(options.rulePackPath || '')
+    });
     let warningCount = 0;
     let errorCount = 0;
     let exitCode = 0;
@@ -1090,10 +1250,19 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         compileCommands = getCompileCommands(resolvedCommandsPath);
         resolvedPreflightPath = resolvePreflightPath(repoRoot, options.preflightPath || '', resolvedTaskId);
         preflightContext = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
+        rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'POST_PREFLIGHT', {
+            artifactPath: String(options.rulePackPath || ''),
+            preflightPath: resolvedPreflightPath,
+            taskModePath: String(options.taskModePath || '')
+        });
         const taskModeViolations = getTaskModeEvidenceViolations(taskModeEvidence);
+        const rulePackViolations = getRulePackEvidenceViolations(rulePackEvidence);
         if (taskModeViolations.length > 0) {
             exitCode = 1;
             exceptionMessage = taskModeViolations.join(' ');
+        } else if (rulePackViolations.length > 0) {
+            exitCode = 1;
+            exceptionMessage = rulePackViolations.join(' ');
         }
         const preflightChangedFiles = expandValueList(preflightContext.changed_files, { splitDelimiters: false });
         workspaceSnapshot = getWorkspaceSnapshot(
@@ -1102,6 +1271,17 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             preflightContext.include_untracked,
             preflightChangedFiles
         );
+
+        const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`));
+        const timelineErrors: string[] = [];
+        const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, timelineErrors);
+        if (!exceptionMessage && timelineErrors.length > 0) {
+            exitCode = 1;
+            exceptionMessage = timelineErrors.join(' ');
+        } else if (!exceptionMessage && !timelineEventTypes.has('RULE_PACK_LOADED')) {
+            exitCode = 1;
+            exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing RULE_PACK_LOADED. Run load-rule-pack before compile gate.`;
+        }
 
         const scopeViolations: string[] = [];
         if (workspaceSnapshot.changed_files_sha256 !== preflightContext.changed_files_sha256) {
@@ -1193,6 +1373,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         preflight_changed_lines_total: preflightContext ? preflightContext.changed_lines_total : null,
         preflight_changed_files_sha256: preflightContext ? preflightContext.changed_files_sha256 : null,
         task_mode: taskModeEvidence,
+        rule_pack: rulePackEvidence,
         scope_detection_source: workspaceSnapshot ? workspaceSnapshot.detection_source : null,
         scope_use_staged: workspaceSnapshot ? !!workspaceSnapshot.use_staged : null,
         scope_include_untracked: workspaceSnapshot ? !!workspaceSnapshot.include_untracked : null,
@@ -1774,6 +1955,11 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         options.compileEvidencePath || ''
     );
     const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
+    const rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'POST_PREFLIGHT', {
+        artifactPath: String(options.rulePackPath || ''),
+        preflightPath: validatedPreflight.preflight_path,
+        taskModePath: String(options.taskModePath || '')
+    });
     const scopeDrift = compileGateEvidence.status === 'PASS'
         ? testCompileScopeDrift(repoRoot, compileGateEvidence)
         : null;
@@ -1794,6 +1980,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
     }
 
     errors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
+    errors.push(...getRulePackEvidenceViolations(rulePackEvidence));
 
     switch (compileGateEvidence.status) {
         case 'TASK_ID_MISSING':
@@ -1845,6 +2032,9 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         errors.push(...timelineErrors);
         if (timelineErrors.length === 0 && !timelineEventTypes.has('TASK_MODE_ENTERED')) {
             errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing TASK_MODE_ENTERED. Run enter-task-mode before review gate.`);
+        }
+        if (timelineErrors.length === 0 && !timelineEventTypes.has('RULE_PACK_LOADED')) {
+            errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing RULE_PACK_LOADED. Run load-rule-pack before review gate.`);
         }
     }
 
@@ -1928,6 +2118,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         preflight_hash_sha256: validatedPreflight.preflight_hash,
         mode: validatedPreflight.mode,
         task_mode: taskModeEvidence,
+        rule_pack: rulePackEvidence,
         compile_evidence_path: compileGateEvidence.evidence_path,
         compile_evidence_hash_sha256: compileGateEvidence.evidence_hash,
         output_filters_path: normalizeOptionalPath(outputFiltersPath),

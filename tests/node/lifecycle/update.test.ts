@@ -564,7 +564,10 @@ describe('runUpdate', () => {
             const skillCatalogContent = fs.readFileSync(path.join(liveRuleDir, '90-skill-catalog.md'), 'utf8');
 
             assert.ok(commandsContent.includes('node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode'));
+            assert.ok(commandsContent.includes('node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack'));
             assert.ok(taskWorkflowContent.includes('TASK_MODE_ENTERED'));
+            assert.ok(taskWorkflowContent.includes('RULE_PACK_LOADED'));
+            assert.ok(skillCatalogContent.includes('Missing rule-pack artifact (`runtime/reviews/<task-id>-rule-pack.json`) blocks progression.'));
             assert.ok(skillCatalogContent.includes('Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.'));
         } finally {
             removePathRecursive(projectRoot);

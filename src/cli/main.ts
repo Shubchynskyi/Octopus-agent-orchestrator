@@ -55,6 +55,7 @@ import {
     runDocImpactGateCommand,
     runEnterTaskModeCommand,
     runHumanCommitCommand,
+    runLoadRulePackCommand,
     runLogTaskEventCommand,
     runRequiredReviewsCheckCommand
 } from './commands/gates';
@@ -841,6 +842,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 '--use-staged': { key: 'useStaged', type: 'boolean' },
                 '--include-untracked': { key: 'includeUntracked', type: 'boolean' },
                 '--task-id': { key: 'taskId', type: 'string' },
+                '--rule-pack-path': { key: 'rulePackPath', type: 'string' },
                 '--task-intent': { key: 'taskIntent', type: 'string' },
                 '--fast-path-max-files': { key: 'fastPathMaxFiles', type: 'string' },
                 '--fast-path-max-changed-lines': { key: 'fastPathMaxChangedLines', type: 'string' },
@@ -875,11 +877,34 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             }
             return;
         }
+        case 'load-rule-pack': {
+            const defs = {
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--stage': { key: 'stage', type: 'string' },
+                '--preflight-path': { key: 'preflightPath', type: 'string' },
+                '--task-mode-path': { key: 'taskModePath', type: 'string' },
+                '--loaded-rule-file': { key: 'loadedRuleFiles', type: 'string[]' },
+                '--loaded-rule-files': { key: 'loadedRuleFiles', type: 'string[]' },
+                '--actor': { key: 'actor', type: 'string' },
+                '--artifact-path': { key: 'artifactPath', type: 'string' },
+                '--metrics-path': { key: 'metricsPath', type: 'string' },
+                '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options } = parseOptions(gateArgv, defs);
+            const result = runLoadRulePackCommand(options);
+            process.stdout.write(`${result.outputLines.join('\n')}\n`);
+            if (result.exitCode !== 0) {
+                process.exitCode = result.exitCode;
+            }
+            return;
+        }
         case 'compile-gate': {
             const defs = {
                 '--commands-path': { key: 'commandsPath', type: 'string' },
                 '--task-id': { key: 'taskId', type: 'string' },
                 '--task-mode-path': { key: 'taskModePath', type: 'string' },
+                '--rule-pack-path': { key: 'rulePackPath', type: 'string' },
                 '--preflight-path': { key: 'preflightPath', type: 'string' },
                 '--compile-evidence-path': { key: 'compileEvidencePath', type: 'string' },
                 '--compile-output-path': { key: 'compileOutputPath', type: 'string' },
@@ -1057,6 +1082,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 '--preflight-path': { key: 'preflightPath', type: 'string' },
                 '--task-id': { key: 'taskId', type: 'string' },
                 '--task-mode-path': { key: 'taskModePath', type: 'string' },
+                '--rule-pack-path': { key: 'rulePackPath', type: 'string' },
                 '--code-review-verdict': { key: 'codeReviewVerdict', type: 'string' },
                 '--db-review-verdict': { key: 'dbReviewVerdict', type: 'string' },
                 '--security-review-verdict': { key: 'securityReviewVerdict', type: 'string' },
@@ -1114,6 +1140,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 '--preflight-path': { key: 'preflightPath', type: 'string' },
                 '--task-id': { key: 'taskId', type: 'string' },
                 '--task-mode-path': { key: 'taskModePath', type: 'string' },
+                '--rule-pack-path': { key: 'rulePackPath', type: 'string' },
                 '--timeline-path': { key: 'timelinePath', type: 'string' },
                 '--reviews-root': { key: 'reviewsRoot', type: 'string' },
                 '--compile-evidence-path': { key: 'compileEvidencePath', type: 'string' },
@@ -1130,6 +1157,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 preflightPath: parseRequiredText(options.preflightPath, 'PreflightPath'),
                 taskId: String(options.taskId || ''),
                 taskModePath: String(options.taskModePath || ''),
+                rulePackPath: String(options.rulePackPath || ''),
                 timelinePath: String(options.timelinePath || ''),
                 reviewsRoot: String(options.reviewsRoot || ''),
                 compileEvidencePath: String(options.compileEvidencePath || ''),

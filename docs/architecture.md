@@ -102,14 +102,16 @@ Gate pipeline:
 
 ```text
 1. enter-task-mode
-2. classify-change
-3. implementation
-4. compile-gate
-5. independent reviews
-6. required-reviews-check
-7. doc-impact-gate
-8. completion-gate
-9. DONE
+2. load-rule-pack (TASK_ENTRY)
+3. classify-change
+4. load-rule-pack (POST_PREFLIGHT)
+5. implementation
+6. compile-gate
+7. independent reviews
+8. required-reviews-check
+9. doc-impact-gate
+10. completion-gate
+11. DONE
 ```
 
 All gate events are logged to `runtime/task-events/<task-id>.jsonl` with hash-chain integrity.

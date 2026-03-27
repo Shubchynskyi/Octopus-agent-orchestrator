@@ -36,6 +36,17 @@ export function getRulePack(reviewType: string) {
     };
 }
 
+export function selectRulePackFiles(reviewType: string, depth: number): string[] {
+    const rulePack = getRulePack(reviewType);
+    if (depth >= 3) {
+        return [...rulePack.full];
+    }
+    if (depth <= 1) {
+        return [...rulePack.depth1];
+    }
+    return [...rulePack.depth2];
+}
+
 /**
  * Resolve the output path for review context.
  */
@@ -119,14 +130,9 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
 
     const rulePack = getRulePack(reviewType);
     const fullRuleFiles = [...rulePack.full];
-    let selectedRuleFiles;
-    if (!tokenEconomyActive || depth >= 3) {
-        selectedRuleFiles = [...fullRuleFiles];
-    } else if (depth === 1) {
-        selectedRuleFiles = [...rulePack.depth1];
-    } else {
-        selectedRuleFiles = [...rulePack.depth2];
-    }
+    const selectedRuleFiles = (!tokenEconomyActive || depth >= 3)
+        ? [...fullRuleFiles]
+        : selectRulePackFiles(reviewType, depth);
 
     const omittedRuleFiles = fullRuleFiles.filter(f => !selectedRuleFiles.includes(f));
     const ruleFilesBasePath = orchestratorRelativePath(repoRoot, 'live/docs/agent-rules');

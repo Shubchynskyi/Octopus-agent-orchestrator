@@ -155,7 +155,9 @@ Execute task T-301 depth=3
  1. Read task + rules                → PLAN_CREATED
  2. Classify changes                 → PREFLIGHT_CLASSIFIED
     octopus gate enter-task-mode --task-id "T-301" --task-summary "Add late-payment fee calculation"
+    octopus gate load-rule-pack --task-id "T-301" --stage "TASK_ENTRY" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
     octopus gate classify-change --use-staged --task-id "T-301" --task-intent "Add late-payment fee calculation"
+    octopus gate load-rule-pack --task-id "T-301" --stage "POST_PREFLIGHT" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/T-301-preflight.json" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/70-security.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
     Result: FULL_PATH, reviews: [code, db, security]
  3. Implement code + tests           → (working…)
     - InvoiceService.java — new calculateLateFee() method

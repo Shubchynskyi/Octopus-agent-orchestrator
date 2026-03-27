@@ -8,6 +8,7 @@ import * as docImpact from './doc-impact';
 import * as completion from './completion';
 import * as taskEventsSummary from './task-events-summary';
 import * as taskMode from './task-mode';
+import * as rulePack from './rule-pack';
 
 export {
     helpers,
@@ -19,5 +20,6 @@ export {
     docImpact,
     completion,
     taskEventsSummary,
-    taskMode
+    taskMode,
+    rulePack
 };

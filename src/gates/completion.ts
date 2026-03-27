@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { fileSha256, normalizePath, joinOrchestratorPath, resolvePathInsideRepo } from './helpers';
+import { getRulePackEvidence, getRulePackEvidenceViolations } from './rule-pack';
 import { collectTaskTimelineEventTypes, getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
 
 export const REVIEW_CONTRACTS = [
@@ -324,6 +325,7 @@ export interface RunCompletionGateOptions {
     preflightPath: string;
     taskId?: string;
     taskModePath?: string;
+    rulePackPath?: string;
     reviewsRoot?: string;
     compileEvidencePath?: string;
     reviewEvidencePath?: string;
@@ -354,6 +356,11 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         ? resolvePathInsideRepo(options.timelinePath, repoRoot, { allowMissing: true }) as string
         : joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`));
     const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, options.taskModePath || '');
+    const rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'POST_PREFLIGHT', {
+        artifactPath: options.rulePackPath || '',
+        preflightPath,
+        taskModePath: options.taskModePath || ''
+    });
 
     const compileEvidence = readJsonArtifact(compileEvidencePath, 'Compile gate', errors);
     const reviewEvidence = readJsonArtifact(reviewEvidencePath, 'Review gate', errors);
@@ -363,10 +370,14 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     ensurePassedArtifactStatus(reviewEvidence, 'Review gate', errors);
     ensurePassedArtifactStatus(docImpactEvidence, 'Doc impact gate', errors);
     errors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
+    errors.push(...getRulePackEvidenceViolations(rulePackEvidence));
 
     const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, errors);
     if (!timelineEventTypes.has('TASK_MODE_ENTERED')) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing TASK_MODE_ENTERED.`);
+    }
+    if (!timelineEventTypes.has('RULE_PACK_LOADED')) {
+        errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing RULE_PACK_LOADED.`);
     }
     if (!timelineEventTypes.has('COMPILE_GATE_PASSED')) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing COMPILE_GATE_PASSED.`);
@@ -413,6 +424,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         preflight_path: normalizePath(preflightPath),
         reviews_root: normalizePath(reviewsRoot),
         task_mode_path: taskModeEvidence.evidence_path,
+        rule_pack_path: rulePackEvidence.evidence_path,
         compile_evidence_path: normalizePath(compileEvidencePath),
         review_evidence_path: normalizePath(reviewEvidencePath),
         doc_impact_path: normalizePath(docImpactPath),

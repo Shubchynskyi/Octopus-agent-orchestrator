@@ -43,10 +43,14 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 ## Preflight Gate (Mandatory)
 - Before preflight, enter task mode explicitly:
   `node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode --task-id "<task-id>" --task-summary "<task summary>"`
+- Before preflight, record the baseline downstream rules that were actually opened:
+  `node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"`
 - Run before review stage:
   `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change --changed-file "<planned-file-1>" --changed-file "<planned-file-2>" --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
 - In dirty workspaces prefer staged mode:
   `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
+- After preflight, re-run `load-rule-pack --stage "POST_PREFLIGHT"` with the actual downstream rule files opened for the required review set:
+  `node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack --task-id "<task-id>" --stage "POST_PREFLIGHT" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --loaded-rule-file "<opened-rule-file>"`
 - Compile gate is mandatory after implementation and before `IN_REVIEW`:
   `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"`
 - Preflight artifact is the only source for:
@@ -106,7 +110,10 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Enforcement
 - Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.
+- Missing rule-pack artifact (`runtime/reviews/<task-id>-rule-pack.json`) blocks progression.
 - Missing preflight artifact blocks progression.
+- Missing baseline `RULE_PACK_LOADED` blocks preflight.
+- Missing post-preflight rule-pack proof blocks compile/review/completion.
 - Missing compile-gate pass (`COMPILE_GATE_PASSED`) blocks progression to `IN_REVIEW` and `DONE`.
 - Missing required skill invocation blocks progression.
 - Missing required verdict blocks completion.

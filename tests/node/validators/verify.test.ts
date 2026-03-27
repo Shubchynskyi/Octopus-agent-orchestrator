@@ -171,8 +171,11 @@ test('detectTaskModeRuleContractViolations reports stale task-mode rule snippets
 
     try {
         const violations = detectTaskModeRuleContractViolations(tmpDir);
+        assert.ok(violations.some(v => v.includes("40-commands.md must include task-mode contract snippet 'node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack'")));
         assert.ok(violations.some(v => v.includes("40-commands.md must include task-mode contract snippet 'node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode'")));
+        assert.ok(violations.some(v => v.includes("80-task-workflow.md must include task-mode contract snippet 'Baseline downstream rules must be opened and recorded before preflight:'")));
         assert.ok(violations.some(v => v.includes("80-task-workflow.md must include task-mode contract snippet 'Task-mode entry command must pass before preflight or implementation:'")));
+        assert.ok(violations.some(v => v.includes("90-skill-catalog.md must include task-mode contract snippet 'Missing rule-pack artifact (`runtime/reviews/<task-id>-rule-pack.json`) blocks progression.'")));
         assert.ok(violations.some(v => v.includes("90-skill-catalog.md must include task-mode contract snippet 'Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.'")));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -194,6 +197,10 @@ test('detectTaskModeRuleContractViolations accepts current task-mode contract sn
         '',
         '## Agent Gates',
         'node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack',
+        '`classify-change` fails without rule-pack evidence',
+        'Compile gate additionally validates post-preflight rule-pack evidence',
+        '`required-reviews-check` additionally validates post-preflight rule-pack evidence',
         'Compile gate additionally validates explicit task-mode entry evidence from `enter-task-mode`.',
         '`required-reviews-check` additionally validates explicit task-mode entry evidence (`TASK_MODE_ENTERED`) before review pass can succeed.'
     ].join('\n'), 'utf8');
@@ -203,8 +210,14 @@ test('detectTaskModeRuleContractViolations accepts current task-mode contract sn
         '## Mandatory Gate Contract',
         'Task-mode entry command must pass before preflight or implementation:',
         'TASK_MODE_ENTERED',
+        'Baseline downstream rules must be opened and recorded before preflight:',
+        'RULE_PACK_LOADED',
+        'After preflight decides `required_reviews.*`, re-run `load-rule-pack --stage "POST_PREFLIGHT" --preflight-path ...`',
+        'Compile gate validates post-preflight rule-pack evidence',
         'Review gate command validates task-mode entry evidence (`TASK_MODE_ENTERED`) for the same task id.',
+        'Review gate command validates post-preflight rule-pack evidence (`RULE_PACK_LOADED`)',
         'Completion gate validates task-mode entry evidence',
+        'HARD STOP: do not skip `load-rule-pack`',
         'HARD STOP: do not skip `enter-task-mode`'
     ].join('\n'), 'utf8');
     fs.writeFileSync(path.join(rulesDir, '90-skill-catalog.md'), [
@@ -213,9 +226,15 @@ test('detectTaskModeRuleContractViolations accepts current task-mode contract sn
         '## Preflight Gate (Mandatory)',
         'Before preflight, enter task mode explicitly:',
         'node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode',
+        'record the baseline downstream rules that were actually opened',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack',
+        'After preflight, re-run `load-rule-pack --stage "POST_PREFLIGHT"`',
         '',
         '## Enforcement',
-        'Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.'
+        'Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.',
+        'Missing rule-pack artifact (`runtime/reviews/<task-id>-rule-pack.json`) blocks progression.',
+        'Missing baseline `RULE_PACK_LOADED` blocks preflight.',
+        'Missing post-preflight rule-pack proof blocks compile/review/completion.'
     ].join('\n'), 'utf8');
 
     try {

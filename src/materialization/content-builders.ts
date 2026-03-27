@@ -248,6 +248,7 @@ export function buildRedirectManagedBlock(
         `Hard stop: read \`${canonicalFile}\` first and follow its routing links before responding to anything.`,
         `Hard stop: before any task execution, open \`TASK.md\` and \`${canonicalFile}\`.`,
         'Do not implement tasks directly without orchestration preflight and required review gates.',
+        'After opening downstream workflow files, record them via `node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack ...` before continuing task execution.',
         'Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are expected local artifacts; never `git add -f` them unless the user explicitly asks to version orchestrator internals.',
         providerBridgeSection,
         MANAGED_END
@@ -319,11 +320,13 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 2. Read \`TASK.md\` and select/create a task row before implementation.
 3. Execute task workflow only in orchestrator mode: \`Execute task <task-id> depth=<1|2|3>\`.
 4. Enter task mode explicitly via \`${NODE_GATE_COMMAND_PREFIX} enter-task-mode --task-id "<task-id>" --task-summary "<summary>" ...\`.
-5. Run preflight classification before implementation via \`${NODE_GATE_COMMAND_PREFIX} classify-change ...\`.
-6. Run compile gate before review via \`${NODE_GATE_COMMAND_PREFIX} compile-gate --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"\`.
-7. Run required independent reviews and gates via \`${NODE_GATE_COMMAND_PREFIX} required-reviews-check ...\`, then \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
-8. Update task status and artifacts in \`TASK.md\`.
-9. Log lifecycle events by task id via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` into \`Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl\`.
+5. Record baseline downstream rules explicitly via \`${NODE_GATE_COMMAND_PREFIX} load-rule-pack --stage "TASK_ENTRY" --loaded-rule-file "<opened-rule-file>" ...\`.
+6. Run preflight classification before implementation via \`${NODE_GATE_COMMAND_PREFIX} classify-change ...\`.
+7. After preflight, refresh downstream rule-pack evidence via \`${NODE_GATE_COMMAND_PREFIX} load-rule-pack --stage "POST_PREFLIGHT" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --loaded-rule-file "<opened-rule-file>" ...\`.
+8. Run compile gate before review via \`${NODE_GATE_COMMAND_PREFIX} compile-gate --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"\`.
+9. Run required independent reviews and gates via \`${NODE_GATE_COMMAND_PREFIX} required-reviews-check ...\`, then \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
+10. Update task status and artifacts in \`TASK.md\`.
+11. Log lifecycle events by task id via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` into \`Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl\`.
 
 ## Reviewer Launch Mapping (Required)
 - Claude Code: launch clean-context reviewers via Agent tool (\`fork_context=false\`).
@@ -380,6 +383,7 @@ Ignored orchestration control-plane files (for example \`TASK.md\`, \`Octopus-ag
 - Re-read \`Octopus-agent-orchestrator/live/config/review-capabilities.json\` before execution.
 - Re-read \`Octopus-agent-orchestrator/live/config/token-economy.json\` before execution.
 - Re-read \`Octopus-agent-orchestrator/live/config/output-filters.json\` before execution.
+- Keep downstream rule-pack evidence current via \`${NODE_GATE_COMMAND_PREFIX} load-rule-pack ...\`; bridge execution is invalid without recorded rule-file loading.
 - On GitHub Copilot CLI, spawn reviewer helper tasks via \`task\` tool with \`agent_type="general-purpose"\` and isolated context.
 - Honor specialist skills added after initialization under \`Octopus-agent-orchestrator/live/skills/**\`.
 - Log review invocation and outcomes via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` into task timeline.

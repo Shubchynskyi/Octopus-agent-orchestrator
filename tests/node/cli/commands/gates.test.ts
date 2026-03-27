@@ -10,6 +10,7 @@ import {
     runDocImpactGateCommand,
     runEnterTaskModeCommand,
     runHumanCommitCommand,
+    runLoadRulePackCommand,
     runLogTaskEventCommand,
     runRequiredReviewsCheckCommand,
     splitCommandLine,
@@ -21,8 +22,28 @@ import * as childProcess from 'node:child_process';
 function createTempRepo(): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-gates-'));
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'live', 'docs', 'agent-rules'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
+    seedRuleFiles(root);
     return root;
+}
+
+function seedRuleFiles(repoRoot: string): void {
+    const rulesRoot = path.join(repoRoot, 'live', 'docs', 'agent-rules');
+    fs.mkdirSync(rulesRoot, { recursive: true });
+    const ruleFiles = [
+        '00-core.md',
+        '30-code-style.md',
+        '35-strict-coding-rules.md',
+        '40-commands.md',
+        '50-structure-and-docs.md',
+        '70-security.md',
+        '80-task-workflow.md',
+        '90-skill-catalog.md'
+    ];
+    for (const ruleFile of ruleFiles) {
+        fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+    }
 }
 
 function writePreflight(repoRoot: string, taskId: string, overrides: Record<string, unknown> = {}): string {
@@ -75,6 +96,40 @@ function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: s
     ].join('\n'), 'utf8');
 }
 
+function loadTaskEntryRulePack(repoRoot: string, taskId: string) {
+    return runLoadRulePackCommand({
+        repoRoot,
+        taskId,
+        stage: 'TASK_ENTRY',
+        loadedRuleFiles: [
+            'live/docs/agent-rules/00-core.md',
+            'live/docs/agent-rules/40-commands.md',
+            'live/docs/agent-rules/80-task-workflow.md',
+            'live/docs/agent-rules/90-skill-catalog.md'
+        ],
+        emitMetrics: false
+    });
+}
+
+function loadPostPreflightRulePack(repoRoot: string, taskId: string, preflightPath: string) {
+    return runLoadRulePackCommand({
+        repoRoot,
+        taskId,
+        stage: 'POST_PREFLIGHT',
+        preflightPath,
+        loadedRuleFiles: [
+            'live/docs/agent-rules/00-core.md',
+            'live/docs/agent-rules/35-strict-coding-rules.md',
+            'live/docs/agent-rules/40-commands.md',
+            'live/docs/agent-rules/50-structure-and-docs.md',
+            'live/docs/agent-rules/70-security.md',
+            'live/docs/agent-rules/80-task-workflow.md',
+            'live/docs/agent-rules/90-skill-catalog.md'
+        ],
+        emitMetrics: false
+    });
+}
+
 describe('cli/commands/gates', () => {
     it('splits quoted command lines', () => {
         assert.deepEqual(
@@ -86,6 +141,13 @@ describe('cli/commands/gates', () => {
     it('classifies explicit changed files and writes preflight artifact', () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight.json');
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId: 'T-900',
+            taskSummary: 'Update app flow'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, 'T-900');
+        assert.equal(rulePackResult.exitCode, 0);
         const result = runClassifyChangeCommand({
             repoRoot,
             changedFiles: ['src/app.ts'],
@@ -100,6 +162,50 @@ describe('cli/commands/gates', () => {
         assert.equal(payload.changed_files[0], 'src/app.ts');
         assert.equal(payload.required_reviews.code, true);
         assert.equal(fs.existsSync(outputPath), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('loads rule-pack evidence and writes artifact', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900a';
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Update app flow'
+        });
+
+        const result = loadTaskEntryRulePack(repoRoot, taskId);
+        const artifactPath = path.join(repoRoot, 'runtime', 'reviews', `${taskId}-rule-pack.json`);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.outputLines[0], 'RULE_PACK_LOADED');
+        assert.equal(artifact.event_source, 'load-rule-pack');
+        assert.equal(artifact.stages.task_entry.status, 'PASSED');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails preflight classification when rule-pack evidence is missing', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900b';
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Update app flow'
+        });
+
+        assert.throws(
+            () => runClassifyChangeCommand({
+                repoRoot,
+                changedFiles: ['src/app.ts'],
+                taskId,
+                taskIntent: 'Update app flow',
+                emitMetrics: false
+            }),
+            /Rule-pack evidence missing/
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -124,6 +230,8 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(taskModeResult.exitCode, 0);
         assert.equal(taskModeResult.outputLines[0], 'TASK_MODE_ENTERED');
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
 
         const result = await runCompileGateCommand({
             repoRoot,
@@ -216,6 +324,8 @@ describe('cli/commands/gates', () => {
             taskId,
             taskSummary: 'Update app flow'
         });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         await runCompileGateCommand({
             repoRoot,
@@ -266,6 +376,8 @@ describe('cli/commands/gates', () => {
             taskId,
             taskSummary: 'Update app flow'
         });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         await runCompileGateCommand({
             repoRoot,

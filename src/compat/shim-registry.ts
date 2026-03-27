@@ -5,6 +5,7 @@
 export const GATE_COMMANDS = Object.freeze([
     'validate-manifest',
     'enter-task-mode',
+    'load-rule-pack',
     'compile-gate',
     'completion-gate',
     'classify-change',

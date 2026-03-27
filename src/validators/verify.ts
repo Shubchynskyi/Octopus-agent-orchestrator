@@ -198,6 +198,7 @@ export function detectCommandsViolations(targetRoot: string): string[] {
     var content = readTextFile(cp);
     var req = [
         'node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode',
+        'node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack',
         '### Compile Gate (Mandatory)',
         'node Octopus-agent-orchestrator/bin/octopus.js gate classify-change',
         'node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate',

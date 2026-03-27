@@ -168,7 +168,9 @@ Execute task T-101 depth=2
  1. Read task + rules                → PLAN_CREATED
  2. Classify changes                 → PREFLIGHT_CLASSIFIED
     octopus gate enter-task-mode --task-id "T-101" --task-summary "Add PDF export endpoint"
+    octopus gate load-rule-pack --task-id "T-101" --stage "TASK_ENTRY" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
     octopus gate classify-change --use-staged --task-id "T-101" --task-intent "Add PDF export endpoint"
+    octopus gate load-rule-pack --task-id "T-101" --stage "POST_PREFLIGHT" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/T-101-preflight.json" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/70-security.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
     Result: STANDARD_PATH, reviews: [code]
  3. Implement code + tests           → (working…)
     - src/routes/invoices.ts — new POST /invoices/:id/pdf route
