@@ -71,6 +71,7 @@ import {
     runHumanCommitCommand,
     runLoadRulePackCommand,
     runLogTaskEventCommand,
+    runRecordNoOpCommand,
     runRequiredReviewsCheckCommand
 } from './commands/gates';
 import { handleOverview } from './commands/overview';
@@ -913,6 +914,26 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             }
             return;
         }
+        case 'record-no-op': {
+            const defs = {
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--classification': { key: 'classification', type: 'string' },
+                '--reason': { key: 'reason', type: 'string' },
+                '--actor': { key: 'actor', type: 'string' },
+                '--preflight-path': { key: 'preflightPath', type: 'string' },
+                '--artifact-path': { key: 'artifactPath', type: 'string' },
+                '--metrics-path': { key: 'metricsPath', type: 'string' },
+                '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options } = parseOptions(gateArgv, defs);
+            const result = runRecordNoOpCommand(options);
+            process.stdout.write(`${result.outputLines.join('\n')}\n`);
+            if (result.exitCode !== 0) {
+                process.exitCode = result.exitCode;
+            }
+            return;
+        }
         case 'compile-gate': {
             const defs = {
                 '--commands-path': { key: 'commandsPath', type: 'string' },
@@ -1192,6 +1213,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 '--compile-evidence-path': { key: 'compileEvidencePath', type: 'string' },
                 '--review-evidence-path': { key: 'reviewEvidencePath', type: 'string' },
                 '--doc-impact-path': { key: 'docImpactPath', type: 'string' },
+                '--no-op-artifact-path': { key: 'noOpArtifactPath', type: 'string' },
                 '--repo-root': { key: 'repoRoot', type: 'string' }
             };
             const { options: rawOptions } = parseOptions(gateArgv, defs);
@@ -1208,7 +1230,8 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 reviewsRoot: String(options.reviewsRoot || ''),
                 compileEvidencePath: String(options.compileEvidencePath || ''),
                 reviewEvidencePath: String(options.reviewEvidencePath || ''),
-                docImpactPath: String(options.docImpactPath || '')
+                docImpactPath: String(options.docImpactPath || ''),
+                noOpArtifactPath: String(options.noOpArtifactPath || '')
             });
 
             // T-004: auto-emit COMPLETION_GATE_PASSED/FAILED to task timeline

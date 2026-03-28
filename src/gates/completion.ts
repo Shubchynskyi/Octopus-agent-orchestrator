@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { getReviewSkillCandidates } from './build-review-context';
 import { fileSha256, normalizePath, joinOrchestratorPath, resolvePathInsideRepo } from './helpers';
+import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from './rule-pack';
 import { collectTaskTimelineEventTypes, getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
 
@@ -35,6 +36,15 @@ export interface StageSequenceEvidence {
     review_skill_ids: string[];
     review_skill_reference_paths: string[];
     review_artifact_keys: string[];
+    violations: string[];
+}
+
+export interface ZeroDiffCompletionEvidence {
+    zero_diff_detected: boolean;
+    status: 'NOT_APPLICABLE' | 'REQUIRES_AUDITED_NO_OP' | 'SATISFIED_BY_AUDITED_NO_OP';
+    no_op_evidence_path: string | null;
+    no_op_classification: string | null;
+    no_op_reason: string | null;
     violations: string[];
 }
 
@@ -157,6 +167,62 @@ export function detectCodeChanged(preflight: Record<string, unknown> | null): bo
         return true;
     }
     return false;
+}
+
+function detectZeroDiffPreflight(preflight: Record<string, unknown> | null): boolean {
+    if (!preflight) return false;
+    const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
+        ? preflight.metrics as Record<string, unknown>
+        : null;
+    const changedLinesTotal = metrics && typeof metrics.changed_lines_total === 'number'
+        ? metrics.changed_lines_total
+        : 0;
+    const changedFilesCount = Array.isArray(preflight.changed_files) ? preflight.changed_files.length : 0;
+    return changedLinesTotal === 0 && changedFilesCount === 0;
+}
+
+export function validateZeroDiffCompletionEvidence(
+    preflight: Record<string, unknown> | null,
+    taskId: string,
+    taskSummary: string | null,
+    noOpEvidence: NoOpEvidenceResult
+): ZeroDiffCompletionEvidence {
+    const zeroDiffDetected = detectZeroDiffPreflight(preflight);
+    if (!zeroDiffDetected) {
+        return {
+            zero_diff_detected: false,
+            status: 'NOT_APPLICABLE',
+            no_op_evidence_path: noOpEvidence.evidence_path,
+            no_op_classification: noOpEvidence.classification,
+            no_op_reason: noOpEvidence.reason,
+            violations: []
+        };
+    }
+
+    if (noOpEvidence.evidence_status === 'PASS') {
+        return {
+            zero_diff_detected: true,
+            status: 'SATISFIED_BY_AUDITED_NO_OP',
+            no_op_evidence_path: noOpEvidence.evidence_path,
+            no_op_classification: noOpEvidence.classification,
+            no_op_reason: noOpEvidence.reason,
+            violations: []
+        };
+    }
+
+    const summarySuffix = taskSummary ? ` (${taskSummary})` : '';
+    return {
+        zero_diff_detected: true,
+        status: 'REQUIRES_AUDITED_NO_OP',
+        no_op_evidence_path: noOpEvidence.evidence_path,
+        no_op_classification: noOpEvidence.classification,
+        no_op_reason: noOpEvidence.reason,
+        violations: [
+            `Task '${taskId}'${summarySuffix} has zero-diff preflight on a clean tree. ` +
+            'Baseline-only preflight cannot complete the task by itself. ' +
+            `Produce a real diff or record an audited no-op artifact at '${normalizePath(noOpEvidence.evidence_path || '')}' before DONE.`
+        ]
+    };
 }
 
 function normalizeTimelineDetailString(value: unknown): string | null {
@@ -637,6 +703,7 @@ export interface RunCompletionGateOptions {
     reviewEvidencePath?: string;
     docImpactPath?: string;
     timelinePath?: string;
+    noOpArtifactPath?: string;
 }
 
 export function runCompletionGate(options: RunCompletionGateOptions) {
@@ -667,6 +734,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         preflightPath,
         taskModePath: options.taskModePath || ''
     });
+    const noOpEvidence = getNoOpEvidence(repoRoot, resolvedTaskId, options.noOpArtifactPath || '');
 
     const compileEvidence = readJsonArtifact(compileEvidencePath, 'Compile gate', errors);
     const reviewEvidence = readJsonArtifact(reviewEvidencePath, 'Review gate', errors);
@@ -704,6 +772,13 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
 
     // Detect code changes from preflight
     const codeChanged = detectCodeChanged(validatedPreflight.preflight);
+    const zeroDiffEvidence = validateZeroDiffCompletionEvidence(
+        validatedPreflight.preflight,
+        resolvedTaskId || '',
+        taskModeEvidence.task_summary,
+        noOpEvidence
+    );
+    errors.push(...zeroDiffEvidence.violations);
 
     // Validate stage sequence ordering
     const stageSequence = validateStageSequence(orderedEvents, codeChanged, timelinePath);
@@ -769,6 +844,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         timeline_path: normalizePath(timelinePath),
         review_artifacts: reviewArtifacts,
         stage_sequence_evidence: stageSequence,
+        zero_diff_evidence: zeroDiffEvidence,
         violations: errors
     };
 }

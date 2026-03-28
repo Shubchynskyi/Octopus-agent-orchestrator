@@ -11,6 +11,7 @@ import {
 import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../gate-runtime/token-telemetry';
 import { applyOutputFilterProfile } from '../../gate-runtime/output-filters';
 import {
+    emitReviewPhaseStartedEvent,
     emitImplementationStartedEvent,
     emitPlanCreatedEvent,
     emitPreflightFailedEvent,
@@ -54,6 +55,10 @@ import {
     parseTaskModeDepth,
     resolveTaskModeArtifactPath
 } from '../../gates/task-mode';
+import {
+    buildNoOpArtifact,
+    resolveNoOpArtifactPath
+} from '../../gates/no-op';
 import * as gateHelpers from '../../gates/helpers';
 
 type ClassificationResult = ReturnType<typeof classifyChange>;
@@ -141,6 +146,18 @@ interface LoadRulePackCommandOptions {
     taskModePath?: string;
     loadedRuleFiles?: unknown;
     actor?: unknown;
+    artifactPath?: string;
+    metricsPath?: string;
+    emitMetrics?: unknown;
+}
+
+interface RecordNoOpCommandOptions {
+    repoRoot?: string;
+    taskId?: unknown;
+    classification?: unknown;
+    reason?: unknown;
+    actor?: unknown;
+    preflightPath?: unknown;
     artifactPath?: string;
     metricsPath?: string;
     emitMetrics?: unknown;
@@ -838,6 +855,81 @@ export function runLoadRulePackCommand(options: LoadRulePackCommandOptions): { o
     };
 }
 
+export function runRecordNoOpCommand(options: RecordNoOpCommandOptions): { outputLines: string[]; exitCode: number } {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
+    const taskId = assertValidTaskId(String(options.taskId || '').trim());
+    const reason = String(options.reason || '').trim();
+    if (!reason) {
+        throw new Error('Reason is required.');
+    }
+    const artifactPath = options.artifactPath
+        ? requireResolvedPath(resolvePathForWrite(options.artifactPath, repoRoot), 'ArtifactPath')
+        : resolveNoOpArtifactPath(repoRoot, taskId, '');
+    const preflightPath = String(options.preflightPath || '').trim()
+        ? requireResolvedPath(gateHelpers.resolvePathInsideRepo(String(options.preflightPath), repoRoot, { allowMissing: true }), 'PreflightPath')
+        : null;
+
+    if (preflightPath) {
+        const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const metrics = preflightPayload.metrics && typeof preflightPayload.metrics === 'object' && !Array.isArray(preflightPayload.metrics)
+            ? preflightPayload.metrics as Record<string, unknown>
+            : null;
+        const changedLinesTotal = metrics && typeof metrics.changed_lines_total === 'number'
+            ? metrics.changed_lines_total
+            : 0;
+        const changedFilesCount = Array.isArray(preflightPayload.changed_files) ? preflightPayload.changed_files.length : 0;
+        if (changedLinesTotal > 0 || changedFilesCount > 0) {
+            throw new Error('No-op artifact is only allowed for zero-diff preflight artifacts.');
+        }
+    }
+
+    const artifact = buildNoOpArtifact({
+        taskId,
+        classification: options.classification,
+        reason,
+        actor: options.actor,
+        preflightPath
+    });
+    writeJsonArtifact(artifactPath, artifact);
+
+    const metricsPath = options.metricsPath
+        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
+        : resolveDefaultMetricsPath(repoRoot);
+    appendMetricsIfEnabled(metricsPath, {
+        timestamp_utc: artifact.timestamp_utc,
+        event_type: 'no_op_recorded',
+        task_id: taskId,
+        artifact_path: gateHelpers.normalizePath(artifactPath),
+        classification: artifact.classification,
+        preflight_path: artifact.preflight_path
+    }, parseBooleanOption(options.emitMetrics, true));
+
+    appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        'NO_OP_RECORDED',
+        'INFO',
+        'Audited no-op recorded.',
+        {
+            artifact_path: gateHelpers.normalizePath(artifactPath),
+            classification: artifact.classification,
+            reason: artifact.reason,
+            preflight_path: artifact.preflight_path
+        }
+    );
+
+    return {
+        outputLines: [
+            'NO_OP_RECORDED',
+            `TaskId: ${taskId}`,
+            `Classification: ${artifact.classification}`,
+            `ArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`
+        ],
+        exitCode: 0
+    };
+}
+
 export function splitCommandLine(commandText: unknown): string[] {
     const text = String(commandText || '').trim();
     if (!text) {
@@ -1121,6 +1213,9 @@ export function executeCommand(commandText: string, options: ExecuteCommandOptio
 }
 
 function getRenameCount(repoRoot: string, detectionSource: string, explicitChangedFiles: string[]): number {
+    if (detectionSource === 'explicit_changed_files' && explicitChangedFiles.length === 0) {
+        return 0;
+    }
     const args = ['-C', repoRoot, 'diff', '--name-status', '--diff-filter=ACMRTUXB'];
     if (detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked') {
         args.push('--cached');
@@ -1199,9 +1294,10 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     }
 
     try {
+    const explicitChangedFilesProvided = options.changedFiles !== undefined;
     const explicitChangedFiles = expandValueList(options.changedFiles, { splitDelimiters: true });
     const includeUntracked = parseBooleanOption(options.includeUntracked, true);
-    const detectionSource = explicitChangedFiles.length > 0
+    const detectionSource = explicitChangedFilesProvided
         ? 'explicit_changed_files'
         : (options.useStaged ? (includeUntracked ? 'git_staged_plus_untracked' : 'git_staged_only') : 'git_auto');
     const workspaceSnapshot = getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, explicitChangedFiles);
@@ -1277,13 +1373,16 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             resolvedTaskId,
             'PREFLIGHT_CLASSIFIED',
             'INFO',
-            `Preflight completed with mode ${result.mode}.`,
+            result.zero_diff_guard && result.zero_diff_guard.zero_diff_detected
+                ? `Preflight completed with mode ${result.mode} (zero-diff baseline only).`
+                : `Preflight completed with mode ${result.mode}.`,
             {
                 mode: result.mode,
                 output_path: normalizeOptionalPath(outputPath),
                 changed_files_count: result.metrics.changed_files_count,
                 changed_lines_total: result.metrics.changed_lines_total,
-                required_reviews: result.required_reviews
+                required_reviews: result.required_reviews,
+                zero_diff_guard: result.zero_diff_guard
             }
         );
     }
@@ -2130,6 +2229,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
     const timelinePath = resolvedTaskId
         ? gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`))
         : null;
+    let reviewPhaseMissingFromTimeline = false;
     if (timelinePath) {
         const timelineErrors: string[] = [];
         const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, timelineErrors);
@@ -2140,6 +2240,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         if (timelineErrors.length === 0 && !timelineEventTypes.has('RULE_PACK_LOADED')) {
             errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing RULE_PACK_LOADED. Run load-rule-pack before review gate.`);
         }
+        reviewPhaseMissingFromTimeline = timelineErrors.length === 0 && !timelineEventTypes.has('REVIEW_PHASE_STARTED');
     }
 
     const required = validatedPreflight.required_reviews;
@@ -2336,6 +2437,14 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
     };
     appendMetricsIfEnabled(metricsPath, successEvent, parseBooleanOption(options.emitMetrics, true));
     if (resolvedTaskId) {
+        const hasRequiredReviews = Object.values(required).some((value) => value === true);
+        if (!hasRequiredReviews && reviewPhaseMissingFromTimeline) {
+            emitReviewPhaseStartedEvent(orchestratorRoot, resolvedTaskId, {
+                review_type: 'none',
+                reason: 'no_required_reviews',
+                preflight_path: gateHelpers.normalizePath(validatedPreflight.preflight_path)
+            });
+        }
         appendTaskEvent(
             orchestratorRoot,
             resolvedTaskId,

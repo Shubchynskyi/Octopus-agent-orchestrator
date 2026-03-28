@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- no changes yet
+- tightened zero-diff orchestration handling: a clean-tree `preflight` is now treated as baseline-only evidence, and task completion requires either a real produced diff or an audited no-op artifact recorded through the gate flow
+- added audited no-op gate support and completion evidence checks so implementation tasks can no longer drift from `preflight` directly to `DONE` without explicit proof of “already done” / “no changes required”
+- finished lifecycle path-boundary hardening by validating rollback/sync metadata before destructive restore operations, including rejection of traversal/absolute-path entries in `rollback-records.json` and `sync-backup-metadata.json`
+- expanded lifecycle regression coverage for malicious relative paths and corrupted rollback/sync metadata to keep copy/remove/restore flows root-confined
 
 ## 2.3.3
 

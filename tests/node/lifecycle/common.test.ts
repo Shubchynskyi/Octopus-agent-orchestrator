@@ -7,15 +7,18 @@ import {
     copyPathRecursive,
     createRollbackSnapshot,
     getRollbackRecordsPath,
+    getSyncBackupMetadataPath,
     getTimestamp,
     readRollbackRecords,
+    readSyncBackupMetadata,
     readdirRecursiveFiles,
     removePathRecursive,
     restoreRollbackSnapshot,
     restoreSyncedItemsFromBackup,
     syncWorkingTreeBundleItems,
     validateTargetRoot,
-    writeRollbackRecords
+    writeRollbackRecords,
+    writeSyncBackupMetadata
 } from '../../../src/lifecycle/common';
 
 import * as fs from 'node:fs';
@@ -236,6 +239,49 @@ describe('createRollbackSnapshot and restoreRollbackSnapshot', () => {
         }
     });
 
+    it('rejects invalid rollback records JSON', () => {
+        const dir = mkTmpDir();
+        try {
+            const snapshotRoot = path.join(dir, '_snapshot');
+            fs.mkdirSync(snapshotRoot, { recursive: true });
+            fs.writeFileSync(getRollbackRecordsPath(snapshotRoot), '{not-json', 'utf8');
+
+            assert.throws(() => readRollbackRecords(snapshotRoot), /not valid JSON/);
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
+    it('rejects rollback records payloads that are not arrays', () => {
+        const dir = mkTmpDir();
+        try {
+            const snapshotRoot = path.join(dir, '_snapshot');
+            fs.mkdirSync(snapshotRoot, { recursive: true });
+            fs.writeFileSync(getRollbackRecordsPath(snapshotRoot), JSON.stringify({ relativePath: 'file.txt' }), 'utf8');
+
+            assert.throws(() => readRollbackRecords(snapshotRoot), /must contain an array/);
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
+    it('rejects rollback records with unsafe relative paths', () => {
+        const dir = mkTmpDir();
+        try {
+            const snapshotRoot = path.join(dir, '_snapshot');
+            fs.mkdirSync(snapshotRoot, { recursive: true });
+            fs.writeFileSync(
+                getRollbackRecordsPath(snapshotRoot),
+                JSON.stringify([{ relativePath: '../escape', existed: true, pathType: 'file' }], null, 2),
+                'utf8'
+            );
+
+            assert.throws(() => readRollbackRecords(snapshotRoot), /parent path traversal/);
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
     it('throws when snapshot entry is missing for existed item', () => {
         const dir = mkTmpDir();
         try {
@@ -320,6 +366,66 @@ describe('syncWorkingTreeBundleItems', () => {
 });
 
 describe('restoreSyncedItemsFromBackup', () => {
+    it('writes and reads sync backup metadata', () => {
+        const dir = mkTmpDir();
+        try {
+            const backupRoot = path.join(dir, 'backup');
+            const metadata = {
+                createdAt: '2026-03-29T00:00:00.000Z',
+                preexistingMap: { VERSION: true, 'NEW.md': false }
+            };
+
+            const metadataPath = writeSyncBackupMetadata(backupRoot, metadata);
+            assert.equal(metadataPath, getSyncBackupMetadataPath(backupRoot));
+            assert.deepEqual(readSyncBackupMetadata(backupRoot), metadata);
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
+    it('rejects invalid sync backup metadata JSON', () => {
+        const dir = mkTmpDir();
+        try {
+            const backupRoot = path.join(dir, 'backup');
+            fs.mkdirSync(backupRoot, { recursive: true });
+            fs.writeFileSync(getSyncBackupMetadataPath(backupRoot), '{not-json', 'utf8');
+
+            assert.throws(() => readSyncBackupMetadata(backupRoot), /not valid JSON/);
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
+    it('rejects sync backup metadata without preexistingMap', () => {
+        const dir = mkTmpDir();
+        try {
+            const backupRoot = path.join(dir, 'backup');
+            fs.mkdirSync(backupRoot, { recursive: true });
+            fs.writeFileSync(getSyncBackupMetadataPath(backupRoot), JSON.stringify({ createdAt: '2026-03-29T00:00:00.000Z' }), 'utf8');
+
+            assert.throws(() => readSyncBackupMetadata(backupRoot), /missing preexistingMap/);
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
+    it('rejects sync backup metadata with unsafe item keys', () => {
+        const dir = mkTmpDir();
+        try {
+            const backupRoot = path.join(dir, 'backup');
+            fs.mkdirSync(backupRoot, { recursive: true });
+            fs.writeFileSync(
+                getSyncBackupMetadataPath(backupRoot),
+                JSON.stringify({ preexistingMap: { '../escape': true } }, null, 2),
+                'utf8'
+            );
+
+            assert.throws(() => readSyncBackupMetadata(backupRoot), /parent path traversal/);
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
     it('restores preexisting items and removes new items', () => {
         const dir = mkTmpDir();
         try {

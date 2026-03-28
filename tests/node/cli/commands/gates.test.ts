@@ -12,6 +12,7 @@ import {
     runHumanCommitCommand,
     runLoadRulePackCommand,
     runLogTaskEventCommand,
+    runRecordNoOpCommand,
     runRequiredReviewsCheckCommand,
     splitCommandLine,
     executeCommand
@@ -129,6 +130,31 @@ function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
     }, null, 2), 'utf8');
 }
 
+function runGit(repoRoot: string, args: string[]): childProcess.SpawnSyncReturns<string> {
+    const result = childProcess.spawnSync('git', args, {
+        cwd: repoRoot,
+        windowsHide: true,
+        encoding: 'utf8'
+    });
+    if (result.error) {
+        throw result.error;
+    }
+    assert.equal(
+        result.status,
+        0,
+        `git ${args.join(' ')} failed: ${String(result.stderr || result.stdout || '').trim()}`
+    );
+    return result;
+}
+
+function initializeGitRepo(repoRoot: string): void {
+    runGit(repoRoot, ['init']);
+    runGit(repoRoot, ['config', 'user.name', 'Octopus Tests']);
+    runGit(repoRoot, ['config', 'user.email', 'octopus-tests@example.com']);
+    runGit(repoRoot, ['add', '.']);
+    runGit(repoRoot, ['commit', '-m', 'test: baseline']);
+}
+
 function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<string, unknown>> {
     const timelinePath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
     return fs.readFileSync(timelinePath, 'utf8')
@@ -206,6 +232,39 @@ describe('cli/commands/gates', () => {
         assert.equal(payload.changed_files[0], 'src/app.ts');
         assert.equal(payload.required_reviews.code, true);
         assert.equal(fs.existsSync(outputPath), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('marks zero-diff preflight as baseline-only instead of complete work', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-zero.json');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\nOctopus-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, 'T-900z');
+        seedInitAnswers(repoRoot);
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId: 'T-900z',
+            taskSummary: 'Implement lifecycle hardening'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, 'T-900z');
+        assert.equal(rulePackResult.exitCode, 0);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: [],
+            taskId: 'T-900z',
+            taskIntent: 'Implement lifecycle hardening',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.changed_files.length, 0);
+        assert.equal(payload.zero_diff_guard.zero_diff_detected, true);
+        assert.equal(payload.zero_diff_guard.status, 'BASELINE_ONLY');
+        assert.equal(payload.zero_diff_guard.completion_requires_audited_no_op, true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -572,6 +631,127 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('requires audited no-op evidence before zero-diff completion can pass', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\nOctopus-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 0 },
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            changed_files: [],
+            zero_diff_guard: {
+                zero_diff_detected: true,
+                status: 'BASELINE_ONLY',
+                completion_requires_audited_no_op: true,
+                no_op_artifact_suffix: '-no-op.json',
+                rationale: 'Preflight on a clean workspace is baseline-only.'
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-zero.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Implement lifecycle hardening'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'PREFLIGHT_CLASSIFIED',
+            'INFO',
+            'Preflight completed with mode FULL_PATH (zero-diff baseline only).',
+            {
+                mode: 'FULL_PATH',
+                changed_files_count: 0,
+                changed_lines_total: 0,
+                required_reviews: { code: false },
+                zero_diff_guard: { zero_diff_detected: true, status: 'BASELINE_ONLY' }
+            }
+        );
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'No public docs impact.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const failedCompletion = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(failedCompletion.outcome, 'FAIL');
+        assert.ok(failedCompletion.violations.some((item) => String(item).includes('audited no-op artifact')));
+
+        const noOpResult = runRecordNoOpCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            classification: 'ALREADY_DONE',
+            reason: 'Task behavior already matches the requested outcome after earlier local changes.',
+            emitMetrics: false
+        });
+        assert.equal(noOpResult.exitCode, 0);
+
+        const passedCompletion = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(passedCompletion.outcome, 'PASS');
+        assert.equal(passedCompletion.zero_diff_evidence.status, 'SATISFIED_BY_AUDITED_NO_OP');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('logs task events with terminal cleanup and command audit', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904';
@@ -608,10 +788,10 @@ describe('cli/commands/gates', () => {
     it('runs human commit through git with commit guard override', async () => {
         const repoRoot = createTempRepo();
     
-        childProcess.spawnSync('git', ['init'], { cwd: repoRoot, windowsHide: true, stdio: 'ignore' });
-        childProcess.spawnSync('git', ['config', 'user.name', 'Octopus Tests'], { cwd: repoRoot, windowsHide: true, stdio: 'ignore' });
-        childProcess.spawnSync('git', ['config', 'user.email', 'octopus-tests@example.com'], { cwd: repoRoot, windowsHide: true, stdio: 'ignore' });
-        childProcess.spawnSync('git', ['add', '.'], { cwd: repoRoot, windowsHide: true, stdio: 'ignore' });
+        runGit(repoRoot, ['init']);
+        runGit(repoRoot, ['config', 'user.name', 'Octopus Tests']);
+        runGit(repoRoot, ['config', 'user.email', 'octopus-tests@example.com']);
+        runGit(repoRoot, ['add', '.']);
 
         const exitCode = await runHumanCommitCommand(['-m', 'test: initial commit'], { cwd: repoRoot });
         const logResult = childProcess.spawnSync('git', ['log', '--oneline', '-1'], {

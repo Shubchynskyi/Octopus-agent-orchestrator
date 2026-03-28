@@ -167,17 +167,19 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         (explicitChangedFiles || []).map((f: string) => normalizePath(f)).filter(Boolean)
     )].sort();
 
-    if (source === 'explicit_changed_files' && normalizedExplicit.length > 0) {
+    if (source === 'explicit_changed_files') {
         const numstatRows: Record<string, { additions: string; deletions: string }> = {};
-        try {
-            for (const line of gitLines(['diff', '--numstat', '--diff-filter=ACMRTUXB', 'HEAD', '--', ...normalizedExplicit], 'Failed numstat')) {
-                const parts = line.split('\t');
-                if (parts.length >= 3) {
-                    const key = normalizePath(parts[2]);
-                    if (key) numstatRows[key] = { additions: parts[0], deletions: parts[1] };
+        if (normalizedExplicit.length > 0) {
+            try {
+                for (const line of gitLines(['diff', '--numstat', '--diff-filter=ACMRTUXB', 'HEAD', '--', ...normalizedExplicit], 'Failed numstat')) {
+                    const parts = line.split('\t');
+                    if (parts.length >= 3) {
+                        const key = normalizePath(parts[2]);
+                        if (key) numstatRows[key] = { additions: parts[0], deletions: parts[1] };
+                    }
                 }
-            }
-        } catch { /* best effort */ }
+            } catch { /* best effort */ }
+        }
 
         let additionsTotal = 0, deletionsTotal = 0;
         for (const item of normalizedExplicit) {
@@ -313,4 +315,3 @@ export function getPreflightContext(preflightPath: string, taskId: string) {
         changed_files_sha256: stringSha256(preflightChangedFiles.join('\n'))
     };
 }
-

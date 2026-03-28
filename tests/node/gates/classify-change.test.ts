@@ -229,6 +229,9 @@ describe('gates/classify-change', () => {
             assert.equal(result.mode, 'FULL_PATH');
             assert.equal(result.required_reviews.code, false);
             assert.equal(result.changed_files.length, 0);
+            assert.equal(result.zero_diff_guard.zero_diff_detected, true);
+            assert.equal(result.zero_diff_guard.status, 'BASELINE_ONLY');
+            assert.equal(result.zero_diff_guard.completion_requires_audited_no_op, true);
         });
 
         it('preserves changed_files in output', () => {

@@ -389,6 +389,7 @@ export function classifyChange(options: ClassifyChangeOptions) {
     const requiredPerformanceReview = performanceTriggered && !!reviewCapabilities.performance;
     const requiredInfraReview = infraTriggered && !!reviewCapabilities.infra;
     const requiredDependencyReview = dependencyTriggered && !!reviewCapabilities.dependency;
+    const zeroDiffDetected = normalizedFiles.length === 0 && changedLinesTotal === 0;
 
     return {
         detection_source: detectionSource,
@@ -437,7 +438,15 @@ export function classifyChange(options: ClassifyChangeOptions) {
             infra: requiredInfraReview,
             dependency: requiredDependencyReview
         },
+        zero_diff_guard: {
+            zero_diff_detected: zeroDiffDetected,
+            status: zeroDiffDetected ? 'BASELINE_ONLY' : 'DIFF_PRESENT',
+            completion_requires_audited_no_op: zeroDiffDetected,
+            no_op_artifact_suffix: zeroDiffDetected ? '-no-op.json' : null,
+            rationale: zeroDiffDetected
+                ? 'Preflight on a clean workspace is baseline-only. Task completion requires a produced diff or an audited no-op artifact.'
+                : 'Workspace diff detected.'
+        },
         changed_files: normalizedFiles
     };
 }
-

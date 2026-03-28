@@ -1,6 +1,41 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+// ---------------------------------------------------------------------------
+// Root boundary helpers
+// ---------------------------------------------------------------------------
+
+function normalizePath(p: string): string {
+    return path.resolve(p);
+}
+
+function isSubpath(parent: string, child: string): boolean {
+    const p = normalizePath(parent).toLowerCase();
+    const c = normalizePath(child).toLowerCase();
+    if (p === c) return true; // allow exact equality
+    return c.startsWith(p + path.sep);
+}
+
+function ensureWithinRoot(root: string, candidate: string, description = 'Path'): string {
+    const resolved = normalizePath(candidate);
+    const resolvedRoot = normalizePath(root);
+    if (!isSubpath(resolvedRoot, resolved)) {
+        throw new Error(`${description} '${candidate}' resolves outside permitted root '${root}'`);
+    }
+    return resolved;
+}
+
+function ensureRelativeSafe(rel: string, description = 'Relative path'): void {
+    if (path.isAbsolute(rel)) {
+        throw new Error(`${description} must be relative, absolute path provided: ${rel}`);
+    }
+    const norm = path.normalize(rel);
+    if (norm.split(path.sep).includes('..')) {
+        throw new Error(`${description} contains parent path traversal: ${rel}`);
+    }
+}
+
+
 type JsonObject = Record<string, unknown>;
 
 export interface RollbackRecord {
@@ -209,7 +244,13 @@ export function createRollbackSnapshot(
     const records: RollbackRecord[] = [];
 
     for (const rel of unique) {
+        // Defensive checks: ensure relative paths are safe and remain under rootPath
+        if (!rel || rel === '.') continue;
+        ensureRelativeSafe(rel, 'Rollback relativePath');
+
         const targetPath = path.join(rootPath, rel);
+        ensureWithinRoot(rootPath, targetPath, 'Rollback target');
+
         const exists = fs.existsSync(targetPath);
         let pathType = 'missing';
         if (exists) {
@@ -261,6 +302,7 @@ export function readRollbackRecords(snapshotRoot: string): RollbackRecord[] {
         if (!relativePath) {
             throw new Error(`Rollback record at index ${index} is missing relativePath.`);
         }
+        ensureRelativeSafe(relativePath, `Rollback record at index ${index} relativePath`);
 
         return {
             relativePath,
@@ -303,6 +345,9 @@ export function readSyncBackupMetadata(backupRoot: string): SyncBackupMetadata {
     if (!preexistingMap || Array.isArray(preexistingMap)) {
         throw new Error(`Sync backup metadata is missing preexistingMap: ${metadataPath}`);
     }
+    for (const key of Object.keys(preexistingMap)) {
+        ensureRelativeSafe(key, 'Sync backup metadata key');
+    }
 
     return {
         ...(parsedObject ?? {}),
@@ -317,7 +362,11 @@ export function restoreRollbackSnapshot(
 ): void {
     for (const record of records) {
         const rel = record.relativePath;
+        if (!rel) continue;
+        ensureRelativeSafe(rel, 'Rollback record.relativePath');
+
         const targetPath = path.join(rootPath, rel);
+        ensureWithinRoot(rootPath, targetPath, 'Rollback restore target');
         const snapshotPath = path.join(snapshotRoot, rel);
         const shouldExist = record.existed;
 
@@ -353,13 +402,22 @@ export function copyDirectoryContentMerge(
     );
 
     const sourceRoot = path.resolve(sourceDirectory);
+    const destRoot = path.resolve(destinationDirectory);
     const expectedDestFiles = new Set<string>();
 
     for (const sourceFile of readdirRecursiveFiles(sourceDirectory)) {
         const rel = path.relative(sourceRoot, sourceFile);
         if (!rel || rel === '.') continue;
 
+        // Guard against any unexpected traversal from source
+        if (rel.split(path.sep).includes('..')) {
+            throw new Error(`Source contains upward-relative paths: ${rel}`);
+        }
+
         const destFile = path.resolve(path.join(destinationDirectory, rel));
+        // Ensure the computed destination file remains under destinationDirectory
+        ensureWithinRoot(destRoot, destFile, 'Destination file');
+
         expectedDestFiles.add(destFile.toLowerCase());
 
         if (skipSet.has(destFile.toLowerCase())) continue;
@@ -373,6 +431,8 @@ export function copyDirectoryContentMerge(
         const destFull = path.resolve(destFile).toLowerCase();
         if (skipSet.has(destFull)) continue;
         if (!expectedDestFiles.has(destFull)) {
+            // extra safety: ensure removal target is under destination root
+            ensureWithinRoot(destRoot, destFile, 'Removal target');
             fs.rmSync(destFile, { force: true });
         }
     }
@@ -383,6 +443,8 @@ export function copyDirectoryContentMerge(
         const dirFull = path.resolve(dir).toLowerCase();
         if (skipSet.has(dirFull)) continue;
         try {
+            // ensure directory under destRoot
+            ensureWithinRoot(destRoot, dir, 'Directory to prune');
             const entries = fs.readdirSync(dir);
             if (entries.length === 0) fs.rmdirSync(dir);
         } catch (_e) { /* ignore */ }
@@ -399,8 +461,14 @@ export function restoreSyncedItemsFromBackup(
     preexistingMap: Record<string, unknown>,
     runningScriptPath: string | null
 ): void {
+    const resolvedTargetRoot = path.resolve(targetBundleRoot);
     for (const item of Object.keys(preexistingMap)) {
+        if (!item) continue;
+        // ensure item name is safe
+        ensureRelativeSafe(item, 'Synced item key');
+
         const destinationPath = path.join(targetBundleRoot, item);
+        ensureWithinRoot(resolvedTargetRoot, destinationPath, 'Synced destination');
         const preexisting = Boolean(preexistingMap[item]);
 
         if (preexisting) {
@@ -440,11 +508,15 @@ export function syncWorkingTreeBundleItems(
     relativeItems: readonly string[]
 ): void {
     const unique = [...new Set(relativeItems)].sort();
+    const resolvedTargetRoot = path.resolve(targetBundleRoot);
     for (const item of unique) {
+        if (!item) continue;
+        ensureRelativeSafe(item, 'Sync item');
         const sourcePath = path.join(sourceBundleRoot, item);
         if (!fs.existsSync(sourcePath)) continue;
 
         const destinationPath = path.join(targetBundleRoot, item);
+        ensureWithinRoot(resolvedTargetRoot, destinationPath, 'Sync destination');
         removePathRecursive(destinationPath);
         fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
         copyPathRecursive(sourcePath, destinationPath);
