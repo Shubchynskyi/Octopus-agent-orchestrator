@@ -9,6 +9,7 @@ import { buildReviewContext, resolveContextOutputPath, resolveScopedDiffMetadata
 import { buildScopedDiff, resolveMetadataPath, resolveOutputPath } from '../gates/build-scoped-diff';
 import { formatCompletionGateResult, runCompletionGate } from '../gates/completion';
 import { buildTaskEventsSummary, formatTaskEventsSummaryText } from '../gates/task-events-summary';
+import { emitCompletionGateEvent } from '../gate-runtime/lifecycle-events';
 import * as gateHelpers from '../gates/helpers';
 import { runDoctor, formatDoctorResult } from '../validators/doctor';
 import { getStatusSnapshot } from '../validators/status';
@@ -1164,6 +1165,20 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 reviewEvidencePath: String(options.reviewEvidencePath || ''),
                 docImpactPath: String(options.docImpactPath || '')
             });
+
+            // T-004: auto-emit COMPLETION_GATE_PASSED/FAILED to task timeline
+            const completionTaskId = String(result.task_id || '').trim();
+            if (completionTaskId) {
+                const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
+                emitCompletionGateEvent(orchestratorRoot, completionTaskId, result.outcome === 'PASS', {
+                    status: result.status,
+                    outcome: result.outcome,
+                    preflight_path: result.preflight_path,
+                    timeline_path: result.timeline_path,
+                    violations: result.violations
+                });
+            }
+
             process.stdout.write(`${formatCompletionGateResult(result)}\n`);
             if (result.outcome !== 'PASS') {
                 process.exitCode = 1;

@@ -32,6 +32,9 @@ export interface StatusSnapshot extends CliStatusSnapshot {
     usagePresent: boolean;
     agentInitStatePath: string;
     agentInitState: AgentInitState | null;
+    timelineTaskCount: number;
+    timelineHealthy: number;
+    timelineWarnings: string[];
 }
 
 function getErrorMessage(error: unknown): string {
@@ -145,6 +148,39 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
     if (currentActiveAgentFiles.length > 0) {
         activeAgentFilesValue = currentActiveAgentFiles.join(', ');
     }
+
+    // T-004: scan task timelines for health summary
+    var timelineTaskCount = 0;
+    var timelineHealthy = 0;
+    var timelineWarnings: string[] = [];
+    if (bundlePresent) {
+        var eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
+        if (pathExists(eventsRoot)) {
+            try {
+                var eventsEntries = fs.readdirSync(eventsRoot).filter(function (name: string) {
+                    return name.endsWith('.jsonl') && name !== 'all-tasks.jsonl';
+                });
+                timelineTaskCount = eventsEntries.length;
+                for (var ei = 0; ei < eventsEntries.length; ei++) {
+                    var entryName = eventsEntries[ei];
+                    var entryPath = path.join(eventsRoot, entryName);
+                    try {
+                        var stat = fs.statSync(entryPath);
+                        if (stat.isFile() && stat.size > 0) {
+                            timelineHealthy++;
+                        } else {
+                            timelineWarnings.push('Empty timeline: ' + entryName);
+                        }
+                    } catch (_e: unknown) {
+                        timelineWarnings.push('Unreadable timeline: ' + entryName);
+                    }
+                }
+            } catch (_e: unknown) {
+                // events directory unreadable
+            }
+        }
+    }
+
     return {
         targetRoot: resolvedTargetRoot, bundlePath: bundlePath, initAnswersResolvedPath: initAnswersResolvedPath,
         initAnswersPathForDisplay: initAnswersPath, bundlePresent: bundlePresent, initAnswersPresent: initAnswersPresent,
@@ -159,7 +195,10 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
         primaryInitializationComplete: primaryInitializationComplete,
         agentInitializationPendingReason: agentInitializationPendingReason,
         agentInitializationComplete: agentInitializationComplete,
-        readyForTasks: readyForTasks, recommendedNextCommand: recommendedNextCommand
+        readyForTasks: readyForTasks, recommendedNextCommand: recommendedNextCommand,
+        timelineTaskCount: timelineTaskCount,
+        timelineHealthy: timelineHealthy,
+        timelineWarnings: timelineWarnings
     };
 }
 
@@ -207,6 +246,17 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
     if (snapshot.initAnswersError) lines.push('InitAnswersStatus: INVALID ('+snapshot.initAnswersError+')');
     if (snapshot.liveVersionError) lines.push('LiveVersionStatus: INVALID ('+snapshot.liveVersionError+')');
     if (snapshot.agentInitStateError) lines.push('AgentInitStateStatus: INVALID ('+snapshot.agentInitStateError+')');
+
+    // T-004: timeline health in status output
+    if (snapshot.timelineTaskCount > 0) {
+        lines.push('TaskTimelines: '+snapshot.timelineHealthy+'/'+snapshot.timelineTaskCount+' healthy');
+        if (snapshot.timelineWarnings.length > 0) {
+            for (var tw = 0; tw < snapshot.timelineWarnings.length; tw++) {
+                lines.push('  Warning: '+snapshot.timelineWarnings[tw]);
+            }
+        }
+    }
+
     lines.push('RecommendedNextCommand: '+snapshot.recommendedNextCommand);
     return lines.join('\n');
 }

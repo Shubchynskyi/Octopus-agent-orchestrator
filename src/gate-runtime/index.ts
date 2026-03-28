@@ -1,4 +1,5 @@
 import * as hash from './hash';
+import * as lifecycleEvents from './lifecycle-events';
 import * as outputFilters from './output-filters';
 import * as reviewContext from './review-context';
 import * as scopedDiff from './scoped-diff';
@@ -8,6 +9,7 @@ import * as tokenTelemetry from './token-telemetry';
 
 export {
     hash,
+    lifecycleEvents,
     outputFilters,
     reviewContext,
     scopedDiff,

@@ -156,7 +156,9 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
             entriesChecked: 5,
             duplicates: []
         },
-        manifestError: null
+        manifestError: null,
+        timelineEvidence: [],
+        timelineWarnings: []
     };
 
     const output = formatDoctorResult(fakeResult);

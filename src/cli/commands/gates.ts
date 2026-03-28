@@ -1550,7 +1550,7 @@ export function runLogTaskEventCommand(options: LogTaskEventCommandOptions): { o
     if (!['INFO', 'PASS', 'FAIL', 'BLOCKED'].includes(outcome)) {
         throw new Error(`Outcome must be one of INFO, PASS, FAIL, BLOCKED. Got '${outcome}'.`);
     }
-    if (eventType === 'TASK_MODE_ENTERED' || /^(COMPILE_GATE_|REVIEW_GATE_|PREFLIGHT_)/.test(eventType)) {
+    if (eventType === 'TASK_MODE_ENTERED' || /^(COMPILE_GATE_|REVIEW_GATE_|PREFLIGHT_|COMPLETION_GATE_)/.test(eventType)) {
         throw new Error(`EventType '${eventType}' is reserved and cannot be emitted via log-task-event.`);
     }
 
