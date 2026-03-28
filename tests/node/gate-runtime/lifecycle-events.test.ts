@@ -10,6 +10,11 @@ import {
     MANDATORY_NON_CODE_EVENTS,
     getMandatoryEvents,
     validateTimelineCompleteness,
+    emitPlanCreatedEvent,
+    emitPreflightStartedEvent,
+    emitPreflightFailedEvent,
+    emitImplementationStartedEvent,
+    emitReviewPhaseStartedEvent,
     emitCompletionGateEvent,
     emitStatusChangedEvent,
     emitProviderRoutingEvent
@@ -30,11 +35,15 @@ describe('gate-runtime/lifecycle-events', () => {
     describe('LIFECYCLE_EVENT_TYPES', () => {
         it('defines all expected event type keys', () => {
             assert.ok(LIFECYCLE_EVENT_TYPES.TASK_MODE_ENTERED);
+            assert.ok(LIFECYCLE_EVENT_TYPES.PLAN_CREATED);
             assert.ok(LIFECYCLE_EVENT_TYPES.RULE_PACK_LOADED);
+            assert.ok(LIFECYCLE_EVENT_TYPES.PREFLIGHT_STARTED);
             assert.ok(LIFECYCLE_EVENT_TYPES.PREFLIGHT_CLASSIFIED);
+            assert.ok(LIFECYCLE_EVENT_TYPES.PREFLIGHT_FAILED);
             assert.ok(LIFECYCLE_EVENT_TYPES.IMPLEMENTATION_STARTED);
             assert.ok(LIFECYCLE_EVENT_TYPES.COMPILE_GATE_PASSED);
             assert.ok(LIFECYCLE_EVENT_TYPES.COMPILE_GATE_FAILED);
+            assert.ok(LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED);
             assert.ok(LIFECYCLE_EVENT_TYPES.REVIEW_GATE_PASSED);
             assert.ok(LIFECYCLE_EVENT_TYPES.REVIEW_GATE_FAILED);
             assert.ok(LIFECYCLE_EVENT_TYPES.DOC_IMPACT_ASSESSED);
@@ -100,6 +109,7 @@ describe('gate-runtime/lifecycle-events', () => {
                 'TASK_MODE_ENTERED',
                 'RULE_PACK_LOADED',
                 'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
                 'REVIEW_GATE_PASSED',
                 'COMPLETION_GATE_PASSED'
             ];
@@ -130,6 +140,7 @@ describe('gate-runtime/lifecycle-events', () => {
                 'TASK_MODE_ENTERED',
                 'RULE_PACK_LOADED',
                 'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
                 'REVIEW_GATE_PASSED'
             ];
             const lines = events.map((et, idx) => JSON.stringify({
@@ -148,16 +159,16 @@ describe('gate-runtime/lifecycle-events', () => {
             assert.ok(result.events_missing.includes('COMPLETION_GATE_PASSED'));
         });
 
-        it('requires PREFLIGHT_CLASSIFIED for code-changing tasks', () => {
+        it('requires code-change lifecycle events for code-changing tasks', () => {
             const eventsDir = path.join(tempDir, 'runtime', 'task-events');
             fs.mkdirSync(eventsDir, { recursive: true });
             const timelinePath = path.join(eventsDir, 'T-TEST.jsonl');
 
-            // All non-code events but no PREFLIGHT_CLASSIFIED
             const events = [
                 'TASK_MODE_ENTERED',
                 'RULE_PACK_LOADED',
                 'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
                 'REVIEW_GATE_PASSED',
                 'COMPLETION_GATE_PASSED'
             ];
@@ -175,6 +186,7 @@ describe('gate-runtime/lifecycle-events', () => {
             const result = validateTimelineCompleteness(timelinePath, 'T-TEST', true);
             assert.equal(result.status, 'INCOMPLETE');
             assert.ok(result.events_missing.includes('PREFLIGHT_CLASSIFIED'));
+            assert.ok(result.events_missing.includes('IMPLEMENTATION_STARTED'));
         });
 
         it('accepts REVIEW_GATE_PASSED_WITH_OVERRIDE as satisfying REVIEW_GATE_PASSED', () => {
@@ -186,6 +198,7 @@ describe('gate-runtime/lifecycle-events', () => {
                 'TASK_MODE_ENTERED',
                 'RULE_PACK_LOADED',
                 'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
                 'REVIEW_GATE_PASSED_WITH_OVERRIDE',
                 'COMPLETION_GATE_PASSED'
             ];
@@ -203,6 +216,63 @@ describe('gate-runtime/lifecycle-events', () => {
             const result = validateTimelineCompleteness(timelinePath, 'T-TEST', false);
             assert.equal(result.status, 'COMPLETE');
             assert.ok(result.events_found.includes('REVIEW_GATE_PASSED'));
+        });
+    });
+
+    describe('stage emit helpers', () => {
+        let tempDir: string;
+
+        beforeEach(() => {
+            tempDir = createTempDir();
+            fs.mkdirSync(path.join(tempDir, 'runtime', 'task-events'), { recursive: true });
+        });
+
+        afterEach(() => {
+            removeTempDir(tempDir);
+        });
+
+        it('emits plan, preflight, implementation, and review-phase events', () => {
+            emitPlanCreatedEvent(tempDir, 'T-STAGE', { task_summary: 'Implement change' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+            emitPreflightStartedEvent(tempDir, 'T-STAGE', { task_intent: 'Implement change' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+            emitImplementationStartedEvent(tempDir, 'T-STAGE', { preflight_path: '/tmp/preflight.json' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+            emitReviewPhaseStartedEvent(tempDir, 'T-STAGE', { review_type: 'code' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+
+            const timelinePath = path.join(tempDir, 'runtime', 'task-events', 'T-STAGE.jsonl');
+            const events = fs.readFileSync(timelinePath, 'utf8')
+                .trim()
+                .split('\n')
+                .map(line => JSON.parse(line) as Record<string, unknown>);
+
+            assert.deepEqual(events.map(event => event.event_type), [
+                'PLAN_CREATED',
+                'PREFLIGHT_STARTED',
+                'IMPLEMENTATION_STARTED',
+                'REVIEW_PHASE_STARTED'
+            ]);
+            const planDetails = events[0].details as Record<string, unknown>;
+            const reviewDetails = events[3].details as Record<string, unknown>;
+            assert.equal(planDetails.task_summary, 'Implement change');
+            assert.equal(reviewDetails.review_type, 'code');
+        });
+
+        it('emits PREFLIGHT_FAILED with FAIL outcome', () => {
+            emitPreflightFailedEvent(tempDir, 'T-STAGE', { error: 'missing scope' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+
+            const timelinePath = path.join(tempDir, 'runtime', 'task-events', 'T-STAGE.jsonl');
+            const event = JSON.parse(fs.readFileSync(timelinePath, 'utf8').trim());
+            assert.equal(event.event_type, 'PREFLIGHT_FAILED');
+            assert.equal(event.outcome, 'FAIL');
+            assert.equal(event.details.error, 'missing scope');
         });
     });
 

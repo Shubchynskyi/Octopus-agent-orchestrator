@@ -47,6 +47,43 @@ export function selectRulePackFiles(reviewType: string, depth: number): string[]
     return [...rulePack.depth2];
 }
 
+const REVIEW_SKILL_CANDIDATES: Record<string, string[]> = Object.freeze({
+    code: ['code-review'],
+    db: ['db-review'],
+    security: ['security-review'],
+    refactor: ['refactor-review'],
+    api: ['api-review', 'api-contract-review'],
+    test: ['test-review', 'testing-strategy'],
+    performance: ['performance-review'],
+    infra: ['infra-review'],
+    dependency: ['dependency-review']
+});
+
+export function getReviewSkillCandidates(reviewType: string): string[] {
+    const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
+    const candidates = REVIEW_SKILL_CANDIDATES[normalizedReviewType];
+    if (!candidates) {
+        return [`${normalizedReviewType}-review`].filter(Boolean);
+    }
+    return [...candidates];
+}
+
+export function resolveReviewSkillId(reviewType: string, repoRoot: string): string {
+    const rulesRoot = path.resolve(repoRoot);
+    for (const candidate of getReviewSkillCandidates(reviewType)) {
+        const skillRoot = path.join(rulesRoot, 'Octopus-agent-orchestrator', 'live', 'skills', candidate);
+        const skillMdPath = path.join(skillRoot, 'SKILL.md');
+        const skillJsonPath = path.join(skillRoot, 'skill.json');
+        if (
+            (fs.existsSync(skillMdPath) && fs.statSync(skillMdPath).isFile())
+            || (fs.existsSync(skillJsonPath) && fs.statSync(skillJsonPath).isFile())
+        ) {
+            return candidate;
+        }
+    }
+    return getReviewSkillCandidates(reviewType)[0];
+}
+
 /**
  * Resolve the output path for review context.
  */

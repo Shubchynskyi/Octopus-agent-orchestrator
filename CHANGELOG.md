@@ -4,6 +4,8 @@
 
 - added explicit `enter-task-mode` gate and hard task-mode evidence enforcement so compile, review, and completion gates fail when code execution starts without a declared `TASK.md` orchestration boundary
 - added explicit `load-rule-pack` gate and downstream rule-pack evidence enforcement so preflight, compile, review, and completion gates now require proof that canonical workflow/risk-specific rule files were actually loaded for the task
+- tightened completion enforcement for code-changing tasks: completion now requires ordered lifecycle evidence (`PREFLIGHT_CLASSIFIED`, `IMPLEMENTATION_STARTED`, `REVIEW_PHASE_STARTED`), real review-skill telemetry (`SKILL_SELECTED`, `SKILL_REFERENCE_LOADED`), and required review artifacts instead of verdict-only proxy evidence
+- expanded automatic task timeline emission and observability: task-mode/preflight/implementation/review routing/status transitions are auto-recorded in `runtime/task-events`, and `status` / `doctor` now surface incomplete timelines explicitly
 - added full Qwen root-entrypoint support: `Qwen` is now a canonical source-of-truth option mapped to `QWEN.md`, with active-entrypoint normalization, bootstrap/install/uninstall coverage, and `.qwen/settings.json` synchronization to the current canonical entrypoint plus `TASK.md`
 - hardened ordinary `update` / `check-update --apply` for existing workspaces by running built-in live-rule contract migrations before verify/manifest, so stale mandatory rule snippets are auto-repaired during update instead of breaking `doctor` afterward
 

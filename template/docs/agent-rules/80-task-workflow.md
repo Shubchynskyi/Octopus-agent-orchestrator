@@ -50,14 +50,18 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Baseline rule-pack evidence must produce `runtime/reviews/<task-id>-rule-pack.json` and task-timeline event `RULE_PACK_LOADED`.
 - Preflight artifact must exist before review stage.
 - Preflight classification must run with explicit `--output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
+- Preflight lifecycle telemetry must show `PREFLIGHT_STARTED` and then either `PREFLIGHT_CLASSIFIED` or `PREFLIGHT_FAILED`.
 - After preflight decides `required_reviews.*`, re-run `load-rule-pack --stage "POST_PREFLIGHT" --preflight-path ...` with the actual task-specific downstream rules that were opened.
 - Compile gate command must pass before `IN_REVIEW`:
   `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate`.
+- Compile lifecycle telemetry must show `IMPLEMENTATION_STARTED` before `COMPILE_GATE_PASSED`.
 - Compile gate enforces preflight scope freshness; if scope drift is detected, re-run preflight before compile.
 - Compile gate validates post-preflight rule-pack evidence for the same task id and preflight artifact.
 - Compile gate invocation must pass `fail_tail_lines` from `live/config/token-economy.json` (fallback `50`) to keep failure-output budget deterministic.
 - Compile/review gate output compaction profiles are loaded from `live/config/output-filters.json`; invalid or missing config must warn and fall back to passthrough output instead of inventing filtered summaries.
 - Shared gate-output compaction is independent of reviewer-context token economy scope; even with token economy disabled or at the default `depth=3` policy, compile/review gates still use `output-filters.json` and `fail_tail_lines`.
+- Before each required reviewer invocation, run `node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context ...` for that review type.
+- Reviewer preparation must emit `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` before the review gate can satisfy completion for code-changing tasks.
 - Required reviews must be launched only from preflight `required_reviews.*`.
 - Review gate command must pass before `DONE`:
   `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check`.
@@ -69,12 +73,14 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   `node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate`.
 - Completion gate command must pass before `DONE`:
   `node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate`.
-- Completion gate validates task-mode entry evidence, post-preflight rule-pack evidence, compile evidence, review-gate evidence, doc-impact evidence, timeline integrity (`TASK_MODE_ENTERED`, `RULE_PACK_LOADED`, `COMPILE_GATE_PASSED`, review pass evidence, `REWORK_STARTED` after latest `REVIEW_GATE_FAILED`), best-effort task-event hash-chain integrity, required review artifacts, and final findings-resolution state in PASS review artifacts.
+- Completion gate validates task-mode entry evidence, post-preflight rule-pack evidence, compile evidence, review-gate evidence, doc-impact evidence, ordered lifecycle evidence (`TASK_MODE_ENTERED`, `RULE_PACK_LOADED`, `PREFLIGHT_CLASSIFIED`, `IMPLEMENTATION_STARTED`, `COMPILE_GATE_PASSED`, `REVIEW_PHASE_STARTED`, review pass evidence), review-skill telemetry (`SKILL_SELECTED`, `SKILL_REFERENCE_LOADED`), best-effort task-event hash-chain integrity, required review artifacts, and final findings-resolution state in PASS review artifacts.
 - Final PASS review artifacts must keep active `Findings by Severity` and `Residual Risks` empty (`none`). Non-blocking follow-ups may remain only in `Deferred Findings`, and every deferred entry must include `Justification:`.
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
   `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.
+- The runtime auto-emits task-start and stage-transition events such as `PLAN_CREATED`, `PREFLIGHT_STARTED`, `IMPLEMENTATION_STARTED`, `REVIEW_PHASE_STARTED`, `STATUS_CHANGED`, `PROVIDER_ROUTING_DECISION`, gate pass/fail markers, and terminal completion markers.
 - Task-event writers must use best-effort append locking for both per-task log and aggregate `all-tasks.jsonl`; do not rely on unsynchronized raw append for concurrent runs.
 - Task-event integrity is procedural hardening only: local hash-chain and replay detection help detect tampering after the fact, but they are not a security-grade trust anchor.
+- Task timeline completeness is surfaced in `status` and `doctor`; incomplete timelines are a real workflow defect, not optional trace noise.
 - Orchestrator control-plane files (`TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and internal docs such as `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are local workflow artifacts; in deployed workspaces their ignored status is normal.
 - Terminal statuses (`DONE`, `BLOCKED`) require full cleanup of temporary reviewer/specialist logs after required artifacts are persisted.
 - Documentation impact updates are required when behavior/contracts/ops docs changed.
@@ -84,6 +90,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Reviewer and specialist agents must be closed after verdict capture.
 - HARD STOP: do not skip `enter-task-mode`; compile/review/completion evidence is invalid without explicit task-mode entry.
 - HARD STOP: do not skip `load-rule-pack`; reading the top-level router alone is not enough to prove downstream rule loading.
+- HARD STOP: do not launch required reviewers without `build-review-context`; completion requires review-skill telemetry.
 - HARD STOP: do not force-stage ignored orchestration control-plane files just because gates, changelog, or reviews reference them.
 - HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order.
 - HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED`, every review finding is either resolved or explicitly deferred with `Justification:`, and the final user report is delivered in mandatory order.

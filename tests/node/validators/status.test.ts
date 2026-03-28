@@ -261,3 +261,44 @@ test('formatStatusSnapshot accepts custom heading', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+test('getStatusSnapshot warns about incomplete task timelines', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+        const timelinePath = path.join(bundlePath, 'runtime', 'task-events', 'T-001.jsonl');
+        writeStatusFixtureFile(timelinePath, JSON.stringify({
+            timestamp_utc: '2026-03-28T10:00:00.000Z',
+            task_id: 'T-001',
+            event_type: 'TASK_MODE_ENTERED',
+            outcome: 'PASS',
+            actor: 'gate',
+            message: 'Task mode entered.',
+            details: {}
+        }) + '\n');
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        const output = formatStatusSnapshot(snapshot);
+        assert.equal(snapshot.timelineTaskCount, 1);
+        assert.equal(snapshot.timelineHealthy, 0);
+        assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('Incomplete timeline: T-001.jsonl')));
+        assert.ok(output.includes('TaskTimelines: 0/1 complete'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});

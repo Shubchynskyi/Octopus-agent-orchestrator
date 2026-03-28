@@ -13,6 +13,7 @@ import {
     getMissingProjectCommands,
     readUtf8IfExists
 } from './workspace-layout';
+import { validateTimelineCompleteness } from '../gate-runtime/lifecycle-events';
 
 type InitAnswers = ReturnType<typeof validateInitAnswers>;
 
@@ -39,6 +40,26 @@ export interface StatusSnapshot extends CliStatusSnapshot {
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+function detectTimelineCodeChanged(bundlePath: string, taskId: string): boolean {
+    const preflightPath = path.join(bundlePath, 'runtime', 'reviews', `${taskId}-preflight.json`);
+    if (!pathExists(preflightPath)) {
+        return false;
+    }
+
+    try {
+        const parsed = JSON.parse(readTextFile(preflightPath)) as Record<string, unknown>;
+        const metrics = parsed.metrics && typeof parsed.metrics === 'object' && !Array.isArray(parsed.metrics)
+            ? parsed.metrics as Record<string, unknown>
+            : null;
+        if (metrics && typeof metrics.changed_lines_total === 'number' && metrics.changed_lines_total > 0) {
+            return true;
+        }
+        return Array.isArray(parsed.changed_files) && parsed.changed_files.length > 0;
+    } catch {
+        return false;
+    }
 }
 
 export function resolveInitAnswersPath(targetRoot: string, initAnswersPath?: string): string {
@@ -164,10 +185,22 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
                 for (var ei = 0; ei < eventsEntries.length; ei++) {
                     var entryName = eventsEntries[ei];
                     var entryPath = path.join(eventsRoot, entryName);
+                    var taskId = entryName.replace(/\.jsonl$/i, '');
                     try {
                         var stat = fs.statSync(entryPath);
                         if (stat.isFile() && stat.size > 0) {
-                            timelineHealthy++;
+                            var completeness = validateTimelineCompleteness(
+                                entryPath,
+                                taskId,
+                                detectTimelineCodeChanged(bundlePath, taskId)
+                            );
+                            if (completeness.status === 'COMPLETE') {
+                                timelineHealthy++;
+                            } else {
+                                timelineWarnings.push(
+                                    'Incomplete timeline: ' + entryName + ' (' + completeness.events_missing.join(', ') + ')'
+                                );
+                            }
                         } else {
                             timelineWarnings.push('Empty timeline: ' + entryName);
                         }
@@ -249,7 +282,7 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
 
     // T-004: timeline health in status output
     if (snapshot.timelineTaskCount > 0) {
-        lines.push('TaskTimelines: '+snapshot.timelineHealthy+'/'+snapshot.timelineTaskCount+' healthy');
+        lines.push('TaskTimelines: '+snapshot.timelineHealthy+'/'+snapshot.timelineTaskCount+' complete');
         if (snapshot.timelineWarnings.length > 0) {
             for (var tw = 0; tw < snapshot.timelineWarnings.length; tw++) {
                 lines.push('  Warning: '+snapshot.timelineWarnings[tw]);

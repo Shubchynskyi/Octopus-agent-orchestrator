@@ -9,12 +9,16 @@ import { appendTaskEvent } from './task-events';
  */
 export const LIFECYCLE_EVENT_TYPES = Object.freeze({
     TASK_MODE_ENTERED: 'TASK_MODE_ENTERED',
+    PLAN_CREATED: 'PLAN_CREATED',
     RULE_PACK_LOADED: 'RULE_PACK_LOADED',
     RULE_PACK_LOAD_FAILED: 'RULE_PACK_LOAD_FAILED',
+    PREFLIGHT_STARTED: 'PREFLIGHT_STARTED',
     PREFLIGHT_CLASSIFIED: 'PREFLIGHT_CLASSIFIED',
+    PREFLIGHT_FAILED: 'PREFLIGHT_FAILED',
     IMPLEMENTATION_STARTED: 'IMPLEMENTATION_STARTED',
     COMPILE_GATE_PASSED: 'COMPILE_GATE_PASSED',
     COMPILE_GATE_FAILED: 'COMPILE_GATE_FAILED',
+    REVIEW_PHASE_STARTED: 'REVIEW_PHASE_STARTED',
     REVIEW_GATE_PASSED: 'REVIEW_GATE_PASSED',
     REVIEW_GATE_PASSED_WITH_OVERRIDE: 'REVIEW_GATE_PASSED_WITH_OVERRIDE',
     REVIEW_GATE_FAILED: 'REVIEW_GATE_FAILED',
@@ -34,7 +38,9 @@ export const MANDATORY_CODE_CHANGE_EVENTS: readonly string[] = Object.freeze([
     'TASK_MODE_ENTERED',
     'RULE_PACK_LOADED',
     'PREFLIGHT_CLASSIFIED',
+    'IMPLEMENTATION_STARTED',
     'COMPILE_GATE_PASSED',
+    'REVIEW_PHASE_STARTED',
     'REVIEW_GATE_PASSED',
     'COMPLETION_GATE_PASSED'
 ]);
@@ -46,6 +52,7 @@ export const MANDATORY_NON_CODE_EVENTS: readonly string[] = Object.freeze([
     'TASK_MODE_ENTERED',
     'RULE_PACK_LOADED',
     'COMPILE_GATE_PASSED',
+    'REVIEW_PHASE_STARTED',
     'REVIEW_GATE_PASSED',
     'COMPLETION_GATE_PASSED'
 ]);
@@ -152,6 +159,170 @@ export interface AutoEmitOptions {
     actor?: string;
     passThru?: boolean;
     eventsRoot?: string;
+}
+
+function getTimelinePath(repoRoot: string, taskId: string, eventsRoot?: string): string {
+    const root = eventsRoot
+        ? path.resolve(String(eventsRoot))
+        : path.join(repoRoot, 'runtime', 'task-events');
+    return path.join(root, `${taskId}.jsonl`);
+}
+
+function hasTaskEvent(repoRoot: string, taskId: string, eventType: string, eventsRoot?: string): boolean {
+    if (!repoRoot || !taskId || !eventType) {
+        return false;
+    }
+    const timelinePath = getTimelinePath(repoRoot, taskId, eventsRoot);
+    const resolvedPath = path.resolve(timelinePath);
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+        return false;
+    }
+
+    try {
+        const lines = fs.readFileSync(resolvedPath, 'utf8').split('\n');
+        for (const rawLine of lines) {
+            if (!rawLine.trim()) {
+                continue;
+            }
+            try {
+                const parsed = JSON.parse(rawLine) as Record<string, unknown>;
+                if (String(parsed.event_type || '').trim().toUpperCase() === String(eventType).trim().toUpperCase()) {
+                    return true;
+                }
+            } catch {
+                // Integrity inspection handles malformed lines elsewhere.
+            }
+        }
+    } catch {
+        return false;
+    }
+
+    return false;
+}
+
+function emitLifecycleEvent(
+    repoRoot: string,
+    taskId: string,
+    eventType: string,
+    outcome: string,
+    message: string,
+    details: unknown,
+    options: AutoEmitOptions = {},
+    emitOnce = false
+): ReturnType<typeof appendTaskEvent> {
+    if (!repoRoot || !taskId) {
+        return null;
+    }
+    try {
+        if (emitOnce && hasTaskEvent(repoRoot, taskId, eventType, options.eventsRoot)) {
+            return null;
+        }
+        return appendTaskEvent(
+            repoRoot,
+            taskId,
+            eventType,
+            outcome,
+            message,
+            details,
+            {
+                actor: options.actor || 'gate',
+                passThru: options.passThru ?? true,
+                eventsRoot: options.eventsRoot
+            }
+        );
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`WARNING: ${String(eventType).toLowerCase()} event emit failed: ${msg}\n`);
+        return null;
+    }
+}
+
+export function emitPlanCreatedEvent(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    return emitLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.PLAN_CREATED,
+        'INFO',
+        'Task plan created.',
+        details,
+        options,
+        true
+    );
+}
+
+export function emitPreflightStartedEvent(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    return emitLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.PREFLIGHT_STARTED,
+        'INFO',
+        'Preflight classification started.',
+        details,
+        options
+    );
+}
+
+export function emitPreflightFailedEvent(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    return emitLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.PREFLIGHT_FAILED,
+        'FAIL',
+        'Preflight classification failed.',
+        details,
+        options
+    );
+}
+
+export function emitImplementationStartedEvent(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    return emitLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.IMPLEMENTATION_STARTED,
+        'INFO',
+        'Implementation started.',
+        details,
+        options,
+        true
+    );
+}
+
+export function emitReviewPhaseStartedEvent(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    return emitLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED,
+        'INFO',
+        'Review phase started.',
+        details,
+        options,
+        true
+    );
 }
 
 /**

@@ -141,6 +141,15 @@ Shipped gates:
 - `validate-manifest`
 - `human-commit`
 
+Lifecycle auto-emission:
+
+- `enter-task-mode` auto-emits `TASK_MODE_ENTERED`, `PLAN_CREATED`, and best-effort `STATUS_CHANGED` / `PROVIDER_ROUTING_DECISION`
+- `classify-change` auto-emits `PREFLIGHT_STARTED` and then `PREFLIGHT_CLASSIFIED` or `PREFLIGHT_FAILED`
+- `compile-gate` auto-emits `IMPLEMENTATION_STARTED` and then `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED`
+- `build-review-context` auto-emits `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` for the selected review skill
+- `required-reviews-check`, `doc-impact-gate`, and `completion-gate` append their pass/fail markers to the task timeline
+- `status` and `doctor` report task-timeline completeness, not just timeline presence
+
 ## Verification Markers
 
 - Overview marker: `OCTOPUS_OVERVIEW`

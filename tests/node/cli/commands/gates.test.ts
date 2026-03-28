@@ -23,14 +23,15 @@ import * as childProcess from 'node:child_process';
 function createTempRepo(): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-gates-'));
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
-    fs.mkdirSync(path.join(root, 'live', 'docs', 'agent-rules'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'Octopus-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'Octopus-agent-orchestrator', 'runtime'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     seedRuleFiles(root);
     return root;
 }
 
 function seedRuleFiles(repoRoot: string): void {
-    const rulesRoot = path.join(repoRoot, 'live', 'docs', 'agent-rules');
+    const rulesRoot = path.join(repoRoot, 'Octopus-agent-orchestrator', 'live', 'docs', 'agent-rules');
     fs.mkdirSync(rulesRoot, { recursive: true });
     const ruleFiles = [
         '00-core.md',
@@ -47,8 +48,16 @@ function seedRuleFiles(repoRoot: string): void {
     }
 }
 
+function getReviewsRoot(repoRoot: string): string {
+    return path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'reviews');
+}
+
+function getOrchestratorRoot(repoRoot: string): string {
+    return path.join(repoRoot, 'Octopus-agent-orchestrator');
+}
+
 function writePreflight(repoRoot: string, taskId: string, overrides: Record<string, unknown> = {}): string {
-    const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+    const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
     const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
     const payload = {
@@ -76,7 +85,7 @@ function writePreflight(repoRoot: string, taskId: string, overrides: Record<stri
 }
 
 function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: string, verdict: string): void {
-    const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+    const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
     fs.writeFileSync(path.join(reviewsRoot, `${taskId}-${reviewKey}.md`), [
         '# Review',
@@ -97,16 +106,48 @@ function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: s
     ].join('\n'), 'utf8');
 }
 
+function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '| ID | Status | Priority | Area | Title | Assignee | Updated | Depth | Notes |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        `| ${taskId} | ${status} | P1 | test | Update app flow | unassigned | 2026-03-28 | 2 | fixture |`
+    ].join('\n'), 'utf8');
+}
+
+function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
+    const initAnswersPath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'init-answers.json');
+    fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
+    fs.writeFileSync(initAnswersPath, JSON.stringify({
+        AssistantLanguage: 'English',
+        AssistantBrevity: 'concise',
+        SourceOfTruth: sourceOfTruth,
+        EnforceNoAutoCommit: 'false',
+        ClaudeOrchestratorFullAccess: 'false',
+        TokenEconomyEnabled: 'true',
+        CollectedVia: 'AGENT_INIT_PROMPT.md',
+        ActiveAgentFiles: 'AGENTS.md'
+    }, null, 2), 'utf8');
+}
+
+function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<string, unknown>> {
+    const timelinePath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    return fs.readFileSync(timelinePath, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 function loadTaskEntryRulePack(repoRoot: string, taskId: string) {
     return runLoadRulePackCommand({
         repoRoot,
         taskId,
         stage: 'TASK_ENTRY',
         loadedRuleFiles: [
-            'live/docs/agent-rules/00-core.md',
-            'live/docs/agent-rules/40-commands.md',
-            'live/docs/agent-rules/80-task-workflow.md',
-            'live/docs/agent-rules/90-skill-catalog.md'
+            '00-core.md',
+            '40-commands.md',
+            '80-task-workflow.md',
+            '90-skill-catalog.md'
         ],
         emitMetrics: false
     });
@@ -119,13 +160,13 @@ function loadPostPreflightRulePack(repoRoot: string, taskId: string, preflightPa
         stage: 'POST_PREFLIGHT',
         preflightPath,
         loadedRuleFiles: [
-            'live/docs/agent-rules/00-core.md',
-            'live/docs/agent-rules/35-strict-coding-rules.md',
-            'live/docs/agent-rules/40-commands.md',
-            'live/docs/agent-rules/50-structure-and-docs.md',
-            'live/docs/agent-rules/70-security.md',
-            'live/docs/agent-rules/80-task-workflow.md',
-            'live/docs/agent-rules/90-skill-catalog.md'
+            '00-core.md',
+            '35-strict-coding-rules.md',
+            '40-commands.md',
+            '50-structure-and-docs.md',
+            '70-security.md',
+            '80-task-workflow.md',
+            '90-skill-catalog.md'
         ],
         emitMetrics: false
     });
@@ -142,6 +183,8 @@ describe('cli/commands/gates', () => {
     it('classifies explicit changed files and writes preflight artifact', () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight.json');
+        seedTaskQueue(repoRoot, 'T-900');
+        seedInitAnswers(repoRoot);
         runEnterTaskModeCommand({
             repoRoot,
             taskId: 'T-900',
@@ -170,6 +213,8 @@ describe('cli/commands/gates', () => {
     it('loads rule-pack evidence and writes artifact', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900a';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
         runEnterTaskModeCommand({
             repoRoot,
             taskId,
@@ -177,7 +222,7 @@ describe('cli/commands/gates', () => {
         });
 
         const result = loadTaskEntryRulePack(repoRoot, taskId);
-        const artifactPath = path.join(repoRoot, 'runtime', 'reviews', `${taskId}-rule-pack.json`);
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
         const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
 
         assert.equal(result.exitCode, 0);
@@ -191,6 +236,8 @@ describe('cli/commands/gates', () => {
     it('fails preflight classification when rule-pack evidence is missing', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900b';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
         runEnterTaskModeCommand({
             repoRoot,
             taskId,
@@ -208,12 +255,49 @@ describe('cli/commands/gates', () => {
             /Rule-pack evidence missing/
         );
 
+        const eventTypes = readTaskTimelineEvents(repoRoot, taskId).map((event) => event.event_type);
+        assert.ok(eventTypes.includes('PREFLIGHT_STARTED'));
+        assert.ok(eventTypes.includes('PREFLIGHT_FAILED'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('auto-emits plan, status, and routing events when entering task mode', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const result = runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Update app flow'
+        });
+
+        assert.equal(result.exitCode, 0);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const eventTypes = events.map((event) => event.event_type);
+        assert.deepEqual(eventTypes, [
+            'TASK_MODE_ENTERED',
+            'PLAN_CREATED',
+            'STATUS_CHANGED',
+            'PROVIDER_ROUTING_DECISION'
+        ]);
+        const statusDetails = events[2].details as Record<string, unknown>;
+        const routingDetails = events[3].details as Record<string, unknown>;
+        assert.equal(statusDetails.previous_status, 'TODO');
+        assert.equal(statusDetails.new_status, 'IN_PROGRESS');
+        assert.equal(routingDetails.provider, 'Codex');
+        assert.equal(routingDetails.routed_to, 'AGENTS.md');
+
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
     it('runs compile gate and writes evidence', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
@@ -243,12 +327,13 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
 
-        const evidencePath = path.join(repoRoot, 'runtime', 'reviews', `${taskId}-compile-gate.json`);
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
         const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
         assert.equal(result.exitCode, 0);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_PASSED');
         assert.equal(evidence.status, 'PASSED');
         assert.equal(evidence.event_source, 'compile-gate');
+        assert.ok(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'IMPLEMENTATION_STARTED'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -256,6 +341,8 @@ describe('cli/commands/gates', () => {
     it('fails compile gate when task mode entry evidence is missing', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901a';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
@@ -285,6 +372,8 @@ describe('cli/commands/gates', () => {
     it('passes doc-impact gate and writes artifact', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-902';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
 
         const result = runDocImpactGateCommand({
@@ -298,7 +387,7 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
 
-        const artifactPath = path.join(repoRoot, 'runtime', 'reviews', `${taskId}-doc-impact.json`);
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-doc-impact.json`);
         const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
         assert.equal(result.exitCode, 0);
         assert.equal(result.outputLines[0], 'DOC_IMPACT_GATE_PASSED');
@@ -310,6 +399,8 @@ describe('cli/commands/gates', () => {
     it('passes required reviews gate with compile evidence and review artifact', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
@@ -337,7 +428,7 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
 
-        const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+        const reviewsRoot = getReviewsRoot(repoRoot);
         writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
 
         const result = runRequiredReviewsCheckCommand({
@@ -355,6 +446,12 @@ describe('cli/commands/gates', () => {
         assert.equal(result.outputLines[0], 'REVIEW_GATE_PASSED');
         assert.equal(evidence.status, 'PASSED');
         assert.equal(evidence.event_source, 'required-reviews-check');
+        assert.ok(readTaskTimelineEvents(repoRoot, taskId).some((event) => (
+            event.event_type === 'STATUS_CHANGED'
+            && event.details
+            && typeof event.details === 'object'
+            && (event.details as Record<string, unknown>).new_status === 'IN_REVIEW'
+        )));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -362,6 +459,8 @@ describe('cli/commands/gates', () => {
     it('passes completion gate only after task mode entry, review gate, and doc impact gate', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
@@ -382,7 +481,7 @@ describe('cli/commands/gates', () => {
 
         // T-003: code-changing tasks must carry PREFLIGHT_CLASSIFIED evidence
         appendTaskEvent(
-            repoRoot,
+            getOrchestratorRoot(repoRoot),
             taskId,
             'PREFLIGHT_CLASSIFIED',
             'INFO',
@@ -398,6 +497,35 @@ describe('cli/commands/gates', () => {
             outputFiltersPath,
             emitMetrics: false
         });
+
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_PHASE_STARTED',
+            'INFO',
+            'Review phase started.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_SELECTED',
+            'INFO',
+            'Skill selected: code-review',
+            { skill_id: 'code-review', trigger_reason: 'required_review' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_REFERENCE_LOADED',
+            'INFO',
+            'Reference loaded: Octopus-agent-orchestrator/live/skills/code-review/SKILL.md',
+            {
+                skill_id: 'code-review',
+                reference_path: 'Octopus-agent-orchestrator/live/skills/code-review/SKILL.md',
+                trigger_reason: 'review_skill'
+            }
+        );
 
         writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
 
@@ -435,6 +563,10 @@ describe('cli/commands/gates', () => {
         assert.ok(completionResult.stage_sequence_evidence);
         assert.equal(completionResult.stage_sequence_evidence.code_changed, true);
         assert.ok(completionResult.stage_sequence_evidence.observed_order.includes('PREFLIGHT_CLASSIFIED'));
+        assert.ok(completionResult.stage_sequence_evidence.observed_order.includes('IMPLEMENTATION_STARTED'));
+        assert.ok(completionResult.stage_sequence_evidence.observed_order.includes('REVIEW_PHASE_STARTED'));
+        assert.deepEqual(completionResult.stage_sequence_evidence.review_skill_ids, ['code-review']);
+        assert.equal(completionResult.stage_sequence_evidence.review_skill_reference_paths.length, 1);
         assert.equal(completionResult.stage_sequence_evidence.violations.length, 0);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -443,13 +575,13 @@ describe('cli/commands/gates', () => {
     it('logs task events with terminal cleanup and command audit', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904';
-        const reviewsRoot = path.join(repoRoot, 'runtime', 'reviews');
+        const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const compileOutputPath = path.join(reviewsRoot, `${taskId}-compile-output.log`);
         fs.writeFileSync(compileOutputPath, 'temporary compile output\n', 'utf8');
         fs.writeFileSync(path.join(reviewsRoot, `${taskId}-compile-gate.json`), JSON.stringify({
             task_id: taskId,
-            compile_output_path: `runtime/reviews/${taskId}-compile-output.log`
+            compile_output_path: `Octopus-agent-orchestrator/runtime/reviews/${taskId}-compile-output.log`
         }, null, 2), 'utf8');
 
         const result = runLogTaskEventCommand({

@@ -51,6 +51,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   `node Octopus-agent-orchestrator/bin/octopus.js gate classify-change --use-staged --task-intent "<task summary>" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
 - After preflight, re-run `load-rule-pack --stage "POST_PREFLIGHT"` with the actual downstream rule files opened for the required review set:
   `node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack --task-id "<task-id>" --stage "POST_PREFLIGHT" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --loaded-rule-file "<opened-rule-file>"`
+- Before each required reviewer invocation, run `node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context --review-type "<review-type>" --depth "<1|2|3>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
 - Compile gate is mandatory after implementation and before `IN_REVIEW`:
   `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate --task-id "<task-id>" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"`
 - Preflight artifact is the only source for:
@@ -88,6 +89,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
     - `performance-review` for `required_reviews.performance=true`
     - `devops-k8s` (or custom `infra-review`) for `required_reviews.infra=true`
     - `dependency-review` for `required_reviews.dependency=true`
+- `build-review-context` is the canonical proof that the selected review skill and its rule context were loaded; completion for code-changing tasks expects `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` in the task timeline.
 - Before `DONE`, run:
   `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" ...`
 - Then run completion gate:
@@ -114,11 +116,13 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Missing preflight artifact blocks progression.
 - Missing baseline `RULE_PACK_LOADED` blocks preflight.
 - Missing post-preflight rule-pack proof blocks compile/review/completion.
+- Missing `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, or `SKILL_REFERENCE_LOADED` blocks completion for code-changing tasks.
 - Missing compile-gate pass (`COMPILE_GATE_PASSED`) blocks progression to `IN_REVIEW` and `DONE`.
 - Missing required skill invocation blocks progression.
 - Missing required verdict blocks completion.
 - Missing review gate check pass blocks completion.
 - Missing completion gate pass (`COMPLETION_GATE_PASSED`) blocks completion.
 - Missing task timeline evidence in `runtime/task-events/<task-id>.jsonl` blocks completion.
+- Incomplete task timeline evidence is surfaced by `status` and `doctor`.
 - Missing required docs/changelog updates blocks completion for doc-impacting changes.
 - Reviewer/specialist agents must be closed after verdict capture.

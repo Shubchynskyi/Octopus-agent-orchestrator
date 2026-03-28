@@ -165,3 +165,67 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
     assert.ok(output.includes('Doctor: PASS'));
     assert.ok(output.includes('Next: Execute task T-001 depth=2'));
 });
+
+test('formatDoctorResult includes timeline completeness warnings', () => {
+    const fakeResult = {
+        passed: false,
+        targetRoot: '/tmp/test',
+        verifyResult: {
+            passed: false,
+            targetRoot: '/tmp/test',
+            sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md',
+            bundleVersion: '1.0.0',
+            requiredPathsChecked: 10,
+            violations: {
+                missingPaths: ['TASK.md missing.'],
+                initAnswersContractViolations: [],
+                versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [],
+                pathsContractViolations: [],
+                tokenEconomyContractViolations: [],
+                outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [],
+                skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [],
+                templatePlaceholderViolations: [],
+                commandsContractViolations: [],
+                manifestContractViolations: [],
+                coreRuleContractViolations: [],
+                entrypointContractViolations: [],
+                taskContractViolations: [],
+                qwenSettingsViolations: [],
+                skillsIndexContractViolations: [],
+                skillPackContractViolations: [],
+                gitignoreMissing: []
+            },
+            totalViolationCount: 1
+        },
+        manifestResult: {
+            passed: true,
+            manifestPath: '/tmp/test/MANIFEST.md',
+            entriesChecked: 5,
+            duplicates: []
+        },
+        manifestError: null,
+        timelineEvidence: [{
+            task_id: 'T-004',
+            timeline_path: '/tmp/test/runtime/task-events/T-004.jsonl',
+            status: 'PASS',
+            completeness_status: 'INCOMPLETE',
+            events_missing: ['REVIEW_PHASE_STARTED', 'COMPLETION_GATE_PASSED'],
+            code_changed: true,
+            events_scanned: 5,
+            integrity_event_count: 5,
+            violations: []
+        }],
+        timelineWarnings: ['Timeline completeness INCOMPLETE for T-004: REVIEW_PHASE_STARTED, COMPLETION_GATE_PASSED']
+    };
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Timeline Evidence'));
+    assert.ok(output.includes('T-004: integrity=PASS, completeness=INCOMPLETE'));
+    assert.ok(output.includes('Timeline Warnings'));
+    assert.ok(output.includes('REVIEW_PHASE_STARTED'));
+    assert.ok(output.includes('Doctor: FAIL'));
+});

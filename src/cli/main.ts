@@ -5,12 +5,25 @@ import {
     LIFECYCLE_COMMANDS
 } from '../core/constants';
 import { getAllShimmedGateNames } from '../compat/shim-registry';
-import { buildReviewContext, resolveContextOutputPath, resolveScopedDiffMetadataPath } from '../gates/build-review-context';
+import {
+    buildReviewContext,
+    resolveContextOutputPath,
+    resolveReviewSkillId,
+    resolveScopedDiffMetadataPath
+} from '../gates/build-review-context';
 import { buildScopedDiff, resolveMetadataPath, resolveOutputPath } from '../gates/build-scoped-diff';
 import { formatCompletionGateResult, runCompletionGate } from '../gates/completion';
 import { buildTaskEventsSummary, formatTaskEventsSummaryText } from '../gates/task-events-summary';
-import { emitCompletionGateEvent } from '../gate-runtime/lifecycle-events';
+import {
+    emitCompletionGateEvent,
+    emitReviewPhaseStartedEvent,
+    emitStatusChangedEvent
+} from '../gate-runtime/lifecycle-events';
 import * as gateHelpers from '../gates/helpers';
+import {
+    emitSkillReferenceLoadedEvent,
+    emitSkillSelectedEvent
+} from '../runtime/skill-telemetry';
 import { runDoctor, formatDoctorResult } from '../validators/doctor';
 import { getStatusSnapshot } from '../validators/status';
 import { formatManifestResult, validateManifest } from '../validators/validate-manifest';
@@ -1014,6 +1027,38 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 outputPath,
                 repoRoot
             });
+
+            try {
+                const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+                const taskId = String(preflightPayload.task_id || '').trim();
+                if (taskId) {
+                    const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
+                    const skillId = resolveReviewSkillId(reviewType, repoRoot);
+                    const skillPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'skills', skillId, 'SKILL.md'));
+
+                    emitReviewPhaseStartedEvent(orchestratorRoot, taskId, {
+                        review_type: reviewType,
+                        depth,
+                        preflight_path: gateHelpers.normalizePath(preflightPath),
+                        output_path: result.output_path,
+                        review_context_artifact_path: result.rule_context.artifact_path
+                    });
+                    emitSkillSelectedEvent(orchestratorRoot, taskId, skillId, null, 'required_review');
+                    if (fs.existsSync(skillPath) && fs.statSync(skillPath).isFile()) {
+                        emitSkillReferenceLoadedEvent(orchestratorRoot, taskId, gateHelpers.normalizePath(skillPath), skillId, 'review_skill');
+                    }
+                    emitSkillReferenceLoadedEvent(
+                        orchestratorRoot,
+                        taskId,
+                        gateHelpers.normalizePath(result.rule_context.artifact_path),
+                        skillId,
+                        'review_context_artifact'
+                    );
+                }
+            } catch {
+                // Keep build-review-context resilient even when telemetry cannot be emitted.
+            }
+
             formatKeyValueOutput({
                 outputPath: result.output_path,
                 ruleContextArtifactPath: result.rule_context.artifact_path,
@@ -1177,6 +1222,9 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                     timeline_path: result.timeline_path,
                     violations: result.violations
                 });
+                if (result.outcome === 'PASS') {
+                    emitStatusChangedEvent(orchestratorRoot, completionTaskId, 'IN_REVIEW', 'DONE');
+                }
             }
 
             process.stdout.write(`${formatCompletionGateResult(result)}\n`);

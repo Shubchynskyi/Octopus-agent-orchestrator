@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../core/constants';
 import { pathExists } from '../core/fs';
 import { inspectTaskEventFile } from '../gate-runtime/task-events';
+import { validateTimelineCompleteness } from '../gate-runtime/lifecycle-events';
 import { validateManifest, formatManifestResult } from './validate-manifest';
 import { formatVerifyResult } from './verify';
 import { runVerify } from './verify';
@@ -18,6 +19,9 @@ interface TimelineEvidence {
     task_id: string;
     timeline_path: string;
     status: string;
+    completeness_status: string;
+    events_missing: string[];
+    code_changed: boolean;
     events_scanned: number;
     integrity_event_count: number;
     violations: string[];
@@ -35,6 +39,26 @@ interface DoctorResult {
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+function detectTimelineCodeChanged(bundlePath: string, taskId: string): boolean {
+    const preflightPath = path.join(bundlePath, 'runtime', 'reviews', `${taskId}-preflight.json`);
+    if (!pathExists(preflightPath)) {
+        return false;
+    }
+
+    try {
+        const parsed = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const metrics = parsed.metrics && typeof parsed.metrics === 'object' && !Array.isArray(parsed.metrics)
+            ? parsed.metrics as Record<string, unknown>
+            : null;
+        if (metrics && typeof metrics.changed_lines_total === 'number' && metrics.changed_lines_total > 0) {
+            return true;
+        }
+        return Array.isArray(parsed.changed_files) && parsed.changed_files.length > 0;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -66,10 +90,15 @@ function scanTimelineEvidence(bundlePath: string): { evidence: TimelineEvidence[
 
         try {
             const inspectResult = inspectTaskEventFile(timelinePath, taskId);
+            const codeChanged = detectTimelineCodeChanged(bundlePath, taskId);
+            const completeness = validateTimelineCompleteness(timelinePath, taskId, codeChanged);
             const item: TimelineEvidence = {
                 task_id: taskId,
                 timeline_path: timelinePath.replace(/\\/g, '/'),
                 status: inspectResult.status,
+                completeness_status: completeness.status,
+                events_missing: completeness.events_missing.slice(),
+                code_changed: codeChanged,
                 events_scanned: inspectResult.events_scanned,
                 integrity_event_count: inspectResult.integrity_event_count,
                 violations: inspectResult.violations.slice()
@@ -83,6 +112,11 @@ function scanTimelineEvidence(bundlePath: string): { evidence: TimelineEvidence[
                 );
             } else if (inspectResult.status === 'EMPTY') {
                 warnings.push('Timeline is EMPTY for ' + taskId + ': ' + timelinePath.replace(/\\/g, '/'));
+            } else if (completeness.status !== 'COMPLETE') {
+                warnings.push(
+                    'Timeline completeness ' + completeness.status + ' for ' + taskId + ': ' +
+                    completeness.events_missing.join(', ')
+                );
             }
         } catch (err: unknown) {
             warnings.push('Timeline scan error for ' + taskId + ': ' + getErrorMessage(err));
@@ -147,7 +181,11 @@ export function formatDoctorResult(result: DoctorResult): string {
         lines.push('Timeline Evidence');
         for (var i = 0; i < result.timelineEvidence.length; i++) {
             var te = result.timelineEvidence[i];
-            lines.push('  ' + te.task_id + ': ' + te.status + ' (' + te.integrity_event_count + ' events)');
+            lines.push(
+                '  ' + te.task_id + ': integrity=' + te.status +
+                ', completeness=' + te.completeness_status +
+                ' (' + te.integrity_event_count + ' events)'
+            );
         }
         if (result.timelineWarnings.length > 0) {
             lines.push('Timeline Warnings');

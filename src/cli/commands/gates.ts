@@ -10,6 +10,14 @@ import {
 } from '../../core/subprocess';
 import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../gate-runtime/token-telemetry';
 import { applyOutputFilterProfile } from '../../gate-runtime/output-filters';
+import {
+    emitImplementationStartedEvent,
+    emitPlanCreatedEvent,
+    emitPreflightFailedEvent,
+    emitPreflightStartedEvent,
+    emitProviderRoutingEvent,
+    emitStatusChangedEvent
+} from '../../gate-runtime/lifecycle-events';
 import { auditReviewArtifactCompaction } from '../../gate-runtime/review-context';
 import { appendTaskEvent, assertValidTaskId } from '../../gate-runtime/task-events';
 import { auditCommandCompactness } from '../../gates/task-events-summary';
@@ -35,6 +43,9 @@ import {
     resolveRulePackArtifactPath,
     type RulePackStageLabel
 } from '../../gates/rule-pack';
+import {
+    getCanonicalEntrypointFile
+} from '../../materialization/common';
 import {
     buildTaskModeArtifact,
     collectTaskTimelineEventTypes,
@@ -355,6 +366,51 @@ function resolveOrchestratorRoot(repoRoot: string): string {
     return gateHelpers.joinOrchestratorPath(repoRoot, '');
 }
 
+function readTaskQueueStatus(repoRoot: string, taskId: string): string | null {
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
+        return null;
+    }
+
+    const statusPattern = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED)\b/i;
+    const lines = fs.readFileSync(taskPath, 'utf8').split('\n');
+    for (const rawLine of lines) {
+        const trimmed = rawLine.trim();
+        if (!trimmed.startsWith('|')) {
+            continue;
+        }
+        const cells = trimmed.split('|').map((cell) => cell.trim()).filter(Boolean);
+        if (cells.length < 2 || cells[0] !== taskId) {
+            continue;
+        }
+        const statusMatch = statusPattern.exec(cells[1]);
+        return statusMatch ? statusMatch[1].toUpperCase() : null;
+    }
+
+    return null;
+}
+
+function readRoutingDecision(repoRoot: string): { provider: string | null; routedTo: string | null } {
+    const initAnswersPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'init-answers.json'));
+    if (!fs.existsSync(initAnswersPath) || !fs.statSync(initAnswersPath).isFile()) {
+        return { provider: null, routedTo: null };
+    }
+
+    try {
+        const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
+        const sourceOfTruth = String(payload.SourceOfTruth || '').trim();
+        if (!sourceOfTruth) {
+            return { provider: null, routedTo: null };
+        }
+        return {
+            provider: sourceOfTruth,
+            routedTo: getCanonicalEntrypointFile(sourceOfTruth)
+        };
+    } catch {
+        return { provider: null, routedTo: null };
+    }
+}
+
 function normalizeOptionalPath(pathValue: unknown): string | null {
     if (!pathValue) {
         return null;
@@ -638,6 +694,30 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             actor: taskModeArtifact.actor
         }
     );
+
+    emitPlanCreatedEvent(orchestratorRoot, taskModeArtifact.task_id, {
+        artifact_path: normalizeOptionalPath(artifactPath),
+        entry_mode: taskModeArtifact.entry_mode,
+        requested_depth: taskModeArtifact.requested_depth,
+        effective_depth: taskModeArtifact.effective_depth,
+        task_summary: taskModeArtifact.task_summary
+    });
+
+    const previousStatus = readTaskQueueStatus(repoRoot, taskModeArtifact.task_id);
+    if (previousStatus && previousStatus !== 'IN_PROGRESS') {
+        emitStatusChangedEvent(orchestratorRoot, taskModeArtifact.task_id, previousStatus, 'IN_PROGRESS');
+    }
+
+    const routingDecision = readRoutingDecision(repoRoot);
+    if (routingDecision.provider && routingDecision.routedTo) {
+        emitProviderRoutingEvent(
+            orchestratorRoot,
+            taskModeArtifact.task_id,
+            routingDecision.provider,
+            routingDecision.routedTo,
+            'task_mode_entry'
+        );
+    }
 
     return {
         outputLines: [
@@ -1108,6 +1188,17 @@ function resolvePreflightPath(repoRoot: string, explicitPath: string, taskId: st
 export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions): { outputText: string } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
+    const resolvedTaskId = gateHelpers.resolveTaskId(options.taskId || '', options.outputPath || '');
+    if (resolvedTaskId) {
+        assertValidTaskId(resolvedTaskId);
+        emitPreflightStartedEvent(orchestratorRoot, resolvedTaskId, {
+            task_intent: String(options.taskIntent || ''),
+            include_untracked: parseBooleanOption(options.includeUntracked, true),
+            use_staged: options.useStaged === true
+        });
+    }
+
+    try {
     const explicitChangedFiles = expandValueList(options.changedFiles, { splitDelimiters: true });
     const includeUntracked = parseBooleanOption(options.includeUntracked, true);
     const detectionSource = explicitChangedFiles.length > 0
@@ -1132,9 +1223,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         reviewCapabilities
     });
 
-    const resolvedTaskId = gateHelpers.resolveTaskId(options.taskId || '', options.outputPath || '');
     if (resolvedTaskId) {
-        assertValidTaskId(resolvedTaskId);
         result.task_id = resolvedTaskId;
 
         const preflightErrors: string[] = [];
@@ -1202,6 +1291,15 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     return {
         outputText: `${JSON.stringify(result, null, 2)}\n`
     };
+    } catch (error: unknown) {
+        if (resolvedTaskId) {
+            emitPreflightFailedEvent(orchestratorRoot, resolvedTaskId, {
+                error: getErrorMessage(error),
+                task_intent: String(options.taskIntent || '')
+            });
+        }
+        throw error;
+    }
 }
 
 export async function runCompileGateCommand(options: CompileGateCommandOptions): Promise<{ outputLines: string[]; exitCode: number }> {
@@ -1296,6 +1394,12 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             exitCode = 1;
             exceptionMessage = `Preflight scope drift detected. Re-run classify-change before compile gate. ${scopeViolations.join(' ')}`;
         } else if (!exceptionMessage) {
+            emitImplementationStartedEvent(orchestratorRoot, resolvedTaskId, {
+                preflight_path: gateHelpers.normalizePath(resolvedPreflightPath),
+                commands_path: normalizeOptionalPath(resolvedCommandsPath),
+                changed_files_count: preflightContext.changed_files.length,
+                changed_lines_total: preflightContext.changed_lines_total
+            });
             preflightHash = gateHelpers.fileSha256(resolvedPreflightPath);
             ensureParentDirectory(compileOutputPath);
             fs.writeFileSync(compileOutputPath, '', 'utf8');
@@ -2249,6 +2353,11 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
                 artifact_evidence: artifactEvidence
             }
         );
+
+        const previousStatus = readTaskQueueStatus(repoRoot, resolvedTaskId);
+        if (previousStatus && previousStatus !== 'IN_REVIEW') {
+            emitStatusChangedEvent(orchestratorRoot, resolvedTaskId, previousStatus, 'IN_REVIEW');
+        }
     }
 
     const outputLines = [...filteredSuccessOutput.lines];

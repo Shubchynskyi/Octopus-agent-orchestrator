@@ -235,35 +235,44 @@ describe('gates/completion', () => {
         it('contains the canonical stage events', () => {
             assert.ok(STAGE_SEQUENCE_ORDER.includes('TASK_MODE_ENTERED'));
             assert.ok(STAGE_SEQUENCE_ORDER.includes('PREFLIGHT_CLASSIFIED'));
+            assert.ok(STAGE_SEQUENCE_ORDER.includes('IMPLEMENTATION_STARTED'));
             assert.ok(STAGE_SEQUENCE_ORDER.includes('COMPILE_GATE_PASSED'));
+            assert.ok(STAGE_SEQUENCE_ORDER.includes('REVIEW_PHASE_STARTED'));
             assert.ok(STAGE_SEQUENCE_ORDER.includes('REVIEW_GATE_PASSED'));
-            assert.equal(STAGE_SEQUENCE_ORDER.length, 5);
+            assert.equal(STAGE_SEQUENCE_ORDER.length, 7);
         });
     });
 
     describe('validateStageSequence', () => {
         function makeEvents(...types: string[]): TimelineEventEntry[] {
-            return types.map((t, i) => ({ event_type: t, timestamp_utc: `2026-01-01T00:0${i}:00.000Z`, sequence: i }));
+            return types.map((t, i) => ({
+                event_type: t,
+                timestamp_utc: `2026-01-01T00:0${i}:00.000Z`,
+                sequence: i,
+                details: null
+            }));
         }
 
         it('passes when stages are in correct order for code-changing task', () => {
             const events = makeEvents(
                 'TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'PREFLIGHT_CLASSIFIED',
-                'COMPILE_GATE_PASSED', 'REVIEW_GATE_PASSED'
+                'IMPLEMENTATION_STARTED', 'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED', 'REVIEW_GATE_PASSED'
             );
             const result = validateStageSequence(events, true, '/timeline.jsonl');
             assert.equal(result.violations.length, 0);
             assert.equal(result.code_changed, true);
             assert.deepEqual(result.observed_order, [
                 'TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'PREFLIGHT_CLASSIFIED',
-                'COMPILE_GATE_PASSED', 'REVIEW_GATE_PASSED'
+                'IMPLEMENTATION_STARTED', 'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED', 'REVIEW_GATE_PASSED'
             ]);
         });
 
         it('passes for non-code task without PREFLIGHT_CLASSIFIED', () => {
             const events = makeEvents(
                 'TASK_MODE_ENTERED', 'RULE_PACK_LOADED',
-                'COMPILE_GATE_PASSED', 'REVIEW_GATE_PASSED'
+                'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED', 'REVIEW_GATE_PASSED'
             );
             const result = validateStageSequence(events, false, '/timeline.jsonl');
             assert.equal(result.violations.length, 0);
@@ -273,17 +282,19 @@ describe('gates/completion', () => {
         it('fails when REVIEW_GATE_PASSED appears before COMPILE_GATE_PASSED', () => {
             const events = makeEvents(
                 'TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED', 'REVIEW_PHASE_STARTED',
                 'REVIEW_GATE_PASSED', 'COMPILE_GATE_PASSED'
             );
             const result = validateStageSequence(events, true, '/timeline.jsonl');
             assert.ok(result.violations.length > 0);
-            assert.ok(result.violations.some(v => v.includes('REVIEW_GATE_PASSED') && v.includes('before') && v.includes('COMPILE_GATE_PASSED')));
+            assert.ok(result.violations.some(v => v.includes('COMPILE_GATE_PASSED') && v.includes('before') && v.includes('REVIEW_PHASE_STARTED')));
         });
 
         it('fails when COMPILE_GATE_PASSED appears before PREFLIGHT_CLASSIFIED for code-changing task', () => {
             const events = makeEvents(
                 'TASK_MODE_ENTERED', 'RULE_PACK_LOADED',
-                'COMPILE_GATE_PASSED', 'PREFLIGHT_CLASSIFIED', 'REVIEW_GATE_PASSED'
+                'COMPILE_GATE_PASSED', 'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED', 'REVIEW_PHASE_STARTED', 'REVIEW_GATE_PASSED'
             );
             const result = validateStageSequence(events, true, '/timeline.jsonl');
             assert.ok(result.violations.some(v => v.includes('COMPILE_GATE_PASSED') && v.includes('before') && v.includes('PREFLIGHT_CLASSIFIED')));
@@ -292,7 +303,8 @@ describe('gates/completion', () => {
         it('fails when PREFLIGHT_CLASSIFIED is missing for code-changing task', () => {
             const events = makeEvents(
                 'TASK_MODE_ENTERED', 'RULE_PACK_LOADED',
-                'COMPILE_GATE_PASSED', 'REVIEW_GATE_PASSED'
+                'IMPLEMENTATION_STARTED', 'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED', 'REVIEW_GATE_PASSED'
             );
             const result = validateStageSequence(events, true, '/timeline.jsonl');
             assert.ok(result.violations.some(v => v.includes('PREFLIGHT_CLASSIFIED')));
@@ -332,65 +344,108 @@ describe('gates/completion', () => {
     });
 
     describe('validateReviewSkillEvidence', () => {
+        function makeEvent(
+            eventType: string,
+            sequence: number,
+            details: Record<string, unknown> | null = null
+        ): TimelineEventEntry {
+            return {
+                event_type: eventType,
+                timestamp_utc: `2026-01-01T00:0${sequence}:00.000Z`,
+                sequence,
+                details
+            };
+        }
+
         it('returns no violations when no code changed', () => {
-            const result = validateReviewSkillEvidence(null, {}, {}, false);
+            const result = validateReviewSkillEvidence([], {}, {}, false, '/timeline.jsonl');
             assert.equal(result.violations.length, 0);
         });
 
-        it('returns no violations when code changed and review evidence present', () => {
-            const reviewEvidence = {
-                status: 'PASSED',
-                outcome: 'PASS',
-                review_checks: {
-                    code: { required: true, verdict: 'REVIEW PASSED' },
-                    test: { required: true, verdict: 'TEST REVIEW PASSED' }
-                }
-            };
+        it('returns no violations when code changed and review telemetry plus artifacts are present', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('SKILL_SELECTED', 4, { skill_id: 'testing-strategy' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 5, {
+                    skill_id: 'testing-strategy',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/testing-strategy/SKILL.md'
+                }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
             const requiredReviews = { code: true, test: true };
             const reviewArtifacts = { code: { path: '/r/code.md' }, test: { path: '/r/test.md' } };
-            const result = validateReviewSkillEvidence(reviewEvidence, requiredReviews, reviewArtifacts, true);
+            const result = validateReviewSkillEvidence(events, requiredReviews, reviewArtifacts, true, '/timeline.jsonl');
             assert.equal(result.violations.length, 0);
-            assert.deepEqual(result.skill_ids, ['code', 'test']);
+            assert.deepEqual(result.skill_ids, ['code-review', 'testing-strategy']);
+            assert.equal(result.reference_paths.length, 2);
             assert.deepEqual(result.artifact_keys, ['code', 'test']);
         });
 
-        it('fails when code changed but review evidence has no invocations', () => {
-            const reviewEvidence = {
-                status: 'PASSED',
-                outcome: 'PASS',
-                review_checks: {
-                    code: { required: true, verdict: 'NOT_REQUIRED' }
-                }
-            };
+        it('fails when code changed but review telemetry is missing', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('REVIEW_GATE_PASSED', 2)
+            ];
             const requiredReviews = { code: true };
             const reviewArtifacts = {};
-            const result = validateReviewSkillEvidence(reviewEvidence, requiredReviews, reviewArtifacts, true);
-            assert.ok(result.violations.some(v => v.includes('no review-skill invocation evidence')));
+            const result = validateReviewSkillEvidence(events, requiredReviews, reviewArtifacts, true, '/timeline.jsonl');
+            assert.ok(result.violations.some(v => v.includes('SKILL_SELECTED telemetry') && v.includes("'code'")));
+            assert.ok(result.violations.some(v => v.includes('SKILL_REFERENCE_LOADED telemetry') && v.includes("'code'")));
         });
 
         it('fails when code changed and required review artifact is missing', () => {
-            const reviewEvidence = {
-                status: 'PASSED',
-                outcome: 'PASS',
-                review_checks: {
-                    code: { required: true, verdict: 'REVIEW PASSED' }
-                }
-            };
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('SKILL_SELECTED', 4, { skill_id: 'testing-strategy' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 5, {
+                    skill_id: 'testing-strategy',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/testing-strategy/SKILL.md'
+                }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
             const requiredReviews = { code: true, test: true };
             const reviewArtifacts = { code: { path: '/r/code.md' } };
-            const result = validateReviewSkillEvidence(reviewEvidence, requiredReviews, reviewArtifacts, true);
+            const result = validateReviewSkillEvidence(events, requiredReviews, reviewArtifacts, true, '/timeline.jsonl');
             assert.ok(result.violations.some(v => v.includes("missing review artifact") && v.includes("'test'")));
         });
 
         it('passes when no reviews required even with code change', () => {
-            const reviewEvidence = {
-                status: 'PASSED',
-                outcome: 'PASS',
-                review_checks: {}
-            };
             const requiredReviews = {};
-            const result = validateReviewSkillEvidence(reviewEvidence, requiredReviews, {}, true);
+            const result = validateReviewSkillEvidence([], requiredReviews, {}, true, '/timeline.jsonl');
             assert.equal(result.violations.length, 0);
+        });
+
+        it('fails when review phase did not start before review telemetry', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('SKILL_SELECTED', 1, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 2, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEW_GATE_PASSED', 3)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                { code: { path: '/r/code.md' } },
+                true,
+                '/timeline.jsonl'
+            );
+            assert.ok(result.violations.some(v => v.includes('missing REVIEW_PHASE_STARTED')));
         });
     });
 });

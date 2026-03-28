@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId } from '../gate-runtime/task-events';
+import { getReviewSkillCandidates } from './build-review-context';
 import { fileSha256, normalizePath, joinOrchestratorPath, resolvePathInsideRepo } from './helpers';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from './rule-pack';
 import { collectTaskTimelineEventTypes, getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
@@ -14,7 +15,9 @@ export const STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze([
     'TASK_MODE_ENTERED',
     'RULE_PACK_LOADED',
     'PREFLIGHT_CLASSIFIED',
+    'IMPLEMENTATION_STARTED',
     'COMPILE_GATE_PASSED',
+    'REVIEW_PHASE_STARTED',
     'REVIEW_GATE_PASSED'
 ]);
 
@@ -22,6 +25,7 @@ export interface TimelineEventEntry {
     event_type: string;
     timestamp_utc: string;
     sequence: number;
+    details: Record<string, unknown> | null;
 }
 
 export interface StageSequenceEvidence {
@@ -29,6 +33,7 @@ export interface StageSequenceEvidence {
     expected_order: string[];
     code_changed: boolean;
     review_skill_ids: string[];
+    review_skill_reference_paths: string[];
     review_artifact_keys: string[];
     violations: string[];
 }
@@ -52,8 +57,11 @@ export function collectOrderedTimelineEvents(timelinePath: string, errors: strin
             const parsed = JSON.parse(line) as Record<string, unknown>;
             const eventType = String(parsed.event_type || '').trim().toUpperCase();
             const timestampUtc = String(parsed.timestamp_utc || '').trim();
+            const details = parsed.details && typeof parsed.details === 'object' && !Array.isArray(parsed.details)
+                ? parsed.details as Record<string, unknown>
+                : null;
             if (eventType) {
-                entries.push({ event_type: eventType, timestamp_utc: timestampUtc, sequence: seq });
+                entries.push({ event_type: eventType, timestamp_utc: timestampUtc, sequence: seq, details });
             }
             seq++;
         } catch {
@@ -80,7 +88,7 @@ export function validateStageSequence(
     const observedOrder: string[] = [];
     const expectedStages = codeChanged
         ? [...STAGE_SEQUENCE_ORDER]
-        : ['TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'COMPILE_GATE_PASSED', 'REVIEW_GATE_PASSED'];
+        : ['TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED', 'REVIEW_GATE_PASSED'];
 
     const firstOccurrence = new Map<string, number>();
     for (const entry of events) {
@@ -89,7 +97,7 @@ export function validateStageSequence(
         }
     }
 
-    for (const stage of STAGE_SEQUENCE_ORDER) {
+    for (const stage of expectedStages) {
         if (firstOccurrence.has(stage)) {
             observedOrder.push(stage);
         }
@@ -126,6 +134,7 @@ export function validateStageSequence(
         expected_order: expectedStages,
         code_changed: codeChanged,
         review_skill_ids: [],
+        review_skill_reference_paths: [],
         review_artifact_keys: [],
         violations
     };
@@ -150,6 +159,41 @@ export function detectCodeChanged(preflight: Record<string, unknown> | null): bo
     return false;
 }
 
+function normalizeTimelineDetailString(value: unknown): string | null {
+    const text = String(value || '').trim();
+    return text || null;
+}
+
+function getTimelineSkillId(event: TimelineEventEntry): string | null {
+    if (!event.details) {
+        return null;
+    }
+    return normalizeTimelineDetailString(event.details.skill_id ?? event.details.skillId)?.toLowerCase() || null;
+}
+
+function getTimelineReferencePath(event: TimelineEventEntry): string | null {
+    if (!event.details) {
+        return null;
+    }
+    const raw = normalizeTimelineDetailString(event.details.reference_path ?? event.details.referencePath);
+    return raw ? normalizePath(raw).toLowerCase() : null;
+}
+
+function eventMatchesReviewSkill(event: TimelineEventEntry, candidateSkillIds: string[]): boolean {
+    const normalizedCandidates = candidateSkillIds.map(candidate => candidate.toLowerCase());
+    const skillId = getTimelineSkillId(event);
+    if (skillId && normalizedCandidates.includes(skillId)) {
+        return true;
+    }
+
+    const referencePath = getTimelineReferencePath(event);
+    if (!referencePath) {
+        return false;
+    }
+
+    return normalizedCandidates.some((candidate) => referencePath.includes(`/live/skills/${candidate.toLowerCase()}/`));
+}
+
 /**
  * Validate review-skill evidence for code-changing tasks.
  * When code changed but the review-gate artifact does not carry evidence
@@ -157,15 +201,22 @@ export function detectCodeChanged(preflight: Record<string, unknown> | null): bo
  * the completion gate fails.
  */
 export function validateReviewSkillEvidence(
-    reviewEvidence: Record<string, unknown> | null,
+    events: TimelineEventEntry[],
     requiredReviews: Record<string, unknown>,
     reviewArtifacts: Record<string, unknown>,
-    codeChanged: boolean
-): { skill_ids: string[]; artifact_keys: string[]; violations: string[] } {
-    const result = { skill_ids: [] as string[], artifact_keys: [] as string[], violations: [] as string[] };
+    codeChanged: boolean,
+    timelinePath: string
+): { skill_ids: string[]; reference_paths: string[]; artifact_keys: string[]; violations: string[] } {
+    const result = {
+        skill_ids: [] as string[],
+        reference_paths: [] as string[],
+        artifact_keys: [] as string[],
+        violations: [] as string[]
+    };
     if (!codeChanged) return result;
 
-    // Collect which review types were actually required and had artifacts
+    const normalizedTimelinePath = normalizePath(timelinePath);
+
     const requiredKeys: string[] = [];
     for (const [key, value] of Object.entries(requiredReviews)) {
         if (value === true) {
@@ -173,28 +224,76 @@ export function validateReviewSkillEvidence(
         }
     }
 
-    // Verify review-gate artifact contains review_checks with actual invocation evidence
-    if (reviewEvidence) {
-        const reviewChecks = reviewEvidence.review_checks as Record<string, Record<string, unknown>> | undefined;
-        if (reviewChecks && typeof reviewChecks === 'object') {
-            for (const [key, check] of Object.entries(reviewChecks)) {
-                if (check && check.required === true) {
-                    result.skill_ids.push(key);
-                    const verdict = String(check.verdict || '').trim();
-                    if (verdict && verdict !== 'NOT_REQUIRED') {
-                        result.artifact_keys.push(key);
-                    }
-                }
-            }
-        }
+    const compilePassSequence = events.find((entry) => entry.event_type === 'COMPILE_GATE_PASSED')?.sequence ?? null;
+    const reviewPhaseSequence = events.find((entry) => entry.event_type === 'REVIEW_PHASE_STARTED')?.sequence ?? null;
+    const reviewGatePassSequence = events.find((entry) => (
+        entry.event_type === 'REVIEW_GATE_PASSED' || entry.event_type === 'REVIEW_GATE_PASSED_WITH_OVERRIDE'
+    ))?.sequence ?? null;
+
+    if (requiredKeys.length > 0 && reviewPhaseSequence == null) {
+        result.violations.push(
+            `Task timeline '${normalizedTimelinePath}' is missing REVIEW_PHASE_STARTED. ` +
+            'Required review skills must be prepared before review gate completion.'
+        );
     }
 
-    // When code changed, at least one review skill must have been invoked
-    if (requiredKeys.length > 0 && result.artifact_keys.length === 0) {
-        result.violations.push(
-            'Code-changing task has required reviews but no review-skill invocation evidence found in review-gate artifact. ' +
-            `Expected evidence for: ${requiredKeys.join(', ')}.`
-        );
+    for (const key of requiredKeys) {
+        const candidateSkillIds = getReviewSkillCandidates(key);
+        const selectionEvent = events.find((entry) => (
+            entry.event_type === 'SKILL_SELECTED' && eventMatchesReviewSkill(entry, candidateSkillIds)
+        ));
+        const referenceEvent = events.find((entry) => (
+            entry.event_type === 'SKILL_REFERENCE_LOADED' && eventMatchesReviewSkill(entry, candidateSkillIds)
+        ));
+
+        if (!selectionEvent) {
+            result.violations.push(
+                `Code-changing task is missing SKILL_SELECTED telemetry for required review '${key}'. ` +
+                `Expected one of: ${candidateSkillIds.join(', ')}.`
+            );
+        } else {
+            const selectedSkillId = getTimelineSkillId(selectionEvent) || candidateSkillIds[0];
+            if (!result.skill_ids.includes(selectedSkillId)) {
+                result.skill_ids.push(selectedSkillId);
+            }
+            if (compilePassSequence != null && selectionEvent.sequence < compilePassSequence) {
+                result.violations.push(
+                    `Review skill '${selectedSkillId}' was selected before COMPILE_GATE_PASSED in '${normalizedTimelinePath}'.`
+                );
+            }
+            if (reviewPhaseSequence != null && selectionEvent.sequence < reviewPhaseSequence) {
+                result.violations.push(
+                    `Review skill '${selectedSkillId}' was selected before REVIEW_PHASE_STARTED in '${normalizedTimelinePath}'.`
+                );
+            }
+            if (reviewGatePassSequence != null && selectionEvent.sequence > reviewGatePassSequence) {
+                result.violations.push(
+                    `Review skill '${selectedSkillId}' was selected after REVIEW_GATE_PASSED in '${normalizedTimelinePath}'.`
+                );
+            }
+        }
+
+        if (!referenceEvent) {
+            result.violations.push(
+                `Code-changing task is missing SKILL_REFERENCE_LOADED telemetry for required review '${key}'. ` +
+                `Expected one of: ${candidateSkillIds.join(', ')}.`
+            );
+        } else {
+            const referencePath = getTimelineReferencePath(referenceEvent);
+            if (referencePath && !result.reference_paths.includes(referencePath)) {
+                result.reference_paths.push(referencePath);
+            }
+            if (reviewPhaseSequence != null && referenceEvent.sequence < reviewPhaseSequence) {
+                result.violations.push(
+                    `Review skill reference for '${key}' was loaded before REVIEW_PHASE_STARTED in '${normalizedTimelinePath}'.`
+                );
+            }
+            if (reviewGatePassSequence != null && referenceEvent.sequence > reviewGatePassSequence) {
+                result.violations.push(
+                    `Review skill reference for '${key}' was loaded after REVIEW_GATE_PASSED in '${normalizedTimelinePath}'.`
+                );
+            }
+        }
     }
 
     // Verify that each required review has a corresponding review artifact
@@ -204,6 +303,8 @@ export function validateReviewSkillEvidence(
                 `Code-changing task is missing review artifact for required review '${key}'. ` +
                 'Review skill must be invoked and produce a review artifact before completion.'
             );
+        } else if (!result.artifact_keys.includes(key)) {
+            result.artifact_keys.push(key);
         }
     }
 
@@ -594,7 +695,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     if (!timelineEventTypes.has('COMPILE_GATE_PASSED')) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing COMPILE_GATE_PASSED.`);
     }
-    if (!timelineEventTypes.has('REVIEW_GATE_PASSED')) {
+    if (!timelineEventTypes.has('REVIEW_PHASE_STARTED')) {
+        errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing REVIEW_PHASE_STARTED.`);
+    }
+    if (!timelineEventTypes.has('REVIEW_GATE_PASSED') && !timelineEventTypes.has('REVIEW_GATE_PASSED_WITH_OVERRIDE')) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing REVIEW_GATE_PASSED.`);
     }
 
@@ -635,15 +739,17 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
 
     // T-003: review-skill invocation evidence for code-changing tasks
     const reviewSkillEvidence = validateReviewSkillEvidence(
-        reviewEvidence,
+        orderedEvents,
         requiredReviews,
         reviewArtifacts,
-        codeChanged
+        codeChanged,
+        timelinePath
     );
     errors.push(...reviewSkillEvidence.violations);
 
     // Merge skill evidence into stage-sequence record
     stageSequence.review_skill_ids = reviewSkillEvidence.skill_ids;
+    stageSequence.review_skill_reference_paths = reviewSkillEvidence.reference_paths;
     stageSequence.review_artifact_keys = reviewSkillEvidence.artifact_keys;
 
     const status = errors.length > 0 ? 'FAILED' : 'PASSED';
