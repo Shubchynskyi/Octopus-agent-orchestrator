@@ -2,15 +2,16 @@
 
 ## Unreleased
 
+- no changes yet
+
+## 2.3.3
+
 - added explicit `enter-task-mode` gate and hard task-mode evidence enforcement so compile, review, and completion gates fail when code execution starts without a declared `TASK.md` orchestration boundary
 - added explicit `load-rule-pack` gate and downstream rule-pack evidence enforcement so preflight, compile, review, and completion gates now require proof that canonical workflow/risk-specific rule files were actually loaded for the task
 - tightened completion enforcement for code-changing tasks: completion now requires ordered lifecycle evidence (`PREFLIGHT_CLASSIFIED`, `IMPLEMENTATION_STARTED`, `REVIEW_PHASE_STARTED`), real review-skill telemetry (`SKILL_SELECTED`, `SKILL_REFERENCE_LOADED`), and required review artifacts instead of verdict-only proxy evidence
 - expanded automatic task timeline emission and observability: task-mode/preflight/implementation/review routing/status transitions are auto-recorded in `runtime/task-events`, and `status` / `doctor` now surface incomplete timelines explicitly
 - added full Qwen root-entrypoint support: `Qwen` is now a canonical source-of-truth option mapped to `QWEN.md`, with active-entrypoint normalization, bootstrap/install/uninstall coverage, and `.qwen/settings.json` synchronization to the current canonical entrypoint plus `TASK.md`
 - hardened ordinary `update` / `check-update --apply` for existing workspaces by running built-in live-rule contract migrations before verify/manifest, so stale mandatory rule snippets are auto-repaired during update instead of breaking `doctor` afterward
-
-## 2.3.2
-
 - finished the TypeScript-only source contract: the public CLI launcher is now generated from `src/bin/octopus.ts`, and hand-written tracked `bin/octopus.js` source is gone
 - added `prepare` plus build-path sync so source checkouts and package builds materialize the generated launcher consistently before execution
 - aligned `typecheck` with the full maintained TypeScript graph used by the runtime, Node tests, and build/test harness
@@ -18,9 +19,9 @@
 - stabilized packaging tests by isolating publish-runtime and pack smoke builds in fixture repos instead of racing on the shared repository `dist/`
 - cleaned repo ignores/docs to match the current compile-first Node/TypeScript contract
 
-## 2.3.1
+### Additional 2.3.3 notes
 
-- synchronized release metadata on `2.3.1`, including the root `package-lock.json` version/license fields with `package.json`, `VERSION`, and `LICENSE`
+- synchronized release metadata on `2.3.3`, including the root `package-lock.json` version/license fields with `package.json`, `VERSION`, and `LICENSE`
 - clarified the compile-first runtime execution model: source-repo usage runs through compiled runtime output, and packaged installs under `node_modules` use compiled `dist/src/**/*.js`
 - refreshed internal token-economy planning docs to describe the current Node-only runtime instead of obsolete PowerShell or shell/Python implementation paths
 - documented `feat/node-runtime-migration` as a historical branch alias rather than a separate active runtime line
