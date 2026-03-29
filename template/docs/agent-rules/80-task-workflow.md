@@ -51,6 +51,11 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Preflight artifact must exist before review stage.
 - Preflight classification must run with explicit `--output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
 - Preflight lifecycle telemetry must show `PREFLIGHT_STARTED` and then either `PREFLIGHT_CLASSIFIED` or `PREFLIGHT_FAILED`.
+- Clean-tree preflight (`changed_files_count=0`) is baseline-only evidence, not task completion.
+- Zero-diff implementation tasks must end in exactly one of these states before terminal status:
+  - produced diff after implementation, then normal gate flow;
+  - audited no-op recorded through `node Octopus-agent-orchestrator/bin/octopus.js gate record-no-op --task-id "<task-id>" --reason "<rationale>"`;
+  - explicit `BLOCKED` state explaining why no changes were produced.
 - After preflight decides `required_reviews.*`, re-run `load-rule-pack --stage "POST_PREFLIGHT" --preflight-path ...` with the actual task-specific downstream rules that were opened.
 - Compile gate command must pass before `IN_REVIEW`:
   `node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate`.
@@ -69,11 +74,13 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Review gate command validates task-mode entry evidence (`TASK_MODE_ENTERED`) for the same task id.
 - Review gate command validates post-preflight rule-pack evidence (`RULE_PACK_LOADED`) for the same task id and preflight artifact.
 - Review gate command validates no workspace drift after compile evidence; post-compile edits require compile gate rerun.
+- Review gate rejects zero-diff implementation tasks unless an audited no-op artifact exists for the same task id.
 - Documentation impact gate command must pass before `DONE`:
   `node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate`.
 - Completion gate command must pass before `DONE`:
   `node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate`.
 - Completion gate validates task-mode entry evidence, post-preflight rule-pack evidence, compile evidence, review-gate evidence, doc-impact evidence, ordered lifecycle evidence (`TASK_MODE_ENTERED`, `RULE_PACK_LOADED`, `PREFLIGHT_CLASSIFIED`, `IMPLEMENTATION_STARTED`, `COMPILE_GATE_PASSED`, `REVIEW_PHASE_STARTED`, review pass evidence), review-skill telemetry (`SKILL_SELECTED`, `SKILL_REFERENCE_LOADED`), best-effort task-event hash-chain integrity, required review artifacts, and final findings-resolution state in PASS review artifacts.
+- Completion gate rejects zero-diff implementation tasks unless the task has later produced a real diff or an audited no-op artifact exists at `runtime/reviews/<task-id>-no-op.json`.
 - Final PASS review artifacts must keep active `Findings by Severity` and `Residual Risks` empty (`none`). Non-blocking follow-ups may remain only in `Deferred Findings`, and every deferred entry must include `Justification:`.
 - Task timeline log must be updated for lifecycle stages and gate outcomes:
   `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.

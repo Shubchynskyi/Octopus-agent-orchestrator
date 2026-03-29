@@ -702,14 +702,37 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(compileResult.exitCode, 0);
 
-        const reviewResult = runRequiredReviewsCheckCommand({
+        // T-033: review gate must FAIL when zero-diff preflight has no no-op artifact
+        const failedReviewResult = runRequiredReviewsCheckCommand({
             repoRoot,
             taskId,
             preflightPath,
             outputFiltersPath,
             emitMetrics: false
         });
-        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(failedReviewResult.exitCode, 1);
+        assert.ok(failedReviewResult.outputLines.some((line) => String(line).includes('zero-diff')));
+
+        // Record a no-op artifact to satisfy the guard
+        const noOpResult = runRecordNoOpCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            classification: 'ALREADY_DONE',
+            reason: 'Task behavior already matches the requested outcome after earlier local changes.',
+            emitMetrics: false
+        });
+        assert.equal(noOpResult.exitCode, 0);
+
+        // Review gate should now pass with no-op artifact
+        const passedReviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(passedReviewResult.exitCode, 0);
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -723,24 +746,7 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(docImpactResult.exitCode, 0);
 
-        const failedCompletion = runCompletionGate({
-            repoRoot,
-            preflightPath,
-            taskId
-        });
-        assert.equal(failedCompletion.outcome, 'FAIL');
-        assert.ok(failedCompletion.violations.some((item) => String(item).includes('audited no-op artifact')));
-
-        const noOpResult = runRecordNoOpCommand({
-            repoRoot,
-            taskId,
-            preflightPath,
-            classification: 'ALREADY_DONE',
-            reason: 'Task behavior already matches the requested outcome after earlier local changes.',
-            emitMetrics: false
-        });
-        assert.equal(noOpResult.exitCode, 0);
-
+        // Completion gate should pass — no-op artifact was already recorded above
         const passedCompletion = runCompletionGate({
             repoRoot,
             preflightPath,

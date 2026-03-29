@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { auditReviewArtifactCompaction } from '../gate-runtime/review-context';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { fileSha256, normalizePath } from './helpers';
+import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 
 export const REVIEW_CONTRACTS = [
     ['code', 'REVIEW PASSED'],
@@ -205,6 +206,87 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         verdicts,
         review_checks: reviewChecks,
         violations: errors
+    };
+}
+
+// --- T-033: zero-diff noop guard for review gate ---
+
+export interface ZeroDiffReviewGuardResult {
+    zero_diff_detected: boolean;
+    status: 'NOT_APPLICABLE' | 'REQUIRES_DIFF_OR_NO_OP' | 'SATISFIED_BY_AUDITED_NO_OP';
+    no_op_evidence_status: string | null;
+    violations: string[];
+}
+
+/**
+ * Detect whether a preflight artifact represents a zero-diff (clean tree) classification.
+ * Reads the preflight's zero_diff_guard block or falls back to metrics/changed_files.
+ */
+export function detectZeroDiffFromPreflight(preflight: Record<string, unknown> | null): boolean {
+    if (!preflight) return false;
+
+    const guard = preflight.zero_diff_guard;
+    if (guard && typeof guard === 'object' && !Array.isArray(guard)) {
+        const guardObj = guard as Record<string, unknown>;
+        if (guardObj.zero_diff_detected === true) return true;
+        if (guardObj.zero_diff_detected === false) return false;
+    }
+
+    const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
+        ? preflight.metrics as Record<string, unknown>
+        : null;
+    const changedLinesTotal = metrics && typeof metrics.changed_lines_total === 'number'
+        ? metrics.changed_lines_total
+        : 0;
+    const changedFilesCount = Array.isArray(preflight.changed_files) ? preflight.changed_files.length : 0;
+    return changedLinesTotal === 0 && changedFilesCount === 0;
+}
+
+/**
+ * Validate zero-diff guard for the review gate.
+ * When the preflight shows zero-diff, the review gate blocks unless an audited no-op
+ * artifact exists. This prevents clean-tree preflights from drifting toward task
+ * completion without any produced diff.
+ */
+export function validateZeroDiffForReviewGate(
+    preflight: Record<string, unknown> | null,
+    taskId: string,
+    repoRoot: string,
+    noOpArtifactPath?: string
+): ZeroDiffReviewGuardResult {
+    const zeroDiffDetected = detectZeroDiffFromPreflight(preflight);
+
+    if (!zeroDiffDetected) {
+        return {
+            zero_diff_detected: false,
+            status: 'NOT_APPLICABLE',
+            no_op_evidence_status: null,
+            violations: []
+        };
+    }
+
+    const noOpEvidence = getNoOpEvidence(repoRoot, taskId, noOpArtifactPath || '');
+
+    if (noOpEvidence.evidence_status === 'PASS') {
+        return {
+            zero_diff_detected: true,
+            status: 'SATISFIED_BY_AUDITED_NO_OP',
+            no_op_evidence_status: noOpEvidence.evidence_status,
+            violations: []
+        };
+    }
+
+    return {
+        zero_diff_detected: true,
+        status: 'REQUIRES_DIFF_OR_NO_OP',
+        no_op_evidence_status: noOpEvidence.evidence_status,
+        violations: [
+            `Task '${taskId}' has zero-diff preflight (clean tree). ` +
+            'Review gate cannot pass without produced changes. ' +
+            'Either implement changes and re-run preflight, record an audited no-op artifact ' +
+            `('node Octopus-agent-orchestrator/bin/octopus.js gate record-no-op --task-id "${taskId}" --reason "..."'), ` +
+            'or set the task to BLOCKED.'
+        ]
     };
 }
 

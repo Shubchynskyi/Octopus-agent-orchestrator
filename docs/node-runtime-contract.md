@@ -132,6 +132,7 @@ Shipped gates:
 - `classify-change`
 - `compile-gate`
 - `required-reviews-check`
+- `record-no-op`
 - `doc-impact-gate`
 - `completion-gate`
 - `build-scoped-diff`
@@ -147,8 +148,18 @@ Lifecycle auto-emission:
 - `classify-change` auto-emits `PREFLIGHT_STARTED` and then `PREFLIGHT_CLASSIFIED` or `PREFLIGHT_FAILED`
 - `compile-gate` auto-emits `IMPLEMENTATION_STARTED` and then `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED`
 - `build-review-context` auto-emits `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` for the selected review skill
+- `record-no-op` writes `runtime/reviews/<task-id>-no-op.json` for audited `already done` / `no changes required` / `audit only` outcomes
 - `required-reviews-check`, `doc-impact-gate`, and `completion-gate` append their pass/fail markers to the task timeline
 - `status` and `doctor` report task-timeline completeness, not just timeline presence
+
+Zero-diff guard:
+
+- A clean-tree `classify-change` result is `BASELINE_ONLY`, not successful completion evidence.
+- For implementation tasks, zero-diff preflight must lead to one of three states:
+  - a later produced diff, then normal compile/review/completion flow;
+  - an audited no-op artifact recorded through `gate record-no-op`;
+  - an explicit blocked state.
+- `required-reviews-check` and `completion-gate` reject zero-diff tasks without audited no-op evidence.
 
 ## Verification Markers
 

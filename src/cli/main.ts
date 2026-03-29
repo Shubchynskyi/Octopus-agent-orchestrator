@@ -1165,6 +1165,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 '--compile-evidence-path': { key: 'compileEvidencePath', type: 'string' },
                 '--reviews-root': { key: 'reviewsRoot', type: 'string' },
                 '--review-evidence-path': { key: 'reviewEvidencePath', type: 'string' },
+                '--no-op-artifact-path': { key: 'noOpArtifactPath', type: 'string' },
                 '--output-filters-path': { key: 'outputFiltersPath', type: 'string' },
                 '--metrics-path': { key: 'metricsPath', type: 'string' },
                 '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },

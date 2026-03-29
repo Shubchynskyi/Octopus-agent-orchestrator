@@ -228,6 +228,7 @@ Canonical gate surface is `octopus gate <name>` or `node bin/octopus.js gate <na
 | Classify change | `octopus gate classify-change --use-staged --task-intent "..."` |
 | Compile gate | `octopus gate compile-gate --task-id "T-001"` |
 | Review gate | `octopus gate required-reviews-check --task-id "T-001" --code-review-verdict "..."` |
+| Audited no-op | `octopus gate record-no-op --task-id "T-001" --reason "Already implemented in current branch"` |
 | Doc impact | `octopus gate doc-impact-gate --task-id "T-001" --decision "..."` |
 | Completion gate | `octopus gate completion-gate --task-id "T-001"` |
 | Scoped diff | `octopus gate build-scoped-diff --review-type "db"` |
@@ -238,6 +239,11 @@ Canonical gate surface is `octopus gate <name>` or `node bin/octopus.js gate <na
 | Human commit | `octopus gate human-commit --message "<message>"` |
 
 Full gate examples live in `template/docs/agent-rules/40-commands.md`.
+
+Zero-diff task contract:
+- A clean-tree `classify-change` result is baseline-only evidence, not proof that the task is complete.
+- `required-reviews-check` and `completion-gate` now block zero-diff implementation tasks unless the task later produces a real diff or an audited no-op artifact is recorded.
+- Use `octopus gate record-no-op --task-id "<task-id>" --reason "<rationale>"` only when the task is genuinely `already done`, `no changes required`, or `audit only`.
 
 ---
 

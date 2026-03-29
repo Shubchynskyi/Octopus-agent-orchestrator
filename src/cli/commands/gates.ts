@@ -35,7 +35,8 @@ import {
     checkRequiredReviews,
     parseSkipReviews,
     REVIEW_CONTRACTS,
-    validatePreflightForReview
+    validatePreflightForReview,
+    validateZeroDiffForReviewGate
 } from '../../gates/required-reviews-check';
 import {
     buildRulePackArtifact,
@@ -213,6 +214,7 @@ interface RequiredReviewsCheckCommandOptions {
     reviewsRoot?: string;
     reviewEvidencePath?: string;
     overrideArtifactPath?: string;
+    noOpArtifactPath?: string;
     emitMetrics?: unknown;
 }
 
@@ -311,6 +313,7 @@ interface ReviewEvidenceContext extends Record<string, unknown> {
     skip_reason: string;
     override_artifact: string | null;
     artifact_evidence: ReviewArtifactsAuditResult;
+    zero_diff_guard?: unknown;
     output_telemetry?: OutputTelemetry;
 }
 
@@ -2243,6 +2246,15 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         reviewPhaseMissingFromTimeline = timelineErrors.length === 0 && !timelineEventTypes.has('REVIEW_PHASE_STARTED');
     }
 
+    // T-033: zero-diff noop guard — block review gate when preflight is baseline-only
+    const zeroDiffGuard = validateZeroDiffForReviewGate(
+        preflight,
+        String(resolvedTaskId || ''),
+        repoRoot,
+        options.noOpArtifactPath || ''
+    );
+    errors.push(...zeroDiffGuard.violations);
+
     const required = validatedPreflight.required_reviews;
     const skipCode = skipReviewsList.includes('code');
     const canSkipCode = !!required.code
@@ -2334,7 +2346,8 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         skip_reviews: skipReviewsList,
         skip_reason: skipReason,
         override_artifact: normalizeOptionalPath(overrideArtifactPath),
-        artifact_evidence: artifactEvidence
+        artifact_evidence: artifactEvidence,
+        zero_diff_guard: zeroDiffGuard
     };
 
     if (status === 'FAILED') {

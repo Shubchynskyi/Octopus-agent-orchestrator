@@ -24,7 +24,8 @@
     "build:node-foundation": "npm run build:scripts && node .scripts-build/scripts/node-foundation/build.js node-foundation",
     "test": "npm run build:scripts && node .scripts-build/scripts/node-foundation/test.js",
     "test:node-foundation": "npm run build:scripts && node .scripts-build/scripts/node-foundation/test.js",
-    "validate:release": "npm run build && npm test && node --test .node-build/tests/node/packaging/pack-smoke.test.js",
+    "validate:version-parity": "npm run build:scripts && node .scripts-build/scripts/node-foundation/validate-release.js",
+    "validate:release": "npm run validate:version-parity && npm run build && npm test && node --test .node-build/tests/node/packaging/pack-smoke.test.js",
     "prepare": "npm run build",
     "typecheck": "tsc -p tsconfig.node-foundation.json",
     "prepack": "npm run build:publish-runtime"

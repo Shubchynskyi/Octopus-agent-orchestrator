@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import {
     parseSkipReviews,
     testExpectedVerdict,
-    REVIEW_CONTRACTS
+    REVIEW_CONTRACTS,
+    detectZeroDiffFromPreflight,
+    validateZeroDiffForReviewGate
 } from '../../../src/gates/required-reviews-check';
 
 describe('gates/required-reviews-check', () => {
@@ -82,6 +84,92 @@ describe('gates/required-reviews-check', () => {
             assert.equal(codeContract![1], 'REVIEW PASSED');
             const dbContract = REVIEW_CONTRACTS.find(([k]) => k === 'db');
             assert.equal(dbContract![1], 'DB REVIEW PASSED');
+        });
+    });
+
+    describe('detectZeroDiffFromPreflight (T-033)', () => {
+        it('returns true for zero-diff preflight with guard block', () => {
+            const preflight = {
+                changed_files: [],
+                metrics: { changed_lines_total: 0, changed_files_count: 0 },
+                zero_diff_guard: { zero_diff_detected: true, status: 'BASELINE_ONLY' }
+            };
+            assert.equal(detectZeroDiffFromPreflight(preflight), true);
+        });
+
+        it('returns true for zero-diff preflight without guard block', () => {
+            const preflight = {
+                changed_files: [],
+                metrics: { changed_lines_total: 0 }
+            };
+            assert.equal(detectZeroDiffFromPreflight(preflight), true);
+        });
+
+        it('returns false when changed files exist', () => {
+            const preflight = {
+                changed_files: ['src/index.ts'],
+                metrics: { changed_lines_total: 10 },
+                zero_diff_guard: { zero_diff_detected: false, status: 'DIFF_PRESENT' }
+            };
+            assert.equal(detectZeroDiffFromPreflight(preflight), false);
+        });
+
+        it('returns false when guard explicitly says false even with zero metrics', () => {
+            const preflight = {
+                changed_files: [],
+                metrics: { changed_lines_total: 0 },
+                zero_diff_guard: { zero_diff_detected: false, status: 'DIFF_PRESENT' }
+            };
+            assert.equal(detectZeroDiffFromPreflight(preflight), false);
+        });
+
+        it('returns false for null preflight', () => {
+            assert.equal(detectZeroDiffFromPreflight(null), false);
+        });
+
+        it('returns false when only changed_lines_total is non-zero', () => {
+            const preflight = {
+                changed_files: [],
+                metrics: { changed_lines_total: 5 }
+            };
+            assert.equal(detectZeroDiffFromPreflight(preflight), false);
+        });
+    });
+
+    describe('validateZeroDiffForReviewGate (T-033)', () => {
+        it('returns NOT_APPLICABLE when diff is present', () => {
+            const preflight = {
+                changed_files: ['src/index.ts'],
+                metrics: { changed_lines_total: 10 }
+            };
+            const result = validateZeroDiffForReviewGate(preflight, 'T-033', '/nonexistent-repo');
+            assert.equal(result.zero_diff_detected, false);
+            assert.equal(result.status, 'NOT_APPLICABLE');
+            assert.equal(result.violations.length, 0);
+        });
+
+        it('returns REQUIRES_DIFF_OR_NO_OP when zero-diff without no-op artifact', () => {
+            const preflight = {
+                changed_files: [],
+                metrics: { changed_lines_total: 0 },
+                zero_diff_guard: { zero_diff_detected: true, status: 'BASELINE_ONLY' }
+            };
+            const result = validateZeroDiffForReviewGate(preflight, 'T-033', '/nonexistent-repo');
+            assert.equal(result.zero_diff_detected, true);
+            assert.equal(result.status, 'REQUIRES_DIFF_OR_NO_OP');
+            assert.equal(result.violations.length, 1);
+            assert.ok(result.violations[0].includes('zero-diff'));
+            assert.ok(result.violations[0].includes('T-033'));
+        });
+
+        it('violation message includes remediation options', () => {
+            const preflight = {
+                changed_files: [],
+                metrics: { changed_lines_total: 0 }
+            };
+            const result = validateZeroDiffForReviewGate(preflight, 'T-099', '/nonexistent-repo');
+            assert.ok(result.violations[0].includes('record-no-op'));
+            assert.ok(result.violations[0].includes('BLOCKED'));
         });
     });
 });
