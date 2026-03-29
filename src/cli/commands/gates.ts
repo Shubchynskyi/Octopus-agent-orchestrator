@@ -6,6 +6,7 @@ import {
     DEFAULT_COMPILE_TIMEOUT_MS,
     DEFAULT_GIT_TIMEOUT_MS,
     spawnStreamed,
+    spawnShellCommand,
     spawnSyncWithTimeout
 } from '../../core/subprocess';
 import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../gate-runtime/token-telemetry';
@@ -1097,26 +1098,23 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
     const args = tokens.slice(1);
     const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_COMPILE_TIMEOUT_MS;
 
-    let spawnCommand: string;
-    let spawnArgs: string[];
-    let useShell = false;
+    let result;
     if (process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(executablePath)) {
-        // On Windows, use shell mode with a pre-quoted command line so
-        // paths with spaces (e.g. C:\Program Files\nodejs\npm.CMD) work.
-        spawnCommand = `"${executablePath}" ${args.map(quoteWindowsArgument).join(' ')}`;
-        spawnArgs = [];
-        useShell = true;
+        // Windows batch files require shell semantics; route through the
+        // confined spawnShellCommand helper instead of general-purpose spawnStreamed.
+        const commandLine = `"${executablePath}" ${args.map(quoteWindowsArgument).join(' ')}`;
+        result = await spawnShellCommand(commandLine, {
+            cwd,
+            timeoutMs,
+            signal: options.signal ?? undefined
+        });
     } else {
-        spawnCommand = executablePath;
-        spawnArgs = args;
+        result = await spawnStreamed(executablePath, args, {
+            cwd,
+            timeoutMs,
+            signal: options.signal ?? undefined
+        });
     }
-
-    const result = await spawnStreamed(spawnCommand, spawnArgs, {
-        cwd,
-        timeoutMs,
-        signal: options.signal ?? undefined,
-        shell: useShell
-    });
 
     if (result.timedOut) {
         return {

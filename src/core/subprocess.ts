@@ -18,7 +18,6 @@ export interface SpawnStreamedOptions {
     cwd?: string;
     timeoutMs?: number;
     signal?: AbortSignal;
-    shell?: boolean;
     env?: Record<string, string | undefined>;
     onStdout?: (chunk: string) => void;
     onStderr?: (chunk: string) => void;
@@ -66,16 +65,12 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
             cwd: string;
             windowsHide: boolean;
             stdio: StdioOptions;
-            shell?: boolean;
             env?: NodeJS.ProcessEnv;
         } = {
             cwd,
             windowsHide: true,
             stdio: inheritStdio ? 'inherit' : ['ignore', 'pipe', 'pipe']
         };
-        if (opts.shell) {
-            spawnOpts.shell = true;
-        }
         if (opts.env) {
             spawnOpts.env = { ...process.env, ...opts.env };
         }
@@ -178,6 +173,167 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
                     }
                 });
             }
+        }
+
+        child.once('close', function (code: number | null) {
+            settle({
+                exitCode: code == null ? 1 : code,
+                stdout: stdoutBuf,
+                stderr: stderrBuf,
+                timedOut,
+                cancelled
+            });
+        });
+    });
+}
+
+// ---------------------------------------------------------------------------
+// spawnShellCommand – internal allowlist helper for Windows batch files
+// ---------------------------------------------------------------------------
+// Shell execution is intentionally NOT exposed in the general-purpose
+// SpawnStreamedOptions interface.  This helper confines shell semantics
+// to the single scenario that genuinely requires them: running Windows
+// .cmd/.bat executables where the OS needs cmd.exe to resolve the script.
+//
+// Callers must supply a fully pre-built command string; argument arrays are
+// NOT accepted so that no user-controlled token can alter shell semantics.
+
+export interface SpawnShellCommandOptions {
+    cwd?: string;
+    timeoutMs?: number;
+    signal?: AbortSignal;
+    env?: Record<string, string | undefined>;
+    onStdout?: (chunk: string) => void;
+    onStderr?: (chunk: string) => void;
+    maxBuffer?: number;
+}
+
+export function spawnShellCommand(
+    commandLine: string,
+    options?: SpawnShellCommandOptions
+): Promise<SpawnStreamedResult> {
+    if (process.platform !== 'win32') {
+        return Promise.reject(new Error(
+            'spawnShellCommand is restricted to Windows batch-file execution. ' +
+            'Use spawnStreamed for cross-platform commands.'
+        ));
+    }
+    const opts = options || {};
+    const cwd = opts.cwd || process.cwd();
+    const timeoutMs = typeof opts.timeoutMs === 'number' ? opts.timeoutMs : 0;
+    const signal = opts.signal || null;
+    const maxBuffer = opts.maxBuffer || 50 * 1024 * 1024;
+
+    return new Promise(function (resolve, reject) {
+        if (signal && signal.aborted) {
+            return resolve({
+                exitCode: 1,
+                stdout: '',
+                stderr: '',
+                timedOut: false,
+                cancelled: true
+            });
+        }
+
+        let settled = false;
+        let timedOut = false;
+        let cancelled = false;
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+        let stdoutBuf = '';
+        let stderrBuf = '';
+        let stdoutBytes = 0;
+        let stderrBytes = 0;
+
+        const child: ChildProcess = childProcess.spawn(commandLine, [], {
+            cwd,
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            shell: true
+        });
+
+        function cleanup(): void {
+            if (timeoutHandle) {
+                clearTimeout(timeoutHandle);
+                timeoutHandle = null;
+            }
+            if (signal) {
+                signal.removeEventListener('abort', onAbort);
+            }
+        }
+
+        function killChild(): void {
+            try {
+                try {
+                    childProcess.execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+                        stdio: 'ignore',
+                        windowsHide: true,
+                        timeout: 5000
+                    });
+                } catch (_e) {
+                    child.kill('SIGKILL');
+                }
+            } catch (_e) {
+                // Child already exited
+            }
+        }
+
+        function settle(result: SpawnStreamedResult): void {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(result);
+        }
+
+        function onAbort(): void {
+            if (settled) return;
+            cancelled = true;
+            killChild();
+        }
+
+        if (signal) {
+            signal.addEventListener('abort', onAbort, { once: true });
+        }
+
+        if (timeoutMs > 0) {
+            timeoutHandle = setTimeout(function () {
+                if (settled) return;
+                timedOut = true;
+                killChild();
+            }, timeoutMs);
+        }
+
+        child.once('error', function (error: NodeJS.ErrnoException) {
+            cleanup();
+            if (settled) return;
+            settled = true;
+            reject(error);
+        });
+
+        if (child.stdout) {
+            child.stdout.setEncoding('utf8');
+            child.stdout.on('data', function (chunk: string) {
+                const len = Buffer.byteLength(chunk, 'utf8');
+                if (stdoutBytes + len <= maxBuffer) {
+                    stdoutBuf += chunk;
+                    stdoutBytes += len;
+                }
+                if (opts.onStdout) {
+                    opts.onStdout(chunk);
+                }
+            });
+        }
+        if (child.stderr) {
+            child.stderr.setEncoding('utf8');
+            child.stderr.on('data', function (chunk: string) {
+                const len = Buffer.byteLength(chunk, 'utf8');
+                if (stderrBytes + len <= maxBuffer) {
+                    stderrBuf += chunk;
+                    stderrBytes += len;
+                }
+                if (opts.onStderr) {
+                    opts.onStderr(chunk);
+                }
+            });
         }
 
         child.once('close', function (code: number | null) {

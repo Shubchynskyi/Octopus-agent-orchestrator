@@ -7,6 +7,7 @@ import {
     DEFAULT_GIT_TIMEOUT_MS,
     DEFAULT_NPM_TIMEOUT_MS,
     spawnStreamed,
+    spawnShellCommand,
     spawnSyncWithTimeout
 } from '../../../src/core/subprocess';
 
@@ -169,5 +170,67 @@ describe('timeout constants', () => {
         assert.equal(typeof DEFAULT_COMPILE_TIMEOUT_MS, 'number');
         assert.ok(DEFAULT_GIT_TIMEOUT_MS > 0);
         assert.ok(DEFAULT_COMPILE_TIMEOUT_MS >= DEFAULT_GIT_TIMEOUT_MS);
+    });
+});
+
+describe('shell-surface hardening', () => {
+    it('spawnStreamed ignores shell property even if force-cast at runtime', async () => {
+        // Prove that even if a caller bypasses TypeScript and sneaks in shell: true,
+        // spawnStreamed does NOT pass it to child_process.spawn.
+        const runtimeOpts = { timeoutMs: 5000, shell: true } as any;
+        const result = await spawnStreamed(process.execPath, ['-e', 'console.log("safe")'], runtimeOpts);
+        assert.equal(result.exitCode, 0);
+        assert.match(result.stdout, /safe/);
+    });
+
+    it('spawnStreamed does not execute via shell even with crafted arguments', async () => {
+        // A command-injection payload that would succeed under shell mode should
+        // simply appear as a literal argument in non-shell mode.
+        const maliciousArg = '&& echo INJECTED';
+        const result = await spawnStreamed(
+            process.execPath,
+            ['-e', `process.stdout.write(process.argv[1])`, '--', maliciousArg],
+            { timeoutMs: 5000 }
+        );
+        assert.equal(result.exitCode, 0);
+        // The argument must arrive as-is, not interpreted by a shell
+        assert.ok(result.stdout.includes('&& echo INJECTED'));
+        assert.ok(!result.stdout.includes('INJECTED\n'));
+    });
+
+    it('spawnShellCommand rejects on non-Windows platforms', async () => {
+        if (process.platform === 'win32') {
+            // On Windows spawnShellCommand is allowed; verify it runs a simple cmd
+            const result = await spawnShellCommand('echo shelltest', { timeoutMs: 5000 });
+            assert.equal(result.exitCode, 0);
+            assert.match(result.stdout, /shelltest/);
+        } else {
+            await assert.rejects(
+                () => spawnShellCommand('echo test', { timeoutMs: 5000 }),
+                (err) => (err as Error).message.includes('restricted to Windows')
+            );
+        }
+    });
+
+    it('spawnShellCommand supports timeout', async () => {
+        if (process.platform !== 'win32') return;
+        const result = await spawnShellCommand(
+            `"${process.execPath}" -e "setTimeout(()=>{},60000)"`,
+            { timeoutMs: 500 }
+        );
+        assert.equal(result.timedOut, true);
+        assert.notEqual(result.exitCode, 0);
+    });
+
+    it('spawnShellCommand supports AbortController cancellation', async () => {
+        if (process.platform !== 'win32') return;
+        const ac = new AbortController();
+        const promise = spawnShellCommand(
+            `"${process.execPath}" -e "setTimeout(()=>{},60000)"`,
+            { signal: ac.signal, timeoutMs: 30000 }
+        );
+        setTimeout(() => ac.abort(), 300);
+        const result = await promise;
+        assert.equal(result.cancelled, true);
     });
 });
