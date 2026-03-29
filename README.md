@@ -138,6 +138,7 @@ Full reference: **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopu
 - Optional skills are discovered from the compact `live/config/skills-index.json` index. After the user selects a built-in pack, it should be installed into `live/skills/**` without reading the full optional `SKILL.md` immediately. Full optional skill files should be opened only later, when the selected skill is actually activated for a task or a hard activation rule requires it.
 - `octopus` without arguments is now non-destructive and only prints overview/help.
 - The public CLI owns the validated runtime surface for lifecycle commands and gate routes.
+- Update trust is allowlist-first by default. Any bypass for local paths or non-standard update sources must be explicit via `--trust-override --no-prompt`, and ordinary CLI flows ignore the legacy `OCTOPUS_UPDATE_TRUST_OVERRIDE` environment variable.
 - `bin/octopus.js` is a generated launcher compiled from `src/bin/octopus.ts`; repository builds run from `dist/src/**/*.js`, tests can stage `.node-build/src/**/*.js`, and packaged installs invoke the same compiled contract from `node_modules`.
 - Root `tsconfig.json` is the editor-facing entrypoint and simply extends `tsconfig.node-foundation.json`.
 - Installer is non-destructive for existing project files outside managed blocks.

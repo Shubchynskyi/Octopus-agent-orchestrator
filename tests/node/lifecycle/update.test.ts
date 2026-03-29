@@ -152,6 +152,13 @@ describe('runUpdate', () => {
                 targetRoot: projectRoot,
                 bundleRoot,
                 initAnswersPath: answersPath,
+                trustContext: {
+                    policy: 'overridden',
+                    overrideUsed: true,
+                    overrideSource: 'cli-flag',
+                    sourceType: 'path',
+                    sourceReference: '/tmp/local-source'
+                },
                 skipVerify: true,
                 skipManifestValidation: true
             });
@@ -172,6 +179,9 @@ describe('runUpdate', () => {
             assert.ok(reportContent.includes('# Update Report'));
             assert.ok(reportContent.includes('Install: PASS'));
             assert.ok(reportContent.includes('Materialization: PASS'));
+            assert.ok(reportContent.includes('TrustPolicy: overridden'));
+            assert.ok(reportContent.includes('TrustOverrideUsed: yes'));
+            assert.ok(reportContent.includes('TrustOverrideSource: cli-flag'));
         } finally {
             removePathRecursive(projectRoot);
         }

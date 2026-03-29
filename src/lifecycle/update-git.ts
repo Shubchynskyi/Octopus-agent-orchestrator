@@ -9,7 +9,7 @@ import {
     spawnSyncWithTimeout
 } from '../core/subprocess';
 import { removePathRecursive } from './common';
-import { runCheckUpdate } from './check-update';
+import { type CheckUpdateRunnerOptions, runCheckUpdate } from './check-update';
 import { validateGitSourceTrust } from './update-trust';
 import { classifyGitDiagnostic, createLifecycleDiagnosticError } from './update-diagnostics';
 import { registerTempRoot } from '../cli/signal-handler';
@@ -33,7 +33,7 @@ interface RunUpdateFromGitOptions {
     skipVerify?: boolean;
     skipManifestValidation?: boolean;
     trustOverride?: boolean;
-    updateRunner?: ((options: Record<string, unknown>) => unknown) | null;
+    updateRunner?: ((options: CheckUpdateRunnerOptions) => unknown) | null;
 }
 
 export function buildGitCloneArgs(repoUrl: string, branch: string | null | undefined, destinationPath: string): string[] {
@@ -147,7 +147,8 @@ export async function runUpdateFromGit(options: RunUpdateFromGitOptions) {
             dryRun,
             skipVerify,
             skipManifestValidation,
-            trustOverride: true,
+            trustOverride: false,
+            prevalidatedPathTrustResult: trustResult,
             updateRunner
         });
 

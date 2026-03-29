@@ -24,7 +24,11 @@ import {
     restoreSyncedItemsFromBackup,
     validateTargetRoot
 } from './common';
-import { validateNpmSourceTrust, validatePathSourceTrust } from './update-trust';
+import {
+    type TrustValidationResult,
+    validateNpmSourceTrust,
+    validatePathSourceTrust
+} from './update-trust';
 import { classifyNpmDiagnostic, createLifecycleDiagnosticError } from './update-diagnostics';
 
 export const DEFAULT_PACKAGE_NAME = 'octopus-agent-orchestrator';
@@ -47,6 +51,7 @@ export interface AcquireUpdateSourceOptions {
     onProgress?: ((chunk: string) => void) | null;
     diagnosticSourceReference?: string | null;
     diagnosticTool?: string | null;
+    prevalidatedPathTrustResult?: TrustValidationResult | null;
 }
 
 export interface AcquiredUpdateSource {
@@ -57,8 +62,23 @@ export interface AcquiredUpdateSource {
     packageName: string | null;
     sourceRoot: string;
     trustPolicy: string;
+    trustOverrideUsed: boolean;
+    trustOverrideSource: string;
     diagnosticTool: string;
     cleanup: () => void;
+}
+
+export interface CheckUpdateRunnerOptions {
+    targetRoot: string;
+    initAnswersPath: string;
+    noPrompt: boolean;
+    skipVerify: boolean;
+    skipManifestValidation: boolean;
+    trustPolicy: string;
+    trustOverrideUsed: boolean;
+    trustOverrideSource: string;
+    sourceType: string;
+    sourceReference: string;
 }
 
 interface CheckUpdateOptions {
@@ -78,13 +98,8 @@ interface CheckUpdateOptions {
     onProgress?: ((chunk: string) => void) | null;
     diagnosticSourceReference?: string | null;
     diagnosticTool?: string | null;
-    updateRunner?: ((options: {
-        targetRoot: string;
-        initAnswersPath: string;
-        noPrompt: boolean;
-        skipVerify: boolean;
-        skipManifestValidation: boolean;
-    }) => void) | null;
+    prevalidatedPathTrustResult?: TrustValidationResult | null;
+    updateRunner?: ((options: CheckUpdateRunnerOptions) => void) | null;
 }
 
 interface CheckUpdateResult {
@@ -101,6 +116,8 @@ interface CheckUpdateResult {
     noPrompt: boolean;
     dryRun: boolean;
     trustPolicy: string;
+    trustOverrideUsed: boolean;
+    trustOverrideSource: string;
     syncItemsDetected: number;
     syncItemsBackedUp: number;
     syncItemsUpdated: number;
@@ -300,7 +317,8 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
         signal = null,
         onProgress = null,
         diagnosticSourceReference = null,
-        diagnosticTool = null
+        diagnosticTool = null,
+        prevalidatedPathTrustResult = null
     } = options;
 
     if (packageSpec && sourcePath) {
@@ -308,7 +326,7 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
     }
 
     if (sourcePath) {
-        const trustResult = validatePathSourceTrust(sourcePath, { trustOverride });
+        const trustResult = prevalidatedPathTrustResult || validatePathSourceTrust(sourcePath, { trustOverride });
         const resolvedSourcePath = path.resolve(String(sourcePath).trim());
         if (!pathExists(resolvedSourcePath)) {
             throw new Error(`Update source path not found: ${resolvedSourcePath}`);
@@ -327,6 +345,8 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
             packageName: readPackageNameFromDirectory(resolvedSourcePath),
             sourceRoot: resolvedSourcePath,
             trustPolicy: trustResult.policy,
+            trustOverrideUsed: trustResult.overridden,
+            trustOverrideSource: trustResult.overrideSource || 'none',
             diagnosticTool: diagnosticTool || 'path',
             cleanup() {}
         };
@@ -414,6 +434,8 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
             packageName: installed.packageName,
             sourceRoot: installed.packageRoot,
             trustPolicy: trustResult.policy,
+            trustOverrideUsed: trustResult.overridden,
+            trustOverrideSource: trustResult.overrideSource || 'none',
             diagnosticTool: diagnosticTool || 'npm',
             cleanup() {
                 removePathRecursive(tempInstallRoot);
@@ -467,6 +489,7 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         onProgress = null,
         diagnosticSourceReference = null,
         diagnosticTool = null,
+        prevalidatedPathTrustResult = null,
         updateRunner = null
     } = options;
 
@@ -495,7 +518,8 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         signal,
         onProgress,
         diagnosticSourceReference,
-        diagnosticTool
+        diagnosticTool,
+        prevalidatedPathTrustResult
     });
 
     const result: CheckUpdateResult = {
@@ -512,6 +536,8 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         noPrompt,
         dryRun,
         trustPolicy: source.trustPolicy || 'enforced',
+        trustOverrideUsed: source.trustOverrideUsed === true,
+        trustOverrideSource: source.trustOverrideSource || 'none',
         syncItemsDetected: 0,
         syncItemsBackedUp: 0,
         syncItemsUpdated: 0,
@@ -639,7 +665,12 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                             initAnswersPath,
                             noPrompt,
                             skipVerify,
-                            skipManifestValidation
+                            skipManifestValidation,
+                            trustPolicy: result.trustPolicy,
+                            trustOverrideUsed: result.trustOverrideUsed,
+                            trustOverrideSource: result.trustOverrideSource,
+                            sourceType: result.sourceType,
+                            sourceReference: result.sourceReference
                         });
                     }
 

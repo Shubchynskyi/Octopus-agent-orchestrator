@@ -116,6 +116,14 @@ Ordinary `update` and `check-update --apply` additionally:
 - re-run install and live materialization
 - apply built-in migrations for mandatory live rule contracts in existing workspaces
 - run verify plus manifest validation before the update is considered successful
+- keep update-source trust in enforced mode unless the operator explicitly passes `--trust-override --no-prompt`
+- record trust-policy audit data (`TrustPolicy`, `TrustOverrideUsed`, `TrustOverrideSource`) in update CLI output and update reports
+
+Update trust model:
+
+- Trusted mode accepts only the allowlisted npm package name and allowlisted git repository URLs.
+- Local `--source-path` update sources are test/dev-only flows and require explicit `--trust-override --no-prompt`.
+- The legacy `OCTOPUS_UPDATE_TRUST_OVERRIDE` environment variable is ignored by ordinary CLI/runtime flows and is reserved for test-only harness paths.
 
 ## Gate Inventory
 

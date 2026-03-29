@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import {
+    assertExplicitCliTrustOverride,
     TRUST_OVERRIDE_ENV_VAR,
     TRUSTED_GIT_REPO_URLS,
     TRUSTED_NPM_PACKAGE_NAMES,
@@ -13,6 +14,7 @@ import {
     isTrustOverrideActive,
     normalizeGitUrl,
     parseNpmPackageSpec,
+    resolveTrustOverrideSource,
     validateGitSourceTrust,
     validateNpmSourceTrust,
     validatePathSourceTrust
@@ -216,12 +218,18 @@ describe('isNpmPackageSpecTrusted', () => {
 
 describe('isTrustOverrideActive', () => {
     const savedEnv = process.env[TRUST_OVERRIDE_ENV_VAR];
+    const savedNodeEnv = process.env.NODE_ENV;
 
     afterEach(() => {
         if (savedEnv === undefined) {
             delete process.env[TRUST_OVERRIDE_ENV_VAR];
         } else {
             process.env[TRUST_OVERRIDE_ENV_VAR] = savedEnv;
+        }
+        if (savedNodeEnv === undefined) {
+            delete process.env.NODE_ENV;
+        } else {
+            process.env.NODE_ENV = savedNodeEnv;
         }
     });
 
@@ -235,34 +243,70 @@ describe('isTrustOverrideActive', () => {
         assert.equal(isTrustOverrideActive({ trustOverride: false }), false);
     });
 
-    it('returns true when env is "1"', () => {
+    it('ignores env override by default in ordinary runtime flows', () => {
         process.env[TRUST_OVERRIDE_ENV_VAR] = '1';
-        assert.equal(isTrustOverrideActive({}), true);
+        process.env.NODE_ENV = 'test';
+        assert.equal(isTrustOverrideActive({}), false);
     });
 
-    it('returns true when env is "true"', () => {
+    it('allows env override only in explicit test-only paths', () => {
         process.env[TRUST_OVERRIDE_ENV_VAR] = 'true';
-        assert.equal(isTrustOverrideActive({}), true);
+        process.env.NODE_ENV = 'test';
+        assert.equal(isTrustOverrideActive({ allowEnvTrustOverride: true }), true);
+        assert.equal(resolveTrustOverrideSource({ allowEnvTrustOverride: true }), 'env-test-only');
     });
 
-    it('returns true when env is "yes"', () => {
+    it('rejects env override outside test runtime even when explicitly enabled', () => {
         process.env[TRUST_OVERRIDE_ENV_VAR] = 'yes';
-        assert.equal(isTrustOverrideActive({}), true);
+        process.env.NODE_ENV = 'development';
+        assert.equal(isTrustOverrideActive({ allowEnvTrustOverride: true }), false);
     });
 
     it('returns false when env is "0"', () => {
         process.env[TRUST_OVERRIDE_ENV_VAR] = '0';
-        assert.equal(isTrustOverrideActive({}), false);
+        process.env.NODE_ENV = 'test';
+        assert.equal(isTrustOverrideActive({ allowEnvTrustOverride: true }), false);
     });
 
     it('returns false when env is empty', () => {
         process.env[TRUST_OVERRIDE_ENV_VAR] = '';
-        assert.equal(isTrustOverrideActive({}), false);
+        process.env.NODE_ENV = 'test';
+        assert.equal(isTrustOverrideActive({ allowEnvTrustOverride: true }), false);
     });
 
     it('returns false with no options and no env', () => {
         delete process.env[TRUST_OVERRIDE_ENV_VAR];
         assert.equal(isTrustOverrideActive(null), false);
+    });
+});
+
+describe('assertExplicitCliTrustOverride', () => {
+    it('allows ordinary trusted-mode calls without noPrompt', () => {
+        assert.doesNotThrow(() => {
+            assertExplicitCliTrustOverride('update', {
+                trustOverride: false,
+                noPrompt: false
+            });
+        });
+    });
+
+    it('rejects trust override without noPrompt', () => {
+        assert.throws(
+            () => assertExplicitCliTrustOverride('check-update', {
+                trustOverride: true,
+                noPrompt: false
+            }),
+            /--trust-override.*--no-prompt/
+        );
+    });
+
+    it('accepts trust override with noPrompt', () => {
+        assert.doesNotThrow(() => {
+            assertExplicitCliTrustOverride('update git', {
+                trustOverride: true,
+                noPrompt: true
+            });
+        });
     });
 });
 
@@ -277,6 +321,7 @@ describe('validateGitSourceTrust', () => {
         assert.equal(result.trusted, true);
         assert.equal(result.overridden, false);
         assert.equal(result.policy, 'enforced');
+        assert.equal(result.overrideSource, null);
     });
 
     it('throws for untrusted repo URL without override', () => {
@@ -291,6 +336,7 @@ describe('validateGitSourceTrust', () => {
         assert.equal(result.trusted, false);
         assert.equal(result.overridden, true);
         assert.equal(result.policy, 'overridden');
+        assert.equal(result.overrideSource, 'cli-flag');
     });
 
     it('error message includes the rejected URL', () => {
@@ -300,6 +346,7 @@ describe('validateGitSourceTrust', () => {
         } catch (err: unknown) {
             assert.ok((err as Error).message.includes('https://evil.com/repo.git'));
             assert.ok((err as Error).message.includes('--trust-override'));
+            assert.ok((err as Error).message.includes('--no-prompt'));
         }
     });
 });
@@ -311,6 +358,7 @@ describe('validateNpmSourceTrust', () => {
         const result = validateNpmSourceTrust('octopus-agent-orchestrator@latest', { trustOverride: false });
         assert.equal(result.trusted, true);
         assert.equal(result.policy, 'enforced');
+        assert.equal(result.overrideSource, null);
     });
 
     it('throws for untrusted package spec without override', () => {
@@ -325,6 +373,7 @@ describe('validateNpmSourceTrust', () => {
         assert.equal(result.trusted, false);
         assert.equal(result.overridden, true);
         assert.equal(result.policy, 'overridden');
+        assert.equal(result.overrideSource, 'cli-flag');
     });
 
     it('throws for local path used as npm spec', () => {
@@ -341,6 +390,7 @@ describe('validateNpmSourceTrust', () => {
         } catch (err: unknown) {
             assert.ok((err as Error).message.includes('evil-package@1.0.0'));
             assert.ok((err as Error).message.includes('--trust-override'));
+            assert.ok((err as Error).message.includes('--no-prompt'));
         }
     });
 });
@@ -360,6 +410,7 @@ describe('validatePathSourceTrust', () => {
         assert.equal(result.trusted, false);
         assert.equal(result.overridden, true);
         assert.equal(result.policy, 'overridden');
+        assert.equal(result.overrideSource, 'cli-flag');
     });
 
     it('error message includes the rejected path', () => {
@@ -369,6 +420,7 @@ describe('validatePathSourceTrust', () => {
         } catch (err: unknown) {
             assert.ok((err as Error).message.includes('C:\\dev\\repo'));
             assert.ok((err as Error).message.includes('--trust-override'));
+            assert.ok((err as Error).message.includes('--no-prompt'));
         }
     });
 });

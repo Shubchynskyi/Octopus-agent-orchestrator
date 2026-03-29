@@ -6,7 +6,9 @@
  * - Local source paths (--source-path) are rejected.
  *
  * Override:
- * - Pass trustOverride: true or set OCTOPUS_UPDATE_TRUST_OVERRIDE=1 to bypass.
+ * - Ordinary bypass requires explicit trustOverride: true from the caller.
+ * - The legacy environment variable is ignored in normal runtime flows and can
+ *   only be enabled deliberately for test-only harness paths.
  * - Overridden sources are clearly flagged in the result.
  */
 
@@ -23,12 +25,16 @@ export const TRUST_OVERRIDE_ENV_VAR = 'OCTOPUS_UPDATE_TRUST_OVERRIDE';
 
 interface TrustOverrideOptions {
     trustOverride?: boolean;
+    allowEnvTrustOverride?: boolean;
 }
 
-interface TrustValidationResult {
+export type TrustOverrideSource = 'cli-flag' | 'env-test-only';
+
+export interface TrustValidationResult {
     trusted: boolean;
     overridden: boolean;
     policy: 'overridden' | 'enforced';
+    overrideSource: TrustOverrideSource | null;
 }
 
 interface ParsedNpmPackageSpec {
@@ -36,14 +42,51 @@ interface ParsedNpmPackageSpec {
     version: string | null;
 }
 
+function isTruthyEnvValue(value: string): boolean {
+    return value === '1' || value === 'true' || value === 'yes';
+}
+
+function isTestOnlyEnvTrustOverrideRuntime(): boolean {
+    return String(process.env.NODE_ENV || '').trim().toLowerCase() === 'test';
+}
+
+export function resolveTrustOverrideSource(options?: TrustOverrideOptions | null): TrustOverrideSource | null {
+    if (options && options.trustOverride === true) {
+        return 'cli-flag';
+    }
+    if (!options || options.allowEnvTrustOverride !== true) {
+        return null;
+    }
+    if (!isTestOnlyEnvTrustOverrideRuntime()) {
+        return null;
+    }
+    const envValue = String(process.env[TRUST_OVERRIDE_ENV_VAR] || '').trim().toLowerCase();
+    return isTruthyEnvValue(envValue) ? 'env-test-only' : null;
+}
+
 /**
  * Returns true when the caller has explicitly opted out of trust enforcement.
- * Checks both the options object and the environment variable.
+ * Ordinary runtime flows only honour the explicit option; the environment
+ * variable is reserved for test-only paths that opt into it.
  */
 export function isTrustOverrideActive(options?: TrustOverrideOptions | null): boolean {
-    if (options && options.trustOverride === true) return true;
-    const envValue = String(process.env[TRUST_OVERRIDE_ENV_VAR] || '').trim().toLowerCase();
-    return envValue === '1' || envValue === 'true' || envValue === 'yes';
+    return resolveTrustOverrideSource(options) !== null;
+}
+
+export function assertExplicitCliTrustOverride(commandName: string, options?: {
+    trustOverride?: boolean;
+    noPrompt?: boolean;
+} | null): void {
+    if (!options || options.trustOverride !== true) {
+        return;
+    }
+    if (options.noPrompt === true) {
+        return;
+    }
+    throw new Error(
+        `${commandName} trust override requires explicit non-interactive acknowledgement. ` +
+        'Rerun with both --trust-override and --no-prompt.'
+    );
 }
 
 /**
@@ -115,45 +158,45 @@ export function isNpmPackageSpecTrusted(packageSpec: string): boolean {
 // ── Validation entry-points ────────────────────────────────────────────
 
 export function validateGitSourceTrust(repoUrl: string, options?: TrustOverrideOptions | null): TrustValidationResult {
-    const overridden = isTrustOverrideActive(options);
-    if (overridden) {
-        return { trusted: false, overridden: true, policy: 'overridden' };
+    const overrideSource = resolveTrustOverrideSource(options);
+    if (overrideSource) {
+        return { trusted: false, overridden: true, policy: 'overridden', overrideSource };
     }
     if (isGitRepoUrlTrusted(repoUrl)) {
-        return { trusted: true, overridden: false, policy: 'enforced' };
+        return { trusted: true, overridden: false, policy: 'enforced', overrideSource: null };
     }
     throw new Error(
         `Update source trust policy rejected git repository '${repoUrl}'. ` +
         `Only allowlisted repositories are accepted in trusted mode. ` +
         `Trusted: ${TRUSTED_GIT_REPO_URLS.join(', ')}. ` +
-        `Use --trust-override or set ${TRUST_OVERRIDE_ENV_VAR}=1 to bypass.`
+        'Use --trust-override together with --no-prompt to bypass.'
     );
 }
 
 export function validateNpmSourceTrust(packageSpec: string, options?: TrustOverrideOptions | null): TrustValidationResult {
-    const overridden = isTrustOverrideActive(options);
-    if (overridden) {
-        return { trusted: false, overridden: true, policy: 'overridden' };
+    const overrideSource = resolveTrustOverrideSource(options);
+    if (overrideSource) {
+        return { trusted: false, overridden: true, policy: 'overridden', overrideSource };
     }
     if (isNpmPackageSpecTrusted(packageSpec)) {
-        return { trusted: true, overridden: false, policy: 'enforced' };
+        return { trusted: true, overridden: false, policy: 'enforced', overrideSource: null };
     }
     throw new Error(
         `Update source trust policy rejected npm package spec '${packageSpec}'. ` +
         `Only allowlisted package names are accepted in trusted mode. ` +
         `Trusted: ${TRUSTED_NPM_PACKAGE_NAMES.join(', ')}. ` +
-        `Use --trust-override or set ${TRUST_OVERRIDE_ENV_VAR}=1 to bypass.`
+        'Use --trust-override together with --no-prompt to bypass.'
     );
 }
 
 export function validatePathSourceTrust(sourcePath: string, options?: TrustOverrideOptions | null): TrustValidationResult {
-    const overridden = isTrustOverrideActive(options);
-    if (overridden) {
-        return { trusted: false, overridden: true, policy: 'overridden' };
+    const overrideSource = resolveTrustOverrideSource(options);
+    if (overrideSource) {
+        return { trusted: false, overridden: true, policy: 'overridden', overrideSource };
     }
     throw new Error(
         `Update source trust policy rejected local source path '${sourcePath}'. ` +
         `Local source paths are not accepted in trusted mode. ` +
-        `Use --trust-override or set ${TRUST_OVERRIDE_ENV_VAR}=1 to bypass.`
+        'Use --trust-override together with --no-prompt to bypass.'
     );
 }

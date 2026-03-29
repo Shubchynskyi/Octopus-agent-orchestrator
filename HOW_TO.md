@@ -209,6 +209,7 @@ octopus rollback --target-root "." --to-version "<target-version>" --init-answer
 `rollback` without `--to-version` restores the latest saved rollback snapshot and bundle backup from the last applied update; with `--to-version` it acquires that version, syncs the bundle, and re-materializes the workspace.
 
 By default `check-update` compares against the deployed package name using the npm `latest` tag. When an update is applied (`check-update --apply` or `update`), the workflow reuses and validates init answers, syncs bundle files, re-materializes `live/`, and only updates `VERSION` after the lifecycle succeeds. For local testing you can point `check-update/update` to `--source-path "."` or to a local tarball via `--package-spec`.
+Trusted mode is the default. If you intentionally bypass the trusted-source allowlist for a local path, non-standard npm spec, or non-allowlisted git source, pass both `--trust-override` and `--no-prompt`; the update report will record that override explicitly. Do not rely on `OCTOPUS_UPDATE_TRUST_OVERRIDE` in CI or production-style flows; ordinary CLI updates ignore it.
 
 See **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md#octopus-update)** for full options.
 

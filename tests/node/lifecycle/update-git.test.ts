@@ -85,6 +85,9 @@ describe('runUpdateFromGit', () => {
             assert.equal(result.checkUpdateResult, 'UPDATE_AVAILABLE');
             assert.equal(result.updateAvailable, true);
             assert.equal(result.updateApplied, false);
+            assert.equal(result.trustPolicy, 'overridden');
+            assert.equal(result.trustOverrideUsed, true);
+            assert.equal(result.trustOverrideSource, 'cli-flag');
         } finally {
             removePathRecursive(repoRoot);
             removePathRecursive(targetRoot);
@@ -110,6 +113,7 @@ describe('runUpdateFromGit', () => {
             assert.equal(result.checkUpdateResult, 'UPDATED');
             assert.equal(result.updateApplied, true);
             assert.equal(updateRunnerCalled, true);
+            assert.equal(result.trustOverrideSource, 'cli-flag');
         } finally {
             removePathRecursive(repoRoot);
             removePathRecursive(targetRoot);

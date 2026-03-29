@@ -52,6 +52,9 @@ describe('runCheckUpdate', () => {
             assert.equal(result.checkUpdateResult, 'UP_TO_DATE');
             assert.equal(result.updateAvailable, false);
             assert.equal(result.currentVersion, currentVersion);
+            assert.equal(result.trustPolicy, 'overridden');
+            assert.equal(result.trustOverrideUsed, true);
+            assert.equal(result.trustOverrideSource, 'cli-flag');
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -147,6 +150,8 @@ describe('runCheckUpdate', () => {
             assert.ok(result.syncItemsUpdated > 0);
             assert.equal(result.syncRollbackStatus, 'NOT_TRIGGERED');
             assert.ok(fs.existsSync(result.syncBackupMetadataPath));
+            assert.equal(result.trustOverrideUsed, true);
+            assert.equal(result.trustOverrideSource, 'cli-flag');
         } finally {
             removePathRecursive(projectRoot);
         }

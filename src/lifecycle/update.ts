@@ -63,6 +63,14 @@ interface ContractMigrationResult {
     appliedFiles?: string[];
 }
 
+interface UpdateTrustContext {
+    policy: string;
+    overrideUsed: boolean;
+    overrideSource: string;
+    sourceType: string;
+    sourceReference: string;
+}
+
 interface RunUpdateOptions {
     targetRoot: string;
     bundleRoot: string;
@@ -75,6 +83,7 @@ interface RunUpdateOptions {
     verifyRunner?: ((options: VerifyRunnerOptions) => unknown) | null;
     manifestRunner?: ((options: ManifestRunnerOptions) => unknown) | null;
     contractMigrationRunner?: ((options: { rootPath: string }) => ContractMigrationResult) | null;
+    trustContext?: UpdateTrustContext | null;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -164,7 +173,8 @@ export function runUpdate(options: RunUpdateOptions) {
         materializationRunner = null,
         verifyRunner = null,
         manifestRunner = null,
-        contractMigrationRunner = null
+        contractMigrationRunner = null,
+        trustContext = null
     } = options;
 
     const normalizedTarget = validateTargetRoot(targetRoot, bundleRoot);
@@ -255,6 +265,13 @@ export function runUpdate(options: RunUpdateOptions) {
     let updatedVersion = bundleVersion;
     let contractMigrationCount = 0;
     let contractMigrationFiles: string[] = [];
+    const effectiveTrustContext: UpdateTrustContext = trustContext || {
+        policy: 'unknown',
+        overrideUsed: false,
+        overrideSource: 'none',
+        sourceType: 'unknown',
+        sourceReference: 'unknown'
+    };
 
     // Create rollback snapshot (not in dry-run)
     if (!dryRun) {
@@ -420,6 +437,13 @@ export function runUpdate(options: RunUpdateOptions) {
             `RollbackSnapshotRecordCount: ${rollbackRecordCount}`,
             `RollbackStatus: ${rollbackStatus}`,
             '',
+            '## Trust',
+            `SourceType: ${effectiveTrustContext.sourceType}`,
+            `SourceReference: ${effectiveTrustContext.sourceReference}`,
+            `TrustPolicy: ${effectiveTrustContext.policy}`,
+            `TrustOverrideUsed: ${effectiveTrustContext.overrideUsed ? 'yes' : 'no'}`,
+            `TrustOverrideSource: ${effectiveTrustContext.overrideSource}`,
+            '',
             '## Version',
             `PreviousVersion: ${previousVersion}`,
             `PreviousVersionSource: ${previousVersionSource}`,
@@ -453,6 +477,9 @@ export function runUpdate(options: RunUpdateOptions) {
         assistantLanguage,
         assistantBrevity,
         sourceOfTruth,
+        trustPolicy: effectiveTrustContext.policy,
+        trustOverrideUsed: effectiveTrustContext.overrideUsed,
+        trustOverrideSource: effectiveTrustContext.overrideSource,
         previousVersion,
         previousVersionSource,
         bundleVersion,

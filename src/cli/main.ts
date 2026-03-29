@@ -28,9 +28,10 @@ import { runDoctor, formatDoctorResult } from '../validators/doctor';
 import { getStatusSnapshot } from '../validators/status';
 import { formatManifestResult, validateManifest } from '../validators/validate-manifest';
 import { formatVerifyResult, runVerify } from '../validators/verify';
-import { runCheckUpdate } from '../lifecycle/check-update';
+import { runCheckUpdate, type CheckUpdateRunnerOptions } from '../lifecycle/check-update';
 import { runContractMigrations } from '../lifecycle/contract-migrations';
 import { runRollback } from '../lifecycle/rollback';
+import { assertExplicitCliTrustOverride } from '../lifecycle/update-trust';
 import { runUninstall } from '../lifecycle/uninstall';
 import { runUpdate } from '../lifecycle/update';
 import { runUpdateFromGit } from '../lifecycle/update-git';
@@ -163,12 +164,7 @@ function ensureBundleExists(targetRoot: string, commandName: string): string {
 }
 
 function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: boolean | undefined) {
-    return function runLifecycleFromCli(runnerOptions: {
-        targetRoot: string;
-        initAnswersPath: string;
-        skipVerify: boolean;
-        skipManifestValidation: boolean;
-    }): UpdateLifecycleResult {
+    return function runLifecycleFromCli(runnerOptions: CheckUpdateRunnerOptions): UpdateLifecycleResult {
         return runUpdate({
             targetRoot: runnerOptions.targetRoot,
             bundleRoot: bundlePath,
@@ -176,6 +172,13 @@ function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: boolean 
             dryRun: fallbackDryRun,
             skipVerify: runnerOptions.skipVerify,
             skipManifestValidation: runnerOptions.skipManifestValidation,
+            trustContext: {
+                policy: runnerOptions.trustPolicy,
+                overrideUsed: runnerOptions.trustOverrideUsed,
+                overrideSource: runnerOptions.trustOverrideSource,
+                sourceType: runnerOptions.sourceType,
+                sourceReference: runnerOptions.sourceReference
+            },
             contractMigrationRunner(options) {
                 return runContractMigrations(options);
             },
@@ -489,6 +492,10 @@ async function handleUpdate(commandArgv: string[], packageJson: PackageJsonLike)
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
     const bundlePath = ensureBundleExists(targetRoot, 'update');
+    assertExplicitCliTrustOverride('update', {
+        trustOverride: options.trustOverride === true,
+        noPrompt: options.noPrompt === true
+    });
 
     let lifecycleResult: UpdateLifecycleResult | null = null;
     const updateResult = await runCheckUpdate({
@@ -512,7 +519,7 @@ async function handleUpdate(commandArgv: string[], packageJson: PackageJsonLike)
     formatKeyValueOutput(mergeUpdateLifecycleOutput(toKeyValueRecord(updateResult), lifecycleResult), [
         'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
         'currentVersion', 'latestVersion', 'updateAvailable',
-        'updateApplied', 'checkUpdateResult', 'trustPolicy',
+        'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
         'previousVersion', 'updatedVersion', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
     ]);
 }
@@ -545,6 +552,10 @@ async function handleUpdateGit(commandArgv: string[], packageJson: PackageJsonLi
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
     const bundlePath = ensureBundleExists(targetRoot, 'update git');
+    assertExplicitCliTrustOverride('update git', {
+        trustOverride: options.trustOverride === true,
+        noPrompt: options.noPrompt === true
+    });
 
     let lifecycleResult: UpdateLifecycleResult | null = null;
     const updateResult = await runUpdateFromGit({
@@ -562,18 +573,13 @@ async function handleUpdateGit(commandArgv: string[], packageJson: PackageJsonLi
         skipManifestValidation: options.skipManifestValidation === true,
         trustOverride: options.trustOverride === true,
         updateRunner(runnerOptions) {
-            lifecycleResult = buildUpdateLifecycleRunner(bundlePath, options.dryRun === true)(runnerOptions as {
-                targetRoot: string;
-                initAnswersPath: string;
-                skipVerify: boolean;
-                skipManifestValidation: boolean;
-            });
+            lifecycleResult = buildUpdateLifecycleRunner(bundlePath, options.dryRun === true)(runnerOptions);
         }
     }) as Record<string, unknown>;
     formatKeyValueOutput(mergeUpdateLifecycleOutput(updateResult, lifecycleResult), [
         'targetRoot', 'repoUrl', 'branch', 'sourceType', 'sourceReference',
         'currentVersion', 'latestVersion', 'updateAvailable',
-        'updateApplied', 'checkUpdateResult', 'trustPolicy',
+        'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
         'previousVersion', 'updatedVersion', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
     ]);
 }
@@ -734,6 +740,10 @@ async function handleCheckUpdate(commandArgv: string[], packageJson: PackageJson
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
     const bundlePath = ensureBundleExists(targetRoot, 'check-update');
+    assertExplicitCliTrustOverride('check-update', {
+        trustOverride: options.trustOverride === true,
+        noPrompt: options.noPrompt === true
+    });
 
     let lifecycleResult: UpdateLifecycleResult | null = null;
     const checkResult = await runCheckUpdate({
@@ -757,7 +767,7 @@ async function handleCheckUpdate(commandArgv: string[], packageJson: PackageJson
     formatKeyValueOutput(mergeUpdateLifecycleOutput(toKeyValueRecord(checkResult), lifecycleResult), [
         'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
         'currentVersion', 'latestVersion', 'updateAvailable',
-        'checkUpdateResult', 'trustPolicy', 'previousVersion', 'updatedVersion',
+        'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource', 'previousVersion', 'updatedVersion',
         'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
     ]);
 }

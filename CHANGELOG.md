@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- no changes yet
+
+## 2.3.4
+
+- hardened update trust bypass flow: ordinary update/check-update/update git paths now ignore the legacy `OCTOPUS_UPDATE_TRUST_OVERRIDE` environment variable, require explicit `--trust-override --no-prompt` for non-allowlisted sources, and record trust override usage in CLI output plus update reports (T-032)
 - hardened zero-diff noop guard: `required-reviews-check` gate now blocks when preflight detects zero-diff (clean tree) unless an audited no-op artifact exists, preventing clean-tree preflights from drifting toward task completion without produced changes (T-033)
 - tightened zero-diff orchestration handling: a clean-tree `preflight` is now treated as baseline-only evidence, and task completion requires either a real produced diff or an audited no-op artifact recorded through the gate flow
 - added audited no-op gate support and completion evidence checks so implementation tasks can no longer drift from `preflight` directly to `DONE` without explicit proof of “already done” / “no changes required”
