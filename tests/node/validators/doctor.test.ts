@@ -154,7 +154,8 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
             passed: true,
             manifestPath: '/tmp/test/MANIFEST.md',
             entriesChecked: 5,
-            duplicates: []
+            duplicates: [],
+            diagnostics: []
         },
         manifestError: null,
         timelineEvidence: [],
@@ -205,7 +206,8 @@ test('formatDoctorResult includes timeline completeness warnings', () => {
             passed: true,
             manifestPath: '/tmp/test/MANIFEST.md',
             entriesChecked: 5,
-            duplicates: []
+            duplicates: [],
+            diagnostics: []
         },
         manifestError: null,
         timelineEvidence: [{
