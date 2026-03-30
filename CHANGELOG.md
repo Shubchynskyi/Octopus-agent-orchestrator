@@ -7,6 +7,7 @@
 - fixed the CI smoke workflow to build the staged `.node-build` test graph before invoking `pack-smoke.test.js`; the smoke step previously assumed `.node-build/tests/**` existed after `npm run build`, which is not true
 - fixed lifecycle smoke for the TS-only repository layout: CI now installs from the already-built checkout and exercises git-based update separately, instead of trying to install from a raw `file://` clone that lacks generated `bin/` and `dist/` artifacts
 - made the concurrent task-event integrity test less timing-sensitive under shared CI runner load while preserving multiprocess lock/integrity coverage
+- opted GitHub Actions workflows into `Node.js 24` for JavaScript-based actions ahead of the hosted-runner cutoff, removing the Node 20 deprecation warning while keeping the project runtime itself on Node 20
 
 ## 2.3.6
 
