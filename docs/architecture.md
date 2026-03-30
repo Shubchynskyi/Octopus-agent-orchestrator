@@ -24,9 +24,9 @@ bin/octopus.js
 
 | Layer | Location | Runtime | Role |
 |---|---|---|---|
-| Public CLI | `bin/octopus.js` | Node.js 20 LTS | Generated launcher compiled from `src/bin/octopus.ts` |
+| Public CLI | `bin/octopus.js` | Node.js 24 LTS | Generated launcher compiled from `src/bin/octopus.ts` |
 | TypeScript source of truth | `src/**/*.ts` | compile-time only | Strict compiler-enforced runtime source |
-| Executed runtime | `dist/src/**/*.js` and `.node-build/src/**/*.js` | Node.js 20 LTS | Compiled lifecycle, validator, and gate implementation |
+| Executed runtime | `dist/src/**/*.js` and `.node-build/src/**/*.js` | Node.js 24 LTS | Compiled lifecycle, validator, and gate implementation |
 | Live workspace | `live/**` | materialized content | Canonical rules, config, skills, metadata |
 
 ## What Is Deployed To Project Root

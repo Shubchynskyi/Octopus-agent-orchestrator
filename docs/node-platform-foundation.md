@@ -4,7 +4,7 @@
 
 This document records the TypeScript/Node foundation that now backs the active runtime.
 
-- baseline: **Node 20 LTS**
+- baseline: **Node 24 LTS**
 - source of truth: **`src/**/*.ts`**
 - executed runtime: **`dist/src/**/*.js`** (or staged **`.node-build/src/**/*.js`** in test fixtures)
 - public router: generated **`bin/octopus.js`** compiled from **`src/bin/octopus.ts`**

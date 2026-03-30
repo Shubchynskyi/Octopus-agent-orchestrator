@@ -9,7 +9,7 @@ This document captures the current Node-only runtime surface.
 
 - CLI aliases: `octopus`, `oao`, `octopus-agent-orchestrator`
 - Entrypoint: generated `bin/octopus.js` (compiled from `src/bin/octopus.ts`)
-- Runtime baseline: `Node.js >=20.0.0`
+- Runtime baseline: `Node.js >=24.0.0`
 
 ## Execution Modes
 

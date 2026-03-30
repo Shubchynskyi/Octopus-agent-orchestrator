@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 
-export const NODE_ENGINE_RANGE = '>=20.0.0';
-export const NODE_BASELINE_LABEL = 'Node 20 LTS';
+export const NODE_ENGINE_RANGE = '>=24.0.0';
+export const NODE_BASELINE_LABEL = 'Node 24 LTS';
 export const DEFAULT_BUNDLE_NAME = 'Octopus-agent-orchestrator';
 export const DEFAULT_INIT_ANSWERS_RELATIVE_PATH = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json');
 export const DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'agent-init-state.json');

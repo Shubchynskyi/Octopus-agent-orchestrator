@@ -7,8 +7,8 @@ test('describeFoundation exposes the staged Node-only runtime', () => {
     const foundation = describeFoundation();
 
     assert.equal(foundation.activeCliEntrypoint, 'bin/octopus.js');
-    assert.equal(foundation.nodeBaseline, '>=20.0.0');
-    assert.equal(foundation.nodeBaselineLabel, 'Node 20 LTS');
+    assert.equal(foundation.nodeBaseline, '>=24.0.0');
+    assert.equal(foundation.nodeBaselineLabel, 'Node 24 LTS');
     assert.equal(foundation.runtimeMode, 'node-only-router');
     assert.deepEqual(foundation.lifecycleCommands, [
         'setup',

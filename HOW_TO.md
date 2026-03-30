@@ -256,7 +256,7 @@ Custom project-specific skills still live under `Octopus-agent-orchestrator/live
 
 | Component | Requirement |
 |---|---|
-| Public CLI and gate commands | Node.js 20 LTS |
+| Public CLI and gate commands | Node.js 24 LTS |
 
 If you work on this repository itself in IntelliJ IDEA/WebStorm, open the root `tsconfig.json`; it extends `tsconfig.node-foundation.json` and is the editor-facing project file.
 
@@ -267,7 +267,7 @@ If you work on this repository itself in IntelliJ IDEA/WebStorm, open the root `
 | `octopus: command not found` | Global install missing or `PATH` not refreshed | Run `npm install -g octopus-agent-orchestrator` and open a new terminal |
 | `npx` fetches a stale version | npm cache holds an older package | Run `npx --yes --package octopus-agent-orchestrator@latest octopus setup` or clear cache with `npm cache clean --force` |
 | `EACCES` / permission denied on global install | No write access to the global `node_modules` prefix | Use `sudo npm install -g …` (Linux/macOS) or fix the npm prefix directory permissions |
-| `octopus setup` exits with "Node.js >= 20 required" | Active Node version is below 20 LTS | Install Node 20+ via `nvm install 20` / `nvm use 20` or download from nodejs.org |
+| `octopus setup` exits with "Node.js >= 24 required" | Active Node version is below 24 LTS | Install Node 24+ via `nvm install 24` / `nvm use 24` or download from nodejs.org |
 | `octopus verify` fails after update | `live/` materialization is out of sync with new templates | Run `octopus init --target-root "."` to re-materialize, then `octopus verify` again |
 | `validate-manifest` reports duplicate keys | MANIFEST.md has repeated file entries | Remove the duplicate lines in `MANIFEST.md` and rerun `octopus gate validate-manifest` |
 | Agent skips init answers and re-asks all 6 questions | `runtime/init-answers.json` missing or unreadable | Verify the file exists and the path passed to the agent matches; rerun `octopus setup` if lost |

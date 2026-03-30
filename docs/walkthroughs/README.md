@@ -21,7 +21,7 @@ Each walkthrough covers the full lifecycle: **install → first task → update 
 ## Prerequisites
 
 All walkthroughs assume:
-- Node.js 20 LTS installed.
+- Node.js 24 LTS installed.
 - `npm install -g octopus-agent-orchestrator` completed.
 - A git-initialized project directory.
 
