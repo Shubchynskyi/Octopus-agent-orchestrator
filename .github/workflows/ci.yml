@@ -121,7 +121,7 @@ jobs:
         run: node --test .node-build/tests/node/packaging/pack-smoke.test.js
 
       # Lifecycle smoke using the local built CLI.
-      # Stages map to: setup/install -> init -> reinit -> update -> uninstall
+      # Stages map to: setup -> update git -> doctor -> uninstall.
       - name: Lifecycle smoke (cross-platform E2E install → update → uninstall)
         shell: bash
         run: |
@@ -132,37 +132,27 @@ jobs:
           # Always use absolute paths in cross-platform test to avoid pathing drift
           CLI="node ${GITHUB_WORKSPACE}/bin/octopus.js"
 
-          echo "::group::1. Install (git-clone path via file URI)"
-          # Using file:// tests the git cloning/fetching paths without hitting external network.
-          # It validates acquireSourceRoot and syncBundleItems end-to-end.
-          # Pin clone/update to the current workflow branch so PR runs do not silently test
-          # the repository default branch via file:// clone semantics.
+          echo "::group::1. Setup (built source checkout)"
+          # First-run CI smoke must go through setup so init-answers are materialized
+          # non-interactively before install/init/review commands are exercised.
           GIT_URL="file://${GITHUB_WORKSPACE}"
           # Format file URL properly for Windows (file:///D:/...) versus Unix (file:///home/...)
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             GIT_URL="file:///${GITHUB_WORKSPACE//\\//}"
           fi
-          $CLI install --target-root "$SMOKE_DIR" --repo-url "$GIT_URL" --branch "$BRANCH_NAME"
+          $CLI setup --target-root "$SMOKE_DIR" --no-prompt --assistant-language "English" --assistant-brevity "concise" --source-of-truth "Antigravity" --enforce-no-auto-commit false --claude-orchestrator-full-access false --token-economy-enabled true --active-agent-files ".antigravity/rules.md"
           echo "::endgroup::"
 
-          echo "::group::2. Init"
-          $CLI init --target-root "$SMOKE_DIR"
+          echo "::group::2. Update (git clone flow)"
+          # Exercise git-based update explicitly against the current workflow branch.
+          $CLI update git --target-root "$SMOKE_DIR" --repo-url "$GIT_URL" --branch "$BRANCH_NAME" --no-prompt --trust-override
           echo "::endgroup::"
 
-          echo "::group::3. Reinit"
-          $CLI reinit --target-root "$SMOKE_DIR" --source-of-truth "Antigravity" --no-prompt
-          echo "::endgroup::"
-
-          echo "::group::4. Update (git pull flow)"
-          # update uses the source origin populated during install to pull latest
-          $CLI update --target-root "$SMOKE_DIR" --no-prompt
-          echo "::endgroup::"
-
-          echo "::group::5. Doctor"
+          echo "::group::3. Doctor"
           $CLI doctor --target-root "$SMOKE_DIR"
           echo "::endgroup::"
 
-          echo "::group::6. Uninstall"
+          echo "::group::4. Uninstall"
           $CLI uninstall --target-root "$SMOKE_DIR" --no-prompt
           echo "::endgroup::"
 

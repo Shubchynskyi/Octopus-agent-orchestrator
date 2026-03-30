@@ -5,6 +5,8 @@
 - updated GitHub Actions workflow dependencies to current major tags for `actions/checkout`, `actions/setup-node`, and `actions/upload-artifact`, removing stale-action warnings from IDE validation
 - fixed the OSV security workflow to use the upstream reusable workflow entrypoint from `google/osv-scanner-action@v2.3.0`; the repository root is not a runnable step-action and broke GitHub Actions job setup with a missing top-level `runs:` section
 - fixed the CI smoke workflow to build the staged `.node-build` test graph before invoking `pack-smoke.test.js`; the smoke step previously assumed `.node-build/tests/**` existed after `npm run build`, which is not true
+- fixed lifecycle smoke for the TS-only repository layout: CI now installs from the already-built checkout and exercises git-based update separately, instead of trying to install from a raw `file://` clone that lacks generated `bin/` and `dist/` artifacts
+- made the concurrent task-event integrity test less timing-sensitive under shared CI runner load while preserving multiprocess lock/integrity coverage
 
 ## 2.3.6
 

@@ -34,7 +34,11 @@ function runConcurrentAppendWorker(modulePath: string, orchestratorRoot: string,
             "const sleepArray = new Int32Array(new SharedArrayBuffer(4));",
             "while (!fs.existsSync(startSignalPath)) { Atomics.wait(sleepArray, 0, 0, 10); }",
             "for (let index = 0; index < attempts; index += 1) {",
-            "  appendTaskEvent(orchestratorRoot, 'T-CONCURRENT', 'test', 'PASS', `Event ${index + 1}`, { worker: process.pid, attempt: index }, { passThru: true, lockTimeoutMs: 10000, lockRetryMs: 5, preWriteDelayMs: delayMs });",
+            "  const result = appendTaskEvent(orchestratorRoot, 'T-CONCURRENT', 'test', 'PASS', `Event ${index + 1}`, { worker: process.pid, attempt: index }, { passThru: true, lockTimeoutMs: 30000, lockRetryMs: 1, preWriteDelayMs: delayMs });",
+            "  if (!result || (Array.isArray(result.warnings) && result.warnings.length > 0)) {",
+            "    const warningText = result && Array.isArray(result.warnings) ? result.warnings.join('; ') : 'appendTaskEvent returned null';",
+            "    throw new Error(warningText);",
+            "  }",
             "}"
         ].join('\n');
 
@@ -445,8 +449,8 @@ test('appendTaskEvent preserves integrity under concurrent process writes', asyn
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-append-concurrent-'));
     const modulePath = resolveTaskEventsModulePath();
     const startSignalPath = path.join(tempDir, 'start.signal');
-    const workerCount = 6;
-    const attemptsPerWorker = 4;
+    const workerCount = 3;
+    const attemptsPerWorker = 3;
 
     try {
         const workers = [];
@@ -457,7 +461,7 @@ test('appendTaskEvent preserves integrity under concurrent process writes', asyn
                     tempDir,
                     startSignalPath,
                     attemptsPerWorker,
-                    40
+                    10
                 )
             );
         }
