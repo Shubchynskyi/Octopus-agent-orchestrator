@@ -113,6 +113,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Build staged node-foundation test graph
+        run: npm run build:node-foundation
+
       # Pack-install smoke: packs a tarball, installs it, exercises version/help/status.
       - name: Pack and install smoke test
         run: node --test .node-build/tests/node/packaging/pack-smoke.test.js
