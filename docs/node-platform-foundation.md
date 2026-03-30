@@ -64,6 +64,17 @@ Runs the explicit release proof path:
 
 This keeps the release contract explicit: the shipped package must build, pass the full test suite, pack cleanly, install, and execute from the packaged runtime.
 
+### GitHub Actions CI
+
+Repository CI mirrors the same contract in `.github/workflows/ci.yml`:
+
+1. `npm run typecheck`
+2. `npm test`
+3. `npm run validate:release`
+4. cross-platform lifecycle smoke on Linux, macOS, and Windows
+
+The lifecycle smoke installs from a `file://` clone of the current workflow branch, not implicitly from the repository default branch. That keeps pull-request and branch runs aligned with the code under test.
+
 ## Current Runtime State
 
 - `bin/octopus.js` is a generated runtime launcher; the maintained source of truth lives in `src/bin/octopus.ts`.

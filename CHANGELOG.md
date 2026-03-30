@@ -1,8 +1,14 @@
 # Changelog
 
 ## Unreleased
-
 - no changes yet
+- updated GitHub Actions workflow dependencies to current major tags for `actions/checkout`, `actions/setup-node`, and `actions/upload-artifact`, removing stale-action warnings from IDE validation
+
+## 2.3.6
+
+- fixed self-hosted provider bridge and live rule examples to use `node bin/octopus.js` in the source checkout instead of the deployed bundle path; this avoids running stale materialized workspace code during local orchestrator development
+- fixed GitHub Actions lifecycle smoke to clone the current workflow branch during `file://` install tests, preventing PR and branch runs from silently validating the repository default branch instead of the checked-out code under test
+- documented the CI/runtime contract in `README.md` and `docs/node-platform-foundation.md` so release validation and cross-platform smoke coverage are visible from the main docs surface
 
 ## 2.3.5
 

@@ -1,0 +1,167 @@
+# CI pipeline for Octopus Agent Orchestrator.
+# Runs: typecheck → unit tests → release validation → cross-platform lifecycle smoke matrix.
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - dev
+      - 'release/**'
+  pull_request:
+    branches:
+      - main
+      - master
+      - dev
+      - 'release/**'
+  workflow_dispatch:
+
+# Cancel in-progress runs for the same PR; let push runs complete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ── 1. Static type checking ──────────────────────────────────────────────────
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Run typecheck
+        run: npm run typecheck
+
+  # ── 2. Unit test suite ───────────────────────────────────────────────────────
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: typecheck
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Run tests
+        run: npm test
+
+  # ── 3. Release validation (typecheck + build + test + pack smoke) ─────────────
+  validate-release:
+    name: Release Validation
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Validate release
+        run: npm run validate:release
+
+  # ── 4. Cross-platform lifecycle smoke matrix ──────────────────────────────────
+  # Runs in parallel with unit tests once typecheck passes.
+  # Covers: install → init → reinit → update/doctor → uninstall on all 3 OSes.
+  smoke:
+    name: Smoke / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    needs: [typecheck, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Build
+        run: npm run build
+
+      # Pack-install smoke: packs a tarball, installs it, exercises version/help/status.
+      - name: Pack and install smoke test
+        run: node --test .node-build/tests/node/packaging/pack-smoke.test.js
+
+      # Lifecycle smoke using the local built CLI.
+      # Stages map to: setup/install -> init -> reinit -> update -> uninstall
+      - name: Lifecycle smoke (cross-platform E2E install → update → uninstall)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SMOKE_DIR="$(mktemp -d)"
+          BRANCH_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          # Always use absolute paths in cross-platform test to avoid pathing drift
+          CLI="node ${GITHUB_WORKSPACE}/bin/octopus.js"
+
+          echo "::group::1. Install (git-clone path via file URI)"
+          # Using file:// tests the git cloning/fetching paths without hitting external network.
+          # It validates acquireSourceRoot and syncBundleItems end-to-end.
+          # Pin clone/update to the current workflow branch so PR runs do not silently test
+          # the repository default branch via file:// clone semantics.
+          GIT_URL="file://${GITHUB_WORKSPACE}"
+          # Format file URL properly for Windows (file:///D:/...) versus Unix (file:///home/...)
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            GIT_URL="file:///${GITHUB_WORKSPACE//\\//}"
+          fi
+          $CLI install --target-root "$SMOKE_DIR" --repo-url "$GIT_URL" --branch "$BRANCH_NAME"
+          echo "::endgroup::"
+
+          echo "::group::2. Init"
+          $CLI init --target-root "$SMOKE_DIR"
+          echo "::endgroup::"
+
+          echo "::group::3. Reinit"
+          $CLI reinit --target-root "$SMOKE_DIR" --source-of-truth "Antigravity" --no-prompt
+          echo "::endgroup::"
+
+          echo "::group::4. Update (git pull flow)"
+          # update uses the source origin populated during install to pull latest
+          $CLI update --target-root "$SMOKE_DIR" --no-prompt
+          echo "::endgroup::"
+
+          echo "::group::5. Doctor"
+          $CLI doctor --target-root "$SMOKE_DIR"
+          echo "::endgroup::"
+
+          echo "::group::6. Uninstall"
+          $CLI uninstall --target-root "$SMOKE_DIR" --no-prompt
+          echo "::endgroup::"
+
+          rm -rf "$SMOKE_DIR"
+          echo "Lifecycle smoke PASSED on $RUNNER_OS"

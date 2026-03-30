@@ -18,7 +18,7 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 - Before implementing any task, open `TASK.md`.
 - Do not execute task work until this canonical file and `TASK.md` are both read.
 - Execute tasks only through orchestration workflow (`Execute task <task-id> depth=<1|2|3>`), with preflight and required review gates.
-- After opening downstream workflow files (`40-commands.md`, `80-task-workflow.md`, `90-skill-catalog.md`, and any risk-specific rule pack), record them via `node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack ...` before continuing task execution.
+- After opening downstream workflow files (`40-commands.md`, `80-task-workflow.md`, `90-skill-catalog.md`, and any risk-specific rule pack), record them via `node bin/octopus.js gate load-rule-pack ...` in a self-hosted source checkout, or `node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack ...` inside a materialized/deployed workspace.
 - If provider-native agent directories are available, execute through provider bridge profiles (`.github/agents/orchestrator.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`).
 - Provider bridge profiles must resolve skills from `Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md` and `Octopus-agent-orchestrator/live/config/review-capabilities.json` (including skills added after init).
 

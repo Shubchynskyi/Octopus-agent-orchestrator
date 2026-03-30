@@ -211,7 +211,17 @@ export function detectCommandsViolations(targetRoot: string): string[] {
         'node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context',
         'node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest'
     ];
-    for (var i=0;i<req.length;i++) { if (!content.includes(req[i])) violations.push("40-commands.md must include gate contract snippet '"+req[i]+"'."); }
+    for (var i=0;i<req.length;i++) {
+        var alternatives = getCommandSnippetAlternatives(req[i]);
+        var present = false;
+        for (var a=0;a<alternatives.length;a++) {
+            if (content.includes(alternatives[a])) {
+                present = true;
+                break;
+            }
+        }
+        if (!present) violations.push("40-commands.md must include gate contract snippet '"+req[i]+"'.");
+    }
     for (var j=0;j<PROJECT_COMMAND_PLACEHOLDERS.length;j++) { if (content.includes(PROJECT_COMMAND_PLACEHOLDERS[j])) violations.push('40-commands.md contains unresolved command placeholder: '+PROJECT_COMMAND_PLACEHOLDERS[j]); }
     return violations;
 }
@@ -228,13 +238,35 @@ export function detectTaskModeRuleContractViolations(targetRoot: string): string
         const content = readTextFile(fullPath);
         const fileLabel = path.basename(migration.liveRelativePath);
         for (const snippet of migration.requiredSnippets) {
-            if (!content.includes(snippet)) {
+            const alternatives = getCommandSnippetAlternatives(snippet);
+            let present = false;
+            for (const candidate of alternatives) {
+                if (content.includes(candidate)) {
+                    present = true;
+                    break;
+                }
+            }
+            if (!present) {
                 violations.push(`${fileLabel} must include task-mode contract snippet '${snippet}'.`);
             }
         }
     }
 
     return violations;
+}
+
+function getCommandSnippetAlternatives(snippet: string): string[] {
+    const normalizedSnippet = String(snippet || '');
+    const bundlePath = 'node Octopus-agent-orchestrator/bin/octopus.js';
+    if (!normalizedSnippet.includes(bundlePath)) {
+        return [normalizedSnippet];
+    }
+
+    const sourcePath = 'node bin/octopus.js';
+    return [
+        normalizedSnippet,
+        normalizedSnippet.replace(bundlePath, sourcePath)
+    ];
 }
 
 export function detectCoreRuleViolations(

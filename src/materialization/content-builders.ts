@@ -248,8 +248,8 @@ export function buildRedirectManagedBlock(
         `Hard stop: read \`${canonicalFile}\` first and follow its routing links before responding to anything.`,
         `Hard stop: before any task execution, open \`TASK.md\` and \`${canonicalFile}\`.`,
         'Do not implement tasks directly without orchestration preflight and required review gates.',
-        'After opening downstream workflow files, record them via `node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack ...` before continuing task execution.',
-        'Before each required reviewer invocation, run `node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context ...`; completion for code-changing tasks expects review-skill telemetry from that step.',
+        'After opening downstream workflow files, record them via `node bin/octopus.js gate load-rule-pack ...` in a self-hosted source checkout, or `node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack ...` inside a materialized/deployed workspace.',
+        'Before each required reviewer invocation, run `node bin/octopus.js gate build-review-context ...` in a self-hosted source checkout, or `node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context ...` inside a materialized/deployed workspace; completion for code-changing tasks expects review-skill telemetry from that step.',
         'Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are expected local artifacts; never `git add -f` them unless the user explicitly asks to version orchestrator internals.',
         providerBridgeSection,
         MANAGED_END
@@ -320,15 +320,15 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 1. Read \`${canonicalFile}\` and its routing links before making changes.
 2. Read \`TASK.md\` and select/create a task row before implementation.
 3. Execute task workflow only in orchestrator mode: \`Execute task <task-id> depth=<1|2|3>\`.
-4. Enter task mode explicitly via \`${NODE_GATE_COMMAND_PREFIX} enter-task-mode --task-id "<task-id>" --task-summary "<summary>" ...\`.
-5. Record baseline downstream rules explicitly via \`${NODE_GATE_COMMAND_PREFIX} load-rule-pack --stage "TASK_ENTRY" --loaded-rule-file "<opened-rule-file>" ...\`.
-6. Run preflight classification before implementation via \`${NODE_GATE_COMMAND_PREFIX} classify-change ...\`.
-7. After preflight, refresh downstream rule-pack evidence via \`${NODE_GATE_COMMAND_PREFIX} load-rule-pack --stage "POST_PREFLIGHT" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --loaded-rule-file "<opened-rule-file>" ...\`.
-8. Run compile gate before review via \`${NODE_GATE_COMMAND_PREFIX} compile-gate --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"\`.
-9. Before each required review, run \`${NODE_GATE_COMMAND_PREFIX} build-review-context --review-type "<review-type>" ...\`; that step auto-emits \`REVIEW_PHASE_STARTED\`, \`SKILL_SELECTED\`, and \`SKILL_REFERENCE_LOADED\`.
-10. Run required independent reviews and gates via \`${NODE_GATE_COMMAND_PREFIX} required-reviews-check ...\`, then \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
+4. Enter task mode explicitly via \`node bin/octopus.js gate enter-task-mode ...\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} enter-task-mode ...\` inside a materialized/deployed workspace.
+5. Record baseline downstream rules explicitly via \`node bin/octopus.js gate load-rule-pack ...\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} load-rule-pack ...\` inside a materialized/deployed workspace.
+6. Run preflight classification before implementation via \`node bin/octopus.js gate classify-change ...\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} classify-change ...\` inside a materialized/deployed workspace.
+7. After preflight, refresh downstream rule-pack evidence via \`node bin/octopus.js gate load-rule-pack --stage "POST_PREFLIGHT" ...\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} load-rule-pack --stage "POST_PREFLIGHT" ...\` inside a materialized/deployed workspace.
+8. Run compile gate before review via \`node bin/octopus.js gate compile-gate ...\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} compile-gate ...\` inside a materialized/deployed workspace.
+9. Before each required review, run \`node bin/octopus.js gate build-review-context ...\` in a self-hosted source checkout, or \`${NODE_GATE_COMMAND_PREFIX} build-review-context ...\` inside a materialized/deployed workspace; that step auto-emits \`REVIEW_PHASE_STARTED\`, \`SKILL_SELECTED\`, and \`SKILL_REFERENCE_LOADED\`.
+10. Run required independent reviews and gates via \`node bin/octopus.js gate required-reviews-check ...\` in a self-hosted source checkout, or \`${NODE_GATE_COMMAND_PREFIX} required-reviews-check ...\` inside a materialized/deployed workspace; then \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
 11. Update task status and artifacts in \`TASK.md\`.
-12. Log or inspect lifecycle events by task id via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` / \`task-events-summary\` into \`Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl\`.
+12. Log or inspect lifecycle events by task id via \`node bin/octopus.js gate log-task-event ...\` / \`task-events-summary\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` / \`task-events-summary\` inside a materialized/deployed workspace.
 
 ## Reviewer Launch Mapping (Required)
 - Claude Code: launch clean-context reviewers via Agent tool (\`fork_context=false\`).

@@ -1,0 +1,96 @@
+# Supply-chain security scanning for Octopus Agent Orchestrator.
+# Jobs: npm audit (high-severity gate) + OSV vulnerability scan (SARIF).
+# Runs on push/PR to main branches and weekly on schedule.
+name: Security
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - dev
+      - 'release/**'
+  pull_request:
+    branches:
+      - main
+      - master
+      - dev
+      - 'release/**'
+  schedule:
+    # Weekly scan: every Monday at 03:30 UTC.
+    - cron: '30 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ── 1. npm audit — blocks on high-severity advisories ────────────────────────
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Install without --no-audit so the registry advisory metadata is fetched.
+      - name: Install dependencies
+        run: npm ci --no-fund
+
+      # Fail the job only on high or critical severity advisories.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high --no-fund
+
+  # ── 2. OSV Scanner — open-source vulnerability database scan ─────────────────
+  # Scans package-lock.json against the OSV database (osv.dev).
+  # Uploads results as SARIF to GitHub Security tab when permissions allow.
+  osv-scan:
+    name: OSV Vulnerability Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run OSV Scanner
+        id: osv
+        uses: google/osv-scanner-action@v2
+        # continue-on-error so the SARIF upload still runs even when vulns are found.
+        continue-on-error: true
+        with:
+          scan-args: |-
+            --lockfile=package-lock.json
+            --format=sarif
+            --output=osv-results.sarif
+
+      - name: Upload OSV SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        # SARIF upload requires security-events:write; skip gracefully on forks.
+        continue-on-error: true
+        with:
+          sarif_file: osv-results.sarif
+          category: osv-scanner
+
+      - name: Upload OSV SARIF as artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: osv-scan-results
+          path: osv-results.sarif
+          if-no-files-found: ignore
+
+      # Propagate the OSV exit code after artifact upload so the job fails on vulns.
+      - name: Check OSV scan result
+        if: steps.osv.outcome == 'failure'
+        run: |
+          echo "OSV Scanner found vulnerabilities. Review the SARIF report in the Security tab."
+          exit 1
