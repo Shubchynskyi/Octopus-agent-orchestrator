@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added source-vs-bundle parity detection to explicitly warn and fail-fast when a self-hosted `bin/octopus.js` source checkout runs against a stale deployed runtime bundle (T-034)
 - raised the project runtime baseline from `Node.js 20 LTS` to `Node.js 24 LTS` across package engines, CLI/runtime constants, CI workflows, live/template skill metadata, and operator docs
 - updated GitHub Actions workflow dependencies to current major tags for `actions/checkout`, `actions/setup-node`, and `actions/upload-artifact`, removing stale-action warnings from IDE validation
 - fixed the OSV security workflow to use the upstream reusable workflow entrypoint from `google/osv-scanner-action@v2.3.0`; the repository root is not a runnable step-action and broke GitHub Actions job setup with a missing top-level `runs:` section

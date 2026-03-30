@@ -19,8 +19,102 @@ import {
     getCanonicalEntrypoint,
     getCommandsRulePath,
     getMissingProjectCommands,
-    readUtf8IfExists
+    readUtf8IfExists,
+    detectSourceBundleParity
 } from '../../../src/validators/workspace-layout';
+
+test('detectSourceBundleParity returns isSourceCheckout false for empty dir', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-test-'));
+    try {
+        const result = detectSourceBundleParity(tmpDir);
+        assert.equal(result.isSourceCheckout, false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectSourceBundleParity detects stale bundle when version differs', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-test-'));
+    try {
+        fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), '', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'bin', 'octopus.js'), '', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'bin', 'octopus.js'), '', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'VERSION'), '1.0.1', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+
+        const result = detectSourceBundleParity(tmpDir);
+        assert.equal(result.isSourceCheckout, true);
+        assert.equal(result.isStale, true);
+        assert.ok(result.violations.some(v => v.includes('version')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectSourceBundleParity detects stale bundle when launcher is older', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-test-'));
+    try {
+        fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), '', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'VERSION'), '1.0.0', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+
+        const rootLauncher = path.join(tmpDir, 'bin', 'octopus.js');
+        const bundleLauncher = path.join(tmpDir, 'Octopus-agent-orchestrator', 'bin', 'octopus.js');
+
+        fs.writeFileSync(bundleLauncher, 'old', 'utf8');
+        // Ensure bundle is older by at least 2 seconds
+        const bundleTime = new Date(Date.now() - 5000);
+        fs.utimesSync(bundleLauncher, bundleTime, bundleTime);
+
+        fs.writeFileSync(rootLauncher, 'new', 'utf8');
+
+        const result = detectSourceBundleParity(tmpDir);
+        assert.equal(result.isSourceCheckout, true);
+        assert.equal(result.isStale, true);
+        assert.ok(result.violations.some(v => v.includes('older than')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectSourceBundleParity passes when matching', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-test-'));
+    try {
+        fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), '', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'VERSION'), '1.0.0', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+
+        const rootLauncher = path.join(tmpDir, 'bin', 'octopus.js');
+        const bundleLauncher = path.join(tmpDir, 'Octopus-agent-orchestrator', 'bin', 'octopus.js');
+
+        fs.writeFileSync(rootLauncher, 'same', 'utf8');
+        fs.writeFileSync(bundleLauncher, 'same', 'utf8');
+
+        // Ensure same time
+        const now = new Date();
+        fs.utimesSync(rootLauncher, now, now);
+        fs.utimesSync(bundleLauncher, now, now);
+
+        const result = detectSourceBundleParity(tmpDir);
+        assert.equal(result.isSourceCheckout, true);
+        assert.equal(result.isStale, false);
+        assert.equal(result.violations.length, 0);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
 
 test('BASE_REQUIRED_PATHS is a frozen non-empty array', () => {
     assert.ok(Array.isArray(BASE_REQUIRED_PATHS));

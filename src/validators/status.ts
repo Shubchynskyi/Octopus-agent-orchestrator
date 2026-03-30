@@ -11,7 +11,8 @@ import {
     getCanonicalEntrypoint,
     getCommandsRulePath,
     getMissingProjectCommands,
-    readUtf8IfExists
+    readUtf8IfExists,
+    detectSourceBundleParity
 } from './workspace-layout';
 import { validateTimelineCompleteness } from '../gate-runtime/lifecycle-events';
 
@@ -36,6 +37,7 @@ export interface StatusSnapshot extends CliStatusSnapshot {
     timelineTaskCount: number;
     timelineHealthy: number;
     timelineWarnings: string[];
+    parityResult: ReturnType<typeof detectSourceBundleParity>;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -123,6 +125,10 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
     var taskPresent = pathExists(taskPath) && fs.lstatSync(taskPath).isFile();
     var usagePresent = pathExists(usagePath) && fs.lstatSync(usagePath).isFile();
     var primaryInitializationComplete = bundlePresent && initAnswersPresent && !initAnswersError && livePresent && taskPresent && usagePresent;
+
+    // T-034: detect stale deployed bundle in self-hosted checkouts
+    var parityResult = detectSourceBundleParity(resolvedTargetRoot);
+
     var agentInitializationPendingReason: CliStatusSnapshot['agentInitializationPendingReason'] = null;
     var currentActiveAgentFiles: string[] = [];
     if (answers && answers.ActiveAgentFiles) {
@@ -158,9 +164,10 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
         }
     }
     var agentInitializationComplete = primaryInitializationComplete && agentInitializationPendingReason === null;
-    var readyForTasks = agentInitializationComplete;
+    var readyForTasks = agentInitializationComplete && !parityResult.isStale;
     var recommendedNextCommand = 'npx octopus-agent-orchestrator setup';
     if (readyForTasks) recommendedNextCommand = 'Execute task T-001 depth=2';
+    else if (parityResult.isStale && parityResult.remediation) recommendedNextCommand = parityResult.remediation;
     else if (primaryInitializationComplete && agentInitializationPendingReason !== null)
         recommendedNextCommand = 'Give your agent "'+path.join(bundlePath,'AGENT_INIT_PROMPT.md')+'" and complete the agent-init flow';
     else if (bundlePresent && (!initAnswersPresent || initAnswersError)) recommendedNextCommand = 'npx octopus-agent-orchestrator setup --target-root "'+resolvedTargetRoot+'"';
@@ -231,7 +238,8 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
         readyForTasks: readyForTasks, recommendedNextCommand: recommendedNextCommand,
         timelineTaskCount: timelineTaskCount,
         timelineHealthy: timelineHealthy,
-        timelineWarnings: timelineWarnings
+        timelineWarnings: timelineWarnings,
+        parityResult: parityResult
     };
 }
 
@@ -257,6 +265,17 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
     lines.push('  '+badge(snapshot.bundlePresent)+' Installed');
     lines.push('  '+badge(snapshot.primaryInitializationComplete)+' Primary initialization');
     lines.push('  '+badge(snapshot.agentInitializationComplete)+' Agent initialization');
+
+    // T-034: source-vs-bundle parity in status output
+    if (snapshot.parityResult.isSourceCheckout) {
+        lines.push('  '+badge(!snapshot.parityResult.isStale)+' Source parity (Self-hosted)');
+        if (snapshot.parityResult.isStale) {
+            for (var pk = 0; pk < snapshot.parityResult.violations.length; pk++) {
+                lines.push('    Violation: ' + snapshot.parityResult.violations[pk]);
+            }
+        }
+    }
+
     lines.push('  '+badge(snapshot.readyForTasks)+' Ready for task execution');
     if (snapshot.agentInitializationPendingReason === 'AGENT_HANDOFF_REQUIRED')
         lines.push('  Next stage: Launch your agent with AGENT_INIT_PROMPT.md');

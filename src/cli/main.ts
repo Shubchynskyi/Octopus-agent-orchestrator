@@ -25,6 +25,7 @@ import {
     emitSkillSelectedEvent
 } from '../runtime/skill-telemetry';
 import { runDoctor, formatDoctorResult } from '../validators/doctor';
+import { detectSourceBundleParity } from '../validators/workspace-layout';
 import { explainFailure, formatExplainResult, listExplainIds } from '../validators/explain';
 import { getStatusSnapshot } from '../validators/status';
 import { getWhyBlocked, formatWhyBlockedResult } from '../validators/why-blocked';
@@ -1391,6 +1392,18 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
     const commandArgv = commandName === 'bootstrap' && argv[0] !== 'bootstrap'
         ? argv
         : argv.slice(1);
+
+    // T-034: Fail fast if the deployed bundle is stale vs source checkout
+    if (['gate', 'agent-init', 'skills'].includes(commandName)) {
+        const parityResult = detectSourceBundleParity(normalizePathValue('.'));
+        if (parityResult.isStale) {
+            throw new Error(
+                'Source Parity Violation: The deployed bundle is stale compared to the source checkout.\n' +
+                (parityResult.violations.length > 0 ? parityResult.violations.join('\n') + '\n' : '') +
+                (parityResult.remediation ? `Fix: ${parityResult.remediation}` : 'Run "npm run build" then "npx octopus-agent-orchestrator setup".')
+            );
+        }
+    }
 
     switch (commandName) {
         case 'setup':

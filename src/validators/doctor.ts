@@ -14,7 +14,7 @@ import { validateTimelineCompleteness } from '../gate-runtime/lifecycle-events';
 import { validateManifest, formatManifestResult } from './validate-manifest';
 import { formatVerifyResult } from './verify';
 import { runVerify } from './verify';
-import { getBundlePath } from './workspace-layout';
+import { getBundlePath, detectSourceBundleParity as getSourceBundleParity } from './workspace-layout';
 
 interface DoctorOptions {
     targetRoot: string;
@@ -46,6 +46,7 @@ interface DoctorResult {
     timelineWarnings: string[];
     lockHealth: TaskEventLockScanResult;
     lockCleanup: TaskEventLockCleanupResult | null;
+    parityResult: ReturnType<typeof getSourceBundleParity>;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -162,6 +163,9 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
     try { manifestResult = validateManifest(manifestPath, targetRoot); }
     catch (err: unknown) { manifestError = getErrorMessage(err); }
 
+    // T-034: detect stale deployed bundle in self-hosted checkouts
+    var parityResult = getSourceBundleParity(targetRoot);
+
     // T-004: scan task timelines for integrity and completeness
     var timelineScan = scanTimelineEvidence(bundlePath);
     var lockCleanup = options.cleanupStaleLocks
@@ -170,7 +174,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
     var lockHealth = scanTaskEventLocks(bundlePath);
 
     var manifestPassed = manifestResult ? manifestResult.passed : false;
-    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0;
+    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && !parityResult.isStale;
 
     return {
         passed: passed,
@@ -181,7 +185,8 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         timelineEvidence: timelineScan.evidence,
         timelineWarnings: timelineScan.warnings,
         lockHealth: lockHealth,
-        lockCleanup: lockCleanup
+        lockCleanup: lockCleanup,
+        parityResult: parityResult
     };
 }
 
@@ -189,6 +194,25 @@ export function formatDoctorResult(result: DoctorResult): string {
     var lines: string[] = [];
     lines.push(formatVerifyResult(result.verifyResult));
     lines.push('');
+
+    // T-034: source-vs-bundle parity summary
+    if (result.parityResult.isSourceCheckout) {
+        lines.push('Source Parity (Self-hosted)');
+        if (result.parityResult.isStale) {
+            lines.push('  Status: STALE');
+            for (var k = 0; k < result.parityResult.violations.length; k++) {
+                lines.push('  Violation: ' + result.parityResult.violations[k]);
+            }
+            if (result.parityResult.remediation) {
+                lines.push('  Fix: ' + result.parityResult.remediation);
+            }
+        } else {
+            lines.push('  Status: MATCH');
+            lines.push('  Version: ' + (result.parityResult.rootVersion || 'unknown'));
+        }
+        lines.push('');
+    }
+
     if (result.manifestResult) lines.push(formatManifestResult(result.manifestResult));
     else if (result.manifestError) { lines.push('MANIFEST_VALIDATION_FAILED'); lines.push('Error: '+result.manifestError); }
     lines.push('');

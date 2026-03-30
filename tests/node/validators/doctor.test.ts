@@ -167,7 +167,15 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
             active_count: 0,
             stale_count: 0
         },
-        lockCleanup: null
+        lockCleanup: null,
+        parityResult: {
+            isSourceCheckout: false,
+            isStale: false,
+            violations: [],
+            rootVersion: null,
+            bundleVersion: null,
+            remediation: null
+        }
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -237,7 +245,15 @@ test('formatDoctorResult includes timeline completeness warnings', () => {
             active_count: 0,
             stale_count: 0
         },
-        lockCleanup: null
+        lockCleanup: null,
+        parityResult: {
+            isSourceCheckout: false,
+            isStale: false,
+            violations: [],
+            rootVersion: null,
+            bundleVersion: null,
+            remediation: null
+        }
     };
 
     const output = formatDoctorResult(fakeResult);

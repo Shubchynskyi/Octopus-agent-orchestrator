@@ -114,6 +114,15 @@ interface VersionViolationResult {
     bundleVersion: string | null;
 }
 
+export interface SourceBundleParityResult {
+    isSourceCheckout: boolean;
+    isStale: boolean;
+    violations: string[];
+    rootVersion: string | null;
+    bundleVersion: string | null;
+    remediation: string | null;
+}
+
 /**
  * Get the canonical entrypoint file for a source-of-truth value.
  */
@@ -130,6 +139,72 @@ export function getCanonicalEntrypoint(sourceOfTruth: string): string | null {
  */
 export function getBundlePath(targetRoot: string): string {
     return path.join(targetRoot, DEFAULT_BUNDLE_NAME);
+}
+
+/**
+ * Detect parity between source checkout and deployed bundle.
+ * Self-hosted development should fail fast when running stale bundle code.
+ */
+export function detectSourceBundleParity(targetRoot: string): SourceBundleParityResult {
+    var isSourceCheckout = pathExists(path.join(targetRoot, 'src', 'index.ts')) &&
+                          pathExists(path.join(targetRoot, 'bin', 'octopus.js')) &&
+                          pathExists(path.join(targetRoot, 'package.json'));
+
+    var result: SourceBundleParityResult = {
+        isSourceCheckout: isSourceCheckout,
+        isStale: false,
+        violations: [],
+        rootVersion: null,
+        bundleVersion: null,
+        remediation: null
+    };
+
+    if (!isSourceCheckout) {
+        return result;
+    }
+
+    var rootVersionPath = path.join(targetRoot, 'VERSION');
+    if (pathExists(rootVersionPath)) {
+        result.rootVersion = readTextFile(rootVersionPath).trim();
+    }
+
+    var bundlePath = getBundlePath(targetRoot);
+    var bundleVersionPath = path.join(bundlePath, 'VERSION');
+    if (pathExists(bundleVersionPath)) {
+        result.bundleVersion = readTextFile(bundleVersionPath).trim();
+    }
+
+    if (result.rootVersion && result.bundleVersion && result.rootVersion !== result.bundleVersion) {
+        result.isStale = true;
+        result.violations.push(
+            "Deployed bundle version '" + result.bundleVersion +
+            "' does not match source checkout version '" + result.rootVersion + "'."
+        );
+    }
+
+    var rootLauncherPath = path.join(targetRoot, 'bin', 'octopus.js');
+    var bundleLauncherPath = path.join(bundlePath, 'bin', 'octopus.js');
+
+    if (pathExists(rootLauncherPath) && pathExists(bundleLauncherPath)) {
+        var rootStat = fs.statSync(rootLauncherPath);
+        var bundleStat = fs.statSync(bundleLauncherPath);
+
+        // T-034: detect if bundle is older than source/build output
+        // We use a small tolerance (1s) to avoid noise from sync latency
+        if (rootStat.mtimeMs > bundleStat.mtimeMs + 1000) {
+            result.isStale = true;
+            result.violations.push(
+                "Deployed bundle launcher 'Octopus-agent-orchestrator/bin/octopus.js' is older than source launcher 'bin/octopus.js'. " +
+                "Source was updated at " + rootStat.mtime.toISOString() + " but bundle has " + bundleStat.mtime.toISOString() + "."
+            );
+        }
+    }
+
+    if (result.isStale) {
+        result.remediation = "Run 'npm run build' followed by 'node bin/octopus.js setup' or 'reinit' to update the deployed bundle.";
+    }
+
+    return result;
 }
 
 /**
