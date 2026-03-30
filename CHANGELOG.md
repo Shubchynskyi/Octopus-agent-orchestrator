@@ -3,7 +3,7 @@
 ## Unreleased
 - no changes yet
 - updated GitHub Actions workflow dependencies to current major tags for `actions/checkout`, `actions/setup-node`, and `actions/upload-artifact`, removing stale-action warnings from IDE validation
-- fixed the OSV security workflow to use a resolvable `google/osv-scanner-action@v2.3.0` release tag instead of a missing floating `@v2` reference that broke GitHub Actions job setup
+- fixed the OSV security workflow to use the upstream reusable workflow entrypoint from `google/osv-scanner-action@v2.3.0`; the repository root is not a runnable step-action and broke GitHub Actions job setup with a missing top-level `runs:` section
 
 ## 2.3.6
 
