@@ -159,7 +159,15 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
         },
         manifestError: null,
         timelineEvidence: [],
-        timelineWarnings: []
+        timelineWarnings: [],
+        lockHealth: {
+            lock_root: '/tmp/test/runtime/task-events',
+            subsystem_scope_note: 'Only runtime/task-events/*.lock participates in the task-event lock subsystem. runtime/reviews/ is never cleaned by these diagnostics.',
+            locks: [],
+            active_count: 0,
+            stale_count: 0
+        },
+        lockCleanup: null
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -221,7 +229,15 @@ test('formatDoctorResult includes timeline completeness warnings', () => {
             integrity_event_count: 5,
             violations: []
         }],
-        timelineWarnings: ['Timeline completeness INCOMPLETE for T-004: REVIEW_PHASE_STARTED, COMPLETION_GATE_PASSED']
+        timelineWarnings: ['Timeline completeness INCOMPLETE for T-004: REVIEW_PHASE_STARTED, COMPLETION_GATE_PASSED'],
+        lockHealth: {
+            lock_root: '/tmp/test/runtime/task-events',
+            subsystem_scope_note: 'Only runtime/task-events/*.lock participates in the task-event lock subsystem. runtime/reviews/ is never cleaned by these diagnostics.',
+            locks: [],
+            active_count: 0,
+            stale_count: 0
+        },
+        lockCleanup: null
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -230,4 +246,44 @@ test('formatDoctorResult includes timeline completeness warnings', () => {
     assert.ok(output.includes('Timeline Warnings'));
     assert.ok(output.includes('REVIEW_PHASE_STARTED'));
     assert.ok(output.includes('Doctor: FAIL'));
+});
+
+test('runDoctor reports stale task-event locks and supports dry-run cleanup output', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-locks-test-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    const eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
+    const staleLockPath = path.join(eventsRoot, '.T-005.lock');
+    fs.mkdirSync(staleLockPath, { recursive: true });
+    fs.writeFileSync(
+        path.join(bundlePath, 'MANIFEST.md'),
+        '- bin/octopus.js\n- package.json\n',
+        'utf8'
+    );
+    fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
+        pid: 999999,
+        hostname: 'stale-host',
+        created_at_utc: '2026-03-30T10:00:00.000Z'
+    }, null, 2) + '\n', 'utf8');
+
+    try {
+        const result = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude',
+            cleanupStaleLocks: true,
+            dryRun: true
+        });
+        assert.equal(result.passed, false);
+        assert.equal(result.lockHealth.stale_count, 1);
+        assert.ok(result.lockCleanup !== null);
+        assert.deepEqual(result.lockCleanup!.removable_stale_locks, ['.T-005.lock']);
+        assert.ok(fs.existsSync(staleLockPath), 'dry-run must not remove stale locks');
+
+        const output = formatDoctorResult(result);
+        assert.ok(output.includes('Task-Event Lock Cleanup'));
+        assert.ok(output.includes('Mode: DRY_RUN'));
+        assert.ok(output.includes('.T-005.lock: STALE'));
+        assert.ok(output.includes('runtime/reviews/ is never cleaned'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 });

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { appendTaskEvent } from './task-events';
+import { appendMandatoryTaskEvent, appendTaskEvent } from './task-events';
 
 /**
  * Canonical lifecycle event types that gates auto-emit during task execution.
@@ -237,6 +237,37 @@ function emitLifecycleEvent(
     }
 }
 
+function emitMandatoryLifecycleEvent(
+    repoRoot: string,
+    taskId: string,
+    eventType: string,
+    outcome: string,
+    message: string,
+    details: unknown,
+    options: AutoEmitOptions = {},
+    emitOnce = false
+): ReturnType<typeof appendTaskEvent> {
+    if (!repoRoot || !taskId) {
+        throw new Error(`Mandatory lifecycle event '${eventType}' requires repoRoot and taskId.`);
+    }
+    if (emitOnce && hasTaskEvent(repoRoot, taskId, eventType, options.eventsRoot)) {
+        return null;
+    }
+
+    return appendMandatoryTaskEvent(
+        repoRoot,
+        taskId,
+        eventType,
+        outcome,
+        message,
+        details,
+        {
+            actor: options.actor || 'gate',
+            eventsRoot: options.eventsRoot
+        }
+    );
+}
+
 export function emitPlanCreatedEvent(
     repoRoot: string,
     taskId: string,
@@ -272,6 +303,23 @@ export function emitPreflightStartedEvent(
     );
 }
 
+export function emitMandatoryPreflightStartedEvent(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    return emitMandatoryLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.PREFLIGHT_STARTED,
+        'INFO',
+        'Preflight classification started.',
+        details,
+        options
+    );
+}
+
 export function emitPreflightFailedEvent(
     repoRoot: string,
     taskId: string,
@@ -279,6 +327,23 @@ export function emitPreflightFailedEvent(
     options: AutoEmitOptions = {}
 ): ReturnType<typeof appendTaskEvent> {
     return emitLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.PREFLIGHT_FAILED,
+        'FAIL',
+        'Preflight classification failed.',
+        details,
+        options
+    );
+}
+
+export function emitMandatoryPreflightFailedEvent(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    return emitMandatoryLifecycleEvent(
         repoRoot,
         taskId,
         LIFECYCLE_EVENT_TYPES.PREFLIGHT_FAILED,
@@ -307,6 +372,24 @@ export function emitImplementationStartedEvent(
     );
 }
 
+export function emitMandatoryImplementationStartedEvent(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    return emitMandatoryLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.IMPLEMENTATION_STARTED,
+        'INFO',
+        'Implementation started.',
+        details,
+        options,
+        true
+    );
+}
+
 export function emitReviewPhaseStartedEvent(
     repoRoot: string,
     taskId: string,
@@ -314,6 +397,24 @@ export function emitReviewPhaseStartedEvent(
     options: AutoEmitOptions = {}
 ): ReturnType<typeof appendTaskEvent> {
     return emitLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED,
+        'INFO',
+        'Review phase started.',
+        details,
+        options,
+        true
+    );
+}
+
+export function emitMandatoryReviewPhaseStartedEvent(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    return emitMandatoryLifecycleEvent(
         repoRoot,
         taskId,
         LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED,
@@ -356,6 +457,24 @@ export function emitCompletionGateEvent(
         process.stderr.write(`WARNING: completion-gate event emit failed: ${msg}\n`);
         return null;
     }
+}
+
+export function emitMandatoryCompletionGateEvent(
+    repoRoot: string,
+    taskId: string,
+    passed: boolean,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    return emitMandatoryLifecycleEvent(
+        repoRoot,
+        taskId,
+        passed ? LIFECYCLE_EVENT_TYPES.COMPLETION_GATE_PASSED : LIFECYCLE_EVENT_TYPES.COMPLETION_GATE_FAILED,
+        passed ? 'PASS' : 'FAIL',
+        passed ? 'Completion gate passed.' : 'Completion gate failed.',
+        details,
+        options
+    );
 }
 
 /**

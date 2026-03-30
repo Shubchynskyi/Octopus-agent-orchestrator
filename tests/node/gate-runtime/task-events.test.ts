@@ -7,11 +7,14 @@ import { spawn } from 'node:child_process';
 
 import {
     assertValidTaskId,
+    appendMandatoryTaskEvent,
     buildEventIntegrityHash,
+    cleanupStaleTaskEventLocks,
     normalizeIntegrityValue,
     inspectTaskEventFile,
     appendTaskEvent,
-    readTaskEventAppendState
+    readTaskEventAppendState,
+    scanTaskEventLocks
 } from '../../../src/gate-runtime/task-events';
 import { stringSha256 } from '../../../src/gate-runtime/hash';
 
@@ -474,6 +477,180 @@ test('appendTaskEvent preserves integrity under concurrent process writes', asyn
         assert.equal(result.integrity_event_count, expectedCount);
         assert.equal(result.violations.length, 0);
         assert.equal(aggregateLines.length, expectedCount);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent removes orphaned task lock when owner pid is no longer alive', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-append-orphan-lock-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const lockPath = path.join(eventsRoot, '.T-TEST.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999,
+            hostname: 'test-host',
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+
+        const result = appendTaskEvent(
+            tempDir,
+            'T-TEST',
+            'test',
+            'PASS',
+            'Recovered from orphaned lock',
+            { recovered: true },
+            {
+                passThru: true,
+                lockTimeoutMs: 250,
+                lockRetryMs: 5,
+                lockStaleMs: 60000
+            }
+        );
+
+        assert.ok(result !== null);
+        assert.equal(result!.warnings.length, 0);
+        assert.ok(fs.existsSync(path.join(eventsRoot, 'T-TEST.jsonl')));
+        assert.ok(!fs.existsSync(lockPath), 'orphaned lock should be removed and released');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent timeout warning includes lock owner diagnostics', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-append-live-lock-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const lockPath = path.join(eventsRoot, '.T-TEST.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+
+        const result = appendTaskEvent(
+            tempDir,
+            'T-TEST',
+            'test',
+            'PASS',
+            'Should time out on active lock',
+            null,
+            {
+                passThru: true,
+                lockTimeoutMs: 50,
+                lockRetryMs: 5,
+                lockStaleMs: 60000
+            }
+        );
+
+        assert.ok(result !== null);
+        assert.equal(result!.warnings.length, 1);
+        assert.match(result!.warnings[0], /Timed out acquiring file lock/);
+        assert.match(result!.warnings[0], /owner_pid=/);
+        assert.match(result!.warnings[0], /owner_alive=yes/);
+        assert.match(result!.warnings[0], /owner_metadata_status=ok/);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendMandatoryTaskEvent throws with detailed error when lock acquisition times out', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-append-mandatory-lock-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const lockPath = path.join(eventsRoot, '.T-TEST.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+
+        assert.throws(
+            () => appendMandatoryTaskEvent(
+                tempDir,
+                'T-TEST',
+                'TASK_MODE_ENTERED',
+                'PASS',
+                'Should fail on active lock',
+                null,
+                {
+                    lockTimeoutMs: 50,
+                    lockRetryMs: 5,
+                    lockStaleMs: 60000
+                }
+            ),
+            /Mandatory lifecycle event 'TASK_MODE_ENTERED' append failed:.*owner_pid=.*owner_alive=yes/
+        );
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('scanTaskEventLocks reports active and stale task-event locks only', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-scan-locks-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const staleLockPath = path.join(eventsRoot, '.T-005.lock');
+        const activeLockPath = path.join(eventsRoot, '.all-tasks.lock');
+        const reviewsLockPath = path.join(tempDir, 'runtime', 'reviews', '.ignored.lock');
+        fs.mkdirSync(staleLockPath, { recursive: true });
+        fs.mkdirSync(activeLockPath, { recursive: true });
+        fs.mkdirSync(reviewsLockPath, { recursive: true });
+        fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
+            pid: 999999,
+            hostname: 'stale-host',
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+        fs.writeFileSync(path.join(activeLockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+
+        const result = scanTaskEventLocks(tempDir, { staleMs: 60000 });
+        assert.equal(result.locks.length, 2);
+        assert.equal(result.stale_count, 1);
+        assert.equal(result.active_count, 1);
+        assert.ok(result.subsystem_scope_note.includes('runtime/reviews/'));
+        assert.ok(result.locks.some((lock) => lock.lock_name === '.T-005.lock' && lock.status === 'STALE'));
+        assert.ok(result.locks.some((lock) => lock.lock_name === '.all-tasks.lock' && lock.status === 'ACTIVE'));
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('cleanupStaleTaskEventLocks removes only stale locks and supports dry-run', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-cleanup-locks-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const staleLockPath = path.join(eventsRoot, '.T-005.lock');
+        const activeLockPath = path.join(eventsRoot, '.all-tasks.lock');
+        fs.mkdirSync(staleLockPath, { recursive: true });
+        fs.mkdirSync(activeLockPath, { recursive: true });
+        fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
+            pid: 999999,
+            hostname: 'stale-host',
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+        fs.writeFileSync(path.join(activeLockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+
+        const dryRun = cleanupStaleTaskEventLocks(tempDir, { dryRun: true, staleMs: 60000 });
+        assert.deepEqual(dryRun.removable_stale_locks, ['.T-005.lock']);
+        assert.deepEqual(dryRun.removed_locks, []);
+        assert.ok(fs.existsSync(staleLockPath));
+
+        const applied = cleanupStaleTaskEventLocks(tempDir, { dryRun: false, staleMs: 60000 });
+        assert.deepEqual(applied.removed_locks, ['.T-005.lock']);
+        assert.deepEqual(applied.retained_live_locks, ['.all-tasks.lock']);
+        assert.ok(!fs.existsSync(staleLockPath));
+        assert.ok(fs.existsSync(activeLockPath));
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }

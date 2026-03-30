@@ -4,6 +4,13 @@
 
 - no changes yet
 
+## 2.3.5
+
+- hardened task-event lock recovery: `enter-task-mode` and other gate timeline writes now inspect lock owner metadata, immediately reclaim orphaned `.lock` directories when the recorded PID is dead, and emit timeout diagnostics with lock age plus owner details instead of generic file-lock timeouts (T-034)
+- hardened mandatory gate-event handling: task-mode, rule-pack, preflight, compile, review, doc-impact, and completion paths now fail hard when their required lifecycle timeline events cannot be appended, and `enter-task-mode` rolls back its freshly written artifact instead of leaving a poisoned partial state behind (T-035)
+- added operator diagnostics for blocked/stalled work: `octopus doctor explain <FAILURE_ID>` now prints remediation steps for known failure codes, and `octopus status why-blocked` analyses `TASK.md`, timelines, and failed gates to explain why active tasks cannot progress (T-005)
+- added task-event lock health and safe cleanup: `octopus doctor` now reports `runtime/task-events/*.lock` owner metadata, stale-vs-live assessment, and remediation guidance, while `octopus doctor --cleanup-stale-locks [--dry-run]` removes only proven-stale task-event locks and explicitly excludes `runtime/reviews/` from the lock subsystem (T-036)
+
 ## 2.3.4
 
 - hardened update trust bypass flow: ordinary update/check-update/update git paths now ignore the legacy `OCTOPUS_UPDATE_TRUST_OVERRIDE` environment variable, require explicit `--trust-override --no-prompt` for non-allowlisted sources, and record trust override usage in CLI output plus update reports (T-032)

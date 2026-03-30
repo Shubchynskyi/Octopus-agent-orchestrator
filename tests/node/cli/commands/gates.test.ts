@@ -352,6 +352,35 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('rolls back task-mode artifact when TASK_MODE_ENTERED append fails', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900lock';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const eventsRoot = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'task-events');
+        const lockPath = path.join(eventsRoot, `.${taskId}.lock`);
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+
+        const artifactPath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'reviews', `${taskId}-task-mode.json`);
+        assert.throws(
+            () => runEnterTaskModeCommand({
+                repoRoot,
+                taskId,
+                taskSummary: 'Update app flow'
+            }),
+            /TASK_MODE_ENTERED/
+        );
+        assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('runs compile gate and writes evidence', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901';

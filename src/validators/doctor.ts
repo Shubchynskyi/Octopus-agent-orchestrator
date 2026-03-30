@@ -2,7 +2,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../core/constants';
 import { pathExists } from '../core/fs';
-import { inspectTaskEventFile } from '../gate-runtime/task-events';
+import {
+    cleanupStaleTaskEventLocks,
+    inspectTaskEventFile,
+    scanTaskEventLocks,
+    type TaskEventLockCleanupResult,
+    type TaskEventLockHealth,
+    type TaskEventLockScanResult
+} from '../gate-runtime/task-events';
 import { validateTimelineCompleteness } from '../gate-runtime/lifecycle-events';
 import { validateManifest, formatManifestResult } from './validate-manifest';
 import { formatVerifyResult } from './verify';
@@ -13,6 +20,8 @@ interface DoctorOptions {
     targetRoot: string;
     sourceOfTruth: string;
     initAnswersPath?: string;
+    cleanupStaleLocks?: boolean;
+    dryRun?: boolean;
 }
 
 interface TimelineEvidence {
@@ -35,6 +44,8 @@ interface DoctorResult {
     manifestError: string | null;
     timelineEvidence: TimelineEvidence[];
     timelineWarnings: string[];
+    lockHealth: TaskEventLockScanResult;
+    lockCleanup: TaskEventLockCleanupResult | null;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -153,9 +164,13 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
 
     // T-004: scan task timelines for integrity and completeness
     var timelineScan = scanTimelineEvidence(bundlePath);
+    var lockCleanup = options.cleanupStaleLocks
+        ? cleanupStaleTaskEventLocks(bundlePath, { dryRun: options.dryRun === true })
+        : null;
+    var lockHealth = scanTaskEventLocks(bundlePath);
 
     var manifestPassed = manifestResult ? manifestResult.passed : false;
-    var passed = verifyResult.passed && manifestPassed && !manifestError;
+    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0;
 
     return {
         passed: passed,
@@ -164,7 +179,9 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         manifestResult: manifestResult,
         manifestError: manifestError,
         timelineEvidence: timelineScan.evidence,
-        timelineWarnings: timelineScan.warnings
+        timelineWarnings: timelineScan.warnings,
+        lockHealth: lockHealth,
+        lockCleanup: lockCleanup
     };
 }
 
@@ -192,6 +209,52 @@ export function formatDoctorResult(result: DoctorResult): string {
             for (var j = 0; j < result.timelineWarnings.length; j++) {
                 lines.push('  - ' + result.timelineWarnings[j]);
             }
+        }
+        lines.push('');
+    }
+
+    if (result.lockCleanup) {
+        lines.push('Task-Event Lock Cleanup');
+        lines.push('  Mode: ' + (result.lockCleanup.dry_run ? 'DRY_RUN' : 'APPLY'));
+        lines.push('  LockRoot: ' + result.lockCleanup.lock_root);
+        lines.push('  StaleCandidates: ' + result.lockCleanup.removable_stale_locks.length);
+        lines.push('  Removed: ' + result.lockCleanup.removed_locks.length);
+        if (result.lockCleanup.retained_live_locks.length > 0) {
+            lines.push('  LiveLocksRetained: ' + result.lockCleanup.retained_live_locks.join(', '));
+        }
+        if (result.lockCleanup.failed_locks.length > 0) {
+            lines.push('  CleanupFailures: ' + result.lockCleanup.failed_locks.join(', '));
+        }
+        for (const warning of result.lockCleanup.warnings) {
+            lines.push('  Warning: ' + warning);
+        }
+        lines.push('');
+    }
+
+    if (result.lockHealth.locks.length > 0 || result.lockCleanup) {
+        lines.push('Task-Event Locks');
+        lines.push('  Scope: ' + result.lockHealth.subsystem_scope_note);
+        lines.push(
+            '  Summary: active=' + result.lockHealth.active_count +
+            ', stale=' + result.lockHealth.stale_count
+        );
+        for (const lock of result.lockHealth.locks) {
+            const ageText = lock.age_ms === null ? 'unknown' : `${lock.age_ms}ms`;
+            const ownerPidText = lock.owner_pid === null ? 'unknown' : String(lock.owner_pid);
+            const ownerAliveText = lock.owner_alive === null ? 'unknown' : (lock.owner_alive ? 'yes' : 'no');
+            const ownerHostText = lock.owner_hostname || 'unknown';
+            lines.push(
+                '  ' + lock.lock_name + ': ' + lock.status +
+                ' scope=' + lock.scope +
+                (lock.task_id ? ' task=' + lock.task_id : '') +
+                ' age=' + ageText +
+                ' owner_pid=' + ownerPidText +
+                ' owner_alive=' + ownerAliveText +
+                ' owner_host=' + ownerHostText +
+                ' metadata=' + lock.owner_metadata_status +
+                ' stale_reason=' + (lock.stale_reason || 'none')
+            );
+            lines.push('    Fix: ' + lock.remediation);
         }
         lines.push('');
     }

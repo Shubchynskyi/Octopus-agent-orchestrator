@@ -157,6 +157,9 @@ Add new files in lowercase kebab-case `.md` format when no existing category fit
 ```shell
 octopus agent-init --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --active-agent-files "AGENTS.md" --project-rules-updated yes --skills-prompted yes
 octopus doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+octopus doctor --target-root "." --cleanup-stale-locks --dry-run
+octopus doctor explain COMPILE_GATE_FAILED
+octopus status why-blocked --target-root "."
 octopus verify --target-root "." --source-of-truth "<provider>" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 octopus gate validate-manifest --manifest-path "Octopus-agent-orchestrator/MANIFEST.md"
 ```
@@ -164,6 +167,8 @@ octopus gate validate-manifest --manifest-path "Octopus-agent-orchestrator/MANIF
 **Provider values:** `Claude`, `Codex`, `Gemini`, `Qwen`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
 
 For day-to-day validation, prefer `octopus doctor`, `octopus verify`, and `octopus gate validate-manifest`.
+Use `octopus doctor explain <FAILURE_ID>` when a doctor/gate failure code is known and you want remediation steps, `octopus status why-blocked` when a task is stalled and you need the missing-gate or missing-timeline explanation, and `octopus doctor --cleanup-stale-locks --dry-run` when task-event locks may be blocking gate writes.
+Only `runtime/task-events/*.lock` belongs to this lock subsystem; `runtime/reviews/` is not cleaned by the lock-health workflow.
 
 See **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/cli-reference.md)** for the full low-level script reference.
 

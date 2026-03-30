@@ -56,7 +56,13 @@ octopus agent-init --target-root "." --init-answers-path "Octopus-agent-orchestr
 
 ```text
 octopus status --target-root "."
+octopus status why-blocked --target-root "."
 ```
+
+Notes:
+- `status` prints the normal workspace readiness snapshot.
+- `status why-blocked` inspects `TASK.md`, task timelines, and failed gate markers to explain why `BLOCKED`, `IN_PROGRESS`, or `IN_REVIEW` tasks are stalled.
+- `status why-blocked` also surfaces task-event locks that can block timeline writes and reminds the operator that `runtime/reviews/` is not part of the lock subsystem.
 
 ### `octopus doctor`
 
@@ -64,7 +70,19 @@ Runs `octopus verify` plus `octopus gate validate-manifest`.
 
 ```text
 octopus doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+octopus doctor --target-root "." --cleanup-stale-locks --dry-run
+octopus doctor --target-root "." --cleanup-stale-locks
+octopus doctor explain COMPILE_GATE_FAILED
+octopus doctor explain --list
 ```
+
+Notes:
+- `doctor` remains the aggregate verify + manifest + timeline health command.
+- `doctor` reports task-event lock health under `Octopus-agent-orchestrator/runtime/task-events/*.lock`, including owner metadata, stale-vs-live assessment, and remediation guidance.
+- `doctor --cleanup-stale-locks --dry-run` previews stale task-event locks that are safe to remove; rerun without `--dry-run` to delete only those proven-stale lock directories.
+- `runtime/reviews/` is not part of the task-event lock subsystem and is never cleaned by `doctor --cleanup-stale-locks`.
+- `doctor explain <FAILURE_ID>` prints remediation steps for known failure IDs such as `TASK_MODE_NOT_ENTERED`, `COMPILE_GATE_FAILED`, and `TIMELINE_INCOMPLETE`.
+- `doctor explain --list` prints the current remediation database keys.
 
 ### `octopus bootstrap`
 

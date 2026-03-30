@@ -13,15 +13,16 @@ import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../gate-runti
 import { applyOutputFilterProfile } from '../../gate-runtime/output-filters';
 import {
     emitReviewPhaseStartedEvent,
-    emitImplementationStartedEvent,
+    emitMandatoryImplementationStartedEvent,
+    emitMandatoryPreflightFailedEvent,
+    emitMandatoryPreflightStartedEvent,
+    emitMandatoryReviewPhaseStartedEvent,
     emitPlanCreatedEvent,
-    emitPreflightFailedEvent,
-    emitPreflightStartedEvent,
     emitProviderRoutingEvent,
     emitStatusChangedEvent
 } from '../../gate-runtime/lifecycle-events';
 import { auditReviewArtifactCompaction } from '../../gate-runtime/review-context';
-import { appendTaskEvent, assertValidTaskId } from '../../gate-runtime/task-events';
+import { appendMandatoryTaskEvent, appendTaskEvent, assertValidTaskId } from '../../gate-runtime/task-events';
 import { auditCommandCompactness } from '../../gates/task-events-summary';
 import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../gates/classify-change';
 import {
@@ -454,6 +455,19 @@ function writeJsonArtifact(filePath: string | null | undefined, payload: unknown
     fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }
 
+function removeArtifactIfExists(filePath: string | null | undefined): void {
+    if (!filePath) {
+        return;
+    }
+    try {
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+            fs.rmSync(filePath, { force: true });
+        }
+    } catch {
+        // Best-effort cleanup only. The original gate failure should surface.
+    }
+}
+
 function resolvePathForWrite(pathValue: string, repoRoot: string): string | null {
     return gateHelpers.resolvePathInsideRepo(pathValue, repoRoot, { allowMissing: true });
 }
@@ -700,21 +714,28 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         actor: taskModeArtifact.actor
     }, parseBooleanOption(options.emitMetrics, true));
 
-    appendTaskEvent(
-        orchestratorRoot,
-        taskModeArtifact.task_id,
-        'TASK_MODE_ENTERED',
-        'PASS',
-        `Task mode entered via ${taskModeArtifact.entry_mode}.`,
-        {
-            artifact_path: normalizeOptionalPath(artifactPath),
-            entry_mode: taskModeArtifact.entry_mode,
-            requested_depth: taskModeArtifact.requested_depth,
-            effective_depth: taskModeArtifact.effective_depth,
-            task_summary: taskModeArtifact.task_summary,
-            actor: taskModeArtifact.actor
-        }
-    );
+    try {
+        appendMandatoryTaskEvent(
+            orchestratorRoot,
+            taskModeArtifact.task_id,
+            'TASK_MODE_ENTERED',
+            'PASS',
+            `Task mode entered via ${taskModeArtifact.entry_mode}.`,
+            {
+                artifact_path: normalizeOptionalPath(artifactPath),
+                entry_mode: taskModeArtifact.entry_mode,
+                requested_depth: taskModeArtifact.requested_depth,
+                effective_depth: taskModeArtifact.effective_depth,
+                task_summary: taskModeArtifact.task_summary,
+                actor: taskModeArtifact.actor
+            }
+        );
+    } catch (error: unknown) {
+        removeArtifactIfExists(artifactPath);
+        throw new Error(
+            `enter-task-mode failed because mandatory lifecycle event 'TASK_MODE_ENTERED' could not be appended. ${getErrorMessage(error)}`
+        );
+    }
 
     emitPlanCreatedEvent(orchestratorRoot, taskModeArtifact.task_id, {
         artifact_path: normalizeOptionalPath(artifactPath),
@@ -813,26 +834,33 @@ export function runLoadRulePackCommand(options: LoadRulePackCommandOptions): { o
         actor: stageArtifact.actor
     }, parseBooleanOption(options.emitMetrics, true));
 
-    appendTaskEvent(
-        orchestratorRoot,
-        taskId,
-        stageArtifact.status === 'PASSED' ? 'RULE_PACK_LOADED' : 'RULE_PACK_LOAD_FAILED',
-        stageArtifact.outcome,
-        stageArtifact.status === 'PASSED'
-            ? `Rule pack loaded for ${stage}.`
-            : `Rule pack load failed for ${stage}.`,
-        {
-            stage,
-            artifact_path: normalizeOptionalPath(artifactPath),
-            preflight_path: stageArtifact.preflight_path,
-            required_rule_files: stageArtifact.required_rule_files,
-            loaded_rule_files: stageArtifact.loaded_rule_files,
-            missing_rule_files: stageArtifact.missing_rule_files,
-            effective_depth: stageArtifact.effective_depth,
-            required_reviews: stageArtifact.required_reviews,
-            actor: stageArtifact.actor
-        }
-    );
+    try {
+        appendMandatoryTaskEvent(
+            orchestratorRoot,
+            taskId,
+            stageArtifact.status === 'PASSED' ? 'RULE_PACK_LOADED' : 'RULE_PACK_LOAD_FAILED',
+            stageArtifact.outcome,
+            stageArtifact.status === 'PASSED'
+                ? `Rule pack loaded for ${stage}.`
+                : `Rule pack load failed for ${stage}.`,
+            {
+                stage,
+                artifact_path: normalizeOptionalPath(artifactPath),
+                preflight_path: stageArtifact.preflight_path,
+                required_rule_files: stageArtifact.required_rule_files,
+                loaded_rule_files: stageArtifact.loaded_rule_files,
+                missing_rule_files: stageArtifact.missing_rule_files,
+                effective_depth: stageArtifact.effective_depth,
+                required_reviews: stageArtifact.required_reviews,
+                actor: stageArtifact.actor
+            }
+        );
+    } catch (error: unknown) {
+        removeArtifactIfExists(artifactPath);
+        throw new Error(
+            `load-rule-pack failed because mandatory lifecycle event '${stageArtifact.status === 'PASSED' ? 'RULE_PACK_LOADED' : 'RULE_PACK_LOAD_FAILED'}' could not be appended. ${getErrorMessage(error)}`
+        );
+    }
 
     if (stageArtifact.status !== 'PASSED') {
         return {
@@ -1287,7 +1315,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     const resolvedTaskId = gateHelpers.resolveTaskId(options.taskId || '', options.outputPath || '');
     if (resolvedTaskId) {
         assertValidTaskId(resolvedTaskId);
-        emitPreflightStartedEvent(orchestratorRoot, resolvedTaskId, {
+        emitMandatoryPreflightStartedEvent(orchestratorRoot, resolvedTaskId, {
             task_intent: String(options.taskIntent || ''),
             include_untracked: parseBooleanOption(options.includeUntracked, true),
             use_staged: options.useStaged === true
@@ -1369,23 +1397,30 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     }, parseBooleanOption(options.emitMetrics, true));
 
     if (resolvedTaskId) {
-        appendTaskEvent(
-            orchestratorRoot,
-            resolvedTaskId,
-            'PREFLIGHT_CLASSIFIED',
-            'INFO',
-            result.zero_diff_guard && result.zero_diff_guard.zero_diff_detected
-                ? `Preflight completed with mode ${result.mode} (zero-diff baseline only).`
-                : `Preflight completed with mode ${result.mode}.`,
-            {
-                mode: result.mode,
-                output_path: normalizeOptionalPath(outputPath),
-                changed_files_count: result.metrics.changed_files_count,
-                changed_lines_total: result.metrics.changed_lines_total,
-                required_reviews: result.required_reviews,
-                zero_diff_guard: result.zero_diff_guard
-            }
-        );
+        try {
+            appendMandatoryTaskEvent(
+                orchestratorRoot,
+                resolvedTaskId,
+                'PREFLIGHT_CLASSIFIED',
+                'INFO',
+                result.zero_diff_guard && result.zero_diff_guard.zero_diff_detected
+                    ? `Preflight completed with mode ${result.mode} (zero-diff baseline only).`
+                    : `Preflight completed with mode ${result.mode}.`,
+                {
+                    mode: result.mode,
+                    output_path: normalizeOptionalPath(outputPath),
+                    changed_files_count: result.metrics.changed_files_count,
+                    changed_lines_total: result.metrics.changed_lines_total,
+                    required_reviews: result.required_reviews,
+                    zero_diff_guard: result.zero_diff_guard
+                }
+            );
+        } catch (error: unknown) {
+            removeArtifactIfExists(outputPath);
+            throw new Error(
+                `classify-change failed because mandatory lifecycle event 'PREFLIGHT_CLASSIFIED' could not be appended. ${getErrorMessage(error)}`
+            );
+        }
     }
 
     return {
@@ -1393,10 +1428,16 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     };
     } catch (error: unknown) {
         if (resolvedTaskId) {
-            emitPreflightFailedEvent(orchestratorRoot, resolvedTaskId, {
-                error: getErrorMessage(error),
-                task_intent: String(options.taskIntent || '')
-            });
+            try {
+                emitMandatoryPreflightFailedEvent(orchestratorRoot, resolvedTaskId, {
+                    error: getErrorMessage(error),
+                    task_intent: String(options.taskIntent || '')
+                });
+            } catch (eventError: unknown) {
+                throw new Error(
+                    `classify-change failed and mandatory lifecycle event 'PREFLIGHT_FAILED' could not be appended. Original error: ${getErrorMessage(error)} | Event append error: ${getErrorMessage(eventError)}`
+                );
+            }
         }
         throw error;
     }
@@ -1494,7 +1535,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             exitCode = 1;
             exceptionMessage = `Preflight scope drift detected. Re-run classify-change before compile gate. ${scopeViolations.join(' ')}`;
         } else if (!exceptionMessage) {
-            emitImplementationStartedEvent(orchestratorRoot, resolvedTaskId, {
+            emitMandatoryImplementationStartedEvent(orchestratorRoot, resolvedTaskId, {
                 preflight_path: gateHelpers.normalizePath(resolvedPreflightPath),
                 commands_path: normalizeOptionalPath(resolvedCommandsPath),
                 changed_files_count: preflightContext.changed_files.length,
@@ -1612,8 +1653,13 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             ...gateContext
         };
         appendMetricsIfEnabled(metricsPath, failureEvent, parseBooleanOption(options.emitMetrics, true));
-        writeCompileEvidence(compileEvidencePath, resolvedTaskId, gateContext, 'FAILED', 'FAIL', exceptionMessage);
-        appendTaskEvent(orchestratorRoot, resolvedTaskId, 'COMPILE_GATE_FAILED', 'FAIL', 'Compile gate failed.', failureEvent);
+        let failureReason = exceptionMessage;
+        try {
+            appendMandatoryTaskEvent(orchestratorRoot, resolvedTaskId, 'COMPILE_GATE_FAILED', 'FAIL', 'Compile gate failed.', failureEvent);
+        } catch (eventError: unknown) {
+            failureReason = `Compile gate failed and mandatory lifecycle event 'COMPILE_GATE_FAILED' could not be appended. Original gate error: ${exceptionMessage} | Event append error: ${getErrorMessage(eventError)}`;
+        }
+        writeCompileEvidence(compileEvidencePath, resolvedTaskId, gateContext, 'FAILED', 'FAIL', failureReason);
 
         const outputLines = [
             'COMPILE_GATE_FAILED',
@@ -1637,7 +1683,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         if (visibleSavingsLine) {
             outputLines.push(visibleSavingsLine);
         }
-        outputLines.push(`Reason: ${exceptionMessage}`);
+        outputLines.push(`Reason: ${failureReason}`);
         return { outputLines, exitCode: 1 };
     }
 
@@ -1649,8 +1695,21 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         ...gateContext
     };
     appendMetricsIfEnabled(metricsPath, successEvent, parseBooleanOption(options.emitMetrics, true));
+    try {
+        appendMandatoryTaskEvent(orchestratorRoot, resolvedTaskId, 'COMPILE_GATE_PASSED', 'PASS', 'Compile gate passed.', successEvent);
+    } catch (error: unknown) {
+        const failureReason = `Compile gate succeeded but mandatory lifecycle event 'COMPILE_GATE_PASSED' could not be appended. ${getErrorMessage(error)}`;
+        writeCompileEvidence(compileEvidencePath, resolvedTaskId, gateContext, 'FAILED', 'FAIL', failureReason);
+        return {
+            outputLines: [
+                'COMPILE_GATE_FAILED',
+                `CompileSummary: FAILED | duration_ms=${durationMs} | exit_code=0 | errors=${errorCount} | warnings=${warningCount}`,
+                `Reason: ${failureReason}`
+            ],
+            exitCode: 1
+        };
+    }
     writeCompileEvidence(compileEvidencePath, resolvedTaskId, gateContext, 'PASSED', 'PASS', null);
-    appendTaskEvent(orchestratorRoot, resolvedTaskId, 'COMPILE_GATE_PASSED', 'PASS', 'Compile gate passed.', successEvent);
 
     const outputLines = [
         'COMPILE_GATE_PASSED',
@@ -1707,14 +1766,21 @@ export function runDocImpactGateCommand(options: DocImpactGateCommandOptions): {
     }, parseBooleanOption(options.emitMetrics, true));
 
     if (resolvedTaskId) {
-        appendTaskEvent(
-            orchestratorRoot,
-            resolvedTaskId,
-            artifact.violations.length > 0 ? 'DOC_IMPACT_ASSESSMENT_FAILED' : 'DOC_IMPACT_ASSESSED',
-            artifact.outcome,
-            artifact.violations.length > 0 ? 'Doc impact gate failed.' : 'Doc impact gate passed.',
-            artifact
-        );
+        try {
+            appendMandatoryTaskEvent(
+                orchestratorRoot,
+                resolvedTaskId,
+                artifact.violations.length > 0 ? 'DOC_IMPACT_ASSESSMENT_FAILED' : 'DOC_IMPACT_ASSESSED',
+                artifact.outcome,
+                artifact.violations.length > 0 ? 'Doc impact gate failed.' : 'Doc impact gate passed.',
+                artifact
+            );
+        } catch (error: unknown) {
+            removeArtifactIfExists(artifactPath);
+            throw new Error(
+                `doc-impact-gate failed because mandatory lifecycle event '${artifact.violations.length > 0 ? 'DOC_IMPACT_ASSESSMENT_FAILED' : 'DOC_IMPACT_ASSESSED'}' could not be appended. ${getErrorMessage(error)}`
+            );
+        }
     }
 
     if (artifact.violations.length > 0) {
@@ -2385,16 +2451,23 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         };
         appendMetricsIfEnabled(metricsPath, failureEvent, parseBooleanOption(options.emitMetrics, true));
         if (resolvedTaskId) {
-            appendTaskEvent(orchestratorRoot, resolvedTaskId, 'REVIEW_GATE_FAILED', 'FAIL', 'Required reviews gate failed.', {
-                review_evidence_path: normalizeOptionalPath(reviewEvidencePath),
-                preflight_path: gateHelpers.normalizePath(validatedPreflight.preflight_path),
-                mode: validatedPreflight.mode,
-                skip_reviews: skipReviewsList,
-                skip_reason: skipReason,
-                compile_gate: compileGateEvidence,
-                artifact_evidence: artifactEvidence,
-                violations: allViolations
-            });
+            try {
+                appendMandatoryTaskEvent(orchestratorRoot, resolvedTaskId, 'REVIEW_GATE_FAILED', 'FAIL', 'Required reviews gate failed.', {
+                    review_evidence_path: normalizeOptionalPath(reviewEvidencePath),
+                    preflight_path: gateHelpers.normalizePath(validatedPreflight.preflight_path),
+                    mode: validatedPreflight.mode,
+                    skip_reviews: skipReviewsList,
+                    skip_reason: skipReason,
+                    compile_gate: compileGateEvidence,
+                    artifact_evidence: artifactEvidence,
+                    violations: allViolations
+                });
+            } catch (error: unknown) {
+                removeArtifactIfExists(reviewEvidencePath);
+                throw new Error(
+                    `required-reviews-check failed because mandatory lifecycle event 'REVIEW_GATE_FAILED' could not be appended. ${getErrorMessage(error)}`
+                );
+            }
         }
 
         const outputLines = [...filteredFailureOutput.lines];
@@ -2450,29 +2523,37 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
     if (resolvedTaskId) {
         const hasRequiredReviews = Object.values(required).some((value) => value === true);
         if (!hasRequiredReviews && reviewPhaseMissingFromTimeline) {
-            emitReviewPhaseStartedEvent(orchestratorRoot, resolvedTaskId, {
+            emitMandatoryReviewPhaseStartedEvent(orchestratorRoot, resolvedTaskId, {
                 review_type: 'none',
                 reason: 'no_required_reviews',
                 preflight_path: gateHelpers.normalizePath(validatedPreflight.preflight_path)
             });
         }
-        appendTaskEvent(
-            orchestratorRoot,
-            resolvedTaskId,
-            skipCode ? 'REVIEW_GATE_PASSED_WITH_OVERRIDE' : 'REVIEW_GATE_PASSED',
-            'PASS',
-            skipCode ? 'Required reviews gate passed with audited override.' : 'Required reviews gate passed.',
-            {
-                review_evidence_path: normalizeOptionalPath(reviewEvidencePath),
-                preflight_path: gateHelpers.normalizePath(validatedPreflight.preflight_path),
-                mode: validatedPreflight.mode,
-                skip_reviews: skipReviewsList,
-                skip_reason: skipReason,
-                compile_gate: compileGateEvidence,
-                override_artifact: normalizeOptionalPath(overrideArtifactPath),
-                artifact_evidence: artifactEvidence
-            }
-        );
+        try {
+            appendMandatoryTaskEvent(
+                orchestratorRoot,
+                resolvedTaskId,
+                skipCode ? 'REVIEW_GATE_PASSED_WITH_OVERRIDE' : 'REVIEW_GATE_PASSED',
+                'PASS',
+                skipCode ? 'Required reviews gate passed with audited override.' : 'Required reviews gate passed.',
+                {
+                    review_evidence_path: normalizeOptionalPath(reviewEvidencePath),
+                    preflight_path: gateHelpers.normalizePath(validatedPreflight.preflight_path),
+                    mode: validatedPreflight.mode,
+                    skip_reviews: skipReviewsList,
+                    skip_reason: skipReason,
+                    compile_gate: compileGateEvidence,
+                    override_artifact: normalizeOptionalPath(overrideArtifactPath),
+                    artifact_evidence: artifactEvidence
+                }
+            );
+        } catch (error: unknown) {
+            removeArtifactIfExists(reviewEvidencePath);
+            removeArtifactIfExists(overrideArtifactPath);
+            throw new Error(
+                `required-reviews-check failed because mandatory lifecycle event '${skipCode ? 'REVIEW_GATE_PASSED_WITH_OVERRIDE' : 'REVIEW_GATE_PASSED'}' could not be appended. ${getErrorMessage(error)}`
+            );
+        }
 
         const previousStatus = readTaskQueueStatus(repoRoot, resolvedTaskId);
         if (previousStatus && previousStatus !== 'IN_REVIEW') {

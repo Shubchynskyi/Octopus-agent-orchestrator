@@ -15,7 +15,7 @@ import { buildScopedDiff, resolveMetadataPath, resolveOutputPath } from '../gate
 import { formatCompletionGateResult, runCompletionGate } from '../gates/completion';
 import { buildTaskEventsSummary, formatTaskEventsSummaryText } from '../gates/task-events-summary';
 import {
-    emitCompletionGateEvent,
+    emitMandatoryCompletionGateEvent,
     emitReviewPhaseStartedEvent,
     emitStatusChangedEvent
 } from '../gate-runtime/lifecycle-events';
@@ -25,7 +25,9 @@ import {
     emitSkillSelectedEvent
 } from '../runtime/skill-telemetry';
 import { runDoctor, formatDoctorResult } from '../validators/doctor';
+import { explainFailure, formatExplainResult, listExplainIds } from '../validators/explain';
 import { getStatusSnapshot } from '../validators/status';
+import { getWhyBlocked, formatWhyBlockedResult } from '../validators/why-blocked';
 import { formatManifestResult, validateManifest } from '../validators/validate-manifest';
 import { formatVerifyResult, runVerify } from '../validators/verify';
 import { runCheckUpdate, type CheckUpdateRunnerOptions } from '../lifecycle/check-update';
@@ -330,6 +332,12 @@ function handleInit(commandArgv: string[], packageJson: PackageJsonLike): void {
 }
 
 function handleStatus(commandArgv: string[], packageJson: PackageJsonLike): void {
+    // Detect subcommand: `status why-blocked`
+    if (commandArgv.length > 0 && commandArgv[0].toLowerCase() === 'why-blocked') {
+        handleStatusWhyBlocked(commandArgv.slice(1));
+        return;
+    }
+
     const statusDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--init-answers-path': { key: 'initAnswersPath', type: 'string' }
@@ -355,10 +363,36 @@ function handleStatus(commandArgv: string[], packageJson: PackageJsonLike): void
     ));
 }
 
+function handleStatusWhyBlocked(commandArgv: string[]): void {
+    const definitions = {
+        '--target-root': { key: 'targetRoot', type: 'string' }
+    };
+    const { options: rawOptions } = parseOptions(commandArgv, definitions);
+    const options = rawOptions as ParsedOptionsRecord;
+
+    const targetRoot = normalizePathValue(options.targetRoot || '.');
+    ensureDirectoryExists(targetRoot, 'Target root');
+
+    const result = getWhyBlocked(targetRoot);
+    console.log(formatWhyBlockedResult(result));
+
+    if (result.has_blocked_tasks) {
+        process.exitCode = 1;
+    }
+}
+
 function handleDoctor(commandArgv: string[], packageJson: PackageJsonLike): void {
+    // Detect subcommand: `doctor explain <failure-id>`
+    if (commandArgv.length > 0 && commandArgv[0].toLowerCase() === 'explain') {
+        handleDoctorExplain(commandArgv.slice(1));
+        return;
+    }
+
     const doctorDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
-        '--init-answers-path': { key: 'initAnswersPath', type: 'string' }
+        '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
+        '--cleanup-stale-locks': { key: 'cleanupStaleLocks', type: 'boolean' },
+        '--dry-run': { key: 'dryRun', type: 'boolean' }
     };
     const { options: rawOptions } = parseOptions(commandArgv, doctorDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
@@ -383,11 +417,56 @@ function handleDoctor(commandArgv: string[], packageJson: PackageJsonLike): void
     const result = runDoctor({
         targetRoot,
         sourceOfTruth: answers.sourceOfTruth,
-        initAnswersPath: answers.resolvedPath
+        initAnswersPath: answers.resolvedPath,
+        cleanupStaleLocks: options.cleanupStaleLocks === true,
+        dryRun: options.dryRun === true
     });
     console.log(formatDoctorResult(result));
     if (!result.passed) {
         throw new Error('Workspace doctor detected validation failures.');
+    }
+}
+
+function handleDoctorExplain(commandArgv: string[]): void {
+    // Allow positional: `doctor explain <failure-id>` or `doctor explain --failure-id <id>`
+    const definitions = {
+        '--failure-id': { key: 'failureId', type: 'string' },
+        '--list': { key: 'list', type: 'boolean' }
+    };
+    const { options: rawOptions, positionals } = parseOptions(commandArgv, definitions, {
+        allowPositionals: true,
+        maxPositionals: 1
+    });
+    const options = rawOptions as ParsedOptionsRecord;
+
+    if (options.list) {
+        console.log('Available failure IDs:');
+        for (const id of listExplainIds()) {
+            console.log(`  ${id}`);
+        }
+        return;
+    }
+
+    const rawId = (typeof options.failureId === 'string' && options.failureId)
+        ? options.failureId
+        : (positionals[0] || '');
+
+    if (!rawId) {
+        console.log('Usage: octopus doctor explain <failure-id>');
+        console.log('       octopus doctor explain --list');
+        console.log('');
+        console.log('Available failure IDs:');
+        for (const id of listExplainIds()) {
+            console.log(`  ${id}`);
+        }
+        return;
+    }
+
+    const result = explainFailure(rawId);
+    console.log(formatExplainResult(result));
+
+    if (!result.found) {
+        process.exitCode = 1;
     }
 }
 
@@ -1249,13 +1328,19 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             const completionTaskId = String(result.task_id || '').trim();
             if (completionTaskId) {
                 const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
-                emitCompletionGateEvent(orchestratorRoot, completionTaskId, result.outcome === 'PASS', {
-                    status: result.status,
-                    outcome: result.outcome,
-                    preflight_path: result.preflight_path,
-                    timeline_path: result.timeline_path,
-                    violations: result.violations
-                });
+                try {
+                    emitMandatoryCompletionGateEvent(orchestratorRoot, completionTaskId, result.outcome === 'PASS', {
+                        status: result.status,
+                        outcome: result.outcome,
+                        preflight_path: result.preflight_path,
+                        timeline_path: result.timeline_path,
+                        violations: result.violations
+                    });
+                } catch (error: unknown) {
+                    throw new Error(
+                        `completion-gate failed because mandatory lifecycle event '${result.outcome === 'PASS' ? 'COMPLETION_GATE_PASSED' : 'COMPLETION_GATE_FAILED'}' could not be appended. ${error instanceof Error ? error.message : String(error)}`
+                    );
+                }
                 if (result.outcome === 'PASS') {
                     emitStatusChangedEvent(orchestratorRoot, completionTaskId, 'IN_REVIEW', 'DONE');
                 }

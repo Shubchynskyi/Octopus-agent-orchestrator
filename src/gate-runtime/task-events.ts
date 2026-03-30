@@ -18,6 +18,21 @@ interface LockHandle {
     lockPath: string;
 }
 
+interface LockOwnerMetadata {
+    pid: number | null;
+    hostname: string | null;
+    created_at_utc: string | null;
+    metadata_status: 'missing' | 'invalid_json' | 'invalid_shape' | 'ok';
+}
+
+interface LockInspectionResult {
+    exists: boolean;
+    ageMs: number | null;
+    metadata: LockOwnerMetadata;
+    ownerAlive: boolean | null;
+    staleReason: 'owner_dead' | 'age_exceeded' | null;
+}
+
 interface TaskEventAppendState {
     matching_events: number;
     parse_errors: number;
@@ -75,6 +90,43 @@ interface AppendTaskEventResult {
     warnings: string[];
 }
 
+export type TaskEventAppendResult = AppendTaskEventResult;
+export type TaskEventLockStatus = 'ACTIVE' | 'STALE';
+
+export interface TaskEventLockHealth {
+    lock_name: string;
+    lock_path: string;
+    scope: 'aggregate' | 'task';
+    task_id: string | null;
+    status: TaskEventLockStatus;
+    age_ms: number | null;
+    owner_pid: number | null;
+    owner_hostname: string | null;
+    owner_created_at_utc: string | null;
+    owner_alive: boolean | null;
+    owner_metadata_status: LockOwnerMetadata['metadata_status'];
+    stale_reason: LockInspectionResult['staleReason'];
+    remediation: string;
+}
+
+export interface TaskEventLockScanResult {
+    lock_root: string;
+    subsystem_scope_note: string;
+    locks: TaskEventLockHealth[];
+    active_count: number;
+    stale_count: number;
+}
+
+export interface TaskEventLockCleanupResult {
+    lock_root: string;
+    dry_run: boolean;
+    removed_locks: string[];
+    removable_stale_locks: string[];
+    retained_live_locks: string[];
+    failed_locks: string[];
+    warnings: string[];
+}
+
 function toPositiveInteger(value: unknown, fallback: number): number {
     const parsed = Number.parseInt(String(value), 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -97,30 +149,150 @@ function writeLockMetadata(lockPath: string): void {
     fs.writeFileSync(metadataPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
 }
 
+function readLockMetadata(lockPath: string): LockOwnerMetadata {
+    const metadataPath = path.join(lockPath, 'owner.json');
+    if (!fs.existsSync(metadataPath) || !fs.statSync(metadataPath).isFile()) {
+        return {
+            pid: null,
+            hostname: null,
+            created_at_utc: null,
+            metadata_status: 'missing'
+        };
+    }
+
+    try {
+        const parsed = JSON.parse(fs.readFileSync(metadataPath, 'utf8')) as Record<string, unknown>;
+        const pidValue = typeof parsed.pid === 'number' && Number.isInteger(parsed.pid) && parsed.pid > 0
+            ? parsed.pid
+            : null;
+        const hostnameValue = typeof parsed.hostname === 'string' && parsed.hostname.trim()
+            ? parsed.hostname.trim()
+            : null;
+        const createdAtValue = typeof parsed.created_at_utc === 'string' && parsed.created_at_utc.trim()
+            ? parsed.created_at_utc.trim()
+            : null;
+        const metadataStatus = pidValue || hostnameValue || createdAtValue
+            ? 'ok'
+            : 'invalid_shape';
+        return {
+            pid: pidValue,
+            hostname: hostnameValue,
+            created_at_utc: createdAtValue,
+            metadata_status: metadataStatus
+        };
+    } catch {
+        return {
+            pid: null,
+            hostname: null,
+            created_at_utc: null,
+            metadata_status: 'invalid_json'
+        };
+    }
+}
+
+function isProcessLikelyAlive(pid: number | null): boolean | null {
+    if (!pid || !Number.isInteger(pid) || pid <= 0) {
+        return null;
+    }
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error: unknown) {
+        const errorCode = error != null && typeof error === 'object' && 'code' in error
+            ? String((error as { code?: unknown }).code || '')
+            : '';
+        if (errorCode === 'EPERM') {
+            return true;
+        }
+        if (errorCode === 'ESRCH') {
+            return false;
+        }
+        return null;
+    }
+}
+
 function removeLockPath(lockPath: string): void {
     fs.rmSync(lockPath, { recursive: true, force: true });
 }
 
-function tryRemoveStaleLock(lockPath: string, staleMs: number): boolean {
-    if (!staleMs || staleMs <= 0) {
-        return false;
-    }
-
+function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
+    const metadata = readLockMetadata(lockPath);
+    let ageMs: number | null = null;
     try {
         const stats = fs.statSync(lockPath);
-        const ageMs = Date.now() - stats.mtimeMs;
-        if (ageMs < staleMs) {
-            return false;
-        }
+        ageMs = Math.max(0, Date.now() - stats.mtimeMs);
     } catch {
-        return false;
+        return {
+            exists: false,
+            ageMs: null,
+            metadata,
+            ownerAlive: null,
+            staleReason: null
+        };
+    }
+
+    const ownerAlive = isProcessLikelyAlive(metadata.pid);
+    if (ownerAlive === false) {
+        return {
+            exists: true,
+            ageMs,
+            metadata,
+            ownerAlive,
+            staleReason: 'owner_dead'
+        };
+    }
+
+    if (staleMs > 0 && ageMs >= staleMs) {
+        return {
+            exists: true,
+            ageMs,
+            metadata,
+            ownerAlive,
+            staleReason: 'age_exceeded'
+        };
+    }
+
+    return {
+        exists: true,
+        ageMs,
+        metadata,
+        ownerAlive,
+        staleReason: null
+    };
+}
+
+function formatLockDiagnostic(lockPath: string, inspection: LockInspectionResult, timeoutMs: number, waitedMs: number): string {
+    const ageText = typeof inspection.ageMs === 'number' ? `${inspection.ageMs}ms` : 'unknown';
+    const ownerPidText = inspection.metadata.pid !== null ? String(inspection.metadata.pid) : 'unknown';
+    const ownerAliveText = inspection.ownerAlive === null ? 'unknown' : (inspection.ownerAlive ? 'yes' : 'no');
+    const ownerHostText = inspection.metadata.hostname || 'unknown';
+    const createdAtText = inspection.metadata.created_at_utc || 'unknown';
+    const staleReasonText = inspection.staleReason || 'none';
+    return [
+        `Timed out acquiring file lock: ${lockPath}`,
+        `waited_ms=${waitedMs}`,
+        `timeout_ms=${timeoutMs}`,
+        `lock_age_ms=${ageText}`,
+        `owner_pid=${ownerPidText}`,
+        `owner_alive=${ownerAliveText}`,
+        `owner_hostname=${ownerHostText}`,
+        `owner_created_at_utc=${createdAtText}`,
+        `owner_metadata_status=${inspection.metadata.metadata_status}`,
+        `stale_reason=${staleReasonText}`
+    ].join('; ');
+}
+
+function tryRemoveStaleLock(lockPath: string, staleMs: number): { removed: boolean; inspection: LockInspectionResult } {
+    const inspection = inspectLock(lockPath, staleMs);
+    if (!inspection.exists || !inspection.staleReason) {
+        return { removed: false, inspection };
     }
 
     try {
         removeLockPath(lockPath);
-        return true;
+        return { removed: true, inspection };
     } catch {
-        return false;
+        return { removed: false, inspection };
     }
 }
 
@@ -129,6 +301,7 @@ function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): Loc
     const retryMs = toPositiveInteger(options.retryMs, DEFAULT_LOCK_RETRY_MS);
     const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
     const startedAt = Date.now();
+    let lastInspection: LockInspectionResult = inspectLock(lockPath, staleMs);
 
     while (true) {
         try {
@@ -143,12 +316,15 @@ function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): Loc
                 throw error;
             }
 
-            if (tryRemoveStaleLock(lockPath, staleMs)) {
+            const staleAttempt = tryRemoveStaleLock(lockPath, staleMs);
+            lastInspection = staleAttempt.inspection;
+            if (staleAttempt.removed) {
                 continue;
             }
 
-            if ((Date.now() - startedAt) >= timeoutMs) {
-                throw new Error(`Timed out acquiring file lock: ${lockPath}`);
+            const waitedMs = Date.now() - startedAt;
+            if (waitedMs >= timeoutMs) {
+                throw new Error(formatLockDiagnostic(lockPath, lastInspection, timeoutMs, waitedMs));
             }
 
             sleepMs(retryMs);
@@ -161,6 +337,146 @@ function releaseFilesystemLock(lockHandle: LockHandle | null): void {
         return;
     }
     removeLockPath(lockHandle.lockPath);
+}
+
+function classifyLockName(entryName: string): { scope: 'aggregate' | 'task'; taskId: string | null } | null {
+    if (entryName === '.all-tasks.lock') {
+        return { scope: 'aggregate', taskId: null };
+    }
+    const taskMatch = entryName.match(/^\.(.+)\.lock$/);
+    if (!taskMatch || !taskMatch[1]) {
+        return null;
+    }
+    return {
+        scope: 'task',
+        taskId: taskMatch[1]
+    };
+}
+
+function buildLockRemediation(entryName: string, inspection: LockInspectionResult): string {
+    if (inspection.staleReason) {
+        return [
+            `Run 'octopus doctor --target-root "." --cleanup-stale-locks --dry-run' first, then rerun without '--dry-run' if the candidate list looks correct.`,
+            'Only runtime/task-events/*.lock is cleaned automatically; runtime/reviews/ is not part of the lock subsystem.'
+        ].join(' ');
+    }
+
+    const ownerPidText = inspection.metadata.pid !== null ? String(inspection.metadata.pid) : 'unknown';
+    return [
+        `Wait for the owning process to release '${entryName}' or terminate PID ${ownerPidText} safely if it is hung.`,
+        'Do not delete live locks manually. runtime/reviews/ is not part of the lock subsystem.'
+    ].join(' ');
+}
+
+function buildTaskEventLockHealth(lockRoot: string, entryName: string, inspection: LockInspectionResult): TaskEventLockHealth | null {
+    const parsed = classifyLockName(entryName);
+    if (!parsed) {
+        return null;
+    }
+    return {
+        lock_name: entryName,
+        lock_path: path.join(lockRoot, entryName).replace(/\\/g, '/'),
+        scope: parsed.scope,
+        task_id: parsed.taskId,
+        status: inspection.staleReason ? 'STALE' : 'ACTIVE',
+        age_ms: inspection.ageMs,
+        owner_pid: inspection.metadata.pid,
+        owner_hostname: inspection.metadata.hostname,
+        owner_created_at_utc: inspection.metadata.created_at_utc,
+        owner_alive: inspection.ownerAlive,
+        owner_metadata_status: inspection.metadata.metadata_status,
+        stale_reason: inspection.staleReason,
+        remediation: buildLockRemediation(entryName, inspection)
+    };
+}
+
+function getTaskEventsRoot(orchestratorRoot: string): string {
+    return path.join(orchestratorRoot, 'runtime', 'task-events');
+}
+
+function listTaskEventLockEntries(lockRoot: string): string[] {
+    if (!fs.existsSync(lockRoot) || !fs.statSync(lockRoot).isDirectory()) {
+        return [];
+    }
+    return fs.readdirSync(lockRoot)
+        .filter(function (entryName: string) {
+            if (!entryName.startsWith('.') || !entryName.endsWith('.lock')) {
+                return false;
+            }
+            const fullPath = path.join(lockRoot, entryName);
+            try {
+                return fs.statSync(fullPath).isDirectory();
+            } catch {
+                return false;
+            }
+        })
+        .sort();
+}
+
+export function scanTaskEventLocks(orchestratorRoot: string, options: LockOptions = {}): TaskEventLockScanResult {
+    const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
+    const lockRoot = getTaskEventsRoot(orchestratorRoot);
+    const locks: TaskEventLockHealth[] = [];
+
+    for (const entryName of listTaskEventLockEntries(lockRoot)) {
+        const inspection = inspectLock(path.join(lockRoot, entryName), staleMs);
+        if (!inspection.exists) {
+            continue;
+        }
+        const lockHealth = buildTaskEventLockHealth(lockRoot, entryName, inspection);
+        if (lockHealth) {
+            locks.push(lockHealth);
+        }
+    }
+
+    return {
+        lock_root: lockRoot.replace(/\\/g, '/'),
+        subsystem_scope_note: 'Only runtime/task-events/*.lock participates in the task-event lock subsystem. runtime/reviews/ is never cleaned by these diagnostics.',
+        locks,
+        active_count: locks.filter((lock) => lock.status === 'ACTIVE').length,
+        stale_count: locks.filter((lock) => lock.status === 'STALE').length
+    };
+}
+
+export function cleanupStaleTaskEventLocks(
+    orchestratorRoot: string,
+    options: LockOptions & { dryRun?: boolean } = {}
+): TaskEventLockCleanupResult {
+    const dryRun = options.dryRun === true;
+    const lockRoot = getTaskEventsRoot(orchestratorRoot);
+    const removableStaleLocks: string[] = [];
+    const retainedLiveLocks: string[] = [];
+    const removedLocks: string[] = [];
+    const failedLocks: string[] = [];
+    const warnings: string[] = [];
+
+    const inspection = scanTaskEventLocks(orchestratorRoot, options);
+    for (const lock of inspection.locks) {
+        if (lock.status === 'STALE') {
+            removableStaleLocks.push(lock.lock_name);
+            if (!dryRun) {
+                try {
+                    removeLockPath(path.join(lockRoot, lock.lock_name));
+                    removedLocks.push(lock.lock_name);
+                } catch (error: unknown) {
+                    failedLocks.push(lock.lock_name);
+                    warnings.push(`Failed to remove stale lock '${lock.lock_name}': ${getErrorMessage(error)}`);
+                }
+            }
+        } else {
+            retainedLiveLocks.push(lock.lock_name);
+        }
+    }
+
+    return {
+        lock_root: lockRoot.replace(/\\/g, '/'),
+        dry_run: dryRun,
+        removed_locks: removedLocks,
+        removable_stale_locks: removableStaleLocks,
+        retained_live_locks: retainedLiveLocks,
+        failed_locks: failedLocks,
+        warnings
+    };
 }
 
 function withFilesystemLock<T>(lockPath: string, options: LockOptions, callback: () => T): T {
@@ -673,4 +989,37 @@ export function appendTaskEvent(
     }
 
     return passThru ? result : null;
+}
+
+export function appendMandatoryTaskEvent(
+    repoRoot: string,
+    taskId: string,
+    eventType: string,
+    outcome: string,
+    message: string,
+    details: unknown,
+    options: AppendTaskEventOptions = {}
+): TaskEventAppendResult {
+    const result = appendTaskEvent(
+        repoRoot,
+        taskId,
+        eventType,
+        outcome,
+        message,
+        details,
+        {
+            ...options,
+            passThru: true
+        }
+    );
+
+    if (!result) {
+        throw new Error(`Mandatory lifecycle event '${eventType}' append failed without diagnostics.`);
+    }
+    if (result.warnings.length > 0) {
+        throw new Error(
+            `Mandatory lifecycle event '${eventType}' append failed: ${result.warnings.join(' | ')}`
+        );
+    }
+    return result;
 }

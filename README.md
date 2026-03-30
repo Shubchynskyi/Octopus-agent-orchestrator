@@ -67,6 +67,8 @@ If you want persistent commands, install globally.
 | `octopus agent-init` | Hard code-level gate that finalizes agent onboarding |
 | `octopus status` | Short project status snapshot |
 | `octopus doctor` | Run verify + manifest validation from existing answers |
+| `octopus status why-blocked` | Explain why blocked or stalled tasks cannot progress, including task-event lock blockers |
+| `octopus doctor explain` | Print remediation steps for known failure IDs |
 | `octopus bootstrap` | Bundle-only deploy without install |
 | `octopus install` | Deploy/refresh orchestrator (requires init-answers.json) |
 | `octopus init` | Re-materialize `live/` from existing answers |
@@ -139,6 +141,7 @@ Full reference: **[docs/cli-reference.md](https://github.com/Shubchynskyi/Octopu
 - `octopus` without arguments is now non-destructive and only prints overview/help.
 - The public CLI owns the validated runtime surface for lifecycle commands and gate routes.
 - Update trust is allowlist-first by default. Any bypass for local paths or non-standard update sources must be explicit via `--trust-override --no-prompt`, and ordinary CLI flows ignore the legacy `OCTOPUS_UPDATE_TRUST_OVERRIDE` environment variable.
+- Task-event lock diagnostics live only under `Octopus-agent-orchestrator/runtime/task-events/*.lock`. Use `octopus doctor --cleanup-stale-locks --dry-run` before removing stale lock directories, and do not treat `runtime/reviews/` as part of the lock subsystem.
 - `bin/octopus.js` is a generated launcher compiled from `src/bin/octopus.ts`; repository builds run from `dist/src/**/*.js`, tests can stage `.node-build/src/**/*.js`, and packaged installs invoke the same compiled contract from `node_modules`.
 - Root `tsconfig.json` is the editor-facing entrypoint and simply extends `tsconfig.node-foundation.json`.
 - Installer is non-destructive for existing project files outside managed blocks.

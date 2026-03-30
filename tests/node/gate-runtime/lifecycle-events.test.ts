@@ -10,6 +10,11 @@ import {
     MANDATORY_NON_CODE_EVENTS,
     getMandatoryEvents,
     validateTimelineCompleteness,
+    emitMandatoryCompletionGateEvent,
+    emitMandatoryImplementationStartedEvent,
+    emitMandatoryPreflightFailedEvent,
+    emitMandatoryPreflightStartedEvent,
+    emitMandatoryReviewPhaseStartedEvent,
     emitPlanCreatedEvent,
     emitPreflightStartedEvent,
     emitPreflightFailedEvent,
@@ -274,6 +279,48 @@ describe('gate-runtime/lifecycle-events', () => {
             assert.equal(event.outcome, 'FAIL');
             assert.equal(event.details.error, 'missing scope');
         });
+
+        it('mandatory emit helpers append the same stage events', () => {
+            emitMandatoryPreflightStartedEvent(tempDir, 'T-MANDATORY', { task_intent: 'Implement change' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+            emitMandatoryPreflightFailedEvent(tempDir, 'T-MANDATORY', { error: 'boom' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+            emitMandatoryImplementationStartedEvent(tempDir, 'T-MANDATORY', { preflight_path: '/tmp/preflight.json' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+            emitMandatoryReviewPhaseStartedEvent(tempDir, 'T-MANDATORY', { review_type: 'code' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+
+            const timelinePath = path.join(tempDir, 'runtime', 'task-events', 'T-MANDATORY.jsonl');
+            const events = fs.readFileSync(timelinePath, 'utf8')
+                .trim()
+                .split('\n')
+                .map(line => JSON.parse(line) as Record<string, unknown>);
+
+            assert.deepEqual(events.map(event => event.event_type), [
+                'PREFLIGHT_STARTED',
+                'PREFLIGHT_FAILED',
+                'IMPLEMENTATION_STARTED',
+                'REVIEW_PHASE_STARTED'
+            ]);
+        });
+
+        it('mandatory emit-once helpers do not duplicate existing stage entries', () => {
+            emitMandatoryImplementationStartedEvent(tempDir, 'T-ONCE', { preflight_path: '/tmp/preflight.json' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+            const secondResult = emitMandatoryImplementationStartedEvent(tempDir, 'T-ONCE', { preflight_path: '/tmp/preflight.json' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+
+            const timelinePath = path.join(tempDir, 'runtime', 'task-events', 'T-ONCE.jsonl');
+            const lines = fs.readFileSync(timelinePath, 'utf8').trim().split('\n');
+            assert.equal(lines.length, 1);
+            assert.equal(secondResult, null);
+        });
     });
 
     describe('emitCompletionGateEvent', () => {
@@ -313,6 +360,17 @@ describe('gate-runtime/lifecycle-events', () => {
             const event = JSON.parse(content);
             assert.equal(event.event_type, 'COMPLETION_GATE_FAILED');
             assert.equal(event.outcome, 'FAIL');
+        });
+
+        it('mandatory completion helper emits completion events too', () => {
+            emitMandatoryCompletionGateEvent(tempDir, 'T-EMIT-MANDATORY', true, { status: 'PASSED' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+
+            const timelinePath = path.join(tempDir, 'runtime', 'task-events', 'T-EMIT-MANDATORY.jsonl');
+            const event = JSON.parse(fs.readFileSync(timelinePath, 'utf8').trim());
+            assert.equal(event.event_type, 'COMPLETION_GATE_PASSED');
+            assert.equal(event.outcome, 'PASS');
         });
 
         it('returns null for missing repoRoot', () => {
