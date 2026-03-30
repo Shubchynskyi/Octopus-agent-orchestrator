@@ -129,7 +129,7 @@ describe('compareVersionStrings', () => {
 describe('getTimestamp', () => {
     it('returns timestamp in expected format', () => {
         const ts = getTimestamp();
-        assert.match(ts, /^\d{8}-\d{6}$/);
+        assert.match(ts, /^\d{8}-\d{6}-\d{3}$/);
     });
 });
 

@@ -89,7 +89,7 @@ export function listRollbackSnapshotPaths(targetRoot: string): string[] {
     }
 
     return fs.readdirSync(snapshotsRoot, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory() && /^update-\d{8}-\d{6}$/i.test(entry.name))
+        .filter((entry) => entry.isDirectory() && /^update-\d{8}-\d{6}(?:-\d{3})?$/i.test(entry.name))
         .map((entry) => path.join(snapshotsRoot, entry.name))
         .sort((left, right) => right.localeCompare(left));
 }
@@ -116,7 +116,7 @@ export function listBundleBackupPaths(targetRoot: string): string[] {
     }
 
     return fs.readdirSync(backupsRoot, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory() && /^\d{8}-\d{6}$/i.test(entry.name))
+        .filter((entry) => entry.isDirectory() && /^\d{8}-\d{6}(?:-\d{3})?$/i.test(entry.name))
         .map((entry) => path.join(backupsRoot, entry.name))
         .sort((left, right) => right.localeCompare(left));
 }

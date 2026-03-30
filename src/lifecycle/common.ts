@@ -152,12 +152,20 @@ export function compareVersionStrings(current: string, latest: string): number {
 // Timestamp helper
 // ---------------------------------------------------------------------------
 
+let lastTimestampMs = 0;
+
 export function getTimestamp(): string {
-    const now = new Date();
+    const currentMs = Date.now();
+    const effectiveMs = currentMs <= lastTimestampMs ? lastTimestampMs + 1 : currentMs;
+    lastTimestampMs = effectiveMs;
+
+    const now = new Date(effectiveMs);
     const pad2 = (n: number): string => String(n).padStart(2, '0');
+    const pad3 = (n: number): string => String(n).padStart(3, '0');
     return (
         `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}-` +
-        `${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`
+        `${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}-` +
+        `${pad3(now.getMilliseconds())}`
     );
 }
 
