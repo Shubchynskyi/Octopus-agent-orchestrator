@@ -15,6 +15,7 @@ function loadPackFixtureItems(repoRoot: string): string[] {
     items.add('package.json');
     items.add('scripts/node-foundation');
     items.add('tsconfig.build.json');
+    items.add('tsconfig.scripts.json');
     return Array.from(items).sort();
 }
 

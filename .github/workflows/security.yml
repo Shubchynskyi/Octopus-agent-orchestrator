@@ -62,7 +62,7 @@ jobs:
 
       - name: Run OSV Scanner
         id: osv
-        uses: google/osv-scanner-action@v2
+        uses: google/osv-scanner-action@v2.3.0
         # continue-on-error so the SARIF upload still runs even when vulns are found.
         continue-on-error: true
         with:
