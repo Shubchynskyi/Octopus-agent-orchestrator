@@ -164,30 +164,13 @@ export function runReinit(options: ReinitOptions) {
     const resolvedEnforceNoAutoCommit = validated.EnforceNoAutoCommit;
     const resolvedClaudeOrchestratorFullAccess = validated.ClaudeOrchestratorFullAccess;
     const resolvedTokenEconomyEnabled = validated.TokenEconomyEnabled;
-
-    // Resolve active agent files
-    let existingActiveAgentFiles = getOptionalValue(existingAnswers, 'ActiveAgentFiles');
-    if (!existingActiveAgentFiles) {
-        existingActiveAgentFiles = getOptionalValue(existingLiveVersion, 'ActiveAgentFiles');
-    }
-    if (!existingActiveAgentFiles) {
-        let entrypoint = getOptionalValue(existingLiveVersion, 'CanonicalEntrypoint');
-        if (!entrypoint) {
-            const sot = getOptionalValue(existingLiveVersion, 'SourceOfTruth');
-            if (sot) {
-                try { entrypoint = getCanonicalEntrypointFile(sot); } catch { /* ignore */ }
-            }
-        }
-        if (entrypoint) existingActiveAgentFiles = entrypoint;
-    }
-
-    const resolvedActiveFiles = getActiveAgentEntrypointFiles(existingActiveAgentFiles, resolvedSourceOfTruth);
+    const resolvedActiveFiles = validated.ActiveAgentFiles || [];
     const resolvedActiveAgentFilesStr = convertActiveAgentEntrypointFilesToString(resolvedActiveFiles);
 
     // Prepare serializable answers
     const serializedAnswers = serializeInitAnswers({
         ...initAnswers,
-        ActiveAgentFiles: resolvedActiveAgentFilesStr || undefined
+        ActiveAgentFiles: resolvedActiveFiles
     });
 
     // Validate git dir if enforceNoAutoCommit
@@ -368,6 +351,11 @@ function getInitAnswerSchema(): InitAnswerSchemaEntry[] {
                 { source: 'version.json', property: 'TokenEconomyEnabled' },
                 { source: 'token-economy.json', property: 'enabled' }
             ]
+        },
+        {
+            key: 'ActiveAgentFiles',
+            defaultValue: '',
+            inferFrom: [{ source: 'version.json', property: 'ActiveAgentFiles' }]
         },
         {
             key: 'CollectedVia',

@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added interactive prompting and `--active-agent-files` support to the `reinit` command, aligning it with the `setup` onboarding flow and allowing intentional changes to active agent entrypoints in existing workspaces
 
 ## 2.4.0
 - changed workspace-facing banners (`status`, `doctor`, `overview`, `setup`, `agent-init`) to display the deployed project/bundle version instead of the launcher package version, preventing global CLI drift from misreporting the active workspace version

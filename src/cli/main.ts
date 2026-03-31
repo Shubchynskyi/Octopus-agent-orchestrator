@@ -2,7 +2,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
     DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
-    LIFECYCLE_COMMANDS
+    LIFECYCLE_COMMANDS,
+    SOURCE_OF_TRUTH_VALUES
 } from '../core/constants';
 import { getAllShimmedGateNames } from '../compat/shim-registry';
 import {
@@ -50,7 +51,9 @@ import {
     dim,
     ensureDirectoryExists,
     getBundlePath,
+    getInitAnswerValue,
     green,
+    normalizeActiveAgentFiles,
     normalizeAssistantBrevity,
     normalizePathValue,
     normalizeSourceOfTruth,
@@ -62,10 +65,17 @@ import {
     printHelp,
     printHighlightedPair,
     printStatus,
+    promptSingleSelect,
+    promptTextInput,
     readInitAnswersArtifact,
+    readOptionalJsonFile,
     readPackageJson,
     resolveWorkspaceDisplayVersion,
+    supportsInteractivePrompts,
     syncBundleItems,
+    tryNormalizeAssistantBrevity,
+    tryNormalizeSourceOfTruth,
+    tryParseBooleanText,
     yellow
 } from './commands/cli-helpers';
 import {
@@ -520,7 +530,7 @@ function handleDoctorExplain(commandArgv: string[]): void {
     }
 }
 
-function handleReinit(commandArgv: string[], packageJson: PackageJsonLike): void {
+async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike): Promise<void> {
     const reinitDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
@@ -530,6 +540,7 @@ function handleReinit(commandArgv: string[], packageJson: PackageJsonLike): void
         '--assistant-language': { key: 'assistantLanguage', type: 'string' },
         '--assistant-brevity': { key: 'assistantBrevity', type: 'string' },
         '--source-of-truth': { key: 'sourceOfTruth', type: 'string' },
+        '--active-agent-files': { key: 'activeAgentFiles', type: 'string' },
         '--enforce-no-auto-commit': { key: 'enforceNoAutoCommit', type: 'string' },
         '--claude-orchestrator-full-access': { key: 'claudeOrchestratorFullAccess', type: 'string' },
         '--claude-full-access': { key: 'claudeOrchestratorFullAccess', type: 'string' },
@@ -551,41 +562,103 @@ function handleReinit(commandArgv: string[], packageJson: PackageJsonLike): void
     ensureDirectoryExists(targetRoot, 'Target root');
     const bundlePath = ensureBundleExists(targetRoot, 'reinit');
 
-    const overrides: Record<string, string> = {};
-    if (options.assistantLanguage !== undefined) {
-        overrides.AssistantLanguage = String(options.assistantLanguage);
+    const initAnswersPath = typeof options.initAnswersPath === 'string'
+        ? options.initAnswersPath
+        : DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+    const resolvedInitAnswersPath = path.resolve(targetRoot, initAnswersPath);
+    const existingAnswers = readOptionalJsonFile(resolvedInitAnswersPath) || {};
+
+    const interactiveReinit = !options.noPrompt;
+    const canUseInteractivePrompts = interactiveReinit && supportsInteractivePrompts();
+
+    let assistantLanguage = (options.assistantLanguage !== undefined ? String(options.assistantLanguage) : null) || getInitAnswerValue(existingAnswers, 'AssistantLanguage') || 'English';
+    let assistantBrevity = tryNormalizeAssistantBrevity(options.assistantBrevity ?? getInitAnswerValue(existingAnswers, 'AssistantBrevity'), 'concise');
+    let sourceOfTruth = tryNormalizeSourceOfTruth(options.sourceOfTruth ?? getInitAnswerValue(existingAnswers, 'SourceOfTruth'), 'Claude');
+    let activeAgentFiles = (options.activeAgentFiles !== undefined ? String(options.activeAgentFiles) : null) || (getInitAnswerValue(existingAnswers, 'ActiveAgentFiles') || '');
+    let enforceNoAutoCommit = tryParseBooleanText(options.enforceNoAutoCommit ?? getInitAnswerValue(existingAnswers, 'EnforceNoAutoCommit'), true);
+    let claudeOrchestratorFullAccess = tryParseBooleanText(options.claudeOrchestratorFullAccess ?? getInitAnswerValue(existingAnswers, 'ClaudeOrchestratorFullAccess'), false);
+    let tokenEconomyEnabled = tryParseBooleanText(options.tokenEconomyEnabled ?? getInitAnswerValue(existingAnswers, 'TokenEconomyEnabled'), true);
+
+    if (canUseInteractivePrompts) {
+        assistantLanguage = await promptTextInput('Set communication language', String(assistantLanguage));
+        assistantBrevity = await promptSingleSelect({
+            title: 'Set default response brevity',
+            defaultLabel: String(assistantBrevity),
+            defaultValue: String(assistantBrevity),
+            options: [
+                { label: 'concise', value: 'concise' },
+                { label: 'detailed', value: 'detailed' }
+            ]
+        });
+        sourceOfTruth = await promptSingleSelect({
+            title: 'Set primary source-of-truth entrypoint',
+            defaultLabel: String(sourceOfTruth),
+            defaultValue: String(sourceOfTruth),
+            options: [...SOURCE_OF_TRUTH_VALUES].map((v) => ({ label: v, value: v }))
+        });
+        activeAgentFiles = await promptTextInput('Set active agent entrypoint files (comma-separated)', String(activeAgentFiles));
+        enforceNoAutoCommit = await promptSingleSelect({
+            title: 'Set no-auto-commit guard mode',
+            defaultLabel: enforceNoAutoCommit ? 'Yes' : 'No',
+            defaultValue: enforceNoAutoCommit ? 'true' : 'false',
+            options: [
+                { label: 'No', value: 'false' },
+                { label: 'Yes', value: 'true' }
+            ]
+        }) === 'true';
+        claudeOrchestratorFullAccess = await promptSingleSelect({
+            title: 'Set Claude access level for orchestrator files',
+            defaultLabel: claudeOrchestratorFullAccess ? 'Yes' : 'No',
+            defaultValue: claudeOrchestratorFullAccess ? 'true' : 'false',
+            options: [
+                { label: 'No', value: 'false' },
+                { label: 'Yes', value: 'true' }
+            ]
+        }) === 'true';
+        tokenEconomyEnabled = await promptSingleSelect({
+            title: 'Set default token economy mode',
+            defaultLabel: tokenEconomyEnabled ? 'Yes' : 'No',
+            defaultValue: tokenEconomyEnabled ? 'true' : 'false',
+            options: [
+                { label: 'No', value: 'false' },
+                { label: 'Yes', value: 'true' }
+            ]
+        }) === 'true';
     }
-    if (options.assistantBrevity !== undefined) {
-        overrides.AssistantBrevity = normalizeAssistantBrevity(options.assistantBrevity);
-    }
-    if (options.sourceOfTruth !== undefined) {
-        overrides.SourceOfTruth = normalizeSourceOfTruth(options.sourceOfTruth);
-    }
-    if (options.enforceNoAutoCommit !== undefined) {
-        overrides.EnforceNoAutoCommit = String(parseBooleanText(options.enforceNoAutoCommit, 'EnforceNoAutoCommit'));
-    }
-    if (options.claudeOrchestratorFullAccess !== undefined) {
-        overrides.ClaudeOrchestratorFullAccess = String(parseBooleanText(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess'));
-    }
-    if (options.tokenEconomyEnabled !== undefined) {
-        overrides.TokenEconomyEnabled = String(parseBooleanText(options.tokenEconomyEnabled, 'TokenEconomyEnabled'));
-    }
+
+    const overrides: Record<string, string> = {
+        AssistantLanguage: String(assistantLanguage),
+        AssistantBrevity: normalizeAssistantBrevity(assistantBrevity),
+        SourceOfTruth: normalizeSourceOfTruth(sourceOfTruth),
+        ActiveAgentFiles: normalizeActiveAgentFiles(activeAgentFiles, sourceOfTruth) || '',
+        EnforceNoAutoCommit: String(enforceNoAutoCommit),
+        ClaudeOrchestratorFullAccess: String(claudeOrchestratorFullAccess),
+        TokenEconomyEnabled: String(tokenEconomyEnabled)
+    };
 
     const reinitResult = runReinit({
         targetRoot,
         bundleRoot: bundlePath,
-        initAnswersPath: typeof options.initAnswersPath === 'string'
-            ? options.initAnswersPath
-            : DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+        initAnswersPath,
         overrides,
         skipVerify: options.skipVerify === true,
         skipManifestValidation: options.skipManifestValidation === true
     }) as Record<string, unknown>;
     console.log('Reinit: PASS');
     formatKeyValueOutput(reinitResult, [
-        'targetRoot', 'sourceOfTruth', 'canonicalEntrypoint',
-        'assistantLanguage', 'assistantBrevity',
-        'coreRuleUpdated', 'tokenEconomyConfigUpdated'
+        'targetRoot',
+        'initAnswersPath',
+        'assistantLanguage',
+        'assistantBrevity',
+        'sourceOfTruth',
+        'activeAgentFiles',
+        'enforceNoAutoCommit',
+        'claudeOrchestratorFullAccess',
+        'tokenEconomyEnabled',
+        'coreRuleUpdated',
+        'tokenEconomyConfigUpdated',
+        'verifyStatus',
+        'manifestValidationStatus'
     ]);
 }
 
@@ -1481,7 +1554,7 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
             handleInit(commandArgv, packageJson);
             return;
         case 'reinit':
-            handleReinit(commandArgv, packageJson);
+            await handleReinit(commandArgv, packageJson);
             return;
         case 'update':
             await handleUpdate(commandArgv, packageJson);
