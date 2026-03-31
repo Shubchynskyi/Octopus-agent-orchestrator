@@ -130,6 +130,7 @@ export function getUpdateRollbackItems(rootPath: string, initAnswersResolvedPath
         '.git/hooks/pre-commit',
         'Octopus-agent-orchestrator/.gitattributes',
         'Octopus-agent-orchestrator/bin',
+        'Octopus-agent-orchestrator/dist',
         'Octopus-agent-orchestrator/live',
         'Octopus-agent-orchestrator/live/docs/project-memory',
         'Octopus-agent-orchestrator/package.json',

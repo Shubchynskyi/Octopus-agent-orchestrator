@@ -227,6 +227,7 @@ export function readdirRecursiveDirs(dirPath: string): string[] {
 export const BUNDLE_SYNC_ITEMS = Object.freeze([
     '.gitattributes',
     'bin',
+    'dist',
     'package.json',
     'src',
     'template',

@@ -23,10 +23,23 @@ function git(args: string[], cwd: string) {
 
 function createGitUpdateRepo(version: string) {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-update-git-repo-'));
+    fs.mkdirSync(path.join(repoRoot, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'scripts', 'build.js'), [
+        "const fs = require('node:fs');",
+        "const path = require('node:path');",
+        "const root = process.cwd();",
+        "fs.mkdirSync(path.join(root, 'bin'), { recursive: true });",
+        "fs.mkdirSync(path.join(root, 'dist', 'src'), { recursive: true });",
+        "fs.writeFileSync(path.join(root, 'bin', 'octopus.js'), '#!/usr/bin/env node\\n');",
+        "fs.writeFileSync(path.join(root, 'dist', 'src', 'index.js'), 'module.exports = {};\\n');"
+    ].join('\n'), 'utf8');
     fs.writeFileSync(path.join(repoRoot, 'VERSION'), `${version}\n`, 'utf8');
     fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({
         name: 'octopus-agent-orchestrator',
-        version
+        version,
+        scripts: {
+            build: 'node scripts/build.js'
+        }
     }, null, 2));
     fs.writeFileSync(path.join(repoRoot, 'README.md'), '# Updated bundle\n', 'utf8');
 
@@ -42,7 +55,10 @@ function createDeployedWorkspace(version: string) {
     const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-update-git-target-'));
     const bundleRoot = path.join(targetRoot, 'Octopus-agent-orchestrator');
     fs.mkdirSync(bundleRoot, { recursive: true });
+    fs.mkdirSync(path.join(bundleRoot, 'dist', 'src'), { recursive: true });
     fs.writeFileSync(path.join(bundleRoot, 'VERSION'), `${version}\n`, 'utf8');
+    fs.writeFileSync(path.join(bundleRoot, 'bin', 'octopus.js'), '#!/usr/bin/env node\n', 'utf8');
+    fs.writeFileSync(path.join(bundleRoot, 'dist', 'src', 'index.js'), 'module.exports = {};', 'utf8');
     fs.writeFileSync(path.join(bundleRoot, 'package.json'), JSON.stringify({
         name: 'octopus-agent-orchestrator',
         version
@@ -114,6 +130,35 @@ describe('runUpdateFromGit', () => {
             assert.equal(result.updateApplied, true);
             assert.equal(updateRunnerCalled, true);
             assert.equal(result.trustOverrideSource, 'cli-flag');
+            assert.ok(fs.existsSync(path.join(bundleRoot, 'dist', 'src', 'index.js')));
+        } finally {
+            removePathRecursive(repoRoot);
+            removePathRecursive(targetRoot);
+        }
+    });
+
+    it('fails apply when the raw git source cannot be built into a runnable bundle', async () => {
+        const repoRoot = createGitUpdateRepo('2.1.0');
+        const { targetRoot, bundleRoot } = createDeployedWorkspace('2.0.0');
+        fs.writeFileSync(path.join(repoRoot, 'scripts', 'build.js'), 'process.exit(2);\n', 'utf8');
+        git(['add', '.'], repoRoot);
+        git(['commit', '-m', 'break build'], repoRoot);
+
+        try {
+            await assert.rejects(
+                runUpdateFromGit({
+                    targetRoot,
+                    bundleRoot,
+                    repoUrl: repoRoot,
+                    noPrompt: true,
+                    trustOverride: true
+                }),
+                (error) => {
+                    assert.match((error as Error).message, /UPDATE_SOURCE_BUILD_FAILED/);
+                    assert.match((error as Error).message, /runnable bundle/i);
+                    return true;
+                }
+            );
         } finally {
             removePathRecursive(repoRoot);
             removePathRecursive(targetRoot);

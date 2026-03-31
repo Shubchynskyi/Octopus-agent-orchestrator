@@ -5,6 +5,7 @@
 ## 2.4.0
 - changed workspace-facing banners (`status`, `doctor`, `overview`, `setup`, `agent-init`) to display the deployed project/bundle version instead of the launcher package version, preventing global CLI drift from misreporting the active workspace version
 - changed the `node_modules` / global `octopus` launcher into a delegating router: when run inside a workspace that already has a source checkout or deployed bundle, it now forwards execution to that local project CLI instead of running stale packaged lifecycle logic
+- changed `update git` to materialize a runnable bundle from raw git source before sync/apply: the git clone now installs dependencies, runs the source build, syncs compiled runtime artifacts including `dist/`, and fails early with build diagnostics instead of leaving a partial update
 - added source-vs-bundle parity detection to explicitly warn and fail-fast when a self-hosted `bin/octopus.js` source checkout runs against a stale deployed runtime bundle
 - raised the project runtime baseline from `Node.js 20 LTS` to `Node.js 24 LTS` across package engines, CLI/runtime constants, CI workflows, live/template skill metadata, and operator docs
 - updated GitHub Actions workflow dependencies to current major tags for `actions/checkout`, `actions/setup-node`, and `actions/upload-artifact`, removing stale-action warnings from IDE validation
