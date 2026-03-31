@@ -1,6 +1,6 @@
 {
   "name": "octopus-agent-orchestrator",
-  "version": "2.3.6",
+  "version": "2.3.8",
   "description": "Bootstrap package for deploying the Octopus Agent Orchestrator bundle into a workspace.",
   "repository": {
     "type": "git",

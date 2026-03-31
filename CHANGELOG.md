@@ -1,7 +1,9 @@
 # Changelog
 
 ## Unreleased
-- added source-vs-bundle parity detection to explicitly warn and fail-fast when a self-hosted `bin/octopus.js` source checkout runs against a stale deployed runtime bundle (T-034)
+
+## 2.3.8
+- added source-vs-bundle parity detection to explicitly warn and fail-fast when a self-hosted `bin/octopus.js` source checkout runs against a stale deployed runtime bundle
 - raised the project runtime baseline from `Node.js 20 LTS` to `Node.js 24 LTS` across package engines, CLI/runtime constants, CI workflows, live/template skill metadata, and operator docs
 - updated GitHub Actions workflow dependencies to current major tags for `actions/checkout`, `actions/setup-node`, and `actions/upload-artifact`, removing stale-action warnings from IDE validation
 - fixed the OSV security workflow to use the upstream reusable workflow entrypoint from `google/osv-scanner-action@v2.3.0`; the repository root is not a runnable step-action and broke GitHub Actions job setup with a missing top-level `runs:` section
@@ -12,10 +14,10 @@
 
 ## 2.3.7
 
-- enforced a hard atomic consistency invariant for the deployed bundle during `update` and `reinit`: the lifecycle now validates the presence of `bin`, `dist`, `package.json`, `VERSION`, and `template` artifacts after sync and before completion (T-040)
-- enhanced `detectSourceBundleParity` to detect structurally incomplete or old bundles in self-hosted mode, preventing execution of stale runtime code (T-040)
-- added automatic rollback on bundle invariant violation during the update pipeline (T-040)
-- added comprehensive unit tests for bundle invariants and lifecycle consistency gates (T-040)
+- enforced a hard atomic consistency invariant for the deployed bundle during `update` and `reinit`: the lifecycle now validates the presence of `bin`, `dist`, `package.json`, `VERSION`, and `template` artifacts after sync and before completion
+- enhanced `detectSourceBundleParity` to detect structurally incomplete or old bundles in self-hosted mode, preventing execution of stale runtime code
+- added automatic rollback on bundle invariant violation during the update pipeline
+- added comprehensive unit tests for bundle invariants and lifecycle consistency gates
 
 ## 2.3.6
 
@@ -25,18 +27,18 @@
 
 ## 2.3.5
 
-- hardened task-event lock recovery: `enter-task-mode` and other gate timeline writes now inspect lock owner metadata, immediately reclaim orphaned `.lock` directories when the recorded PID is dead, and emit timeout diagnostics with lock age plus owner details instead of generic file-lock timeouts (T-034)
-- hardened mandatory gate-event handling: task-mode, rule-pack, preflight, compile, review, doc-impact, and completion paths now fail hard when their required lifecycle timeline events cannot be appended, and `enter-task-mode` rolls back its freshly written artifact instead of leaving a poisoned partial state behind (T-035)
-- added operator diagnostics for blocked/stalled work: `octopus doctor explain <FAILURE_ID>` now prints remediation steps for known failure codes, and `octopus status why-blocked` analyses `TASK.md`, timelines, and failed gates to explain why active tasks cannot progress (T-005)
-- added task-event lock health and safe cleanup: `octopus doctor` now reports `runtime/task-events/*.lock` owner metadata, stale-vs-live assessment, and remediation guidance, while `octopus doctor --cleanup-stale-locks [--dry-run]` removes only proven-stale task-event locks and explicitly excludes `runtime/reviews/` from the lock subsystem (T-036)
+- hardened task-event lock recovery: `enter-task-mode` and other gate timeline writes now inspect lock owner metadata, immediately reclaim orphaned `.lock` directories when the recorded PID is dead, and emit timeout diagnostics with lock age plus owner details instead of generic file-lock timeouts
+- hardened mandatory gate-event handling: task-mode, rule-pack, preflight, compile, review, doc-impact, and completion paths now fail hard when their required lifecycle timeline events cannot be appended, and `enter-task-mode` rolls back its freshly written artifact instead of leaving a poisoned partial state behind
+- added operator diagnostics for blocked/stalled work: `octopus doctor explain <FAILURE_ID>` now prints remediation steps for known failure codes, and `octopus status why-blocked` analyses `TASK.md`, timelines, and failed gates to explain why active tasks cannot progress
+- added task-event lock health and safe cleanup: `octopus doctor` now reports `runtime/task-events/*.lock` owner metadata, stale-vs-live assessment, and remediation guidance, while `octopus doctor --cleanup-stale-locks [--dry-run]` removes only proven-stale task-event locks and explicitly excludes `runtime/reviews/` from the lock subsystem
 
 ## 2.3.4
 
-- hardened update trust bypass flow: ordinary update/check-update/update git paths now ignore the legacy `OCTOPUS_UPDATE_TRUST_OVERRIDE` environment variable, require explicit `--trust-override --no-prompt` for non-allowlisted sources, and record trust override usage in CLI output plus update reports (T-032)
-- hardened zero-diff noop guard: `required-reviews-check` gate now blocks when preflight detects zero-diff (clean tree) unless an audited no-op artifact exists, preventing clean-tree preflights from drifting toward task completion without produced changes (T-033)
+- hardened update trust bypass flow: ordinary update/check-update/update git paths now ignore the legacy `OCTOPUS_UPDATE_TRUST_OVERRIDE` environment variable, require explicit `--trust-override --no-prompt` for non-allowlisted sources, and record trust override usage in CLI output plus update reports
+- hardened zero-diff noop guard: `required-reviews-check` gate now blocks when preflight detects zero-diff (clean tree) unless an audited no-op artifact exists, preventing clean-tree preflights from drifting toward task completion without produced changes
 - tightened zero-diff orchestration handling: a clean-tree `preflight` is now treated as baseline-only evidence, and task completion requires either a real produced diff or an audited no-op artifact recorded through the gate flow
 - added audited no-op gate support and completion evidence checks so implementation tasks can no longer drift from `preflight` directly to `DONE` without explicit proof of “already done” / “no changes required”
-- hardened subprocess shell usage: `spawnStreamed` no longer exposes general-purpose shell execution, and Windows shell semantics are confined to a dedicated internal batch-file helper with regression coverage against runtime-cast `shell: true` and crafted command-injection-style arguments (T-031)
+- hardened subprocess shell usage: `spawnStreamed` no longer exposes general-purpose shell execution, and Windows shell semantics are confined to a dedicated internal batch-file helper with regression coverage against runtime-cast `shell: true` and crafted command-injection-style arguments
 - documented the zero-diff contract in CLI/runtime/workflow docs, including the `gate record-no-op` escape hatch and the rule that clean-tree preflight is baseline-only, not completion evidence
 - finished lifecycle path-boundary hardening by validating rollback/sync metadata before destructive restore operations, including rejection of traversal/absolute-path entries in `rollback-records.json` and `sync-backup-metadata.json`
 - expanded lifecycle regression coverage for malicious relative paths and corrupted rollback/sync metadata to keep copy/remove/restore flows root-confined
