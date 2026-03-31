@@ -8,12 +8,30 @@ import {
     SETUP_DEFINITIONS,
     getSetupAnswerDefaults,
     buildSetupHandoffText,
-    buildSetupStepsText
+    buildSetupStepsText,
+    handleSetup
 } from '../../../../src/cli/commands/setup';
 import type { StatusSnapshot } from '../../../../src/validators/status';
 
 import { DEFAULT_BUNDLE_NAME, DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../../../../src/core/constants';
 import { parseOptions, getBundlePath } from '../../../../src/cli/commands/cli-helpers';
+
+function findRepoRoot(startDir: string): string {
+    let current = path.resolve(startDir);
+    while (true) {
+        const packageJsonPath = path.join(current, 'package.json');
+        const cliPath = path.join(current, 'bin', 'octopus.js');
+        if (fs.existsSync(packageJsonPath) && fs.existsSync(cliPath)) {
+            return current;
+        }
+
+        const parent = path.dirname(current);
+        if (parent === current) {
+            throw new Error(`Could not resolve repository root from: ${startDir}`);
+        }
+        current = parent;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // SETUP_DEFINITIONS
@@ -184,7 +202,7 @@ test('getSetupAnswerDefaults normalizes numbered active agent file selections', 
     }
 });
 
-test('getSetupAnswerDefaults does not silently reuse old extra active agent files', () => {
+test('getSetupAnswerDefaults preserves existing active agent files by default', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-defaults-'));
     const answersDir = path.join(tmpDir, DEFAULT_BUNDLE_NAME, 'runtime');
     fs.mkdirSync(answersDir, { recursive: true });
@@ -205,9 +223,78 @@ test('getSetupAnswerDefaults does not silently reuse old extra active agent file
     try {
         const defaults = getSetupAnswerDefaults(tmpDir, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {});
         assert.equal(defaults.sourceOfTruth, 'Codex');
-        assert.equal(defaults.activeAgentFiles, 'AGENTS.md');
+        assert.equal(defaults.activeAgentFiles, 'CLAUDE.md, AGENTS.md');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getSetupAnswerDefaults reconciles preserved active agent files with an explicit source-of-truth override', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-defaults-'));
+    const answersDir = path.join(tmpDir, DEFAULT_BUNDLE_NAME, 'runtime');
+    fs.mkdirSync(answersDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(answersDir, 'init-answers.json'),
+        JSON.stringify({
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'true',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            ActiveAgentFiles: 'CLAUDE.md, AGENTS.md, .antigravity/rules.md'
+        }),
+        'utf8'
+    );
+
+    try {
+        const defaults = getSetupAnswerDefaults(tmpDir, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {
+            sourceOfTruth: 'Gemini'
+        });
+        assert.equal(defaults.sourceOfTruth, 'Gemini');
+        assert.equal(defaults.activeAgentFiles, 'CLAUDE.md, AGENTS.md, GEMINI.md, .antigravity/rules.md');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('handleSetup --no-prompt preserves existing active agent files and rematerializes their entrypoints', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-setup-preserve-active-files-'));
+    const answersDir = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'runtime');
+    fs.mkdirSync(answersDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(answersDir, 'init-answers.json'),
+        JSON.stringify({
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_NONINTERACTIVE',
+            ActiveAgentFiles: 'CLAUDE.md, AGENTS.md, .antigravity/rules.md'
+        }),
+        'utf8'
+    );
+
+    try {
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation'],
+            packageJson,
+            repoRoot
+        );
+
+        const persistedAnswers = JSON.parse(
+            fs.readFileSync(path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json'), 'utf8')
+        );
+        assert.equal(persistedAnswers.ActiveAgentFiles, 'CLAUDE.md, AGENTS.md, .antigravity/rules.md');
+        assert.ok(fs.existsSync(path.join(workspaceRoot, 'CLAUDE.md')));
+        assert.ok(fs.existsSync(path.join(workspaceRoot, 'AGENTS.md')));
+        assert.ok(fs.existsSync(path.join(workspaceRoot, '.antigravity', 'rules.md')));
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
 });
 

@@ -16,7 +16,6 @@ import {
     normalizeAssistantBrevity,
     normalizePathValue,
     normalizeSourceOfTruth,
-    parseBooleanText,
     parseOptionalText,
     parseOptions,
     printBanner,
@@ -111,12 +110,13 @@ interface SetupAnswers {
 
 function resolveSetupActiveAgentFiles(
     sourceOfTruth: string,
-    explicitActiveAgentFiles: string | null | undefined
+    explicitActiveAgentFiles: string | null | undefined,
+    fallbackActiveAgentFiles?: unknown
 ): string | null {
-    if (explicitActiveAgentFiles === undefined) {
-        return normalizeActiveAgentFiles(null, sourceOfTruth);
-    }
-    return normalizeActiveAgentFiles(explicitActiveAgentFiles, sourceOfTruth);
+    const candidateActiveAgentFiles = explicitActiveAgentFiles === undefined
+        ? fallbackActiveAgentFiles
+        : explicitActiveAgentFiles;
+    return normalizeActiveAgentFiles(candidateActiveAgentFiles ?? null, sourceOfTruth);
 }
 
 export function getSetupAnswerDefaults(targetRoot: string, initAnswersPath: string, options: SetupOptions): SetupAnswers {
@@ -126,7 +126,11 @@ export function getSetupAnswerDefaults(targetRoot: string, initAnswersPath: stri
         options.sourceOfTruth ?? getInitAnswerValue(existingAnswers, 'SourceOfTruth'),
         'Claude'
     );
-    const activeAgentFiles = resolveSetupActiveAgentFiles(sourceOfTruth, options.activeAgentFiles);
+    const activeAgentFiles = resolveSetupActiveAgentFiles(
+        sourceOfTruth,
+        options.activeAgentFiles,
+        getInitAnswerValue(existingAnswers, 'ActiveAgentFiles')
+    );
 
     return {
         assistantLanguage:
@@ -358,28 +362,19 @@ export async function handleSetup(
 
         const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
         const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
-        const resolvedAnswers: Partial<SetupAnswers> = promptedAnswers || {};
-        const assistantLanguage = resolvedAnswers.assistantLanguage || options.assistantLanguage || 'English';
-        const assistantBrevity = resolvedAnswers.assistantBrevity
-            || (options.assistantBrevity !== undefined ? normalizeAssistantBrevity(options.assistantBrevity) : 'concise');
-        const sourceOfTruth = resolvedAnswers.sourceOfTruth
-            || (options.sourceOfTruth !== undefined ? normalizeSourceOfTruth(options.sourceOfTruth) : 'Claude');
-        const enforceNoAutoCommit = resolvedAnswers.enforceNoAutoCommit !== undefined
-            ? (String(resolvedAnswers.enforceNoAutoCommit) === 'true')
-            : (options.enforceNoAutoCommit !== undefined ? parseBooleanText(options.enforceNoAutoCommit, 'EnforceNoAutoCommit') : true);
-        const claudeOrchestratorFullAccess = resolvedAnswers.claudeOrchestratorFullAccess !== undefined
-            ? (String(resolvedAnswers.claudeOrchestratorFullAccess) === 'true')
-            : (options.claudeOrchestratorFullAccess !== undefined ? parseBooleanText(options.claudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess') : false);
-        const tokenEconomyEnabled = resolvedAnswers.tokenEconomyEnabled !== undefined
-            ? (String(resolvedAnswers.tokenEconomyEnabled) === 'true')
-            : (options.tokenEconomyEnabled !== undefined ? parseBooleanText(options.tokenEconomyEnabled, 'TokenEconomyEnabled') : true);
+        const fallbackAnswers = getSetupAnswerDefaults(targetRoot, initAnswersPath, options);
+        const resolvedAnswers = promptedAnswers || fallbackAnswers;
+        const assistantLanguage = resolvedAnswers.assistantLanguage;
+        const assistantBrevity = normalizeAssistantBrevity(resolvedAnswers.assistantBrevity);
+        const sourceOfTruth = normalizeSourceOfTruth(resolvedAnswers.sourceOfTruth);
+        const enforceNoAutoCommit = String(resolvedAnswers.enforceNoAutoCommit) === 'true';
+        const claudeOrchestratorFullAccess = String(resolvedAnswers.claudeOrchestratorFullAccess) === 'true';
+        const tokenEconomyEnabled = String(resolvedAnswers.tokenEconomyEnabled) === 'true';
         const activeAgentFiles = resolveSetupActiveAgentFiles(
             sourceOfTruth,
-            resolvedAnswers.activeAgentFiles !== undefined
-                ? resolvedAnswers.activeAgentFiles
-                : options.activeAgentFiles
+            resolvedAnswers.activeAgentFiles
         ) || [];
-        const collectedVia = canUseInteractivePrompts ? 'CLI_INTERACTIVE' : 'CLI_NONINTERACTIVE';
+        const collectedVia = promptedAnswers ? 'CLI_INTERACTIVE' : 'CLI_NONINTERACTIVE';
         const resolvedInitAnswersPath = resolvePathInsideRoot(targetRoot, initAnswersPath, 'InitAnswersPath', { allowMissing: true });
         const normalizedActiveAgentFiles = getActiveAgentEntrypointFiles(activeAgentFiles, sourceOfTruth);
         const previousAgentInitStateResult = readAgentInitStateSafe(targetRoot);
