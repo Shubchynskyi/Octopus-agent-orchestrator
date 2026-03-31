@@ -2,6 +2,7 @@
 
 ## Unreleased
 - added interactive prompting and `--active-agent-files` support to the `reinit` command, aligning it with the `setup` onboarding flow and allowing intentional changes to active agent entrypoints in existing workspaces
+- strengthened orchestration rules: mandatory gate/tooling failures now force an immediate `BLOCKED` status, requiring detailed infrastructure failure reporting; explicitly stated that mandatory gates cannot be waived by user preferences regarding rebuilds or tests
 
 ## 2.4.0
 - changed workspace-facing banners (`status`, `doctor`, `overview`, `setup`, `agent-init`) to display the deployed project/bundle version instead of the launcher package version, preventing global CLI drift from misreporting the active workspace version

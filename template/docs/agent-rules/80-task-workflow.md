@@ -101,6 +101,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - HARD STOP: do not force-stage ignored orchestration control-plane files just because gates, changelog, or reviews reference them.
 - HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order.
 - HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED`, every review finding is either resolved or explicitly deferred with `Justification:`, and the final user report is delivered in mandatory order.
+- HARD STOP: any mandatory gate/tooling failure (`Unknown gate`, missing CLI, build dependency errors, stale bundle mismatch) forces an immediate `BLOCKED` state. Broken infrastructure is not a license to continue implementation or bypass the orchestrator.
 - If compile command or workflow infra files are hotfixed inside current task, scope is expanded and full re-run is mandatory: preflight -> compile gate -> required reviews gate -> doc impact gate -> completion gate.
 
 ## Escape Hatch Contract
@@ -134,3 +135,4 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - `BLOCKED` means pipeline is paused; no next stage may start.
 - Resume only after explicit blocking condition resolution.
 - Record `blocked_reason_code` in `TASK.md`.
+- For infrastructure-driven blocks, you must report: the exact command, `cwd`, chosen CLI path, and `stderr`.

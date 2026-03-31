@@ -22,6 +22,13 @@ Default response brevity: {{ASSISTANT_RESPONSE_BREVITY}}.
 4. Canonical files: `context.md`, `architecture.md`, `conventions.md`, `stack.md`, `decisions.md`. Add new files in lowercase kebab-case `.md` format when an existing category does not fit.
 5. Agents may read `project-memory/` at any time for context. Write access requires explicit user approval or a task instruction that authorises the update.
 
+## Mandatory Infrastructure Integrity
+1. Mandatory gate/tooling failures (e.g., `Unknown gate`, missing CLI capability, missing local build dependencies, stale bundle mismatch, unreadable gate artifact paths) are critical infrastructure defects.
+2. Any such failure forces an immediate `BLOCKED` condition. You must not continue task execution or implementation when gate infrastructure is broken.
+3. User preferences or environment-specific instructions (e.g., "do not run rebuild", "skip tests") never waive the requirement for mandatory gate commands. If a gate requires a build or test execution to satisfy its contract, it must be run regardless of general preferences.
+4. Broken gate infrastructure is not permission to bypass the orchestrator or edit code directly without following the lifecycle.
+5. When blocked by infrastructure failure, report the exact command, `cwd`, chosen CLI path, and the complete `stderr` output to the user.
+
 ## Code Quality
 
 ### Cleanliness and Readability
