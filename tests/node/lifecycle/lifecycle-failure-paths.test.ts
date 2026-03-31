@@ -58,6 +58,12 @@ function copyDirRecursive(src: string, dst: string) {
     }
 }
 
+function seedExecutableBundleSurface(repoRoot: string, bundleRoot: string) {
+    copyDirRecursive(path.join(repoRoot, 'bin'), path.join(bundleRoot, 'bin'));
+    fs.mkdirSync(path.join(bundleRoot, 'dist', 'src'), { recursive: true });
+    fs.writeFileSync(path.join(bundleRoot, 'dist', 'src', 'index.js'), 'module.exports = {};', 'utf8');
+}
+
 const MANAGED_END_MARKER = '<!-- Octopus-agent-orchestrator:managed-end -->';
 
 function setupUpdateWorkspace(repoRoot: string) {
@@ -67,6 +73,7 @@ function setupUpdateWorkspace(repoRoot: string) {
 
     fs.copyFileSync(path.join(repoRoot, 'VERSION'), path.join(bundle, 'VERSION'));
     fs.copyFileSync(path.join(repoRoot, 'package.json'), path.join(bundle, 'package.json'));
+    seedExecutableBundleSurface(repoRoot, bundle);
     copyDirRecursive(path.join(repoRoot, 'template'), path.join(bundle, 'template'));
 
     fs.mkdirSync(path.join(bundle, 'live', 'config'), { recursive: true });

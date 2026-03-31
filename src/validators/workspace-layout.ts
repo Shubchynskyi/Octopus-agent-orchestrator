@@ -99,6 +99,30 @@ export const TEMPLATE_PLACEHOLDER_PATTERN = /{{[A-Z0-9_]+}}/;
 export const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
 export const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
 
+/**
+ * Minimal executable files required for a healthy deployed bundle.
+ */
+export const CRITICAL_BUNDLE_PATHS = Object.freeze([
+    'bin/octopus.js',
+    'dist/src/index.js',
+    'package.json',
+    'VERSION',
+    'template/AGENTS.md'
+]);
+
+/**
+ * Runtime/config inventory that must exist together with the executable bundle.
+ */
+export const BUNDLE_RUNTIME_INVENTORY_PATHS = Object.freeze([
+    'runtime/init-answers.json',
+    'live/config/review-capabilities.json',
+    'live/config/paths.json',
+    'live/config/token-economy.json',
+    'live/config/output-filters.json',
+    'live/config/skill-packs.json',
+    'live/config/skills-index.json'
+]);
+
 interface BuildRequiredPathsOptions {
     activeAgentFiles?: readonly string[];
     claudeOrchestratorFullAccess?: boolean;
@@ -129,7 +153,7 @@ export interface SourceBundleParityResult {
 export function getCanonicalEntrypoint(sourceOfTruth: string): string | null {
     const key = sourceOfTruth.trim().toUpperCase().replace(/\s+/g, '');
     const match = SOURCE_OF_TRUTH_VALUES.find(
-        function (v) { return v.toUpperCase().replace(/\s+/g, '') === key; }
+        function (value) { return value.toUpperCase().replace(/\s+/g, '') === key; }
     );
     return match ? SOURCE_TO_ENTRYPOINT_MAP[match as keyof typeof SOURCE_TO_ENTRYPOINT_MAP] : null;
 }
@@ -142,87 +166,21 @@ export function getBundlePath(targetRoot: string): string {
 }
 
 /**
- * Detect parity between source checkout and deployed bundle.
- * Self-hosted development should fail fast when running stale bundle code.
- */
-export function detectSourceBundleParity(targetRoot: string): SourceBundleParityResult {
-    var isSourceCheckout = pathExists(path.join(targetRoot, 'src', 'index.ts')) &&
-                          pathExists(path.join(targetRoot, 'bin', 'octopus.js')) &&
-                          pathExists(path.join(targetRoot, 'package.json'));
-
-    var result: SourceBundleParityResult = {
-        isSourceCheckout: isSourceCheckout,
-        isStale: false,
-        violations: [],
-        rootVersion: null,
-        bundleVersion: null,
-        remediation: null
-    };
-
-    if (!isSourceCheckout) {
-        return result;
-    }
-
-    var rootVersionPath = path.join(targetRoot, 'VERSION');
-    if (pathExists(rootVersionPath)) {
-        result.rootVersion = readTextFile(rootVersionPath).trim();
-    }
-
-    var bundlePath = getBundlePath(targetRoot);
-    var bundleVersionPath = path.join(bundlePath, 'VERSION');
-    if (pathExists(bundleVersionPath)) {
-        result.bundleVersion = readTextFile(bundleVersionPath).trim();
-    }
-
-    if (result.rootVersion && result.bundleVersion && result.rootVersion !== result.bundleVersion) {
-        result.isStale = true;
-        result.violations.push(
-            "Deployed bundle version '" + result.bundleVersion +
-            "' does not match source checkout version '" + result.rootVersion + "'."
-        );
-    }
-
-    var rootLauncherPath = path.join(targetRoot, 'bin', 'octopus.js');
-    var bundleLauncherPath = path.join(bundlePath, 'bin', 'octopus.js');
-
-    if (pathExists(rootLauncherPath) && pathExists(bundleLauncherPath)) {
-        var rootStat = fs.statSync(rootLauncherPath);
-        var bundleStat = fs.statSync(bundleLauncherPath);
-
-        // T-034: detect if bundle is older than source/build output
-        // We use a small tolerance (1s) to avoid noise from sync latency
-        if (rootStat.mtimeMs > bundleStat.mtimeMs + 1000) {
-            result.isStale = true;
-            result.violations.push(
-                "Deployed bundle launcher 'Octopus-agent-orchestrator/bin/octopus.js' is older than source launcher 'bin/octopus.js'. " +
-                "Source was updated at " + rootStat.mtime.toISOString() + " but bundle has " + bundleStat.mtime.toISOString() + "."
-            );
-        }
-    }
-
-    if (result.isStale) {
-        result.remediation = "Run 'npm run build' followed by 'node bin/octopus.js setup' or 'reinit' to update the deployed bundle.";
-    }
-
-    return result;
-}
-
-/**
  * Build the full list of required paths for a workspace.
  */
 export function buildRequiredPaths(options: BuildRequiredPathsOptions): string[] {
-    var activeAgentFiles = options.activeAgentFiles || [];
-    var claudeOrchestratorFullAccess = options.claudeOrchestratorFullAccess || false;
+    const activeAgentFiles = options.activeAgentFiles || [];
+    const claudeOrchestratorFullAccess = options.claudeOrchestratorFullAccess || false;
 
-    var paths: string[] = [...BASE_REQUIRED_PATHS];
+    const paths: string[] = [...BASE_REQUIRED_PATHS];
 
-    for (var i = 0; i < RULE_FILES.length; i++) {
-        paths.push('Octopus-agent-orchestrator/live/docs/agent-rules/' + RULE_FILES[i]);
+    for (const ruleFile of RULE_FILES) {
+        paths.push(`Octopus-agent-orchestrator/live/docs/agent-rules/${ruleFile}`);
     }
 
-    for (var j = 0; j < activeAgentFiles.length; j++) {
-        if (paths.indexOf(activeAgentFiles[j]) === -1) {
-            paths.push(activeAgentFiles[j]);
+    for (const file of activeAgentFiles) {
+        if (!paths.includes(file)) {
+            paths.push(file);
         }
     }
 
@@ -230,27 +188,17 @@ export function buildRequiredPaths(options: BuildRequiredPathsOptions): string[]
         paths.push('.claude/settings.local.json');
     }
 
-    var unique: string[] = [];
-    var seen: Record<string, boolean> = {};
-    for (var k = 0; k < paths.length; k++) {
-        if (!(paths[k] in seen)) {
-            seen[paths[k]] = true;
-            unique.push(paths[k]);
-        }
-    }
-
-    return unique.sort();
+    return Array.from(new Set(paths)).sort();
 }
 
 /**
  * Check which required paths are missing.
  */
 export function detectMissingPaths(targetRoot: string, requiredPaths: readonly string[]): string[] {
-    var missing: string[] = [];
-    for (var i = 0; i < requiredPaths.length; i++) {
-        var fullPath = path.join(targetRoot, requiredPaths[i]);
-        if (!pathExists(fullPath)) {
-            missing.push(requiredPaths[i]);
+    const missing: string[] = [];
+    for (const requiredPath of requiredPaths) {
+        if (!pathExists(path.join(targetRoot, requiredPath))) {
+            missing.push(requiredPath);
         }
     }
     return missing;
@@ -269,7 +217,7 @@ export function getCommandsRulePath(bundlePath: string): string {
 export function readUtf8IfExists(filePath: string): string | null {
     try {
         if (!pathExists(filePath)) return null;
-        var stats = fs.lstatSync(filePath);
+        const stats = fs.lstatSync(filePath);
         if (!stats.isFile()) return null;
         return readTextFile(filePath);
     } catch {
@@ -284,9 +232,10 @@ export function getMissingProjectCommands(commandsContent: string | null): strin
     if (!commandsContent) {
         return [...PROJECT_COMMAND_PLACEHOLDERS];
     }
-    return PROJECT_COMMAND_PLACEHOLDERS.filter(
-        function (placeholder) { return commandsContent.includes(placeholder); }
-    );
+
+    return PROJECT_COMMAND_PLACEHOLDERS.filter(function (placeholder) {
+        return commandsContent.includes(placeholder);
+    });
 }
 
 /**
@@ -294,10 +243,10 @@ export function getMissingProjectCommands(commandsContent: string | null): strin
  */
 export function extractManagedBlock(content: string | null): string | null {
     if (!content) return null;
-    var startEscaped = MANAGED_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    var endEscaped = MANAGED_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    var pattern = new RegExp(startEscaped + '[\\s\\S]*?' + endEscaped);
-    var match = content.match(pattern);
+    const startEscaped = MANAGED_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const endEscaped = MANAGED_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(startEscaped + '[\\s\\S]*?' + endEscaped);
+    const match = content.match(pattern);
     return match ? match[0] : null;
 }
 
@@ -305,25 +254,189 @@ export function extractManagedBlock(content: string | null): string | null {
  * Detect rule file violations: empty files and unresolved template placeholders.
  */
 export function detectRuleFileViolations(targetRoot: string): RuleFileViolations {
-    var ruleFileViolations: string[] = [];
-    var templatePlaceholderViolations: string[] = [];
+    const ruleFileViolations: string[] = [];
+    const templatePlaceholderViolations: string[] = [];
 
-    for (var i = 0; i < RULE_FILES.length; i++) {
-        var ruleFile = RULE_FILES[i];
-        var relativePath = 'Octopus-agent-orchestrator/live/docs/agent-rules/' + ruleFile;
-        var fullPath = path.join(targetRoot, relativePath);
-        if (!pathExists(fullPath)) continue;
+    for (const ruleFile of RULE_FILES) {
+        const relativePath = `Octopus-agent-orchestrator/live/docs/agent-rules/${ruleFile}`;
+        const fullPath = path.join(targetRoot, relativePath);
+        if (!pathExists(fullPath)) {
+            continue;
+        }
 
-        var content = readTextFile(fullPath);
+        const content = readTextFile(fullPath);
         if (!content || !content.trim()) {
-            ruleFileViolations.push('Rule file is empty: ' + relativePath);
+            ruleFileViolations.push(`Rule file is empty: ${relativePath}`);
         }
         if (TEMPLATE_PLACEHOLDER_PATTERN.test(content)) {
-            templatePlaceholderViolations.push('Unresolved template placeholder in: ' + relativePath);
+            templatePlaceholderViolations.push(`Unresolved template placeholder in: ${relativePath}`);
         }
     }
 
-    return { ruleFileViolations: ruleFileViolations, templatePlaceholderViolations: templatePlaceholderViolations };
+    return { ruleFileViolations, templatePlaceholderViolations };
+}
+
+/**
+ * Detect parity between source checkout and deployed bundle.
+ */
+export function detectSourceBundleParity(targetRoot: string): SourceBundleParityResult {
+    const isSourceCheckout = pathExists(path.join(targetRoot, 'src', 'index.ts')) &&
+        pathExists(path.join(targetRoot, 'bin', 'octopus.js')) &&
+        pathExists(path.join(targetRoot, 'package.json'));
+
+    const result: SourceBundleParityResult = {
+        isSourceCheckout,
+        isStale: false,
+        violations: [],
+        rootVersion: null,
+        bundleVersion: null,
+        remediation: null
+    };
+
+    if (!isSourceCheckout) {
+        return result;
+    }
+
+    const rootVersionPath = path.join(targetRoot, 'VERSION');
+    if (pathExists(rootVersionPath)) {
+        result.rootVersion = readTextFile(rootVersionPath).trim();
+    }
+
+    const bundlePath = getBundlePath(targetRoot);
+    const bundleVersionPath = path.join(bundlePath, 'VERSION');
+    if (pathExists(bundleVersionPath)) {
+        result.bundleVersion = readTextFile(bundleVersionPath).trim();
+    }
+
+    if (result.rootVersion && result.bundleVersion && result.rootVersion !== result.bundleVersion) {
+        result.isStale = true;
+        result.violations.push(
+            `Deployed bundle version '${result.bundleVersion}' does not match source checkout version '${result.rootVersion}'.`
+        );
+    }
+
+    const rootLauncherPath = path.join(targetRoot, 'bin', 'octopus.js');
+    const bundleLauncherPath = path.join(bundlePath, 'bin', 'octopus.js');
+    if (pathExists(rootLauncherPath) && pathExists(bundleLauncherPath)) {
+        const rootStat = fs.statSync(rootLauncherPath);
+        const bundleStat = fs.statSync(bundleLauncherPath);
+        if (rootStat.mtimeMs > bundleStat.mtimeMs + 1000) {
+            result.isStale = true;
+            result.violations.push(
+                `Deployed bundle launcher 'Octopus-agent-orchestrator/bin/octopus.js' is older than source launcher 'bin/octopus.js'. ` +
+                `Source was updated at ${rootStat.mtime.toISOString()} but bundle has ${bundleStat.mtime.toISOString()}.`
+            );
+        }
+    }
+
+    const invariantResult = validateBundleInvariants(bundlePath);
+    if (!invariantResult.isValid) {
+        result.isStale = true;
+        for (const violation of invariantResult.violations) {
+            result.violations.push(`Bundle invariant violation: ${violation}`);
+        }
+    }
+
+    if (result.isStale) {
+        result.remediation = "Run 'npm run build' followed by 'node bin/octopus.js setup' or 'reinit' to update the deployed bundle.";
+    }
+
+    return result;
+}
+
+/**
+ * Validate required deployed bundle inventory.
+ */
+export function getExpectedBundleInvariantPaths(sourceBundleRoot?: string | null): string[] {
+    if (!sourceBundleRoot) {
+        return [...CRITICAL_BUNDLE_PATHS, ...BUNDLE_RUNTIME_INVENTORY_PATHS];
+    }
+
+    const expected = new Set<string>();
+    const hasExecutableSurface = [
+        'package.json',
+        'bin/octopus.js',
+        'dist/src/index.js'
+    ].some(function (relPath) {
+        return pathExists(path.join(sourceBundleRoot, relPath));
+    });
+
+    if (hasExecutableSurface) {
+        for (const relPath of CRITICAL_BUNDLE_PATHS) {
+            expected.add(relPath);
+        }
+    } else {
+        for (const relPath of CRITICAL_BUNDLE_PATHS) {
+            if (pathExists(path.join(sourceBundleRoot, relPath))) {
+                expected.add(relPath);
+            }
+        }
+    }
+
+    for (const relPath of BUNDLE_RUNTIME_INVENTORY_PATHS) {
+        if (pathExists(path.join(sourceBundleRoot, relPath))) {
+            expected.add(relPath);
+        }
+    }
+
+    if (expected.size === 0) {
+        return [...CRITICAL_BUNDLE_PATHS, ...BUNDLE_RUNTIME_INVENTORY_PATHS];
+    }
+
+    return Array.from(expected);
+}
+
+export function validateBundleInvariants(
+    bundlePath: string,
+    sourceBundleRootOrExpectedPaths?: string | readonly string[] | null
+): { isValid: boolean; violations: string[] } {
+    const violations: string[] = [];
+
+    if (!pathExists(bundlePath)) {
+        violations.push(`Bundle directory '${DEFAULT_BUNDLE_NAME}' is missing.`);
+        return { isValid: false, violations };
+    }
+
+    const expectedPaths = Array.isArray(sourceBundleRootOrExpectedPaths)
+        ? [...sourceBundleRootOrExpectedPaths]
+        : getExpectedBundleInvariantPaths(
+            typeof sourceBundleRootOrExpectedPaths === 'string' || sourceBundleRootOrExpectedPaths == null
+                ? sourceBundleRootOrExpectedPaths
+                : null
+        );
+
+    for (const relPath of expectedPaths) {
+        if (!pathExists(path.join(bundlePath, relPath))) {
+            if (CRITICAL_BUNDLE_PATHS.includes(relPath as typeof CRITICAL_BUNDLE_PATHS[number])) {
+                violations.push(`Required bundle file '${relPath}' is missing.`);
+            } else {
+                violations.push(`Required bundle inventory '${relPath}' is missing.`);
+            }
+        }
+    }
+
+    return { isValid: violations.length === 0, violations };
+}
+
+/**
+ * Validate managed config JSON files exist and parse without error.
+ */
+export function detectManagedConfigViolations(targetRoot: string, configRelativePath: string): string[] {
+    const violations: string[] = [];
+    const configPath = path.join(targetRoot, configRelativePath);
+
+    if (!pathExists(configPath)) {
+        violations.push(`${configRelativePath} is missing.`);
+        return violations;
+    }
+
+    try {
+        JSON.parse(readTextFile(configPath));
+    } catch {
+        violations.push(`${configRelativePath} must contain valid JSON.`);
+    }
+
+    return violations;
 }
 
 /**
@@ -334,11 +447,11 @@ export function detectVersionViolations(
     sourceOfTruth: string,
     canonicalEntrypoint: string | null
 ): VersionViolationResult {
-    var violations: string[] = [];
-    var bundleVersionPath = path.join(targetRoot, 'Octopus-agent-orchestrator/VERSION');
-    var liveVersionPath = path.join(targetRoot, 'Octopus-agent-orchestrator/live/version.json');
+    const violations: string[] = [];
+    const bundleVersionPath = path.join(targetRoot, 'Octopus-agent-orchestrator', 'VERSION');
+    const liveVersionPath = path.join(targetRoot, 'Octopus-agent-orchestrator', 'live', 'version.json');
 
-    var bundleVersion: string | null = null;
+    let bundleVersion: string | null = null;
 
     if (pathExists(bundleVersionPath)) {
         bundleVersion = readTextFile(bundleVersionPath).trim();
@@ -348,94 +461,89 @@ export function detectVersionViolations(
     }
 
     if (pathExists(liveVersionPath)) {
-        var liveVersionObject: Record<string, unknown>;
+        let liveVersionObject: Record<string, unknown>;
         try {
-            var parsed = JSON.parse(readTextFile(liveVersionPath));
+            const parsed = JSON.parse(readTextFile(liveVersionPath));
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
                 throw new Error('Invalid JSON root');
             }
             liveVersionObject = parsed as Record<string, unknown>;
         } catch {
             violations.push('Octopus-agent-orchestrator/live/version.json must contain valid JSON.');
-            return { violations: violations, bundleVersion: bundleVersion };
+            return { violations, bundleVersion };
         }
 
-        var liveVersion = liveVersionObject && liveVersionObject.Version
-            ? String(liveVersionObject.Version).trim()
-            : '';
+        const liveVersion = liveVersionObject.Version ? String(liveVersionObject.Version).trim() : '';
         if (!liveVersion) {
             violations.push('Octopus-agent-orchestrator/live/version.json must include non-empty Version.');
         } else if (bundleVersion && liveVersion !== bundleVersion) {
             violations.push(
-                "Octopus-agent-orchestrator/live/version.json Version '" + liveVersion + "' must match Octopus-agent-orchestrator/VERSION '" + bundleVersion + "'."
+                `Octopus-agent-orchestrator/live/version.json Version '${liveVersion}' must match Octopus-agent-orchestrator/VERSION '${bundleVersion}'.`
             );
         }
 
-        var liveSoT = liveVersionObject && liveVersionObject.SourceOfTruth
-            ? String(liveVersionObject.SourceOfTruth).trim()
-            : '';
-        if (!liveSoT) {
+        const liveSourceOfTruth = liveVersionObject.SourceOfTruth ? String(liveVersionObject.SourceOfTruth).trim() : '';
+        if (!liveSourceOfTruth) {
             violations.push('Octopus-agent-orchestrator/live/version.json must include non-empty SourceOfTruth.');
-        } else if (liveSoT.toLowerCase() !== sourceOfTruth.toLowerCase()) {
+        } else if (liveSourceOfTruth.toLowerCase() !== sourceOfTruth.toLowerCase()) {
             violations.push(
-                "Octopus-agent-orchestrator/live/version.json SourceOfTruth '" + liveSoT + "' must match verification SourceOfTruth '" + sourceOfTruth + "'."
+                `Octopus-agent-orchestrator/live/version.json SourceOfTruth '${liveSourceOfTruth}' must match verification SourceOfTruth '${sourceOfTruth}'.`
             );
         }
 
-        var liveCE = liveVersionObject && liveVersionObject.CanonicalEntrypoint
-            ? String(liveVersionObject.CanonicalEntrypoint).trim()
-            : '';
-        if (!liveCE) {
+        const liveCanonicalEntrypoint = liveVersionObject.CanonicalEntrypoint ? String(liveVersionObject.CanonicalEntrypoint).trim() : '';
+        if (!liveCanonicalEntrypoint) {
             violations.push('Octopus-agent-orchestrator/live/version.json must include non-empty CanonicalEntrypoint.');
-        } else if (canonicalEntrypoint && liveCE !== canonicalEntrypoint) {
+        } else if (canonicalEntrypoint && liveCanonicalEntrypoint !== canonicalEntrypoint) {
             violations.push(
-                "Octopus-agent-orchestrator/live/version.json CanonicalEntrypoint '" + liveCE + "' must match expected '" + canonicalEntrypoint + "'."
+                `Octopus-agent-orchestrator/live/version.json CanonicalEntrypoint '${liveCanonicalEntrypoint}' must match expected '${canonicalEntrypoint}'.`
             );
         }
     }
 
-    return { violations: violations, bundleVersion: bundleVersion };
-}
-
-/**
- * Validate managed config JSON files exist and parse without error.
- */
-export function detectManagedConfigViolations(targetRoot: string, configRelativePath: string): string[] {
-    var violations: string[] = [];
-    var configPath = path.join(targetRoot, configRelativePath);
-
-    if (!pathExists(configPath)) {
-        violations.push(configRelativePath + ' is missing.');
-        return violations;
-    }
-
-    try {
-        var raw = readTextFile(configPath);
-        JSON.parse(raw);
-    } catch {
-        violations.push(configRelativePath + ' must contain valid JSON.');
-    }
-
-    return violations;
+    return { violations, bundleVersion };
 }
 
 /**
  * Detect .gitignore violations.
  */
 export function detectGitignoreViolations(targetRoot: string, requiredEntries: readonly string[]): string[] {
-    var gitignorePath = path.join(targetRoot, '.gitignore');
+    const gitignorePath = path.join(targetRoot, '.gitignore');
     if (!pathExists(gitignorePath)) {
         return [...requiredEntries];
     }
 
-    var existingLines = readTextFile(gitignorePath).split(/\r?\n/);
-    var missing: string[] = [];
+    const existingLines = readTextFile(gitignorePath).split(/\r?\n/);
+    const missing: string[] = [];
 
-    for (var i = 0; i < requiredEntries.length; i++) {
-        if (existingLines.indexOf(requiredEntries[i]) === -1) {
-            missing.push(requiredEntries[i]);
+    for (const entry of requiredEntries) {
+        if (!existingLines.includes(entry)) {
+            missing.push(entry);
         }
     }
 
+    return missing;
+}
+
+export function detectManagedMarkers(filePath: string): { hasStart: boolean; hasEnd: boolean } {
+    const content = readUtf8IfExists(filePath);
+    if (!content) return { hasStart: false, hasEnd: false };
+    return {
+        hasStart: content.includes(MANAGED_START),
+        hasEnd: content.includes(MANAGED_END)
+    };
+}
+
+export function detectMissingManagedEntries(filePath: string, requiredEntries: readonly string[]): string[] {
+    const content = readUtf8IfExists(filePath);
+    if (!content) return [...requiredEntries];
+
+    const existingLines = content.split(/\r?\n/).map(function (line) { return line.trim(); });
+    const missing: string[] = [];
+    for (const entry of requiredEntries) {
+        if (!existingLines.includes(entry.trim())) {
+            missing.push(entry);
+        }
+    }
     return missing;
 }

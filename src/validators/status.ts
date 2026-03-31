@@ -97,9 +97,9 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
     var taskPath = path.join(resolvedTargetRoot, 'TASK.md');
     var livePath = path.join(bundlePath, 'live');
     var usagePath = path.join(livePath, 'USAGE.md');
-    var commandsRulePath = getCommandsRulePath(bundlePath);
-    var commandsContent = readUtf8IfExists(commandsRulePath);
-    var missingProjectCommands = getMissingProjectCommands(commandsContent);
+    const commandsRulePath = getCommandsRulePath(bundlePath);
+    const commandsContent = readUtf8IfExists(commandsRulePath);
+    const missingProjectCommands = getMissingProjectCommands(commandsContent || '');
     var agentInitStateResult: AgentInitStateResult = bundlePresent
         ? readAgentInitStateSafe(resolvedTargetRoot, DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH)
         : { statePath: path.join(bundlePath, 'runtime', 'agent-init-state.json'), state: null, error: null };

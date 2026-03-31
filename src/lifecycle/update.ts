@@ -7,6 +7,7 @@ import { isPathInsideRoot } from '../core/paths';
 import { validateInitAnswers } from '../schemas/init-answers';
 import { runInstall } from '../materialization/install';
 import { runInit } from '../materialization/init';
+import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
 import {
     createRollbackSnapshot,
     getTimestamp,
@@ -262,9 +263,11 @@ export function runUpdate(options: RunUpdateOptions) {
     let contractMigrationStatus = 'NOT_RUN';
     let verifyStatus = 'NOT_RUN';
     let manifestStatus = 'NOT_RUN';
+    let invariantStatus = 'NOT_RUN';
     let updatedVersion = bundleVersion;
     let contractMigrationCount = 0;
     let contractMigrationFiles: string[] = [];
+    const expectedInvariantPaths = getExpectedBundleInvariantPaths(bundleRoot);
     const effectiveTrustContext: UpdateTrustContext = trustContext || {
         policy: 'unknown',
         overrideUsed: false,
@@ -380,6 +383,14 @@ export function runUpdate(options: RunUpdateOptions) {
                 manifestStatus = 'SKIPPED_NO_RUNNER';
             }
 
+            // T-040: Bundle invariant check (enforce consistency)
+            currentStage = 'INVARIANT_CHECK';
+            const invariantResult = validateBundleInvariants(path.join(normalizedTarget, DEFAULT_BUNDLE_NAME), expectedInvariantPaths);
+            if (!invariantResult.isValid) {
+                throw new Error(`Bundle invariant violation after update: ${invariantResult.violations.join('; ')}`);
+            }
+            invariantStatus = 'PASS';
+
             // Re-read updated version
             if (pathExists(liveVersionPath)) {
                 try {
@@ -403,6 +414,7 @@ export function runUpdate(options: RunUpdateOptions) {
             case 'CONTRACT_MIGRATIONS': contractMigrationStatus = 'FAIL'; break;
             case 'VERIFY': verifyStatus = 'FAIL'; break;
             case 'MANIFEST_VALIDATION': manifestStatus = 'FAIL'; break;
+            case 'INVARIANT_CHECK': invariantStatus = 'FAIL'; break;
         }
 
         if (!dryRun && rollbackSnapshotCreated) {
@@ -456,6 +468,7 @@ export function runUpdate(options: RunUpdateOptions) {
             `ContractMigrations: ${contractMigrationStatus}`,
             `Verify: ${verifyStatus}`,
             `ManifestValidation: ${manifestStatus}`,
+            `InvariantCheck: ${invariantStatus}`,
             '',
             '## ContractMigrations',
             `AppliedCount: ${contractMigrationCount}`,

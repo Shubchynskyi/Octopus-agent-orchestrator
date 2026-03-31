@@ -34,6 +34,13 @@ function copyDirRecursive(src: string, dst: string) {
     }
 }
 
+function seedExecutableBundleSurface(repoRoot: string, bundleRoot: string) {
+    fs.copyFileSync(path.join(repoRoot, 'package.json'), path.join(bundleRoot, 'package.json'));
+    copyDirRecursive(path.join(repoRoot, 'bin'), path.join(bundleRoot, 'bin'));
+    fs.mkdirSync(path.join(bundleRoot, 'dist', 'src'), { recursive: true });
+    fs.writeFileSync(path.join(bundleRoot, 'dist', 'src', 'index.js'), 'module.exports = {};', 'utf8');
+}
+
 function setupUpdateWorkspace(repoRoot: string) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-update-'));
     const bundle = path.join(tmpDir, 'Octopus-agent-orchestrator');
@@ -41,6 +48,7 @@ function setupUpdateWorkspace(repoRoot: string) {
 
     // Copy VERSION
     fs.copyFileSync(path.join(repoRoot, 'VERSION'), path.join(bundle, 'VERSION'));
+    seedExecutableBundleSurface(repoRoot, bundle);
 
     // Copy template
     copyDirRecursive(path.join(repoRoot, 'template'), path.join(bundle, 'template'));
@@ -96,6 +104,8 @@ function setupSyncedUpdateWorkspace(repoRoot: string) {
     }
 
     copyDirRecursive(path.join(repoRoot, 'bin'), path.join(bundle, 'bin'));
+    fs.mkdirSync(path.join(bundle, 'dist', 'src'), { recursive: true });
+    fs.writeFileSync(path.join(bundle, 'dist', 'src', 'index.js'), 'module.exports = {};', 'utf8');
     copyDirRecursive(path.join(repoRoot, 'src'), path.join(bundle, 'src'));
     copyDirRecursive(path.join(repoRoot, 'template'), path.join(bundle, 'template'));
 

@@ -12,6 +12,8 @@ import {
 import { getCanonicalEntrypointFile, getActiveAgentEntrypointFiles, convertActiveAgentEntrypointFilesToString } from './common';
 import { applyAssistantDefaults } from './rule-materialization';
 import { runInstall } from './install';
+import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
+import { DEFAULT_BUNDLE_NAME } from '../core/constants';
 
 interface ReinitOptions {
     targetRoot: string;
@@ -81,6 +83,7 @@ export function runReinit(options: ReinitOptions) {
     } = options;
 
     const sourceRoot = path.join(bundleRoot, 'template');
+    const expectedInvariantPaths = getExpectedBundleInvariantPaths(bundleRoot);
     if (!pathExists(sourceRoot)) {
         throw new Error(`Template directory not found: ${sourceRoot}`);
     }
@@ -240,6 +243,12 @@ export function runReinit(options: ReinitOptions) {
     }));
 
     const canonicalEntrypoint = getCanonicalEntrypointFile(resolvedSourceOfTruth);
+
+    // T-040: Bundle invariant check (enforce consistency)
+    const invariantResult = validateBundleInvariants(path.join(normalizedTarget, DEFAULT_BUNDLE_NAME), expectedInvariantPaths);
+    if (!invariantResult.isValid) {
+        throw new Error(`Bundle invariant violation after reinit: ${invariantResult.violations.join('; ')}`);
+    }
 
     return {
         targetRoot: normalizedTarget,

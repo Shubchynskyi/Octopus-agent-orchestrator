@@ -10,6 +10,13 @@
 - made the concurrent task-event integrity test less timing-sensitive under shared CI runner load while preserving multiprocess lock/integrity coverage
 - opted GitHub Actions workflows into `Node.js 24` for JavaScript-based actions ahead of the hosted-runner cutoff, removing the Node 20 deprecation warning while keeping the project runtime itself on Node 20
 
+## 2.3.7
+
+- enforced a hard atomic consistency invariant for the deployed bundle during `update` and `reinit`: the lifecycle now validates the presence of `bin`, `dist`, `package.json`, `VERSION`, and `template` artifacts after sync and before completion (T-040)
+- enhanced `detectSourceBundleParity` to detect structurally incomplete or old bundles in self-hosted mode, preventing execution of stale runtime code (T-040)
+- added automatic rollback on bundle invariant violation during the update pipeline (T-040)
+- added comprehensive unit tests for bundle invariants and lifecycle consistency gates (T-040)
+
 ## 2.3.6
 
 - fixed self-hosted provider bridge and live rule examples to use `node bin/octopus.js` in the source checkout instead of the deployed bundle path; this avoids running stale materialized workspace code during local orchestrator development

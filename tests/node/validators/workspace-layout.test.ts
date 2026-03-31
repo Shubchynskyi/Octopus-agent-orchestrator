@@ -6,6 +6,8 @@ import * as os from 'node:os';
 
 import {
     BASE_REQUIRED_PATHS,
+    BUNDLE_RUNTIME_INVENTORY_PATHS,
+    CRITICAL_BUNDLE_PATHS,
     RULE_FILES,
     PROJECT_COMMAND_PLACEHOLDERS,
     MANAGED_START,
@@ -20,7 +22,8 @@ import {
     getCommandsRulePath,
     getMissingProjectCommands,
     readUtf8IfExists,
-    detectSourceBundleParity
+    detectSourceBundleParity,
+    validateBundleInvariants
 } from '../../../src/validators/workspace-layout';
 
 test('detectSourceBundleParity returns isSourceCheckout false for empty dir', () => {
@@ -91,10 +94,24 @@ test('detectSourceBundleParity passes when matching', () => {
         fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
         fs.mkdirSync(path.join(tmpDir, 'bin'), { recursive: true });
         fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'dist', 'src'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'template'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'runtime'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config'), { recursive: true });
         fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), '', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'VERSION'), '1.0.0', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'dist', 'src', 'index.js'), 'module.exports = {};', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'template', 'AGENTS.md'), '# template', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'runtime', 'init-answers.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'review-capabilities.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'paths.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'token-economy.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'output-filters.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'skill-packs.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'skills-index.json'), '{}', 'utf8');
 
         const rootLauncher = path.join(tmpDir, 'bin', 'octopus.js');
         const bundleLauncher = path.join(tmpDir, 'Octopus-agent-orchestrator', 'bin', 'octopus.js');
@@ -111,6 +128,26 @@ test('detectSourceBundleParity passes when matching', () => {
         assert.equal(result.isSourceCheckout, true);
         assert.equal(result.isStale, false);
         assert.equal(result.violations.length, 0);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('validateBundleInvariants fails on partial runtime inventory', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-invariants-test-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    try {
+        for (const relPath of [...CRITICAL_BUNDLE_PATHS, ...BUNDLE_RUNTIME_INVENTORY_PATHS]) {
+            const fullPath = path.join(bundlePath, relPath);
+            fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+            fs.writeFileSync(fullPath, '{}', 'utf8');
+        }
+
+        fs.rmSync(path.join(bundlePath, 'live', 'config', 'paths.json'));
+
+        const result = validateBundleInvariants(bundlePath);
+        assert.equal(result.isValid, false);
+        assert.ok(result.violations.some(v => v.includes('live/config/paths.json')));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

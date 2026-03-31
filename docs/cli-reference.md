@@ -118,6 +118,10 @@ Change init answers without a full reinstall.
 octopus reinit --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
 ```
 
+Notes:
+- `reinit` re-materializes `live/` based on new answers and enforces a hard atomic consistency invariant for the deployed bundle.
+- After sync, a mandatory post-reinit invariant check proves the deployed bundle is structurally complete (includes `bin`, `dist`, `package.json`, `VERSION`, and `template`) relative to the source being applied.
+
 ### `octopus verify`
 
 Validate deployment consistency and rule contracts.
@@ -146,7 +150,7 @@ Notes:
 - `--source-path` is for local testing against an unpacked repo or bundle directory.
 - `--trust-override` is an explicit bypass for non-allowlisted npm specs, git sources, or local `--source-path` testing, and the public CLI only accepts it together with `--no-prompt`.
 - Ordinary CLI/runtime flows ignore `OCTOPUS_UPDATE_TRUST_OVERRIDE`; that environment variable is reserved for test-only harness paths, not for production or CI.
-- `--apply` runs the full update lifecycle after bundle sync, re-materializes `live/`, applies built-in live-rule contract migrations for existing workspaces, runs verify plus manifest validation, defers `VERSION` until lifecycle success, and creates rollback artifacts for the last applied update.
+- `--apply` runs the full update lifecycle after bundle sync, re-materializes `live/`, applies built-in live-rule contract migrations for existing workspaces, runs verify plus manifest validation, enforces a hard atomic consistency invariant for the deployed bundle, defers `VERSION` until lifecycle success, and creates rollback artifacts for the last applied update.
 
 ### `octopus update`
 
