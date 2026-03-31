@@ -14,6 +14,7 @@ import { applyAssistantDefaults } from './rule-materialization';
 import { runInstall } from './install';
 import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
 import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { cleanupStaleTaskEventLocks } from '../gate-runtime/task-events';
 
 interface ReinitOptions {
     targetRoot: string;
@@ -101,6 +102,14 @@ export function runReinit(options: ReinitOptions) {
     const resolvedInitPath = path.isAbsolute(initAnswersPath)
         ? initAnswersPath
         : path.resolve(targetRoot, initAnswersPath);
+
+    // Read bundle version (T-033)
+    const bundleVersionPath = path.join(bundleRoot, 'VERSION');
+    if (!pathExists(bundleVersionPath)) {
+        throw new Error(`Bundle version file not found: ${bundleVersionPath}`);
+    }
+    const bundleVersion = readTextFile(bundleVersionPath).trim();
+
     const previousAgentInitStateResult = readAgentInitStateSafe(normalizedTarget);
     const previousAgentInitState = previousAgentInitStateResult.state;
 
@@ -215,14 +224,15 @@ export function runReinit(options: ReinitOptions) {
         initAnswersPath: resolvedInitPath
     });
 
-    const preserveExistingCheckpoints = doesAgentInitStateMatchAnswers(previousAgentInitState, {
+    const preserveExistingCheckpoints = doesAgentInitStateMatchAnswers(previousAgentInitState, {        
         AssistantLanguage: resolvedLanguage,
         SourceOfTruth: resolvedSourceOfTruth,
         ActiveAgentFiles: resolvedActiveFiles
-    });
+    }, bundleVersion);
     writeAgentInitState(normalizedTarget, createAgentInitState({
         AssistantLanguage: resolvedLanguage,
         SourceOfTruth: resolvedSourceOfTruth,
+        OrchestratorVersion: bundleVersion, // Track version (T-033)
         AssistantLanguageConfirmed: true,
         ActiveAgentFilesConfirmed: preserveExistingCheckpoints && previousAgentInitState
             ? previousAgentInitState.ActiveAgentFilesConfirmed
@@ -241,6 +251,13 @@ export function runReinit(options: ReinitOptions) {
             : false,
         ActiveAgentFiles: resolvedActiveFiles
     }));
+
+    // T-033: best-effort stale task-event lock cleanup so reinit recovers provider state without reinstall.
+    try {
+        cleanupStaleTaskEventLocks(path.join(normalizedTarget, DEFAULT_BUNDLE_NAME), { dryRun: false });
+    } catch {
+        // Ignore lock cleanup failures here; reinit still updates the workspace state and bundle surface.
+    }
 
     const canonicalEntrypoint = getCanonicalEntrypointFile(resolvedSourceOfTruth);
 

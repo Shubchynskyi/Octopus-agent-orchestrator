@@ -62,6 +62,19 @@ function copyDirRecursive(src: string, dst: string) {
     }
 }
 
+function seedStaleTaskEventLock(bundleRoot: string, lockName: string) {
+    const lockPath = path.join(bundleRoot, 'runtime', 'task-events', lockName);
+    const oldDate = new Date('2020-01-01T00:00:00.000Z');
+    fs.mkdirSync(lockPath, { recursive: true });
+    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        pid: 999999,
+        hostname: 'test-host',
+        created_at_utc: '2020-01-01T00:00:00.000Z'
+    }), 'utf8');
+    fs.utimesSync(path.join(lockPath, 'owner.json'), oldDate, oldDate);
+    fs.utimesSync(lockPath, oldDate, oldDate);
+}
+
 describe('getOptionalValue', () => {
     it('does case-insensitive lookup', () => {
         assert.equal(getOptionalValue({ AssistantLanguage: 'English' }, 'assistantlanguage'), 'English');
@@ -342,6 +355,61 @@ describe('runReinit', () => {
                 fs.readFileSync(path.join(pmDir, 'decisions.md'), 'utf8')
                     .includes('event sourcing'),
                 'user content in decisions.md must be intact');
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('invalidates stale agent-init checkpoints on version mismatch and cleans stale task-event locks (T-033)', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+            const bundleVersion = fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim();
+            fs.writeFileSync(answersPath, JSON.stringify({
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            }));
+            fs.writeFileSync(path.join(bundleRoot, 'runtime', 'agent-init-state.json'), JSON.stringify({
+                Version: 1,
+                UpdatedAt: '2026-03-31T00:00:00.000Z',
+                OrchestratorVersion: null,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Claude',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['CLAUDE.md']
+            }, null, 2), 'utf8');
+            seedStaleTaskEventLock(bundleRoot, '.T-STALE.lock');
+
+            runReinit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            const persistedState = JSON.parse(fs.readFileSync(
+                path.join(bundleRoot, 'runtime', 'agent-init-state.json'),
+                'utf8'
+            ));
+            assert.equal(persistedState.OrchestratorVersion, bundleVersion);
+            assert.equal(persistedState.AssistantLanguageConfirmed, true);
+            assert.equal(persistedState.ActiveAgentFilesConfirmed, false);
+            assert.equal(persistedState.ProjectRulesUpdated, false);
+            assert.equal(persistedState.SkillsPromptCompleted, false);
+            assert.equal(persistedState.VerificationPassed, false);
+            assert.equal(persistedState.ManifestValidationPassed, false);
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'task-events', '.T-STALE.lock')));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

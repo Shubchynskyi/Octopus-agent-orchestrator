@@ -168,7 +168,51 @@ function ensureBundleExists(targetRoot: string, commandName: string): string {
 
 function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: boolean | undefined) {
     return function runLifecycleFromCli(runnerOptions: CheckUpdateRunnerOptions): UpdateLifecycleResult {
-        return runUpdate({
+        // T-033: Try to use the NEW code from the bundle for materialization/lifecycle.
+        // This ensures that the update is applied using the TARGET version's logic.
+        const bundleResolved = path.resolve(bundlePath);
+        const targetUpdateModulePath = path.join(bundleResolved, 'dist', 'src', 'lifecycle', 'update.js');
+        const targetMigrationModulePath = path.join(bundleResolved, 'dist', 'src', 'lifecycle', 'contract-migrations.js');
+        const targetVerifyModulePath = path.join(bundleResolved, 'dist', 'src', 'validators', 'verify.js');
+        const targetManifestModulePath = path.join(bundleResolved, 'dist', 'src', 'validators', 'validate-manifest.js');
+
+        let effectiveRunUpdate = runUpdate;
+        let effectiveRunContractMigrations = runContractMigrations;
+        let effectiveRunVerify = runVerify;
+        let effectiveValidateManifest = validateManifest;
+
+        if (fs.existsSync(targetUpdateModulePath)) {
+            try {
+                // Clear cache for the new modules to ensure we load fresh versions from the synced bundle
+                [targetUpdateModulePath, targetMigrationModulePath, targetVerifyModulePath, targetManifestModulePath].forEach(p => {
+                    try {
+                        const resolved = require.resolve(p);
+                        if (require.cache[resolved]) delete require.cache[resolved];
+                    } catch { /* ignore */ }
+                });
+
+                const newUpdateModule = require(targetUpdateModulePath);
+                if (typeof newUpdateModule.runUpdate === 'function') {
+                    effectiveRunUpdate = newUpdateModule.runUpdate;
+                }
+                const newMigrationModule = fs.existsSync(targetMigrationModulePath) ? require(targetMigrationModulePath) : null;
+                if (newMigrationModule && typeof newMigrationModule.runContractMigrations === 'function') {
+                    effectiveRunContractMigrations = newMigrationModule.runContractMigrations;
+                }
+                const newVerifyModule = fs.existsSync(targetVerifyModulePath) ? require(targetVerifyModulePath) : null;
+                if (newVerifyModule && typeof newVerifyModule.runVerify === 'function') {
+                    effectiveRunVerify = newVerifyModule.runVerify;
+                }
+                const newManifestModule = fs.existsSync(targetManifestModulePath) ? require(targetManifestModulePath) : null;
+                if (newManifestModule && typeof newManifestModule.validateManifest === 'function') {
+                    effectiveValidateManifest = newManifestModule.validateManifest;
+                }
+            } catch (_e) {
+                // Fallback to current code
+            }
+        }
+
+        return effectiveRunUpdate({
             targetRoot: runnerOptions.targetRoot,
             bundleRoot: bundlePath,
             initAnswersPath: runnerOptions.initAnswersPath,
@@ -183,10 +227,10 @@ function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: boolean 
                 sourceReference: runnerOptions.sourceReference
             },
             contractMigrationRunner(options) {
-                return runContractMigrations(options);
+                return effectiveRunContractMigrations(options);
             },
             verifyRunner(options) {
-                const result = runVerify({
+                const result = effectiveRunVerify({
                     targetRoot: options.targetRoot,
                     initAnswersPath: options.initAnswersPath,
                     sourceOfTruth: options.sourceOfTruth
@@ -198,7 +242,7 @@ function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: boolean 
             },
             manifestRunner(options) {
                 const manifestPath = path.join(options.targetRoot, 'Octopus-agent-orchestrator', 'MANIFEST.md');
-                const result = validateManifest(manifestPath, options.targetRoot);
+                const result = effectiveValidateManifest(manifestPath, options.targetRoot);
                 if (!result.passed) {
                     throw new Error(formatManifestResult(result));
                 }

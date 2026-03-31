@@ -9,6 +9,14 @@ import { runInstall } from '../materialization/install';
 import { runInit } from '../materialization/init';
 import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
 import {
+    createAgentInitState,
+    doesAgentInitStateMatchAnswers,
+    readAgentInitStateSafe,
+    writeAgentInitState
+} from '../runtime/agent-init-state';
+import { getActiveAgentEntrypointFiles } from '../materialization/common';
+import { cleanupStaleTaskEventLocks } from '../gate-runtime/task-events';
+import {
     createRollbackSnapshot,
     getTimestamp,
     getRollbackRecordsPath,
@@ -390,6 +398,45 @@ export function runUpdate(options: RunUpdateOptions) {
                 throw new Error(`Bundle invariant violation after update: ${invariantResult.violations.join('; ')}`);
             }
             invariantStatus = 'PASS';
+
+            // Sync agent init state after successful update
+            const previousAgentInitStateResult = readAgentInitStateSafe(normalizedTarget);
+            const previousAgentInitState = previousAgentInitStateResult.state;
+            const activeEntryFilesSeed = initAnswers.ActiveAgentFiles
+                ? (Array.isArray(initAnswers.ActiveAgentFiles) ? initAnswers.ActiveAgentFiles.join(', ') : String(initAnswers.ActiveAgentFiles))
+                : null;
+            const activeEntryFiles = getActiveAgentEntrypointFiles(activeEntryFilesSeed, sourceOfTruth);
+
+            const preserveExistingCheckpoints = doesAgentInitStateMatchAnswers(previousAgentInitState, {
+                AssistantLanguage: assistantLanguage,
+                SourceOfTruth: sourceOfTruth,
+                ActiveAgentFiles: activeEntryFiles
+            }, bundleVersion);
+
+            // T-033: Automatic stale lock cleanup during update
+            try {
+                cleanupStaleTaskEventLocks(path.join(normalizedTarget, DEFAULT_BUNDLE_NAME), { dryRun: false });
+            } catch (lockError: unknown) {
+                // Log and continue
+                contractMigrationFiles.push(`Warning: Lock cleanup failed: ${getErrorMessage(lockError)}`);
+            }
+
+            writeAgentInitState(normalizedTarget, createAgentInitState({
+                AssistantLanguage: assistantLanguage,
+                SourceOfTruth: sourceOfTruth,
+                OrchestratorVersion: bundleVersion, // Track version (T-033)
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: preserveExistingCheckpoints && previousAgentInitState
+                    ? previousAgentInitState.ActiveAgentFilesConfirmed
+                    : false,
+                ProjectRulesUpdated: false, // Force re-read rules after update (T-033)
+                SkillsPromptCompleted: preserveExistingCheckpoints && previousAgentInitState
+                    ? previousAgentInitState.SkillsPromptCompleted
+                    : false,
+                VerificationPassed: false, // Force re-verify after update (T-033)
+                ManifestValidationPassed: false, // Force re-validate manifest after update (T-033)
+                ActiveAgentFiles: activeEntryFiles
+            }));
 
             // Re-read updated version
             if (pathExists(liveVersionPath)) {

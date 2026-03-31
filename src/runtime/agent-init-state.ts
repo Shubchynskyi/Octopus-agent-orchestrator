@@ -8,6 +8,7 @@ export const AGENT_INIT_STATE_VERSION = 1;
 export interface AgentInitState {
     Version: number;
     UpdatedAt: string;
+    OrchestratorVersion: string | null;
     AssistantLanguage: string | null;
     SourceOfTruth: string | null;
     AssistantLanguageConfirmed: boolean;
@@ -90,6 +91,7 @@ export function validateAgentInitState(input: unknown): AgentInitState {
     return {
         Version: raw.Version === undefined ? AGENT_INIT_STATE_VERSION : Number(raw.Version),
         UpdatedAt: String(raw.UpdatedAt || new Date().toISOString()),
+        OrchestratorVersion: normalizeOptionalString(raw.OrchestratorVersion),
         AssistantLanguage: normalizeOptionalString(raw.AssistantLanguage),
         SourceOfTruth: normalizeOptionalString(raw.SourceOfTruth),
         AssistantLanguageConfirmed: normalizeBoolean(raw.AssistantLanguageConfirmed, 'AssistantLanguageConfirmed'),
@@ -106,6 +108,7 @@ export function createAgentInitState(overrides: Partial<AgentInitState> = {}): A
     return validateAgentInitState({
         Version: AGENT_INIT_STATE_VERSION,
         UpdatedAt: new Date().toISOString(),
+        OrchestratorVersion: null,
         AssistantLanguage: null,
         SourceOfTruth: null,
         AssistantLanguageConfirmed: false,
@@ -165,7 +168,8 @@ export function writeAgentInitState(
 
 export function doesAgentInitStateMatchAnswers(
     state: AgentInitState | null | undefined,
-    answers: Record<string, unknown> | null | undefined
+    answers: Record<string, unknown> | null | undefined,
+    currentOrchestratorVersion: string | null = null
 ): boolean {
     if (!state) {
         return false;
@@ -176,9 +180,15 @@ export function doesAgentInitStateMatchAnswers(
         answers && answers.ActiveAgentFiles,
         'ActiveAgentFiles'
     );
+    const expectedVersion = normalizeOptionalString(currentOrchestratorVersion);
+    const actualVersion = normalizeOptionalString(state.OrchestratorVersion);
+
+    const versionMatches = !expectedVersion || actualVersion === expectedVersion;
 
     return (
-        normalizeOptionalString(state.SourceOfTruth) === expectedSourceOfTruth
+        versionMatches
+        && normalizeOptionalString(state.AssistantLanguage) === normalizeOptionalString(answers && answers.AssistantLanguage)
+        && normalizeOptionalString(state.SourceOfTruth) === expectedSourceOfTruth
         && areStringArraysEqual(state.ActiveAgentFiles, expectedActiveAgentFiles)
     );
 }

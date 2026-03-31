@@ -41,6 +41,19 @@ function seedExecutableBundleSurface(repoRoot: string, bundleRoot: string) {
     fs.writeFileSync(path.join(bundleRoot, 'dist', 'src', 'index.js'), 'module.exports = {};', 'utf8');
 }
 
+function seedStaleTaskEventLock(bundleRoot: string, lockName: string) {
+    const lockPath = path.join(bundleRoot, 'runtime', 'task-events', lockName);
+    const oldDate = new Date('2020-01-01T00:00:00.000Z');
+    fs.mkdirSync(lockPath, { recursive: true });
+    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        pid: 999999,
+        hostname: 'test-host',
+        created_at_utc: '2020-01-01T00:00:00.000Z'
+    }), 'utf8');
+    fs.utimesSync(path.join(lockPath, 'owner.json'), oldDate, oldDate);
+    fs.utimesSync(lockPath, oldDate, oldDate);
+}
+
 function setupUpdateWorkspace(repoRoot: string) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-update-'));
     const bundle = path.join(tmpDir, 'Octopus-agent-orchestrator');
@@ -721,6 +734,50 @@ describe('runUpdate', () => {
             assert.ok(!manifestCalled, 'manifestRunner should not be called when skipManifestValidation is true');
             assert.equal(result.verifyStatus, 'SKIPPED');
             assert.equal(result.manifestValidationStatus, 'SKIPPED');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('resets update-sensitive checkpoints, stamps bundle version, and cleans stale task-event locks (T-033)', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const bundleVersion = fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim();
+            fs.writeFileSync(path.join(bundleRoot, 'runtime', 'agent-init-state.json'), JSON.stringify({
+                Version: 1,
+                UpdatedAt: '2026-03-31T00:00:00.000Z',
+                OrchestratorVersion: bundleVersion,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Claude',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['CLAUDE.md']
+            }, null, 2), 'utf8');
+            seedStaleTaskEventLock(bundleRoot, '.T-STALE.lock');
+
+            runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            const persistedState = JSON.parse(fs.readFileSync(
+                path.join(bundleRoot, 'runtime', 'agent-init-state.json'),
+                'utf8'
+            ));
+            assert.equal(persistedState.OrchestratorVersion, bundleVersion);
+            assert.equal(persistedState.ActiveAgentFilesConfirmed, true);
+            assert.equal(persistedState.SkillsPromptCompleted, true);
+            assert.equal(persistedState.ProjectRulesUpdated, false);
+            assert.equal(persistedState.VerificationPassed, false);
+            assert.equal(persistedState.ManifestValidationPassed, false);
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'task-events', '.T-STALE.lock')));
         } finally {
             removePathRecursive(projectRoot);
         }

@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { DEFAULT_BUNDLE_NAME } from '../core/constants';
-import { pathExists } from '../core/fs';
+import { pathExists, readTextFile } from '../core/fs';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { validateInitAnswers, serializeInitAnswers } from '../schemas/init-answers';
 import { convertActiveAgentEntrypointFilesToString, getActiveAgentEntrypointFiles } from '../materialization/common';
@@ -10,6 +10,7 @@ import { validateManifest } from '../validators/validate-manifest';
 import { createAgentInitState, writeAgentInitState } from '../runtime/agent-init-state';
 
 interface AgentInitState {
+    OrchestratorVersion: string | null;
     AssistantLanguage: string | null;
     SourceOfTruth: string | null;
     AssistantLanguageConfirmed: boolean;
@@ -106,6 +107,10 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
     const normalizedTargetRoot = path.resolve(targetRoot);
     const normalizedBundleRoot = path.resolve(bundleRoot);
     const resolvedInitAnswersPath = resolvePathInsideTarget(normalizedTargetRoot, initAnswersPath);
+    const bundleVersionPath = path.join(normalizedBundleRoot, 'VERSION');
+    const orchestratorVersion = pathExists(bundleVersionPath)
+        ? (readTextFile(bundleVersionPath).trim() || null)
+        : null;
 
     if (!pathExists(normalizedBundleRoot)) {
         throw new Error(`Deployed bundle not found: ${normalizedBundleRoot}`);
@@ -149,6 +154,7 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
     const manifestResult = manifestRunner(path.join(normalizedBundleRoot, 'MANIFEST.md'));
 
     const state = createAgentInitState({
+        OrchestratorVersion: orchestratorVersion,
         AssistantLanguage: serializedAnswers.AssistantLanguage,
         SourceOfTruth: serializedAnswers.SourceOfTruth,
         AssistantLanguageConfirmed: true,

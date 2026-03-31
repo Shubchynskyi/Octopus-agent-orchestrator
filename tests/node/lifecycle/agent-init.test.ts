@@ -27,6 +27,7 @@ test('runAgentInit writes finalized init answers and agent-init state', () => {
             CollectedVia: 'CLI_INTERACTIVE',
             ActiveAgentFiles: 'AGENTS.md'
         });
+        fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n', 'utf8');
         fs.writeFileSync(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n', 'utf8');
 
         const result = runAgentInit({
@@ -51,6 +52,7 @@ test('runAgentInit writes finalized init answers and agent-init state', () => {
         assert.equal(persistedAnswers.ActiveAgentFiles, 'CLAUDE.md, AGENTS.md');
 
         const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
+        assert.equal(persistedState.OrchestratorVersion, '9.9.9-test');
         assert.equal(persistedState.SourceOfTruth, 'Codex');
         assert.equal(persistedState.AssistantLanguageConfirmed, true);
         assert.equal(persistedState.ActiveAgentFilesConfirmed, true);
