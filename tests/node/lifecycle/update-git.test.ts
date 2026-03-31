@@ -55,6 +55,7 @@ function createDeployedWorkspace(version: string) {
     const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-update-git-target-'));
     const bundleRoot = path.join(targetRoot, 'Octopus-agent-orchestrator');
     fs.mkdirSync(bundleRoot, { recursive: true });
+    fs.mkdirSync(path.join(bundleRoot, 'bin'), { recursive: true });
     fs.mkdirSync(path.join(bundleRoot, 'dist', 'src'), { recursive: true });
     fs.writeFileSync(path.join(bundleRoot, 'VERSION'), `${version}\n`, 'utf8');
     fs.writeFileSync(path.join(bundleRoot, 'bin', 'octopus.js'), '#!/usr/bin/env node\n', 'utf8');
