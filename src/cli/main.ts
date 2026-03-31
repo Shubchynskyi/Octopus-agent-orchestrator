@@ -540,7 +540,6 @@ async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike)
         '--assistant-language': { key: 'assistantLanguage', type: 'string' },
         '--assistant-brevity': { key: 'assistantBrevity', type: 'string' },
         '--source-of-truth': { key: 'sourceOfTruth', type: 'string' },
-        '--active-agent-files': { key: 'activeAgentFiles', type: 'string' },
         '--enforce-no-auto-commit': { key: 'enforceNoAutoCommit', type: 'string' },
         '--claude-orchestrator-full-access': { key: 'claudeOrchestratorFullAccess', type: 'string' },
         '--claude-full-access': { key: 'claudeOrchestratorFullAccess', type: 'string' },
@@ -574,7 +573,7 @@ async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike)
     let assistantLanguage = (options.assistantLanguage !== undefined ? String(options.assistantLanguage) : null) || getInitAnswerValue(existingAnswers, 'AssistantLanguage') || 'English';
     let assistantBrevity = tryNormalizeAssistantBrevity(options.assistantBrevity ?? getInitAnswerValue(existingAnswers, 'AssistantBrevity'), 'concise');
     let sourceOfTruth = tryNormalizeSourceOfTruth(options.sourceOfTruth ?? getInitAnswerValue(existingAnswers, 'SourceOfTruth'), 'Claude');
-    let activeAgentFiles = (options.activeAgentFiles !== undefined ? String(options.activeAgentFiles) : null) || (getInitAnswerValue(existingAnswers, 'ActiveAgentFiles') || '');
+    let activeAgentFiles = getInitAnswerValue(existingAnswers, 'ActiveAgentFiles') || '';
     let enforceNoAutoCommit = tryParseBooleanText(options.enforceNoAutoCommit ?? getInitAnswerValue(existingAnswers, 'EnforceNoAutoCommit'), true);
     let claudeOrchestratorFullAccess = tryParseBooleanText(options.claudeOrchestratorFullAccess ?? getInitAnswerValue(existingAnswers, 'ClaudeOrchestratorFullAccess'), false);
     let tokenEconomyEnabled = tryParseBooleanText(options.tokenEconomyEnabled ?? getInitAnswerValue(existingAnswers, 'TokenEconomyEnabled'), true);
@@ -596,7 +595,6 @@ async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike)
             defaultValue: String(sourceOfTruth),
             options: [...SOURCE_OF_TRUTH_VALUES].map((v) => ({ label: v, value: v }))
         });
-        activeAgentFiles = await promptTextInput('Set active agent entrypoint files (comma-separated)', String(activeAgentFiles));
         enforceNoAutoCommit = await promptSingleSelect({
             title: 'Set no-auto-commit guard mode',
             defaultLabel: enforceNoAutoCommit ? 'Yes' : 'No',
@@ -651,7 +649,6 @@ async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike)
         'assistantLanguage',
         'assistantBrevity',
         'sourceOfTruth',
-        'activeAgentFiles',
         'enforceNoAutoCommit',
         'claudeOrchestratorFullAccess',
         'tokenEconomyEnabled',

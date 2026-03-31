@@ -103,6 +103,7 @@ describe('recollectInitAnswers', () => {
                 AssistantLanguage: 'Russian',
                 AssistantBrevity: 'detailed',
                 SourceOfTruth: 'Codex',
+                ActiveAgentFiles: 'CLAUDE.md, AGENTS.md',
                 EnforceNoAutoCommit: 'true',
                 ClaudeOrchestratorFullAccess: 'false',
                 TokenEconomyEnabled: 'true',
@@ -114,8 +115,9 @@ describe('recollectInitAnswers', () => {
         assert.equal(result.AssistantLanguage, 'Russian');
         assert.equal(result.AssistantBrevity, 'detailed');
         assert.equal(result.SourceOfTruth, 'Codex');
+        assert.equal(result.ActiveAgentFiles, 'CLAUDE.md, AGENTS.md');
         const preservedCount = changes.filter((c) => c.action === 'preserved').length;
-        assert.ok(preservedCount >= 6);
+        assert.ok(preservedCount >= 7);
     });
 
     it('applies overrides over existing', () => {
@@ -360,6 +362,43 @@ describe('runReinit', () => {
         }
     });
 
+    it('preserves ActiveAgentFiles on reinit (T-047)', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+            fs.writeFileSync(answersPath, JSON.stringify({
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                ActiveAgentFiles: 'CLAUDE.md, AGENTS.md',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            }));
+
+            // Reinit changing language, should keep ActiveAgentFiles
+            const result = runReinit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                overrides: { AssistantLanguage: 'French' },
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.assistantLanguage, 'French');
+            assert.equal(result.activeAgentFiles, 'CLAUDE.md, AGENTS.md');
+
+            // Verify answers were persisted correctly
+            const persistedAnswers = JSON.parse(fs.readFileSync(answersPath, 'utf8'));
+            assert.equal(persistedAnswers.AssistantLanguage, 'French');
+            assert.equal(persistedAnswers.ActiveAgentFiles, 'CLAUDE.md, AGENTS.md');
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('preserves ready agent-init checkpoints on version mismatch when answers are unchanged and cleans stale task-event locks (T-033)', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
@@ -394,6 +433,7 @@ describe('runReinit', () => {
                 targetRoot: projectRoot,
                 bundleRoot,
                 initAnswersPath: answersPath,
+                overrides: { ActiveAgentFiles: 'CLAUDE.md' },
                 skipVerify: true,
                 skipManifestValidation: true
             });
