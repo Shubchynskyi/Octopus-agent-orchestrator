@@ -360,7 +360,7 @@ describe('runReinit', () => {
         }
     });
 
-    it('invalidates stale agent-init checkpoints on version mismatch and cleans stale task-event locks (T-033)', () => {
+    it('preserves ready agent-init checkpoints on version mismatch when answers are unchanged and cleans stale task-event locks (T-033)', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const answersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
@@ -404,11 +404,11 @@ describe('runReinit', () => {
             ));
             assert.equal(persistedState.OrchestratorVersion, bundleVersion);
             assert.equal(persistedState.AssistantLanguageConfirmed, true);
-            assert.equal(persistedState.ActiveAgentFilesConfirmed, false);
-            assert.equal(persistedState.ProjectRulesUpdated, false);
-            assert.equal(persistedState.SkillsPromptCompleted, false);
-            assert.equal(persistedState.VerificationPassed, false);
-            assert.equal(persistedState.ManifestValidationPassed, false);
+            assert.equal(persistedState.ActiveAgentFilesConfirmed, true);
+            assert.equal(persistedState.ProjectRulesUpdated, true);
+            assert.equal(persistedState.SkillsPromptCompleted, true);
+            assert.equal(persistedState.VerificationPassed, true);
+            assert.equal(persistedState.ManifestValidationPassed, true);
             assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'task-events', '.T-STALE.lock')));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });

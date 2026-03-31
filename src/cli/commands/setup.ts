@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { DEFAULT_INIT_ANSWERS_RELATIVE_PATH, SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
+import { pathExists, readTextFile } from '../../core/fs';
 import { getActiveAgentEntrypointFiles } from '../../materialization/common';
 import { getStatusSnapshot } from '../../validators/status';
 import {
@@ -35,7 +36,7 @@ import {
     tryParseBooleanText
 } from './cli-helpers';
 import {
-    createAgentInitState,
+    buildRefreshAgentInitState,
     doesAgentInitStateMatchAnswers,
     readAgentInitStateSafe,
     writeAgentInitState
@@ -60,6 +61,7 @@ export const SETUP_DEFINITIONS = {
     '--no-prompt': { key: 'noPrompt', type: 'boolean' },
     '--skip-verify': { key: 'skipVerify', type: 'boolean' },
     '--skip-manifest-validation': { key: 'skipManifestValidation', type: 'boolean' },
+    '--preserve-agent-state': { key: 'preserveAgentState', type: 'boolean' },
     '--assistant-language': { key: 'assistantLanguage', type: 'string' },
     '--assistant-brevity': { key: 'assistantBrevity', type: 'string' },
     '--active-agent-files': { key: 'activeAgentFiles', type: 'string' },
@@ -82,6 +84,7 @@ interface SetupOptions {
     noPrompt?: boolean;
     skipVerify?: boolean;
     skipManifestValidation?: boolean;
+    preserveAgentState?: boolean;
     assistantLanguage?: string;
     assistantBrevity?: string;
     activeAgentFiles?: string;
@@ -401,30 +404,6 @@ export async function handleSetup(
                 ActiveAgentFiles: activeAgentFiles
             });
             fs.writeFileSync(resolvedInitAnswersPath, JSON.stringify(serialized, null, 2), 'utf8');
-            writeAgentInitState(targetRoot, createAgentInitState({
-                AssistantLanguage: assistantLanguage,
-                SourceOfTruth: sourceOfTruth,
-                AssistantLanguageConfirmed: true,
-                ActiveAgentFilesConfirmed: options.activeAgentFiles !== undefined
-                    || Boolean(
-                        preserveExistingCheckpoints
-                        && previousAgentInitState
-                        && previousAgentInitState.ActiveAgentFilesConfirmed
-                    ),
-                ProjectRulesUpdated: preserveExistingCheckpoints && previousAgentInitState
-                    ? previousAgentInitState.ProjectRulesUpdated
-                    : false,
-                SkillsPromptCompleted: preserveExistingCheckpoints && previousAgentInitState
-                    ? previousAgentInitState.SkillsPromptCompleted
-                    : false,
-                VerificationPassed: preserveExistingCheckpoints && previousAgentInitState
-                    ? previousAgentInitState.VerificationPassed
-                    : false,
-                ManifestValidationPassed: preserveExistingCheckpoints && previousAgentInitState
-                    ? previousAgentInitState.ManifestValidationPassed
-                    : false,
-                ActiveAgentFiles: normalizedActiveAgentFiles
-            }));
         }
 
         runInstall({
@@ -451,11 +430,11 @@ export async function handleSetup(
             }
         }
 
-        const snapshot = getStatusSnapshot(targetRoot, initAnswersPath) as StatusSnapshot;
+        let snapshot = getStatusSnapshot(targetRoot, initAnswersPath) as StatusSnapshot;
         let verifyStatus = options.skipVerify ? 'SKIPPED' : 'PENDING_AGENT_CONTEXT';
         if (!options.skipVerify) {
             try {
-                if (snapshot.readyForTasks || options.runVerify) {
+                if (snapshot.readyForTasks || options.runVerify || options.preserveAgentState) {
                     const verifyResult = runVerify({
                         targetRoot,
                         sourceOfTruth,
@@ -466,6 +445,27 @@ export async function handleSetup(
             } catch (_error) {
                 verifyStatus = 'PENDING_AGENT_CONTEXT';
             }
+        }
+
+        const bundleVersionPath = path.join(effectiveBundlePath, 'VERSION');
+        const bundleVersion = pathExists(bundleVersionPath)
+            ? (readTextFile(bundleVersionPath).trim() || null)
+            : null;
+
+        if (!options.dryRun) {
+            writeAgentInitState(targetRoot, buildRefreshAgentInitState({
+                previousState: previousAgentInitState,
+                preserveExistingCheckpoints,
+                assistantLanguage,
+                sourceOfTruth,
+                orchestratorVersion: bundleVersion,
+                activeAgentFiles: normalizedActiveAgentFiles,
+                verificationPassed: options.skipVerify ? null : verifyStatus === 'PASS',
+                manifestValidationPassed: options.skipManifestValidation ? null : manifestStatus === 'PASS',
+                autoConfirmPrompts: options.preserveAgentState === true,
+                autoAcceptRules: options.preserveAgentState === true
+            }));
+            snapshot = getStatusSnapshot(targetRoot, initAnswersPath) as StatusSnapshot;
         }
 
         console.log(`Setup: ${manifestStatus === 'FAIL' ? 'FAIL' : 'PASS'}`);

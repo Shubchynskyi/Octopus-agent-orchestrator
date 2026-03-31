@@ -29,6 +29,7 @@ test('SETUP_DEFINITIONS includes all expected flags', () => {
     assert.ok(SETUP_DEFINITIONS['--no-prompt']);
     assert.ok(SETUP_DEFINITIONS['--skip-verify']);
     assert.ok(SETUP_DEFINITIONS['--skip-manifest-validation']);
+    assert.ok(SETUP_DEFINITIONS['--preserve-agent-state']);
     assert.ok(SETUP_DEFINITIONS['--assistant-language']);
     assert.ok(SETUP_DEFINITIONS['--assistant-brevity']);
     assert.ok(SETUP_DEFINITIONS['--active-agent-files']);
@@ -44,6 +45,7 @@ test('parseOptions works with SETUP_DEFINITIONS', () => {
     const { options } = parseOptions([
         '--target-root', '/workspace',
         '--no-prompt',
+        '--preserve-agent-state',
         '--source-of-truth', 'Claude',
         '--assistant-language', 'English',
         '--assistant-brevity', 'concise',
@@ -53,6 +55,7 @@ test('parseOptions works with SETUP_DEFINITIONS', () => {
 
     assert.equal(options.targetRoot, '/workspace');
     assert.equal(options.noPrompt, true);
+    assert.equal(options.preserveAgentState, true);
     assert.equal(options.sourceOfTruth, 'Claude');
     assert.equal(options.assistantLanguage, 'English');
     assert.equal(options.assistantBrevity, 'concise');

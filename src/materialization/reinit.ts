@@ -4,6 +4,7 @@ import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { validateInitAnswers, serializeInitAnswers } from '../schemas/init-answers';
 import {
+    buildRefreshAgentInitState,
     createAgentInitState,
     doesAgentInitStateMatchAnswers,
     readAgentInitStateSafe,
@@ -228,28 +229,16 @@ export function runReinit(options: ReinitOptions) {
         AssistantLanguage: resolvedLanguage,
         SourceOfTruth: resolvedSourceOfTruth,
         ActiveAgentFiles: resolvedActiveFiles
-    }, bundleVersion);
-    writeAgentInitState(normalizedTarget, createAgentInitState({
-        AssistantLanguage: resolvedLanguage,
-        SourceOfTruth: resolvedSourceOfTruth,
-        OrchestratorVersion: bundleVersion, // Track version (T-033)
-        AssistantLanguageConfirmed: true,
-        ActiveAgentFilesConfirmed: preserveExistingCheckpoints && previousAgentInitState
-            ? previousAgentInitState.ActiveAgentFilesConfirmed
-            : false,
-        ProjectRulesUpdated: preserveExistingCheckpoints && previousAgentInitState
-            ? previousAgentInitState.ProjectRulesUpdated
-            : false,
-        SkillsPromptCompleted: preserveExistingCheckpoints && previousAgentInitState
-            ? previousAgentInitState.SkillsPromptCompleted
-            : false,
-        VerificationPassed: preserveExistingCheckpoints && previousAgentInitState
-            ? previousAgentInitState.VerificationPassed
-            : false,
-        ManifestValidationPassed: preserveExistingCheckpoints && previousAgentInitState
-            ? previousAgentInitState.ManifestValidationPassed
-            : false,
-        ActiveAgentFiles: resolvedActiveFiles
+    });
+    writeAgentInitState(normalizedTarget, buildRefreshAgentInitState({
+        previousState: previousAgentInitState,
+        preserveExistingCheckpoints,
+        assistantLanguage: resolvedLanguage,
+        sourceOfTruth: resolvedSourceOfTruth,
+        orchestratorVersion: bundleVersion,
+        activeAgentFiles: resolvedActiveFiles,
+        autoConfirmPrompts: true,
+        autoAcceptRules: true
     }));
 
     // T-033: best-effort stale task-event lock cleanup so reinit recovers provider state without reinstall.

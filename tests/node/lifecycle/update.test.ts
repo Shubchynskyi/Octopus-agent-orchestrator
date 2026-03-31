@@ -739,7 +739,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('resets update-sensitive checkpoints, stamps bundle version, and cleans stale task-event locks (T-033)', () => {
+    it('preserves ready checkpoints across update, stamps bundle version, and cleans stale task-event locks (T-033)', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             const bundleVersion = fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim();
@@ -773,10 +773,10 @@ describe('runUpdate', () => {
             ));
             assert.equal(persistedState.OrchestratorVersion, bundleVersion);
             assert.equal(persistedState.ActiveAgentFilesConfirmed, true);
+            assert.equal(persistedState.ProjectRulesUpdated, true);
             assert.equal(persistedState.SkillsPromptCompleted, true);
-            assert.equal(persistedState.ProjectRulesUpdated, false);
-            assert.equal(persistedState.VerificationPassed, false);
-            assert.equal(persistedState.ManifestValidationPassed, false);
+            assert.equal(persistedState.VerificationPassed, true);
+            assert.equal(persistedState.ManifestValidationPassed, true);
             assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'task-events', '.T-STALE.lock')));
         } finally {
             removePathRecursive(projectRoot);

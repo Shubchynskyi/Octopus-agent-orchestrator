@@ -26,6 +26,19 @@ interface AgentInitStateReadResult {
     error: string | null;
 }
 
+interface BuildRefreshAgentInitStateOptions {
+    previousState: AgentInitState | null | undefined;
+    preserveExistingCheckpoints: boolean;
+    assistantLanguage: string | null;
+    sourceOfTruth: string | null;
+    orchestratorVersion?: string | null;
+    activeAgentFiles: string[];
+    verificationPassed?: boolean | null;
+    manifestValidationPassed?: boolean | null;
+    autoConfirmPrompts?: boolean;
+    autoAcceptRules?: boolean;
+}
+
 function normalizeBoolean(value: unknown, fieldName: string): boolean {
     if (value === true || value === false) {
         return value;
@@ -119,6 +132,47 @@ export function createAgentInitState(overrides: Partial<AgentInitState> = {}): A
         ManifestValidationPassed: false,
         ActiveAgentFiles: [],
         ...overrides
+    });
+}
+
+export function buildRefreshAgentInitState(options: BuildRefreshAgentInitStateOptions): AgentInitState {
+    const {
+        previousState,
+        preserveExistingCheckpoints,
+        assistantLanguage,
+        sourceOfTruth,
+        orchestratorVersion = null,
+        activeAgentFiles,
+        verificationPassed = null,
+        manifestValidationPassed = null,
+        autoConfirmPrompts = false,
+        autoAcceptRules = false
+    } = options;
+
+    const canPreserve = Boolean(preserveExistingCheckpoints && previousState);
+    const preservedState = canPreserve ? previousState as AgentInitState : null;
+
+    return createAgentInitState({
+        AssistantLanguage: assistantLanguage,
+        SourceOfTruth: sourceOfTruth,
+        OrchestratorVersion: orchestratorVersion,
+        AssistantLanguageConfirmed: true,
+        ActiveAgentFilesConfirmed: canPreserve
+            ? (autoConfirmPrompts ? true : preservedState!.ActiveAgentFilesConfirmed)
+            : false,
+        ProjectRulesUpdated: canPreserve
+            ? (autoAcceptRules ? true : preservedState!.ProjectRulesUpdated)
+            : false,
+        SkillsPromptCompleted: canPreserve
+            ? (autoConfirmPrompts ? true : preservedState!.SkillsPromptCompleted)
+            : false,
+        VerificationPassed: canPreserve
+            ? (verificationPassed === null ? preservedState!.VerificationPassed : verificationPassed)
+            : false,
+        ManifestValidationPassed: canPreserve
+            ? (manifestValidationPassed === null ? preservedState!.ManifestValidationPassed : manifestValidationPassed)
+            : false,
+        ActiveAgentFiles: activeAgentFiles
     });
 }
 

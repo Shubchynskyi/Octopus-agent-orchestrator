@@ -9,6 +9,7 @@ import { runInstall } from '../materialization/install';
 import { runInit } from '../materialization/init';
 import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
 import {
+    buildRefreshAgentInitState,
     createAgentInitState,
     doesAgentInitStateMatchAnswers,
     readAgentInitStateSafe,
@@ -411,7 +412,7 @@ export function runUpdate(options: RunUpdateOptions) {
                 AssistantLanguage: assistantLanguage,
                 SourceOfTruth: sourceOfTruth,
                 ActiveAgentFiles: activeEntryFiles
-            }, bundleVersion);
+            });
 
             // T-033: Automatic stale lock cleanup during update
             try {
@@ -421,21 +422,17 @@ export function runUpdate(options: RunUpdateOptions) {
                 contractMigrationFiles.push(`Warning: Lock cleanup failed: ${getErrorMessage(lockError)}`);
             }
 
-            writeAgentInitState(normalizedTarget, createAgentInitState({
-                AssistantLanguage: assistantLanguage,
-                SourceOfTruth: sourceOfTruth,
-                OrchestratorVersion: bundleVersion, // Track version (T-033)
-                AssistantLanguageConfirmed: true,
-                ActiveAgentFilesConfirmed: preserveExistingCheckpoints && previousAgentInitState
-                    ? previousAgentInitState.ActiveAgentFilesConfirmed
-                    : false,
-                ProjectRulesUpdated: false, // Force re-read rules after update (T-033)
-                SkillsPromptCompleted: preserveExistingCheckpoints && previousAgentInitState
-                    ? previousAgentInitState.SkillsPromptCompleted
-                    : false,
-                VerificationPassed: false, // Force re-verify after update (T-033)
-                ManifestValidationPassed: false, // Force re-validate manifest after update (T-033)
-                ActiveAgentFiles: activeEntryFiles
+            writeAgentInitState(normalizedTarget, buildRefreshAgentInitState({
+                previousState: previousAgentInitState,
+                preserveExistingCheckpoints,
+                assistantLanguage,
+                sourceOfTruth,
+                orchestratorVersion: bundleVersion,
+                activeAgentFiles: activeEntryFiles,
+                verificationPassed: skipVerify ? null : true,
+                manifestValidationPassed: skipManifestValidation ? null : true,
+                autoConfirmPrompts: true,
+                autoAcceptRules: true
             }));
 
             // Re-read updated version
