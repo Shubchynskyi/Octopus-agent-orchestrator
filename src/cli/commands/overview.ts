@@ -7,7 +7,8 @@ import {
     PackageJsonLike,
     printBanner,
     printCommandSummary,
-    printStatus
+    printStatus,
+    resolveWorkspaceDisplayVersion
 } from './cli-helpers';
 
 // ---------------------------------------------------------------------------
@@ -23,7 +24,9 @@ export function buildOverviewOutput(packageJson: PackageJsonLike, targetRoot?: s
     const snapshot = getStatusSnapshot(targetRoot);
     const lines = [];
     lines.push('OCTOPUS_OVERVIEW');
-    lines.push(buildBannerText(packageJson, 'Workspace overview', targetRoot));
+    lines.push(buildBannerText(packageJson, 'Workspace overview', targetRoot, {
+        versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
+    }));
     lines.push(formatStatusSnapshot(snapshot, { heading: 'OCTOPUS_STATUS' }));
     lines.push('');
     lines.push('Available Commands');
@@ -49,7 +52,9 @@ export function printOverview(packageJson: PackageJsonLike, targetRoot?: string)
     if (targetRoot === undefined) targetRoot = normalizePathValue('.');
     const snapshot = getStatusSnapshot(targetRoot);
     console.log('OCTOPUS_OVERVIEW');
-    printBanner(packageJson, 'Workspace overview', targetRoot);
+    printBanner(packageJson, 'Workspace overview', targetRoot, {
+        versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
+    });
     printStatus(snapshot, { heading: 'OCTOPUS_STATUS' });
     printCommandSummary();
 }

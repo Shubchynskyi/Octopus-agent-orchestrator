@@ -32,6 +32,7 @@ import {
     readOptionalJsonFile,
     removePathIfExists,
     resolvePathInsideRoot,
+    resolveWorkspaceDisplayVersion,
     shouldSkipPath,
     syncBundleItems,
     toPosixPath,
@@ -704,6 +705,34 @@ test('buildBannerText includes version and title', () => {
     assert.ok(text.includes('OCTOPUS AGENT ORCHESTRATOR'));
     assert.ok(text.includes('Test title'));
     assert.ok(text.includes('Test subtitle'));
+});
+
+test('buildBannerText supports explicit version override and hiding launcher version', () => {
+    const pkg = { name: 'test', version: '1.0.8' };
+    const overridden = buildBannerText(pkg, 'Test title', 'Test subtitle', { versionOverride: '2.4.0' });
+    assert.ok(overridden.includes('v2.4.0'));
+    assert.ok(!overridden.includes('v1.0.8'));
+
+    const hidden = buildBannerText(pkg, 'Test title', 'Test subtitle', { versionOverride: null });
+    assert.ok(!hidden.includes('v1.0.8'));
+});
+
+test('resolveWorkspaceDisplayVersion prefers deployed bundle version and falls back to root version', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-version-'));
+    try {
+        fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator'), { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'VERSION'), '2.4.0', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'VERSION'), '2.3.9', 'utf8');
+        assert.equal(resolveWorkspaceDisplayVersion(tmpDir, '1.0.0'), '2.4.0');
+
+        fs.rmSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'VERSION'));
+        assert.equal(resolveWorkspaceDisplayVersion(tmpDir, '1.0.0'), '2.3.9');
+
+        fs.rmSync(path.join(tmpDir, 'VERSION'));
+        assert.equal(resolveWorkspaceDisplayVersion(tmpDir, '1.0.0'), '1.0.0');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 });
 
 test('buildHelpText includes all command descriptions', () => {

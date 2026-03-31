@@ -26,6 +26,7 @@ import {
     promptSingleSelect,
     promptTextInput,
     readOptionalJsonFile,
+    resolveWorkspaceDisplayVersion,
     resolvePathInsideRoot,
     supportsInteractivePrompts,
     syncBundleItems,
@@ -322,7 +323,8 @@ export async function handleSetup(
             ? 'You will be asked 6 control questions.'
             : interactiveSetup
                 ? 'Interactive prompts are unavailable in this terminal. Falling back to script-managed setup.'
-                : 'Running in non-interactive mode with provided/default answers.'
+                : 'Running in non-interactive mode with provided/default answers.',
+        { versionOverride: null }
     );
     console.log(`Project: ${targetRoot}`);
     console.log(`BundlePath: ${getBundlePath(targetRoot)}`);
@@ -477,7 +479,8 @@ export async function handleSetup(
             'Setup complete',
             snapshot.readyForTasks
                 ? 'Workspace is ready.'
-                : 'Primary setup finished. Next stage: agent initialization.'
+                : 'Primary setup finished. Next stage: agent initialization.',
+            { versionOverride: bundleVersion || resolveWorkspaceDisplayVersion(targetRoot, packageJson.version) }
         );
         printStatus(snapshot, { heading: 'OCTOPUS_SETUP_STATUS' });
         if (!snapshot.agentInitializationComplete) {

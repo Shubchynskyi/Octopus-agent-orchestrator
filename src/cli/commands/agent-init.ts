@@ -9,7 +9,8 @@ import {
     PackageJsonLike,
     printBanner,
     printHelp,
-    printStatus
+    printStatus,
+    resolveWorkspaceDisplayVersion
 } from './cli-helpers';
 
 export const AGENT_INIT_DEFINITIONS = {
@@ -80,7 +81,9 @@ export function handleAgentInit(commandArgv: string[], packageJson: PackageJsonL
         : DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
 
     console.log('OCTOPUS_AGENT_INIT');
-    printBanner(packageJson, 'Finalize agent onboarding', 'Runs install answer-dependent refresh, verify, manifest validation, and writes agent-init state.');
+    printBanner(packageJson, 'Finalize agent onboarding', 'Runs install answer-dependent refresh, verify, manifest validation, and writes agent-init state.', {
+        versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
+    });
 
     const result = runAgentInit({
         targetRoot,

@@ -64,6 +64,7 @@ import {
     printStatus,
     readInitAnswersArtifact,
     readPackageJson,
+    resolveWorkspaceDisplayVersion,
     syncBundleItems,
     yellow
 } from './commands/cli-helpers';
@@ -401,7 +402,9 @@ function handleStatus(commandArgv: string[], packageJson: PackageJsonLike): void
 
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
-    printBanner(packageJson, 'Workspace status', targetRoot);
+    printBanner(packageJson, 'Workspace status', targetRoot, {
+        versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
+    });
     printStatus(getStatusSnapshot(
         targetRoot,
         typeof options.initAnswersPath === 'string' ? options.initAnswersPath : DEFAULT_INIT_ANSWERS_RELATIVE_PATH
@@ -453,7 +456,9 @@ function handleDoctor(commandArgv: string[], packageJson: PackageJsonLike): void
 
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
-    printBanner(packageJson, 'Workspace doctor', targetRoot);
+    printBanner(packageJson, 'Workspace doctor', targetRoot, {
+        versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
+    });
     const bundlePath = ensureBundleExists(targetRoot, 'doctor');
     const initAnswersPath = typeof options.initAnswersPath === 'string'
         ? options.initAnswersPath

@@ -13,7 +13,8 @@
 
 ```text
 bin/octopus.js
-  -> loads compiled dist/src/**/*.js (or staged .node-build/src/**/*.js for tests)
+  -> when launched from node_modules, delegates to the local workspace/source launcher when available
+  -> otherwise loads compiled dist/src/**/*.js (or staged .node-build/src/**/*.js for tests)
   -> generated from strict TypeScript source in src/bin/octopus.ts
   -> loads runtime compiled from strict TypeScript source in src/**/*.ts
   -> runs lifecycle commands, validators, and gates

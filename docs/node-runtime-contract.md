@@ -16,7 +16,7 @@ This document captures the current Node-only runtime surface.
 - Source-repository mode: run `npm run build`, which compiles `src/bin/octopus.ts` into `bin/octopus.js`; that launcher then resolves compiled `dist/src/**/*.js`.
 - Source-install mode: `npm install` from a source checkout runs `prepare`, which builds the generated launcher and compiled runtime before first use.
 - Test-staged mode: Node foundation tests may stage `.node-build/src/**/*.js`, and `bin/octopus.js` can resolve that compiled output when `dist/` is intentionally absent in the fixture.
-- Packaged-install mode: under `node_modules`, `bin/octopus.js` resolves only compiled `dist/src/**/*.js`.
+- Packaged-install mode: under `node_modules`, `bin/octopus.js` first delegates to a local workspace/source `bin/octopus.js` when the current project already contains an orchestrator checkout or deployed bundle; otherwise it falls back to its packaged compiled runtime in `dist/src/**/*.js`.
 - Raw `src/**/*.ts` files are compile-time inputs only; direct `.ts` execution is not part of the supported runtime contract.
 - Public CLI commands, gate names, and verification markers are the same in both modes.
 

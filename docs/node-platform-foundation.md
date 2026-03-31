@@ -30,7 +30,7 @@ This document records the TypeScript/Node foundation that now backs the active r
 ## Execution Model
 
 - `src/**/*.ts` is the strict TypeScript source of truth; it is compiled before execution.
-- `src/bin/octopus.ts` compiles into the public `bin/octopus.js` launcher; that generated launcher executes compiled JavaScript only, preferring `dist/src/**/*.js` and falling back to staged `.node-build/src/**/*.js` for test fixtures.
+- `src/bin/octopus.ts` compiles into the public `bin/octopus.js` launcher; under `node_modules` it behaves as a thin router that prefers a local workspace/source launcher when one exists, and otherwise executes compiled JavaScript from `dist/src/**/*.js` or staged `.node-build/src/**/*.js`.
 - `scripts/node-foundation/build.ts` produces `.node-build/` for staged contract tests, `dist/` for the published-package runtime, and syncs the generated `bin/octopus.js` launcher from compiled TypeScript output.
 - Direct execution of raw `.ts` files is no longer part of the supported runtime.
 

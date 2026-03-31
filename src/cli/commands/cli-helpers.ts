@@ -472,6 +472,23 @@ export function readBundleVersion(sourceRoot: string): string {
     return readPackageJson(sourceRoot).version;
 }
 
+function readVersionFileIfPresent(versionPath: string): string | null {
+    if (!fs.existsSync(versionPath)) return null;
+    const stats = fs.statSync(versionPath);
+    if (!stats.isFile()) return null;
+    const value = fs.readFileSync(versionPath, 'utf8').trim();
+    return value || null;
+}
+
+export function resolveWorkspaceDisplayVersion(targetRoot: string, fallbackVersion?: string): string | null {
+    const normalizedRoot = normalizePathValue(targetRoot);
+    const bundleVersion = readVersionFileIfPresent(path.join(normalizedRoot, DEFAULT_BUNDLE_NAME, 'VERSION'));
+    if (bundleVersion) return bundleVersion;
+    const rootVersion = readVersionFileIfPresent(path.join(normalizedRoot, 'VERSION'));
+    if (rootVersion) return rootVersion;
+    return fallbackVersion || null;
+}
+
 // ---------------------------------------------------------------------------
 // File copy / bundle deployment
 // ---------------------------------------------------------------------------
@@ -694,12 +711,22 @@ export async function acquireSourceRoot(
 // Banner / status display
 // ---------------------------------------------------------------------------
 
-export function printBanner(packageJson: PackageJsonLike, title: string, subtitle: string): void {
+export function printBanner(
+    packageJson: PackageJsonLike,
+    title: string,
+    subtitle: string,
+    options?: { versionOverride?: string | null }
+): void {
     const width = 62;
     const top = `+${'-'.repeat(width - 2)}+`;
-    const versionText = `v${packageJson.version}`;
     const titleText = ` OCTOPUS AGENT ORCHESTRATOR `;
-    const titleLine = `|${padRight(titleText, width - versionText.length - 3)} ${versionText}|`;
+    const effectiveVersion = options && options.versionOverride !== undefined
+        ? options.versionOverride
+        : packageJson.version;
+    const versionText = effectiveVersion ? `v${effectiveVersion}` : '';
+    const titleLine = versionText
+        ? `|${padRight(titleText, width - versionText.length - 3)} ${versionText}|`
+        : `|${padRight(titleText, width - 2)}|`;
     console.log(cyan(top));
     console.log(cyan(titleLine));
     console.log(cyan(top));
@@ -707,12 +734,22 @@ export function printBanner(packageJson: PackageJsonLike, title: string, subtitl
     if (subtitle) console.log(dim(subtitle));
 }
 
-export function buildBannerText(packageJson: PackageJsonLike, title: string, subtitle: string): string {
+export function buildBannerText(
+    packageJson: PackageJsonLike,
+    title: string,
+    subtitle: string,
+    options?: { versionOverride?: string | null }
+): string {
     const width = 62;
     const top = `+${'-'.repeat(width - 2)}+`;
-    const versionText = `v${packageJson.version}`;
     const titleText = ` OCTOPUS AGENT ORCHESTRATOR `;
-    const titleLine = `|${padRight(titleText, width - versionText.length - 3)} ${versionText}|`;
+    const effectiveVersion = options && options.versionOverride !== undefined
+        ? options.versionOverride
+        : packageJson.version;
+    const versionText = effectiveVersion ? `v${effectiveVersion}` : '';
+    const titleLine = versionText
+        ? `|${padRight(titleText, width - versionText.length - 3)} ${versionText}|`
+        : `|${padRight(titleText, width - 2)}|`;
     const lines = [top, titleLine, top];
     if (title) lines.push(title);
     if (subtitle) lines.push(subtitle);
