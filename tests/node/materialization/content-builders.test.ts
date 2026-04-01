@@ -15,6 +15,7 @@ import {
     buildRedirectManagedBlock,
     buildCommitGuardManagedBlock,
     buildProviderOrchestratorAgentContent,
+    buildAntigravityStartTaskWorkflowContent,
     buildGitHubSkillBridgeAgentContent,
     buildQwenSettingsContent,
     buildClaudeLocalSettingsContent,
@@ -168,6 +169,23 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result!.includes('Task Timeline Logging'));
         assert.ok(result!.includes('.github/agents/orchestrator.md'));
     });
+
+    it('builds a compact Antigravity router instead of a full duplicate workflow', () => {
+        const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
+        assert.ok(result.includes('Antigravity Agent: Orchestrator'));
+        assert.ok(result.includes('.agents/workflows/start-task.md'));
+        assert.ok(!result.includes('## Required Execution Contract'));
+    });
+});
+
+describe('buildAntigravityStartTaskWorkflowContent', () => {
+    it('builds a compact checklist that routes to canonical orchestration gates', () => {
+        const result = buildAntigravityStartTaskWorkflowContent('AGENTS.md');
+        assert.ok(result.includes('# Start Task'));
+        assert.ok(result.includes('gate enter-task-mode'));
+        assert.ok(result.includes('gate completion-gate'));
+        assert.ok(result.includes('.antigravity/agents/orchestrator.md'));
+    });
 });
 
 describe('buildGitHubSkillBridgeAgentContent', () => {
@@ -263,6 +281,7 @@ describe('buildGitignoreEntries', () => {
         assert.ok(entries.includes('QWEN.md'));
         assert.ok(entries.includes('.github/copilot-instructions.md'));
         assert.ok(entries.includes('.antigravity/'));
+        assert.ok(entries.includes('.agents/workflows/start-task.md'));
         assert.ok(entries.includes('.junie/'));
         assert.ok(entries.includes('.windsurf/'));
         assert.ok(entries.includes('.qwen/'));

@@ -22,10 +22,11 @@ import {
     INSTALL_BACKUP_CANDIDATE_PATHS,
     buildTaskManagedBlockWithExistingQueue,
     buildCanonicalManagedBlock,
-    buildRedirectManagedBlock,
-    buildCommitGuardManagedBlock,
-    buildProviderOrchestratorAgentContent,
-    buildGitHubSkillBridgeAgentContent,
+      buildRedirectManagedBlock,
+      buildCommitGuardManagedBlock,
+      buildProviderOrchestratorAgentContent,
+      buildAntigravityStartTaskWorkflowContent,
+      buildGitHubSkillBridgeAgentContent,
     buildQwenSettingsContent,
     buildClaudeLocalSettingsContent,
     buildGitignoreEntries,
@@ -201,6 +202,9 @@ export function runInstall(options: RunInstallOptions) {
         ? getGitHubSkillBridgeProfileDefinitions()
         : [];
     const providerBridgePaths = providerOrchestratorProfiles.map((p) => p.orchestratorRelativePath);
+    const antigravityWorkflowPaths = providerOrchestratorProfiles
+        .map((p) => ('workflowRelativePath' in p ? p.workflowRelativePath : null))
+        .filter((p): p is string => typeof p === 'string' && p.trim().length > 0);
 
     // Setup
     const backupLocation = createUniqueInstallBackupRoot(bundleRoot);
@@ -511,6 +515,12 @@ export function runInstall(options: RunInstallOptions) {
             profile.providerLabel, canonicalEntryFile, profile.orchestratorRelativePath
         );
         applyEntrypointManagedBlock(profile.orchestratorRelativePath, block);
+        if ('workflowRelativePath' in profile && typeof profile.workflowRelativePath === 'string') {
+            applyEntrypointManagedBlock(
+                profile.workflowRelativePath,
+                buildAntigravityStartTaskWorkflowContent(canonicalEntryFile)
+            );
+        }
     }
 
     // GitHub skill bridge profiles
@@ -526,11 +536,15 @@ export function runInstall(options: RunInstallOptions) {
         canonicalEntryFile,
         ...redirectEntryFiles,
         ...providerOrchestratorProfiles.map((profile) => profile.orchestratorRelativePath),
+        ...antigravityWorkflowPaths,
         ...githubSkillBridgeProfiles.map((profile) => profile.relativePath)
     ]);
     const allManagedFileCandidates = [
         ...ALL_AGENT_ENTRYPOINT_FILES,
         ...getProviderOrchestratorProfileDefinitions().map((profile) => profile.orchestratorRelativePath),
+        ...getProviderOrchestratorProfileDefinitions()
+            .map((profile) => ('workflowRelativePath' in profile ? profile.workflowRelativePath : null))
+            .filter((relativePath): relativePath is string => typeof relativePath === 'string' && relativePath.trim().length > 0),
         ...getGitHubSkillBridgeProfileDefinitions().map((profile) => profile.relativePath)
     ];
     for (const relativePath of allManagedFileCandidates) {

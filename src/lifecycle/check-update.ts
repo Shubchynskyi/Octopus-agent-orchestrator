@@ -129,6 +129,23 @@ interface CheckUpdateResult {
     checkUpdateResult: string;
 }
 
+function syncDeferredLiveVersionPayload(bundleRoot: string, version: string): void {
+    const liveVersionPath = path.join(bundleRoot, 'live', 'version.json');
+    if (!pathExists(liveVersionPath)) {
+        return;
+    }
+
+    try {
+        const parsed = toObjectRecord(JSON.parse(readTextFile(liveVersionPath))) || {};
+        parsed.Version = version;
+        parsed.UpdatedAt = new Date().toISOString();
+        fs.writeFileSync(liveVersionPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
+    } catch (_error) {
+        // Keep update success path stable when historical live/version.json is malformed.
+        // Verification will still surface the malformed payload if it remains unreadable.
+    }
+}
+
 function toObjectRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown>
@@ -706,6 +723,7 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                         }
                         result.syncItemsUpdated++;
                         result.syncedItems.push(DEFERRED_VERSION_ITEM);
+                        syncDeferredLiveVersionPayload(deployedBundleRoot, readTextFile(versionDestPath).trim());
                     }
 
                     removeUpdateSentinel(deployedBundleRoot);

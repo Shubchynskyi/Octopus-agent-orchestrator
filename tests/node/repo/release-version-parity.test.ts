@@ -48,6 +48,9 @@ test('validateReleaseVersionParity passes for the real repository', () => {
     assert.equal(result.versionFileValue, result.packageJsonVersion);
     assert.equal(result.packageJsonVersion, result.packageLockVersion);
     assert.equal(result.packageLockVersion, result.packageLockRootPackageVersion);
+    if (result.deployedLiveVersion !== null) {
+        assert.equal(result.packageLockRootPackageVersion, result.deployedLiveVersion);
+    }
 });
 
 test('validateReleaseVersionParity catches VERSION mismatch', () => {
@@ -109,6 +112,26 @@ test('validateReleaseVersionParity catches missing root package metadata', () =>
         const result = validateReleaseVersionParity(repoRoot);
         assert.equal(result.passed, false);
         assert.ok(result.violations.some((line) => line.includes('packages metadata')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('validateReleaseVersionParity catches deployed live/version.json mismatch when present', () => {
+    const repoRoot = createRepoFixture('2.3.3');
+    const liveDir = path.join(repoRoot, 'Octopus-agent-orchestrator', 'live');
+    fs.mkdirSync(liveDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(liveDir, 'version.json'),
+        JSON.stringify({ Version: '2.3.4' }, null, 2) + '\n',
+        'utf8'
+    );
+
+    try {
+        const result = validateReleaseVersionParity(repoRoot);
+        assert.equal(result.passed, false);
+        assert.equal(result.deployedLiveVersion, '2.3.4');
+        assert.ok(result.violations.some((line) => line.includes('Octopus-agent-orchestrator/live/version.json')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

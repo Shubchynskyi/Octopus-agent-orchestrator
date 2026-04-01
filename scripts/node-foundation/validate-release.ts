@@ -9,6 +9,7 @@ export interface ReleaseVersionParityState {
     packageJsonVersion: string | null;
     packageLockVersion: string | null;
     packageLockRootPackageVersion: string | null;
+    deployedLiveVersion: string | null;
 }
 
 export interface ReleaseVersionParityResult extends ReleaseVersionParityState {
@@ -41,11 +42,13 @@ export function validateReleaseVersionParity(repoRoot: string): ReleaseVersionPa
     const versionPath = path.join(normalizedRoot, 'VERSION');
     const packageJsonPath = path.join(normalizedRoot, 'package.json');
     const packageLockPath = path.join(normalizedRoot, 'package-lock.json');
+    const deployedLiveVersionPath = path.join(normalizedRoot, 'Octopus-agent-orchestrator', 'live', 'version.json');
 
     let versionFileValue: string | null = null;
     let packageJsonVersion: string | null = null;
     let packageLockVersion: string | null = null;
     let packageLockRootPackageVersion: string | null = null;
+    let deployedLiveVersion: string | null = null;
 
     if (!fs.existsSync(versionPath)) {
         violations.push(`Missing VERSION file: ${versionPath}`);
@@ -100,11 +103,28 @@ export function validateReleaseVersionParity(repoRoot: string): ReleaseVersionPa
         }
     }
 
+    if (fs.existsSync(deployedLiveVersionPath)) {
+        try {
+            const livePayload = readJsonFile(deployedLiveVersionPath);
+            if (typeof livePayload !== 'object' || livePayload === null || Array.isArray(livePayload)) {
+                violations.push(`Octopus-agent-orchestrator/live/version.json must contain an object: ${deployedLiveVersionPath}`);
+            } else {
+                deployedLiveVersion = getObjectStringValue(livePayload as Record<string, unknown>, 'Version');
+                if (!deployedLiveVersion) {
+                    violations.push(`Octopus-agent-orchestrator/live/version.json is missing a non-empty Version field: ${deployedLiveVersionPath}`);
+                }
+            }
+        } catch (_error) {
+            violations.push(`Octopus-agent-orchestrator/live/version.json must contain valid JSON: ${deployedLiveVersionPath}`);
+        }
+    }
+
     const comparableVersions = [
         ['VERSION', versionFileValue],
         ['package.json', packageJsonVersion],
         ['package-lock.json', packageLockVersion],
-        ['package-lock.json packages[""]', packageLockRootPackageVersion]
+        ['package-lock.json packages[""]', packageLockRootPackageVersion],
+        ['Octopus-agent-orchestrator/live/version.json', deployedLiveVersion]
     ] as const;
 
     const firstPresent = comparableVersions.find(([, value]) => value !== null)?.[1] ?? null;
@@ -123,6 +143,7 @@ export function validateReleaseVersionParity(repoRoot: string): ReleaseVersionPa
         packageJsonVersion,
         packageLockVersion,
         packageLockRootPackageVersion,
+        deployedLiveVersion,
         violations
     };
 }

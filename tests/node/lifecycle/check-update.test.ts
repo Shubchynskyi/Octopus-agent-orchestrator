@@ -276,6 +276,35 @@ describe('runCheckUpdate', () => {
         }
     });
 
+    it('realigns live/version.json after deferred VERSION sync completes', async () => {
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
+        try {
+            fs.mkdirSync(path.join(bundleRoot, 'live'), { recursive: true });
+            fs.writeFileSync(
+                path.join(bundleRoot, 'live', 'version.json'),
+                JSON.stringify({ Version: '0.0.1', SourceOfTruth: 'Codex', CanonicalEntrypoint: 'AGENTS.md' }, null, 2),
+                'utf8'
+            );
+
+            const result = await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: repoRoot,
+                noPrompt: true,
+                apply: true,
+                trustOverride: true,
+                updateRunner: () => {}
+            });
+
+            const finalVersion = fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim();
+            const liveVersion = JSON.parse(fs.readFileSync(path.join(bundleRoot, 'live', 'version.json'), 'utf8'));
+            assert.equal(result.checkUpdateResult, 'UPDATED');
+            assert.equal(liveVersion.Version, finalVersion);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('does not update VERSION when lifecycle fails (T-067)', async () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {

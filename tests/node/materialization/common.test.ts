@@ -116,7 +116,8 @@ describe('getProviderOrchestratorProfileDefinitions', () => {
         const antigravity = profiles.find((p) => p.providerLabel === 'Antigravity');
         assert.deepEqual(windsurf!.gitignoreEntries, ['.windsurf/']);
         assert.deepEqual(junie!.gitignoreEntries, ['.junie/']);
-        assert.deepEqual(antigravity!.gitignoreEntries, ['.antigravity/']);
+        assert.deepEqual(antigravity!.gitignoreEntries, ['.antigravity/', '.agents/workflows/start-task.md']);
+        assert.equal(antigravity!.workflowRelativePath, '.agents/workflows/start-task.md');
     });
 });
 
@@ -128,6 +129,7 @@ describe('managed gitignore entries', () => {
         assert.ok(entries.includes('GEMINI.md'));
         assert.ok(entries.includes('QWEN.md'));
         assert.ok(entries.includes('.github/copilot-instructions.md'));
+        assert.ok(entries.includes('.agents/workflows/start-task.md'));
     });
 
     it('keeps legacy nested provider file ignores only in cleanup mode', () => {

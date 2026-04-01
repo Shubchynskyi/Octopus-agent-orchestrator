@@ -158,7 +158,8 @@ export function getProviderOrchestratorProfileDefinitions() {
             entrypointFile: '.antigravity/rules.md',
             providerLabel: 'Antigravity',
             orchestratorRelativePath: '.antigravity/agents/orchestrator.md',
-            gitignoreEntries: ['.antigravity/']
+            workflowRelativePath: '.agents/workflows/start-task.md',
+            gitignoreEntries: ['.antigravity/', '.agents/workflows/start-task.md']
         }
     ];
 }
@@ -181,8 +182,12 @@ export function getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess = 
         'TASK.md',
         '.qwen/'
     ]);
+    const directoryScopedProviderEntrypoints = new Set<string>(getLegacyManagedGitignoreEntries());
 
     for (const entrypointFile of ALL_AGENT_ENTRYPOINT_FILES) {
+        if (directoryScopedProviderEntrypoints.has(entrypointFile)) {
+            continue;
+        }
         selected.add(entrypointFile);
     }
 

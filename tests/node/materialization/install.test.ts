@@ -506,6 +506,43 @@ describe('runInstall', () => {
         }
     });
 
+    it('creates Antigravity bridge checklist workflow when Antigravity is active', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Antigravity',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Antigravity',
+                initAnswersPath: answersPath
+            });
+
+            const bridgePath = path.join(projectRoot, '.antigravity', 'agents', 'orchestrator.md');
+            const workflowPath = path.join(projectRoot, '.agents', 'workflows', 'start-task.md');
+            assert.ok(fs.existsSync(bridgePath));
+            assert.ok(fs.existsSync(workflowPath));
+            const bridge = fs.readFileSync(bridgePath, 'utf8');
+            const workflow = fs.readFileSync(workflowPath, 'utf8');
+            assert.ok(bridge.includes('.agents/workflows/start-task.md'));
+            assert.ok(workflow.includes('gate enter-task-mode'));
+            assert.ok(workflow.includes('gate completion-gate'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('backs up and fully replaces conflicting legacy entrypoint files', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

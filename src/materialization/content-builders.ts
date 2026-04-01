@@ -23,6 +23,7 @@ export const INSTALL_BACKUP_CANDIDATE_PATHS = Object.freeze([
     '.junie/guidelines.md', '.windsurf/rules/rules.md',
     '.qwen/settings.json', '.claude/settings.local.json',
     '.git/hooks/pre-commit', '.gitignore',
+    '.agents/workflows/start-task.md',
     '.github/agents/orchestrator.md', '.windsurf/agents/orchestrator.md',
     '.junie/agents/orchestrator.md', '.antigravity/agents/orchestrator.md',
     '.github/agents/reviewer.md', '.github/agents/code-review.md',
@@ -311,6 +312,27 @@ export function buildProviderOrchestratorAgentContent(
     canonicalFile: string,
     bridgePath: string
 ): string {
+    if (bridgePath.replace(/\\/g, '/') === '.antigravity/agents/orchestrator.md') {
+        return `${MANAGED_START}
+# Antigravity Agent: Orchestrator
+
+Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
+
+This bridge is a router, not a second workflow.
+
+Required:
+1. Open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
+2. Execute every code task only as \`Execute task <task-id> depth=<1|2|3>\`.
+3. Follow the checklist in \`.agents/workflows/start-task.md\` exactly.
+4. Do not bypass gates, fake review artifacts, or use provider-default review flow outside Octopus.
+5. If any mandatory gate command fails, stop, keep the task blocked, and report the exact command, cwd, CLI path, and stderr.
+
+Canonical workflow skill: \`Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md\`
+Skill catalog: \`Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md\`
+Bridge path: \`${bridgePath}\`
+${MANAGED_END}`.trim();
+    }
+
     return `${MANAGED_START}
 # ${providerLabel} Agent: Orchestrator
 
@@ -365,6 +387,40 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 - Aggregate log: \`Octopus-agent-orchestrator/runtime/task-events/all-tasks.jsonl\`
 
 Bridge path for this provider: \`${bridgePath}\`.
+${MANAGED_END}`.trim();
+}
+
+export function buildAntigravityStartTaskWorkflowContent(canonicalFile: string): string {
+    return `${MANAGED_START}
+---
+description: "Mandatory router for any Antigravity task execution through Octopus orchestration."
+---
+
+# Start Task
+
+This checklist routes to the canonical Octopus workflow. It does not replace \`80-task-workflow.md\` or the orchestration skill.
+
+Before any code changes:
+- Open \`${canonicalFile}\`, \`TASK.md\`, and \`.antigravity/agents/orchestrator.md\`.
+- Move the task to \`IN_PROGRESS\`.
+- Enter orchestrator mode: \`Execute task <task-id> depth=<1|2|3>\`.
+
+Mandatory gate order:
+1. \`gate enter-task-mode\`
+2. \`gate load-rule-pack --stage TASK_ENTRY\`
+3. \`gate classify-change\`
+4. \`gate load-rule-pack --stage POST_PREFLIGHT\`
+5. implement only after preflight
+6. \`gate compile-gate\`
+7. \`gate build-review-context\` for each required review
+8. \`gate required-reviews-check\`
+9. \`gate doc-impact-gate\`
+10. \`gate completion-gate\`
+
+Hard stops:
+- If a mandatory gate fails or is unavailable, stop and report the exact command and stderr.
+- Do not mark \`DONE\` without \`COMPLETION_GATE_PASSED\`.
+- Do not create fake review artifacts or bypass reviewer routing.
 ${MANAGED_END}`.trim();
 }
 
