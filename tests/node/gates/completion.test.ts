@@ -105,17 +105,70 @@ describe('gates/completion', () => {
                     skill_id: 'code-review',
                     reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEW_RECORDED', 4, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 5, { skill_id: 'testing-strategy' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 6, {
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('SKILL_SELECTED', 6, { skill_id: 'testing-strategy' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 7, {
                     skill_id: 'testing-strategy',
                     reference_path: '/repo/Octopus-agent-orchestrator/live/skills/testing-strategy/SKILL.md'
                 }),
-                makeEvent('REVIEW_RECORDED', 7, { review_type: 'test' }),
-                makeEvent('REVIEW_GATE_PASSED', 8)
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 8, {
+                    review_type: 'test',
+                    reviewer_execution_mode: 'delegated_subagent'
+                }),
+                makeEvent('REVIEW_RECORDED', 9, { review_type: 'test' }),
+                makeEvent('REVIEW_GATE_PASSED', 10)
             ];
             const requiredReviews = { code: true, test: true };
-            const reviewArtifacts = { code: { path: '/reviews/T-123-code.md' }, test: { path: '/reviews/T-123-test.md' } };
+            const reviewArtifacts = {
+                code: {
+                    path: '/reviews/T-123-code.md',
+                    reviewContext: {
+                        reviewer_routing: {
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:code-reviewer'
+                        }
+                    },
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-123',
+                        review_type: 'code',
+                        preflight_sha256: null,
+                        scope_sha256: null,
+                        review_context_sha256: null,
+                        review_artifact_sha256: null,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:code-reviewer',
+                        reviewer_fallback_reason: null,
+                        recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                    }
+                },
+                test: {
+                    path: '/reviews/T-123-test.md',
+                    reviewContext: {
+                        reviewer_routing: {
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:test-reviewer'
+                        }
+                    },
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-123',
+                        review_type: 'test',
+                        preflight_sha256: null,
+                        scope_sha256: null,
+                        review_context_sha256: null,
+                        review_artifact_sha256: null,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:test-reviewer',
+                        reviewer_fallback_reason: null,
+                        recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                    }
+                }
+            };
 
             const fsMock = require('node:fs');
             const originalExists = fsMock.existsSync;
@@ -134,15 +187,204 @@ describe('gates/completion', () => {
 
             try {
                 // timelinePath must be such that construction yields the mocked paths
-                const result = validateReviewSkillEvidence(events, requiredReviews, reviewArtifacts, true, '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl');
+                const result = validateReviewSkillEvidence(
+                    events,
+                    requiredReviews,
+                    reviewArtifacts,
+                    true,
+                    '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                    'Codex'
+                );
                 if (result.violations.length > 0) {
                     console.log('VIOLATIONS:', result.violations);
                 }
                 assert.equal(result.violations.length, 0);
+                assert.deepEqual(result.reviewer_execution_modes, ['delegated_subagent']);
             } finally {
                 fsMock.existsSync = originalExists;
                 fsMock.readFileSync = originalRead;
             }
+        });
+
+        it('fails when delegation-required provider records same-agent fallback for a required review', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'testing-strategy' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'testing-strategy',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/testing-strategy/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'test',
+                    reviewer_execution_mode: 'same_agent_fallback'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'test' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { test: true },
+                {
+                    test: {
+                        path: '/reviews/T-123-test.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'same_agent_fallback',
+                                reviewer_session_id: 'self:T-123'
+                            }
+                        }
+                    }
+                },
+                true,
+                '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some((entry) => entry.includes('delegated_subagent')));
+        });
+
+        it('fails when a single-agent provider records delegated_subagent for a required review', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        }
+                    }
+                },
+                true,
+                '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Qwen'
+            );
+
+            assert.ok(result.violations.some((entry) => entry.includes('single-agent providers')));
+        });
+
+        it('fails when review-context uses an invalid reviewer execution mode', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_magic',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            reviewer_fallback_reason: null,
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some((entry) => entry.includes('invalid reviewer_routing.actual_execution_mode')));
+        });
+
+        it('fails when receipt reviewer identity disagrees with review-context reviewer session', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:other-reviewer',
+                            reviewer_fallback_reason: null,
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some((entry) => entry.includes('inconsistent reviewer identity')));
         });
 
         it('fails when code changed but review telemetry is missing', () => {
@@ -152,8 +394,32 @@ describe('gates/completion', () => {
                 makeEvent('REVIEW_GATE_PASSED', 2)
             ];
             const requiredReviews = { code: true };
-            const result = validateReviewSkillEvidence(events, requiredReviews, {}, true, '/T-123.jsonl');
+            const result = validateReviewSkillEvidence(events, requiredReviews, {}, true, '/T-123.jsonl', 'Codex');
             assert.ok(result.violations.some(v => v.includes('SKILL_SELECTED telemetry') && v.includes("'code'")));
+        });
+
+        it('fails when reviewer delegation telemetry is missing', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEW_RECORDED', 4, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 5)
+            ];
+            const requiredReviews = { code: true };
+            const result = validateReviewSkillEvidence(
+                events,
+                requiredReviews,
+                { code: { path: '/reviews/T-123-code.md' } },
+                true,
+                '/T-123.jsonl',
+                'Codex'
+            );
+            assert.ok(result.violations.some(v => v.includes('REVIEWER_DELEGATION_ROUTED telemetry')));
         });
     });
 });

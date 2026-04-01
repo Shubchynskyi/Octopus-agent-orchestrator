@@ -13,6 +13,8 @@ export const GATE_COMMANDS = Object.freeze([
     'build-review-context',
     'doc-impact-gate',
     'required-reviews-check',
+    'record-review-routing',
+    'record-review-receipt',
     'log-task-event',
     'task-events-summary',
     'human-commit'

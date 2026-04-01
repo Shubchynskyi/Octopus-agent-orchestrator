@@ -173,14 +173,22 @@ Canonical gate surface is `node Octopus-agent-orchestrator/bin/octopus.js gate <
 
 ## Reviewer Agent Execution (Platform-Agnostic)
 - Apply this section on every platform.
-- Preferred mode is always clean-context reviewer execution.
+- Mandatory mode on delegation-capable providers: launch each required reviewer as a fresh-context sub-agent with isolated context. Same-agent self-review is invalid by default when delegation is available.
 - Do not use provider-default reviewer agents that bypass this contract.
-- Platform launch mapping:
-  - Claude Code: use Agent tool/sub-agents with `fork_context=false`.
-  - GitHub Copilot CLI: use `task` tool with `agent_type="general-purpose"`; run one reviewer per isolated task execution.
-  - Platforms without task/sub-agent support: use sequential single-agent fallback with explicit reviewer role prompts and isolated checklists.
+- Provider delegation capability and platform launch mapping:
+  - Codex (delegation-capable): use sub-agents with isolated review context.
+  - Claude Code (delegation-capable): use Agent tool/sub-agents with `fork_context=false`.
+  - GitHub Copilot CLI (delegation-capable): use `task` tool with `agent_type="general-purpose"`; run one reviewer per isolated task execution.
+  - Windsurf, Junie, Antigravity: delegate when provider sub-agent support is available; otherwise use fallback.
+  - Platforms without task/sub-agent support (fallback): use sequential single-agent fallback with explicit reviewer role prompts and isolated checklists.
+- Reviewer routing metadata contract:
+  - Each reviewer invocation must capture `reviewer_execution_mode` (`delegated_subagent` or `same_agent_fallback`) and `reviewer_identity` (provider-assigned session/agent id, or `self:<task-id>` for fallback).
+  - When `same_agent_fallback` is used on a conditional/unknown delegation provider, record `reviewer_fallback_reason` in the receipt.
+  - `build-review-context` emits `reviewer_routing` metadata in the review-context artifact; the orchestrator must populate `reviewer_routing.actual_execution_mode` and `reviewer_routing.reviewer_session_id` after reviewer launch.
+  - Review receipts must include `reviewer_execution_mode`, `reviewer_identity`, and `reviewer_fallback_reason` when fallback mode is used.
+  - Gate diagnostics (`required-reviews-check`, `completion-gate`) must report whether each review used delegated fresh-context execution or fallback mode.
 - For each required review where preflight `required_reviews.<type>=true`:
-  1. Launch reviewer using the platform mapping above with clean context isolation.
+  1. Launch reviewer using the platform mapping above with mandatory delegation on capable providers.
   2. Prompt must include:
      - task id and task goal;
      - changed files list from preflight artifact;
@@ -193,6 +201,7 @@ Canonical gate surface is `node Octopus-agent-orchestrator/bin/octopus.js gate <
       - required output contract:
         - verdict token (`... PASSED` or `... FAILED`);
         - findings list with file evidence;
+        - `reviewer_execution_mode` used for this review (`delegated_subagent` or `same_agent_fallback`);
         - when verdict is pass, keep active `Findings by Severity` and `Residual Risks` empty (`none`); move any accepted non-blocking follow-up to `Deferred Findings` and include `Justification:` in each deferred entry;
         - review artifact write path: `Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.
    3. Parse verdict token from reviewer output.
@@ -213,7 +222,8 @@ Canonical gate surface is `node Octopus-agent-orchestrator/bin/octopus.js gate <
   - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate --preflight-path "<path>" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
 - After review gate pass, run completion gate before `DONE`:
   - Node: `node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate --preflight-path "<path>" --task-id "<task-id>"`
-- In single-agent fallback mode (no Agent tool), run the same review scopes sequentially with explicit role prompts and use the same verdict tokens and artifact contract.
+- In single-agent fallback mode (no Agent tool), run the same review scopes sequentially with explicit role prompts and use the same verdict tokens and artifact contract. Each review artifact and receipt must record `reviewer_execution_mode: same_agent_fallback` and `reviewer_identity: self:<task-id>`.
+- HARD STOP: on delegation-capable providers, same-agent self-review is invalid. If the provider supports sub-agents or isolated task execution, the orchestrator must use delegated reviewer launch; skipping delegation without an explicit fallback reason is a workflow violation.
 
 ## Task Event Logging Commands
 - Node:

@@ -235,10 +235,10 @@ describe('buildGitignoreEntries', () => {
         const entries = buildGitignoreEntries(['CLAUDE.md'], [], false);
         assert.ok(entries.includes('Octopus-agent-orchestrator/'));
         assert.ok(entries.includes('TASK.md'));
-        assert.ok(!entries.includes('.qwen/'));
+        assert.ok(entries.includes('.qwen/'));
     });
 
-    it('includes .qwen/ only when qwen integration is already present', () => {
+    it('includes .qwen/ in the managed baseline so later Qwen activation stays ignored', () => {
         const entries = buildGitignoreEntries(['CLAUDE.md'], [], false, true);
         assert.ok(entries.includes('.qwen/'));
     });
@@ -251,6 +251,19 @@ describe('buildGitignoreEntries', () => {
     it('adds QWEN.md when active', () => {
         const entries = buildGitignoreEntries(['QWEN.md'], [], false);
         assert.ok(entries.includes('QWEN.md'));
+    });
+
+    it('includes all supported entrypoint and provider ignore variants from the managed baseline', () => {
+        const entries = buildGitignoreEntries(['CLAUDE.md'], [], false);
+        assert.ok(entries.includes('CLAUDE.md'));
+        assert.ok(entries.includes('AGENTS.md'));
+        assert.ok(entries.includes('GEMINI.md'));
+        assert.ok(entries.includes('QWEN.md'));
+        assert.ok(entries.includes('.github/copilot-instructions.md'));
+        assert.ok(entries.includes('.antigravity/'));
+        assert.ok(entries.includes('.junie/'));
+        assert.ok(entries.includes('.windsurf/'));
+        assert.ok(entries.includes('.qwen/'));
     });
 
     it('adds .claude/ when claude access enabled', () => {

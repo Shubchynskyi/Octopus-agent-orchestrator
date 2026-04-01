@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import { stringSha256 } from './hash';
 import { estimateTokenCount, DEFAULT_TOKEN_ESTIMATOR, LEGACY_TOKEN_ESTIMATOR } from './token-telemetry';
 
@@ -299,7 +300,33 @@ export interface ReviewReceipt {
     scope_sha256: string | null;
     review_context_sha256: string | null;
     review_artifact_sha256: string | null;
+    reviewer_execution_mode: string | null;
+    reviewer_identity: string | null;
+    reviewer_fallback_reason: string | null;
     recorded_at_utc: string;
+}
+
+export interface ReviewContextRoutingMetadataUpdate {
+    actualExecutionMode: string | null;
+    reviewerSessionId: string | null;
+    fallbackReason: string | null;
+}
+
+export const REVIEWER_EXECUTION_MODES = Object.freeze([
+    'delegated_subagent',
+    'same_agent_fallback'
+] as const);
+
+export type ReviewerExecutionMode = (typeof REVIEWER_EXECUTION_MODES)[number];
+
+export function normalizeReviewerExecutionMode(value: unknown): ReviewerExecutionMode | null {
+    const text = String(value || '').trim();
+    if (!text) {
+        return null;
+    }
+    return REVIEWER_EXECUTION_MODES.includes(text as ReviewerExecutionMode)
+        ? text as ReviewerExecutionMode
+        : null;
 }
 
 /**
@@ -312,16 +339,50 @@ export function buildReviewReceipt(options: {
     scopeSha256: string | null;
     reviewContextSha256: string | null;
     reviewArtifactSha256: string | null;
+    reviewerExecutionMode?: string | null;
+    reviewerIdentity?: string | null;
+    reviewerFallbackReason?: string | null;
 }): ReviewReceipt {
     return {
-        schema_version: 1,
+        schema_version: 2,
         task_id: options.taskId,
         review_type: options.reviewType,
         preflight_sha256: options.preflightSha256,
         scope_sha256: options.scopeSha256,
         review_context_sha256: options.reviewContextSha256,
         review_artifact_sha256: options.reviewArtifactSha256,
+        reviewer_execution_mode: options.reviewerExecutionMode ?? null,
+        reviewer_identity: options.reviewerIdentity ?? null,
+        reviewer_fallback_reason: options.reviewerFallbackReason ?? null,
         recorded_at_utc: new Date().toISOString()
+    };
+}
+
+export function applyReviewerRoutingMetadata(
+    reviewContextPath: string,
+    update: ReviewContextRoutingMetadataUpdate
+): { updated: boolean; contextSha256: string | null } {
+    if (!reviewContextPath || !fs.existsSync(reviewContextPath) || !fs.statSync(reviewContextPath).isFile()) {
+        return { updated: false, contextSha256: null };
+    }
+
+    const parsed = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+    const currentRouting = parsed.reviewer_routing && typeof parsed.reviewer_routing === 'object' && !Array.isArray(parsed.reviewer_routing)
+        ? parsed.reviewer_routing as Record<string, unknown>
+        : {};
+
+    parsed.reviewer_routing = {
+        ...currentRouting,
+        actual_execution_mode: update.actualExecutionMode ?? null,
+        reviewer_session_id: update.reviewerSessionId ?? null,
+        fallback_reason: update.fallbackReason ?? null
+    };
+
+    const serialized = JSON.stringify(parsed, null, 2) + '\n';
+    fs.writeFileSync(reviewContextPath, serialized, 'utf8');
+    return {
+        updated: true,
+        contextSha256: stringSha256(serialized)
     };
 }
 
@@ -411,4 +472,3 @@ export function buildReviewContextSections(selectedRulePaths: string[], readFile
         }
     };
 }
-

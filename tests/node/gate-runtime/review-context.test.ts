@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import {
+    applyReviewerRoutingMetadata,
     compactMarkdownContent,
     getCompactReviewBudget,
     auditReviewArtifactCompaction,
@@ -201,4 +205,33 @@ test('buildReviewContextSections includes strip flags in header', () => {
 
     assert.ok(result.artifact_text.includes('- strip_examples: true'));
     assert.ok(result.artifact_text.includes('- strip_code_blocks: false'));
+});
+
+test('applyReviewerRoutingMetadata updates review-context routing fields and returns sha', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-review-context-'));
+    const contextPath = path.join(tempDir, 'T-044-code-review-context.json');
+    fs.writeFileSync(contextPath, JSON.stringify({
+        review_type: 'code',
+        reviewer_routing: {
+            source_of_truth: 'Codex',
+            actual_execution_mode: null,
+            reviewer_session_id: null,
+            fallback_reason: null
+        }
+    }, null, 2) + '\n', 'utf8');
+
+    const result = applyReviewerRoutingMetadata(contextPath, {
+        actualExecutionMode: 'delegated_subagent',
+        reviewerSessionId: 'agent:reviewer-1',
+        fallbackReason: null
+    });
+
+    const updated = JSON.parse(fs.readFileSync(contextPath, 'utf8'));
+    assert.equal(result.updated, true);
+    assert.equal(updated.reviewer_routing.actual_execution_mode, 'delegated_subagent');
+    assert.equal(updated.reviewer_routing.reviewer_session_id, 'agent:reviewer-1');
+    assert.equal(updated.reviewer_routing.fallback_reason, null);
+    assert.equal(result.contextSha256, stringSha256(fs.readFileSync(contextPath, 'utf8')));
+
+    fs.rmSync(tempDir, { recursive: true, force: true });
 });

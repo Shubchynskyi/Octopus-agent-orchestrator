@@ -151,7 +151,30 @@ function writeLockMetadata(lockPath: string): void {
 
 function readLockMetadata(lockPath: string): LockOwnerMetadata {
     const metadataPath = path.join(lockPath, 'owner.json');
-    if (!fs.existsSync(metadataPath) || !fs.statSync(metadataPath).isFile()) {
+    let rawContent = '';
+    try {
+        const stats = fs.statSync(metadataPath);
+        if (!stats.isFile()) {
+            return {
+                pid: null,
+                hostname: null,
+                created_at_utc: null,
+                metadata_status: 'missing'
+            };
+        }
+        rawContent = fs.readFileSync(metadataPath, 'utf8');
+    } catch (error: unknown) {
+        const errorCode = error != null && typeof error === 'object' && 'code' in error
+            ? String((error as { code?: unknown }).code || '')
+            : '';
+        if (errorCode === 'ENOENT' || errorCode === 'ENOTDIR' || errorCode === 'EISDIR') {
+            return {
+                pid: null,
+                hostname: null,
+                created_at_utc: null,
+                metadata_status: 'missing'
+            };
+        }
         return {
             pid: null,
             hostname: null,
@@ -161,7 +184,7 @@ function readLockMetadata(lockPath: string): LockOwnerMetadata {
     }
 
     try {
-        const parsed = JSON.parse(fs.readFileSync(metadataPath, 'utf8')) as Record<string, unknown>;
+        const parsed = JSON.parse(rawContent) as Record<string, unknown>;
         const pidValue = typeof parsed.pid === 'number' && Number.isInteger(parsed.pid) && parsed.pid > 0
             ? parsed.pid
             : null;

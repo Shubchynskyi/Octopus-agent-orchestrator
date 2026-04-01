@@ -164,6 +164,34 @@ export function getProviderOrchestratorProfileDefinitions() {
 }
 
 /**
+ * Returns the managed .gitignore superset that should exist immediately after setup/install,
+ * even before agent-init expands ActiveAgentFiles.
+ */
+export function getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess = false): string[] {
+    const selected = new Set<string>([
+        'Octopus-agent-orchestrator/',
+        'TASK.md',
+        '.qwen/'
+    ]);
+
+    for (const entrypointFile of ALL_AGENT_ENTRYPOINT_FILES) {
+        selected.add(entrypointFile);
+    }
+
+    for (const profile of getProviderOrchestratorProfileDefinitions()) {
+        for (const gitignoreEntry of profile.gitignoreEntries) {
+            selected.add(gitignoreEntry);
+        }
+    }
+
+    if (enableClaudeOrchestratorFullAccess) {
+        selected.add('.claude/');
+    }
+
+    return [...selected].sort();
+}
+
+/**
  * Returns GitHub skill bridge profile definitions.
  */
 export function getGitHubSkillBridgeProfileDefinitions() {

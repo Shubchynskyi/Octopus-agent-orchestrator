@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildReviewContextSections } from '../gate-runtime/review-context';
 import { normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
+import { readRuntimeReviewerProvider, resolveReviewerRoutingPolicy } from './reviewer-routing';
 
 /**
  * Rule pack configuration by review type.
@@ -180,6 +181,9 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
 
     const requiredReviews = preflight.required_reviews || {};
     const requiredReview = parseBool(requiredReviews[reviewType]);
+    const taskId = String(preflight.task_id || '').trim() || null;
+    const sourceOfTruth = readRuntimeReviewerProvider(repoRoot, taskId);
+    const reviewerRoutingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth);
     const stripExamplesFlag = parseBool(tokenConfig.strip_examples);
     const stripCodeBlocksFlag = parseBool(tokenConfig.strip_code_blocks);
     const scopedDiffsFlag = parseBool(tokenConfig.scoped_diffs);
@@ -303,6 +307,18 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
             expected: !!scopedDiffExpected,
             metadata_path: normalizePath(scopedDiffMetadataPath),
             metadata: scopedDiffMetadata
+        },
+        reviewer_routing: {
+            source_of_truth: reviewerRoutingPolicy.source_of_truth,
+            capability_level: reviewerRoutingPolicy.capability_level,
+            delegation_required: !!requiredReview && reviewerRoutingPolicy.delegation_required,
+            expected_execution_mode: reviewerRoutingPolicy.expected_execution_mode,
+            fallback_allowed: reviewerRoutingPolicy.fallback_allowed,
+            fallback_reason_required: reviewerRoutingPolicy.fallback_reason_required,
+            actual_execution_mode: null as string | null,
+            reviewer_session_id: null as string | null,
+            fallback_reason: null as string | null,
+            note: reviewerRoutingPolicy.note
         }
     };
 

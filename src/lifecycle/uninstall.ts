@@ -9,7 +9,7 @@ import {
 import { pathExists, readTextFile } from '../core/fs';
 import { detectLineEnding } from '../core/line-endings';
 import { readJsonFile } from '../core/json';
-import { getActiveAgentEntrypointFiles, getCanonicalEntrypointFile } from '../materialization/common';
+import { getActiveAgentEntrypointFiles, getCanonicalEntrypointFile, getManagedGitignoreEntries } from '../materialization/common';
 import {
     MANAGED_START,
     MANAGED_END,
@@ -137,19 +137,7 @@ export const CLAUDE_LOCAL_SETTINGS_RELATIVE = '.claude/settings.local.json';
 export const PRE_COMMIT_HOOK_RELATIVE = '.git/hooks/pre-commit';
 
 export const GITIGNORE_MANAGED_COMMENT = '# Octopus-agent-orchestrator managed ignores';
-export const GITIGNORE_MANAGED_ENTRIES = Object.freeze([
-    'Octopus-agent-orchestrator/',
-    'AGENTS.md',
-    'QWEN.md',
-    'TASK.md',
-    '.qwen/',
-    '.github/agents/',
-    '.antigravity/',
-    '.junie/',
-    '.windsurf/',
-    '.github/copilot-instructions.md',
-    '.claude/'
-]);
+export const GITIGNORE_MANAGED_ENTRIES = Object.freeze(getManagedGitignoreEntries(true));
 
 // ---------------------------------------------------------------------------
 // Boolean answer parsing (mirrors Convert-ToBooleanAnswer)

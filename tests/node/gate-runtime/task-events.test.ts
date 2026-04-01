@@ -560,6 +560,38 @@ test('appendTaskEvent timeout warning includes lock owner diagnostics', () => {
     }
 });
 
+test('appendTaskEvent tolerates missing lock owner metadata', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-append-owner-race-'));
+
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const lockPath = path.join(eventsRoot, '.T-TEST.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+
+        const result = appendTaskEvent(
+            tempDir,
+            'T-TEST',
+            'test',
+            'PASS',
+            'Should time out on active lock with missing owner metadata',
+            null,
+            {
+                passThru: true,
+                lockTimeoutMs: 50,
+                lockRetryMs: 5,
+                lockStaleMs: 60000
+            }
+        );
+
+        assert.ok(result !== null);
+        assert.equal(result!.warnings.length, 1);
+        assert.match(result!.warnings[0], /Timed out acquiring file lock/);
+        assert.match(result!.warnings[0], /owner_metadata_status=missing/);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
 test('appendMandatoryTaskEvent throws with detailed error when lock acquisition times out', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-append-mandatory-lock-'));
     try {

@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import { BOOLEAN_TRUE_VALUES, BOOLEAN_FALSE_VALUES } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import { isPathInsideRoot } from '../core/paths';
+import { getManagedGitignoreEntries } from '../materialization/common';
 import { validateSkillPacks, validateSkillsIndex } from '../runtime/skills';
 import { TASK_MODE_RULE_SECTION_MIGRATIONS } from '../materialization/rule-contracts';
 import {
@@ -386,10 +387,7 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
     var qv = detectQwenSettingsViolations(targetRoot, canonicalEntrypoint);
     var skillPackValidation = validateSkillPacks(path.join(targetRoot, 'Octopus-agent-orchestrator'));
     var skillsIndexValidation = validateSkillsIndex(path.join(targetRoot, 'Octopus-agent-orchestrator'));
-    var ge: string[] = ['Octopus-agent-orchestrator/','TASK.md'];
-    if (pathExists(path.join(targetRoot, '.qwen/settings.json'))) {
-        ge.push('.qwen/');
-    }
+    var ge: string[] = getManagedGitignoreEntries(iar.claudeOrchestratorFullAccess);
     var gm = detectGitignoreViolations(targetRoot, ge);
     var mv = detectManifestContractViolations(targetRoot);
 

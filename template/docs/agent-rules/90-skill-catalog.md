@@ -90,6 +90,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
     - `devops-k8s` (or custom `infra-review`) for `required_reviews.infra=true`
     - `dependency-review` for `required_reviews.dependency=true`
 - `build-review-context` is the canonical proof that the selected review skill and its rule context were loaded; completion for code-changing tasks expects `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` in the task timeline.
+- `build-review-context` emits `reviewer_routing` metadata in the review-context artifact; on delegation-capable providers, reviewers must be launched as fresh-context sub-agents and the orchestrator must populate `reviewer_routing.actual_execution_mode` and `reviewer_routing.reviewer_session_id` after reviewer launch.
+- Same-agent self-review is invalid by default on delegation-capable providers (Codex, Claude Code, GitHub Copilot CLI); fallback to `same_agent_fallback` is allowed only on platforms without sub-agent support or on conditional-delegation providers with an explicit fallback reason.
 - Before `DONE`, run:
   `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" ...`
 - Then run completion gate:

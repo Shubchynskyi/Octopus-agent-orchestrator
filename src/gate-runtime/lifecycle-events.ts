@@ -25,6 +25,7 @@ export const LIFECYCLE_EVENT_TYPES = Object.freeze({
     DOC_IMPACT_ASSESSED: 'DOC_IMPACT_ASSESSED',
     DOC_IMPACT_ASSESSMENT_FAILED: 'DOC_IMPACT_ASSESSMENT_FAILED',
     REVIEW_RECORDED: 'REVIEW_RECORDED',
+    REVIEWER_DELEGATION_ROUTED: 'REVIEWER_DELEGATION_ROUTED',
     COMPLETION_GATE_PASSED: 'COMPLETION_GATE_PASSED',
     COMPLETION_GATE_FAILED: 'COMPLETION_GATE_FAILED',
     STATUS_CHANGED: 'STATUS_CHANGED',
@@ -528,6 +529,47 @@ export function emitStatusChangedEvent(
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : String(error);
         process.stderr.write(`WARNING: status-changed event emit failed: ${msg}\n`);
+        return null;
+    }
+}
+
+/**
+ * Auto-emit REVIEWER_DELEGATION_ROUTED to the task timeline.
+ * Called when a reviewer is launched to record whether delegation or fallback was used.
+ */
+export function emitReviewerDelegationRoutedEvent(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    executionMode: 'delegated_subagent' | 'same_agent_fallback',
+    reviewerSessionId: string,
+    fallbackReason: string | null = null,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    if (!repoRoot || !taskId) return null;
+    try {
+        return appendTaskEvent(
+            repoRoot,
+            taskId,
+            LIFECYCLE_EVENT_TYPES.REVIEWER_DELEGATION_ROUTED,
+            'INFO',
+            `Reviewer delegation: ${reviewType} → ${executionMode}.`,
+            {
+                review_type: reviewType,
+                reviewer_execution_mode: executionMode,
+                reviewer_session_id: reviewerSessionId,
+                delegation_used: executionMode === 'delegated_subagent',
+                reviewer_fallback_reason: fallbackReason
+            },
+            {
+                actor: options.actor || 'orchestrator',
+                passThru: options.passThru ?? true,
+                eventsRoot: options.eventsRoot
+            }
+        );
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`WARNING: reviewer-delegation-routed event emit failed: ${msg}\n`);
         return null;
     }
 }

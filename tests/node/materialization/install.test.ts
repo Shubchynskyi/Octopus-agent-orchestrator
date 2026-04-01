@@ -275,6 +275,11 @@ describe('runInstall', () => {
             const gitignore = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
             assert.ok(gitignore.includes('Octopus-agent-orchestrator/'));
             assert.ok(gitignore.includes('TASK.md'));
+            assert.ok(gitignore.includes('AGENTS.md'));
+            assert.ok(gitignore.includes('GEMINI.md'));
+            assert.ok(gitignore.includes('.antigravity/'));
+            assert.ok(gitignore.includes('.windsurf/'));
+            assert.ok(gitignore.includes('.junie/'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

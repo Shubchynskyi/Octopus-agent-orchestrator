@@ -40,6 +40,7 @@ tsc-target-errors.txt
 /.github/copilot-instructions.md
 
 # Octopus-agent-orchestrator managed ignores
+plans/*
 AGENTS.md
 Octopus-agent-orchestrator/
 TASK.md

@@ -114,10 +114,20 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - DB, security, and refactor mandatory reviews are never skippable by override.
 
 ## Reviewer Independence
-- Preferred mode: reviewers are spawned with clean context (`fork_context=false`) when platform supports sub-agents.
-- Platform mapping: GitHub Copilot CLI must spawn reviewer runs via `task` tool with `agent_type="general-purpose"` (isolated context per reviewer run).
-- Fallback mode (single-agent platforms): run independent review passes sequentially, each with explicit scope and isolated checklist, before final verdict aggregation.
+- Mandatory mode on delegation-capable providers: reviewers must be spawned as fresh-context sub-agents (separate reviewer agent with isolated context built from `build-review-context`).
+- Same-agent self-review is invalid by default when the provider supports sub-agent delegation; the implementation agent must not review its own changes in-place on delegation-capable platforms.
+- Provider delegation capability:
+  - Codex: delegation-capable — use sub-agents with isolated review context.
+  - Claude Code: delegation-capable — use Agent tool/sub-agents with `fork_context=false`.
+  - GitHub Copilot CLI: delegation-capable — use `task` tool with `agent_type="general-purpose"` (one reviewer per isolated task run).
+  - Windsurf, Junie, Antigravity: evaluate provider sub-agent support at runtime; default to delegation when available.
+  - Single-agent platforms (no sub-agent/task tool): explicit fallback allowed — run independent review passes sequentially, each with explicit scope and isolated checklist, before final verdict aggregation.
 - Fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewers.
+- Reviewer execution mode must be recorded in review receipts and telemetry:
+  - `reviewer_execution_mode`: `delegated_subagent` (preferred) or `same_agent_fallback`.
+  - `reviewer_identity`: provider-assigned session/agent id when available, or `self:<task-id>` for fallback.
+  - `reviewer_fallback_reason`: required when `same_agent_fallback` is used on conditional/unknown delegation platforms.
+  - Gate diagnostics must explain whether each review used delegated fresh-context execution or fallback mode.
 - Reviewer verdict is a release gate, not optional advice.
 - Required verdicts:
   - code: `REVIEW PASSED`

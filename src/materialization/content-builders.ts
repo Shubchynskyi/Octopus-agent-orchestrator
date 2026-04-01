@@ -1,4 +1,5 @@
 import { normalizeLineEndings } from '../core/line-endings';
+import { getManagedGitignoreEntries } from './common';
 import { NODE_BUNDLE_CLI_COMMAND, NODE_GATE_COMMAND_PREFIX, NODE_HUMAN_COMMIT_COMMAND } from './command-constants';
 
 export const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
@@ -330,10 +331,14 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 11. Update task status and artifacts in \`TASK.md\`.
 12. Log or inspect lifecycle events by task id via \`node bin/octopus.js gate log-task-event ...\` / \`task-events-summary\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` / \`task-events-summary\` inside a materialized/deployed workspace.
 
-## Reviewer Launch Mapping (Required)
-- Claude Code: launch clean-context reviewers via Agent tool (\`fork_context=false\`).
-- GitHub Copilot CLI: launch clean-context reviewers via \`task\` tool with \`agent_type="general-purpose"\` (one reviewer per isolated task run).
-- Platforms without task/sub-agent support: run sequential isolated reviewer passes in one thread; never use provider-default reviewer agents.
+## Reviewer Launch Mapping (Mandatory Delegation)
+- Delegation-capable providers must spawn each required reviewer as a fresh-context sub-agent; same-agent self-review is invalid when delegation is available.
+- Codex (delegation-capable): launch clean-context reviewers via sub-agents with isolated context.
+- Claude Code (delegation-capable): launch clean-context reviewers via Agent tool (\`fork_context=false\`).
+- GitHub Copilot CLI (delegation-capable): launch clean-context reviewers via \`task\` tool with \`agent_type="general-purpose"\` (one reviewer per isolated task run).
+- Windsurf, Junie, Antigravity: delegate when provider sub-agent support is available; otherwise use fallback.
+- Platforms without task/sub-agent support (fallback only): run sequential isolated reviewer passes in one thread; never use provider-default reviewer agents.
+- Each review receipt must include \`reviewer_execution_mode\` (\`delegated_subagent\` or \`same_agent_fallback\`), \`reviewer_identity\`, and \`reviewer_fallback_reason\` when fallback mode is used.
 
 ## Skill Routing
 - Orchestration: \`Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md\`
@@ -387,7 +392,7 @@ Ignored orchestration control-plane files (for example \`TASK.md\`, \`Octopus-ag
 - Re-read \`Octopus-agent-orchestrator/live/config/output-filters.json\` before execution.
 - Keep downstream rule-pack evidence current via \`${NODE_GATE_COMMAND_PREFIX} load-rule-pack ...\`; bridge execution is invalid without recorded rule-file loading.
 - Reviewer preparation must run \`${NODE_GATE_COMMAND_PREFIX} build-review-context --review-type "<review-type>" ...\` before verdict capture; completion for code-changing tasks validates the resulting review-skill telemetry.
-- On GitHub Copilot CLI, spawn reviewer helper tasks via \`task\` tool with \`agent_type="general-purpose"\` and isolated context.
+- On GitHub Copilot CLI, spawn reviewer helper tasks via \`task\` tool with \`agent_type="general-purpose"\` and isolated context; same-agent self-review is invalid on this delegation-capable provider.
 - Honor specialist skills added after initialization under \`Octopus-agent-orchestrator/live/skills/**\`.
 - Log review invocation and outcomes via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` into task timeline.
 - Task timeline path (per task): \`Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl\`.
@@ -534,31 +539,24 @@ export function buildGitignoreEntries(
     enableClaudeOrchestratorFullAccess: boolean,
     includeQwenDirectory = false
 ): string[] {
-    const entries = ['Octopus-agent-orchestrator/', 'TASK.md'];
+    const entries = new Set<string>(getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess));
 
     if (includeQwenDirectory) {
-        entries.push('.qwen/');
+        entries.add('.qwen/');
     }
 
     for (const entryFile of activeEntryFiles) {
         const normalized = entryFile.replace(/\\/g, '/');
-        if (normalized === 'AGENTS.md') entries.push('AGENTS.md');
-        if (normalized === 'QWEN.md') entries.push('QWEN.md');
-        if (normalized === '.github/copilot-instructions.md') entries.push('.github/copilot-instructions.md');
+        entries.add(normalized);
     }
 
     for (const profile of providerOrchestratorProfiles) {
         for (const entry of profile.gitignoreEntries) {
-            entries.push(entry);
+            entries.add(entry);
         }
     }
 
-    const unique = [...new Set(entries)].sort();
-    if (enableClaudeOrchestratorFullAccess) {
-        unique.push('.claude/');
-    }
-
-    return unique;
+    return [...entries].sort();
 }
 
 /**

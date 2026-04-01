@@ -40,6 +40,7 @@ import {
     validatePreflightForReview,
     validateZeroDiffForReviewGate
 } from '../../gates/required-reviews-check';
+import { readRuntimeReviewerProvider } from '../../gates/reviewer-routing';
 import {
     buildRulePackArtifact,
     getRulePackEvidence,
@@ -135,6 +136,8 @@ interface EnterTaskModeCommandOptions {
     requestedDepth?: unknown;
     effectiveDepth?: unknown;
     taskSummary?: unknown;
+    provider?: unknown;
+    routedTo?: unknown;
     actor?: unknown;
     artifactPath?: string;
     metricsPath?: string;
@@ -412,7 +415,16 @@ function readTaskQueueStatus(repoRoot: string, taskId: string): string | null {
     return null;
 }
 
-function readRoutingDecision(repoRoot: string): { provider: string | null; routedTo: string | null } {
+function readRoutingDecision(repoRoot: string, providerOverride?: unknown, routedToOverride?: unknown): { provider: string | null; routedTo: string | null } {
+    const explicitProvider = String(providerOverride || '').trim();
+    const explicitRoutedTo = String(routedToOverride || '').trim();
+    if (explicitProvider) {
+        return {
+            provider: explicitProvider,
+            routedTo: explicitRoutedTo || getCanonicalEntrypointFile(explicitProvider)
+        };
+    }
+
     const initAnswersPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'init-answers.json'));
     if (!fs.existsSync(initAnswersPath) || !fs.statSync(initAnswersPath).isFile()) {
         return { provider: null, routedTo: null };
@@ -689,12 +701,15 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
     const artifactPath = resolveTaskModeArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
+    const routingDecision = readRoutingDecision(repoRoot, options.provider, options.routedTo);
     const taskModeArtifact = buildTaskModeArtifact({
         taskId,
         entryMode: options.entryMode,
         requestedDepth: parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2),
         effectiveDepth: parseTaskModeDepth(options.effectiveDepth, 'EffectiveDepth', parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2)),
         taskSummary: String(options.taskSummary || ''),
+        provider: routingDecision.provider,
+        routedTo: routingDecision.routedTo,
         actor: String(options.actor || 'orchestrator')
     });
     writeJsonArtifact(artifactPath, taskModeArtifact);
@@ -727,6 +742,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 requested_depth: taskModeArtifact.requested_depth,
                 effective_depth: taskModeArtifact.effective_depth,
                 task_summary: taskModeArtifact.task_summary,
+                provider: taskModeArtifact.provider,
+                routed_to: taskModeArtifact.routed_to,
                 actor: taskModeArtifact.actor
             }
         );
@@ -742,7 +759,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         entry_mode: taskModeArtifact.entry_mode,
         requested_depth: taskModeArtifact.requested_depth,
         effective_depth: taskModeArtifact.effective_depth,
-        task_summary: taskModeArtifact.task_summary
+        task_summary: taskModeArtifact.task_summary,
+        provider: taskModeArtifact.provider,
+        routed_to: taskModeArtifact.routed_to
     });
 
     const previousStatus = readTaskQueueStatus(repoRoot, taskModeArtifact.task_id);
@@ -750,7 +769,6 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         emitStatusChangedEvent(orchestratorRoot, taskModeArtifact.task_id, previousStatus, 'IN_PROGRESS');
     }
 
-    const routingDecision = readRoutingDecision(repoRoot);
     if (routingDecision.provider && routingDecision.routedTo) {
         emitProviderRoutingEvent(
             orchestratorRoot,
@@ -767,7 +785,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             `TaskModeArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
             `EntryMode: ${taskModeArtifact.entry_mode}`,
             `RequestedDepth: ${taskModeArtifact.requested_depth}`,
-            `EffectiveDepth: ${taskModeArtifact.effective_depth}`
+            `EffectiveDepth: ${taskModeArtifact.effective_depth}`,
+            ...(routingDecision.provider ? [`Provider: ${routingDecision.provider}`] : []),
+            ...(routingDecision.routedTo ? [`RoutedTo: ${routingDecision.routedTo}`] : [])
         ],
         exitCode: 0
     };
@@ -1989,6 +2009,15 @@ function testReviewArtifacts(
                 );
             }
         }
+        if (!entry.review_context_present) {
+            result.violations.push(
+                `Review context artifact not found for claimed '${passToken}': ${entry.review_context_path}`
+            );
+        } else if (!entry.review_context_valid) {
+            result.violations.push(
+                `Review context artifact '${entry.review_context_path}' is invalid and cannot support a required review receipt.`
+            );
+        }
 
         const compactionAudit = auditReviewArtifactCompaction({
             artifactPath: entry.path,
@@ -2349,13 +2378,28 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         options.reviewsRoot || ''
     );
 
-    const reviewArtifactsMap: Record<string, { path: string; content: string; reviewContext?: Record<string, unknown> }> = {};
+    const reviewArtifactsMap: Record<string, { path: string; content: string; reviewContext?: Record<string, unknown>; reviewContextSha256?: string | null }> = {};
     for (const entry of artifactEvidence.checked) {
         if (entry.present && entry.path) {
             try {
+                let reviewContext: Record<string, unknown> | undefined;
+                let reviewContextPath: string | null = null;
+                if (entry.review_context_present && entry.review_context_path) {
+                    reviewContextPath = path.resolve(entry.review_context_path);
+                    if (fs.existsSync(reviewContextPath) && fs.statSync(reviewContextPath).isFile()) {
+                        const parsedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+                        if (isPlainObject(parsedReviewContext)) {
+                            reviewContext = parsedReviewContext;
+                        }
+                    }
+                }
                 reviewArtifactsMap[entry.review] = {
                     path: entry.path,
-                    content: fs.readFileSync(entry.path, 'utf8')
+                    content: fs.readFileSync(entry.path, 'utf8'),
+                    reviewContext,
+                    reviewContextSha256: reviewContextPath && fs.existsSync(reviewContextPath)
+                        ? gateHelpers.fileSha256(reviewContextPath)
+                        : null
                 };
             } catch (e) {
                 // ignore
@@ -2368,7 +2412,8 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         verdicts,
         skipReviews: skipReviewsList,
         compileGateEvidence: compileGateEvidence.status === 'PASS' ? { status: 'PASSED' } : null,
-        reviewArtifacts: reviewArtifactsMap
+        reviewArtifacts: reviewArtifactsMap,
+        sourceOfTruth: readRuntimeReviewerProvider(repoRoot, resolvedTaskId)
     });
     const allViolations = [...baseResult.violations, ...artifactEvidence.violations];
     const status = allViolations.length > 0 ? 'FAILED' : 'PASSED';
