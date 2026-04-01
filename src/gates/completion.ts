@@ -19,6 +19,7 @@ export const STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze([
     'IMPLEMENTATION_STARTED',
     'COMPILE_GATE_PASSED',
     'REVIEW_PHASE_STARTED',
+    'REVIEW_RECORDED',
     'REVIEW_GATE_PASSED'
 ]);
 
@@ -261,6 +262,31 @@ function eventMatchesReviewSkill(event: TimelineEventEntry, candidateSkillIds: s
 }
 
 /**
+ * Check if review artifact content is trivial (too short or only boilerplate).
+ */
+export function isTrivialReview(content: string): boolean {
+    const text = (content || '').trim();
+    if (text.length < 100) return true;
+
+    if (!text.includes('`')) return true;
+
+    // Check if findings and risks are all 'none' or 'n/a'
+    const lines = text.split('\n');
+    const findings = getMarkdownMeaningfulEntries(extractMarkdownSectionLines(lines, 'Findings by Severity'));
+    const risks = getMarkdownMeaningfulEntries(extractMarkdownSectionLines(lines, 'Residual Risks'));
+
+    // If both sections are empty of meaningful content, it might be trivial,
+    // but we only block if total length is very low or no implementation details are mentioned.
+    if (findings.length === 0 && risks.length === 0) {
+        // Trivial if very few words
+        const wordCount = text.split(/\s+/).length;
+        if (wordCount < 30) return true;
+    }
+
+    return false;
+}
+
+/**
  * Validate review-skill evidence for code-changing tasks.
  * When code changed but the review-gate artifact does not carry evidence
  * of actual review-skill invocations (review_checks with non-NOT_REQUIRED verdicts),
@@ -311,6 +337,10 @@ export function validateReviewSkillEvidence(
         const referenceEvent = events.find((entry) => (
             entry.event_type === 'SKILL_REFERENCE_LOADED' && eventMatchesReviewSkill(entry, candidateSkillIds)
         ));
+        const recordEvent = events.find((entry) => (
+            entry.event_type === 'REVIEW_RECORDED' && 
+            String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
+        ));
 
         if (!selectionEvent) {
             result.violations.push(
@@ -360,17 +390,42 @@ export function validateReviewSkillEvidence(
                 );
             }
         }
+
+        if (!recordEvent) {
+            result.violations.push(
+                `Code-changing task is missing REVIEW_RECORDED telemetry for required review '${key}'. ` +
+                "Review evidence was not officially recorded via 'gate record-review-receipt'."
+            );
+        }
     }
 
     // Verify that each required review has a corresponding review artifact
     for (const key of requiredKeys) {
-        if (!reviewArtifacts[key]) {
+        const artifact = reviewArtifacts[key];
+        if (!artifact) {
             result.violations.push(
                 `Code-changing task is missing review artifact for required review '${key}'. ` +
                 'Review skill must be invoked and produce a review artifact before completion.'
             );
-        } else if (!result.artifact_keys.includes(key)) {
-            result.artifact_keys.push(key);
+        } else {
+            if (!result.artifact_keys.includes(key)) {
+                result.artifact_keys.push(key);
+            }
+
+            // T-043: Triviality check
+            let artifactPath = (artifact as any).path;
+            if (!artifactPath && timelinePath) {
+                artifactPath = path.join(path.dirname(timelinePath.replace('task-events', 'reviews')), `${path.basename(timelinePath, '.jsonl')}-${key}.md`);
+            }
+            if (artifactPath && fs.existsSync(artifactPath)) {
+                const content = (artifact as any).content || fs.readFileSync(artifactPath, 'utf8');
+                if (isTrivialReview(content)) {
+                    result.violations.push(
+                        `Review artifact '${normalizePath(artifactPath)}' is trivial or obviously synthetic. ` +
+                        'Meaningful review artifacts must include implementation details and carry at least 100 characters of content.'
+                    );
+                }
+            }
         }
     }
 

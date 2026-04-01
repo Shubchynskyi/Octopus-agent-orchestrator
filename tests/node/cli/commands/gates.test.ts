@@ -88,24 +88,45 @@ function writePreflight(repoRoot: string, taskId: string, overrides: Record<stri
 function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: string, verdict: string): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
-    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-${reviewKey}.md`), [
+    const content = [
         '# Review',
+        '',
+        `Verified changes in \`src/app.ts\`. This review artifact content has been extended with more words to ensure it strictly passes the newly introduced triviality check, which demands at least thirty words if there are no meaningful findings or risks.`,
         '',
         verdict,
         '',
         '## Findings by Severity',
-        'Critical: None',
-        'High: None',
-        'Medium: None',
-        'Low: None',
+        'none',
         '',
         '## Residual Risks',
-        'None',
+        'none',
         '',
-        '## Deferred Findings',
-        'None'
-    ].join('\n'), 'utf8');
+        '## Verdict',
+        verdict
+    ].join('\n');
+    const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
+    fs.writeFileSync(artifactPath, content, 'utf8');
+
+    // T-043: Authenticity hardening - Write verifiable receipt
+    const crypto = require('node:crypto');
+    const artifactHash = crypto.createHash('sha256').update(content).digest('hex');
+    const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+    fs.writeFileSync(receiptPath, JSON.stringify({
+        schema_version: 1,
+        task_id: taskId,
+        review_type: reviewKey,
+        review_artifact_sha256: artifactHash
+    }));
+
+    // Emit mandatory telemetry for authenticity
+    const orchestratorRoot = path.join(repoRoot, 'Octopus-agent-orchestrator');
+    if (fs.existsSync(path.join(orchestratorRoot, 'runtime', 'task-events', `${taskId}.jsonl`))) {
+        appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: 'code-review' });
+        appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: '/live/skills/code-review/SKILL.md' });
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
+    }
 }
+
 
 function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -507,6 +528,9 @@ describe('cli/commands/gates', () => {
         loadTaskEntryRulePack(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
         await runCompileGateCommand({
             repoRoot,
             taskId,
@@ -516,8 +540,7 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
 
-        const reviewsRoot = getReviewsRoot(repoRoot);
-        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+        // T-043: Telemetry must be in the timeline, writeCleanReviewArtifact handles it
 
         const result = runRequiredReviewsCheckCommand({
             repoRoot,
@@ -653,6 +676,7 @@ describe('cli/commands/gates', () => {
         assert.ok(completionResult.stage_sequence_evidence.observed_order.includes('PREFLIGHT_CLASSIFIED'));
         assert.ok(completionResult.stage_sequence_evidence.observed_order.includes('IMPLEMENTATION_STARTED'));
         assert.ok(completionResult.stage_sequence_evidence.observed_order.includes('REVIEW_PHASE_STARTED'));
+        assert.ok(completionResult.stage_sequence_evidence.observed_order.includes('REVIEW_RECORDED'));
         assert.deepEqual(completionResult.stage_sequence_evidence.review_skill_ids, ['code-review']);
         assert.equal(completionResult.stage_sequence_evidence.review_skill_reference_paths.length, 1);
         assert.equal(completionResult.stage_sequence_evidence.violations.length, 0);

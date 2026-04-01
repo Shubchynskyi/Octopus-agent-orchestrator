@@ -291,6 +291,40 @@ export interface ReviewContextSectionsResult {
     summary: Record<string, unknown>;
 }
 
+export interface ReviewReceipt {
+    schema_version: number;
+    task_id: string;
+    review_type: string;
+    preflight_sha256: string | null;
+    scope_sha256: string | null;
+    review_context_sha256: string | null;
+    review_artifact_sha256: string | null;
+    recorded_at_utc: string;
+}
+
+/**
+ * Build a review receipt artifact.
+ */
+export function buildReviewReceipt(options: {
+    taskId: string;
+    reviewType: string;
+    preflightSha256: string | null;
+    scopeSha256: string | null;
+    reviewContextSha256: string | null;
+    reviewArtifactSha256: string | null;
+}): ReviewReceipt {
+    return {
+        schema_version: 1,
+        task_id: options.taskId,
+        review_type: options.reviewType,
+        preflight_sha256: options.preflightSha256,
+        scope_sha256: options.scopeSha256,
+        review_context_sha256: options.reviewContextSha256,
+        review_artifact_sha256: options.reviewArtifactSha256,
+        recorded_at_utc: new Date().toISOString()
+    };
+}
+
 export function buildReviewContextSections(selectedRulePaths: string[], readFileCallback: (path: string) => string, options: CompactMarkdownOptions = {}): ReviewContextSectionsResult {
     const stripExamples = options.stripExamples || false;
     const stripCodeBlocks = options.stripCodeBlocks || false;

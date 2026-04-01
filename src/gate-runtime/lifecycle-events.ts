@@ -24,6 +24,7 @@ export const LIFECYCLE_EVENT_TYPES = Object.freeze({
     REVIEW_GATE_FAILED: 'REVIEW_GATE_FAILED',
     DOC_IMPACT_ASSESSED: 'DOC_IMPACT_ASSESSED',
     DOC_IMPACT_ASSESSMENT_FAILED: 'DOC_IMPACT_ASSESSMENT_FAILED',
+    REVIEW_RECORDED: 'REVIEW_RECORDED',
     COMPLETION_GATE_PASSED: 'COMPLETION_GATE_PASSED',
     COMPLETION_GATE_FAILED: 'COMPLETION_GATE_FAILED',
     STATUS_CHANGED: 'STATUS_CHANGED',
@@ -405,6 +406,24 @@ export function emitReviewPhaseStartedEvent(
         details,
         options,
         true
+    );
+}
+
+export function emitReviewRecordedEvent(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    return emitLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEW_RECORDED,
+        'PASS',
+        `Review recorded: ${reviewType}.`,
+        details,
+        options
     );
 }
 

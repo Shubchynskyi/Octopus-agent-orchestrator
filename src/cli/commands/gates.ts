@@ -2349,12 +2349,26 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         options.reviewsRoot || ''
     );
 
+    const reviewArtifactsMap: Record<string, { path: string; content: string; reviewContext?: Record<string, unknown> }> = {};
+    for (const entry of artifactEvidence.checked) {
+        if (entry.present && entry.path) {
+            try {
+                reviewArtifactsMap[entry.review] = {
+                    path: entry.path,
+                    content: fs.readFileSync(entry.path, 'utf8')
+                };
+            } catch (e) {
+                // ignore
+            }
+        }
+    }
+
     const baseResult = checkRequiredReviews({
         validatedPreflight: { ...validatedPreflight, errors },
         verdicts,
         skipReviews: skipReviewsList,
         compileGateEvidence: compileGateEvidence.status === 'PASS' ? { status: 'PASSED' } : null,
-        reviewArtifacts: {}
+        reviewArtifacts: reviewArtifactsMap
     });
     const allViolations = [...baseResult.violations, ...artifactEvidence.violations];
     const status = allViolations.length > 0 ? 'FAILED' : 'PASSED';

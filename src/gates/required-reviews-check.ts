@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { auditReviewArtifactCompaction } from '../gate-runtime/review-context';
+import { auditReviewArtifactCompaction, buildReviewReceipt, type ReviewReceipt } from '../gate-runtime/review-context';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { fileSha256, normalizePath } from './helpers';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
@@ -170,6 +170,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         testExpectedVerdict(errors, `Review '${reviewKey}'`, required, skippedByOverride, actualVerdict, passToken);
 
         let compactionAudit = null;
+        let receiptValid = false;
         if (reviewArtifacts[reviewKey]) {
             const artifactPath = reviewArtifacts[reviewKey].path;
             const artifactContent = reviewArtifacts[reviewKey].content;
@@ -180,7 +181,31 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                     content: artifactContent,
                     reviewContext
                 });
+
+                // T-043: Authenticity hardening - Check for machine-verifiable receipt
+                const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+                if (fs.existsSync(receiptPath)) {
+                    try {
+                        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
+                        const currentArtifactHash = fileSha256(artifactPath);
+                        if (receipt.task_id !== resolvedTaskId) {
+                            errors.push(`Review receipt for '${reviewKey}' belongs to a different task: ${receipt.task_id}.`);
+                        } else if (receipt.review_type !== reviewKey) {
+                            errors.push(`Review receipt for '${reviewKey}' has mismatched review type: ${receipt.review_type}.`);
+                        } else if (receipt.review_artifact_sha256 !== currentArtifactHash) {
+                            errors.push(`Review artifact hash mismatch for '${reviewKey}'. Artifact was modified after receipt was issued.`);
+                        } else {
+                            receiptValid = true;
+                        }
+                    } catch {
+                        errors.push(`Review receipt for '${reviewKey}' is invalid JSON: ${normalizePath(receiptPath)}.`);
+                    }
+                } else if (required && !skippedByOverride) {
+                    errors.push(`Verifiable review receipt missing for '${reviewKey}': ${normalizePath(receiptPath)}. Run 'gate record-review-receipt' to fix.`);
+                }
             }
+        } else if (required && !skippedByOverride) {
+            errors.push(`Review artifact missing for '${reviewKey}'.`);
         }
 
         reviewChecks[reviewKey] = {
@@ -188,7 +213,8 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
             skipped_by_override: skippedByOverride,
             verdict: actualVerdict,
             pass_token: passToken,
-            compaction_audit: compactionAudit
+            compaction_audit: compactionAudit,
+            receipt_valid: receiptValid
         };
     }
 

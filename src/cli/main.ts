@@ -1,5 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { buildReviewReceipt, auditReviewArtifactCompaction } from '../gate-runtime/review-context';
+import { assertValidTaskId, appendTaskEvent } from '../gate-runtime/task-events';
+import { fileSha256 } from '../gate-runtime/hash';
 import {
     DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
     LIFECYCLE_COMMANDS,
@@ -18,8 +21,14 @@ import { buildTaskEventsSummary, formatTaskEventsSummaryText } from '../gates/ta
 import {
     emitMandatoryCompletionGateEvent,
     emitReviewPhaseStartedEvent,
+    emitReviewRecordedEvent,
     emitStatusChangedEvent
 } from '../gate-runtime/lifecycle-events';
+import {
+    fileSha256 as gateFileSha256,
+    normalizePath,
+    joinOrchestratorPath
+} from '../gates/helpers';
 import * as gateHelpers from '../gates/helpers';
 import {
     emitSkillReferenceLoadedEvent,
@@ -1470,6 +1479,53 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             if (result.outcome !== 'PASS') {
                 process.exitCode = 1;
             }
+            return;
+        }
+        case 'record-review-receipt': {
+            const defs = {
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--review-type': { key: 'reviewType', type: 'string' },
+                '--preflight-path': { key: 'preflightPath', type: 'string' },
+                '--review-context-path': { key: 'reviewContextPath', type: 'string' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options: rawOptions } = parseOptions(gateArgv, defs, { allowPositionals: false });
+            const options = rawOptions as ParsedOptionsRecord;
+            const taskId = assertValidTaskId(options.taskId);
+            const reviewType = String(options.reviewType || '').trim().toLowerCase();
+            if (!reviewType) throw new Error('ReviewType is required.');
+
+            const repoRoot = normalizePathValue(options.repoRoot || '.');
+            const preflightPath = path.resolve(repoRoot, String(options.preflightPath || ''));
+            if (!fs.existsSync(preflightPath)) throw new Error(`Preflight artifact not found: ${preflightPath}`);
+            const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
+            const preflightSha256 = fileSha256(preflightPath);
+
+            const reviewsRoot = path.dirname(preflightPath);
+            const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
+            if (!fs.existsSync(artifactPath)) throw new Error(`Review artifact not found: ${artifactPath}`);
+            const artifactSha256 = fileSha256(artifactPath);
+
+            const contextPath = options.reviewContextPath
+                ? path.resolve(repoRoot, String(options.reviewContextPath))
+                : path.join(reviewsRoot, `${taskId}-${reviewType}-context.json`);
+            const contextSha256 = fs.existsSync(contextPath) ? fileSha256(contextPath) : null;
+
+            const receipt = buildReviewReceipt({
+                taskId,
+                reviewType,
+                preflightSha256,
+                scopeSha256: preflight.metrics?.changed_files_sha256 || null,
+                reviewContextSha256: contextSha256,
+                reviewArtifactSha256: artifactSha256
+            });
+
+            const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+            fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2), 'utf8');
+
+            const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
+            emitReviewRecordedEvent(orchestratorRoot, taskId, reviewType, receipt);
+            console.log(`REVIEW_RECORDED: ${reviewType} (Receipt: ${normalizePath(receiptPath)})`);
             return;
         }
         case 'human-commit': {
