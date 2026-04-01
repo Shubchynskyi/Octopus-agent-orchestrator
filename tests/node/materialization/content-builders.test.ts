@@ -19,6 +19,8 @@ import {
     buildQwenSettingsContent,
     buildClaudeLocalSettingsContent,
     buildGitignoreEntries,
+    buildManagedGitignoreBlock,
+    syncManagedGitignoreBlockInContent,
     syncManagedBlockInContent
 } from '../../../src/materialization/content-builders';
 
@@ -264,6 +266,9 @@ describe('buildGitignoreEntries', () => {
         assert.ok(entries.includes('.junie/'));
         assert.ok(entries.includes('.windsurf/'));
         assert.ok(entries.includes('.qwen/'));
+        assert.ok(!entries.includes('.windsurf/rules/rules.md'));
+        assert.ok(!entries.includes('.junie/guidelines.md'));
+        assert.ok(!entries.includes('.antigravity/rules.md'));
     });
 
     it('adds .claude/ when claude access enabled', () => {
@@ -275,6 +280,54 @@ describe('buildGitignoreEntries', () => {
         const profiles = [{ gitignoreEntries: ['.github/agents/', '.github/copilot-instructions.md'] }];
         const entries = buildGitignoreEntries(['.github/copilot-instructions.md'], profiles, false);
         assert.ok(entries.includes('.github/agents/'));
+    });
+});
+
+describe('managed gitignore block sync', () => {
+    it('builds a single canonical managed block', () => {
+        const block = buildManagedGitignoreBlock(['TASK.md', 'AGENTS.md'], '\n');
+        assert.equal(block, '# Octopus-agent-orchestrator managed ignores\nAGENTS.md\nTASK.md');
+    });
+
+    it('replaces an existing managed block in place', () => {
+        const content = [
+            'node_modules/',
+            '# Octopus-agent-orchestrator managed ignores',
+            'TASK.md',
+            '.antigravity/rules.md',
+            '',
+            'coverage/'
+        ].join('\n');
+        const result = syncManagedGitignoreBlockInContent(content, ['TASK.md', '.antigravity/'], false);
+        assert.ok(result.changed);
+        assert.equal((result.content.match(/# Octopus-agent-orchestrator managed ignores/g) || []).length, 1);
+        assert.ok(result.content.includes('.antigravity/'));
+        assert.ok(!result.content.includes('.antigravity/rules.md'));
+        assert.ok(result.content.includes('coverage/'));
+    });
+
+    it('collapses multiple managed blocks into one canonical block', () => {
+        const content = [
+            'node_modules/',
+            '# Octopus-agent-orchestrator managed ignores',
+            'AGENTS.md',
+            '',
+            '# Octopus-agent-orchestrator managed ignores',
+            '.antigravity/rules.md',
+            'coverage/'
+        ].join('\n');
+        const result = syncManagedGitignoreBlockInContent(content, ['TASK.md', '.antigravity/'], false);
+        assert.equal((result.content.match(/# Octopus-agent-orchestrator managed ignores/g) || []).length, 1);
+        assert.ok(result.content.includes('.antigravity/'));
+        assert.ok(!result.content.includes('AGENTS.md\n\n# Octopus-agent-orchestrator managed ignores'));
+        assert.ok(result.content.includes('coverage/'));
+    });
+
+    it('appends a managed block once when missing', () => {
+        const result = syncManagedGitignoreBlockInContent('node_modules/\n', ['TASK.md', 'AGENTS.md'], false);
+        assert.ok(result.changed);
+        assert.equal((result.content.match(/# Octopus-agent-orchestrator managed ignores/g) || []).length, 1);
+        assert.ok(result.content.includes('node_modules/'));
     });
 });
 

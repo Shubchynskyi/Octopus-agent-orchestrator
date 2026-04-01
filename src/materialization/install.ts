@@ -29,6 +29,7 @@ import {
     buildQwenSettingsContent,
     buildClaudeLocalSettingsContent,
     buildGitignoreEntries,
+    syncManagedGitignoreBlockInContent,
     syncManagedBlockInContent
 } from './content-builders';
 
@@ -546,26 +547,26 @@ export function runInstall(options: RunInstallOptions) {
     const gitignorePath = path.join(targetRoot, '.gitignore');
     if (!dryRun) {
         const gitignoreExisted = pathExists(gitignorePath);
-        if (!gitignoreExisted) {
-            fs.writeFileSync(gitignorePath, '', 'utf8');
-        }
-        const existingLines = readTextFile(gitignorePath).split(/\r?\n/);
-        const appendLines = gitignoreEntryList.filter((e) => !existingLines.includes(e));
-        if (appendLines.length > 0) {
+        const existingContent = gitignoreExisted ? readTextFile(gitignorePath) : '';
+        const syncResult = syncManagedGitignoreBlockInContent(
+            existingContent,
+            gitignoreEntryList,
+            enableClaudeOrchestratorFullAccess
+        );
+        gitignoreAdded = syncResult.addedEntries;
+        if (syncResult.changed) {
             if (gitignoreExisted) {
                 backupFile(gitignorePath, '.gitignore');
             }
-            const appendContent = '\n# Octopus-agent-orchestrator managed ignores\n' + appendLines.join('\n') + '\n';
-            fs.appendFileSync(gitignorePath, appendContent, 'utf8');
-            gitignoreAdded = appendLines.length;
+            fs.writeFileSync(gitignorePath, syncResult.content, 'utf8');
         }
     } else {
-        if (pathExists(gitignorePath)) {
-            const existingLines = readTextFile(gitignorePath).split(/\r?\n/);
-            gitignoreAdded = gitignoreEntryList.filter((e) => !existingLines.includes(e)).length;
-        } else {
-            gitignoreAdded = gitignoreEntryList.length;
-        }
+        const existingContent = pathExists(gitignorePath) ? readTextFile(gitignorePath) : '';
+        gitignoreAdded = syncManagedGitignoreBlockInContent(
+            existingContent,
+            gitignoreEntryList,
+            enableClaudeOrchestratorFullAccess
+        ).addedEntries;
     }
 
     // Commit guard hook

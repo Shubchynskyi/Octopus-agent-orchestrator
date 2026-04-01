@@ -1,11 +1,12 @@
 import { normalizeLineEndings } from '../core/line-endings';
-import { getManagedGitignoreEntries } from './common';
+import { getManagedGitignoreEntries, getManagedGitignoreCleanupEntries } from './common';
 import { NODE_BUNDLE_CLI_COMMAND, NODE_GATE_COMMAND_PREFIX, NODE_HUMAN_COMMIT_COMMAND } from './command-constants';
 
 export const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
 export const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
 export const COMMIT_GUARD_START = '# Octopus-agent-orchestrator:commit-guard-start';
 export const COMMIT_GUARD_END = '# Octopus-agent-orchestrator:commit-guard-end';
+export const GITIGNORE_MANAGED_COMMENT = '# Octopus-agent-orchestrator managed ignores';
 export const COMMIT_GUARD_ENV_NAME = 'OCTOPUS_ALLOW_COMMIT';
 export const COMMIT_GUARD_EXTRA_MARKERS_ENV = 'OCTOPUS_AGENT_ENV_MARKERS';
 export const COMMIT_GUARD_AGENT_MARKERS = Object.freeze([
@@ -78,6 +79,10 @@ interface SettingsBuildResult {
 interface ManagedBlockSyncResult {
     content: string;
     changed: boolean;
+}
+
+interface GitignoreManagedBlockSyncResult extends ManagedBlockSyncResult {
+    addedEntries: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -557,6 +562,77 @@ export function buildGitignoreEntries(
     }
 
     return [...entries].sort();
+}
+
+export function buildManagedGitignoreBlock(entries: string[] | null | undefined, newline = '\n'): string {
+    const normalizedEntries = [...new Set((entries || []).filter((entry) => Boolean(entry && String(entry).trim())).map((entry) => String(entry)))].sort();
+    return [GITIGNORE_MANAGED_COMMENT, ...normalizedEntries].join(newline);
+}
+
+export function syncManagedGitignoreBlockInContent(
+    content: string | null | undefined,
+    entries: string[],
+    enableClaudeOrchestratorFullAccess: boolean
+): GitignoreManagedBlockSyncResult {
+    const originalContent = content || '';
+    const newline = originalContent.includes('\r\n') ? '\r\n' : '\n';
+    const normalizedContent = normalizeLineEndings(originalContent, '\n');
+    const lines = normalizedContent.length > 0 ? normalizedContent.split('\n') : [];
+    const cleanupEntrySet = new Set(getManagedGitignoreCleanupEntries(enableClaudeOrchestratorFullAccess));
+    const canonicalBlockLines = [GITIGNORE_MANAGED_COMMENT, ...[...new Set(entries)].sort()];
+    const canonicalEntrySet = new Set(canonicalBlockLines.slice(1));
+
+    let existingManagedEntries: string[] = [];
+    const preservedLines: string[] = [];
+    let insertionIndex = -1;
+
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i] === GITIGNORE_MANAGED_COMMENT) {
+            if (insertionIndex < 0) {
+                insertionIndex = preservedLines.length;
+            }
+            let j = i + 1;
+            while (j < lines.length && cleanupEntrySet.has(lines[j])) {
+                existingManagedEntries.push(lines[j]);
+                j++;
+            }
+            i = j - 1;
+            continue;
+        }
+        preservedLines.push(lines[i]);
+    }
+
+    const existingManagedSet = new Set(existingManagedEntries);
+    const addedEntries = [...canonicalEntrySet].filter((entry) => !existingManagedSet.has(entry)).length;
+
+    let updatedLines: string[];
+    if (insertionIndex >= 0) {
+        updatedLines = [
+            ...preservedLines.slice(0, insertionIndex),
+            ...canonicalBlockLines,
+            ...preservedLines.slice(insertionIndex)
+        ];
+    } else if (lines.length === 0) {
+        updatedLines = canonicalBlockLines;
+    } else {
+        updatedLines = [...preservedLines];
+        if (updatedLines.length > 0 && updatedLines[updatedLines.length - 1] !== '') {
+            updatedLines.push('');
+        }
+        updatedLines.push(...canonicalBlockLines);
+    }
+
+    let updatedContent = updatedLines.join('\n');
+    updatedContent = normalizeLineEndings(updatedContent, newline);
+    if (updatedContent && !updatedContent.endsWith(newline)) {
+        updatedContent += newline;
+    }
+
+    return {
+        content: updatedContent,
+        changed: updatedContent !== originalContent,
+        addedEntries
+    };
 }
 
 /**

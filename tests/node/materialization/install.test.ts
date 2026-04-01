@@ -280,6 +280,54 @@ describe('runInstall', () => {
             assert.ok(gitignore.includes('.antigravity/'));
             assert.ok(gitignore.includes('.windsurf/'));
             assert.ok(gitignore.includes('.junie/'));
+            assert.ok(!gitignore.includes('.antigravity/rules.md'));
+            assert.ok(!gitignore.includes('.windsurf/rules/rules.md'));
+            assert.ok(!gitignore.includes('.junie/guidelines.md'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('replaces an existing managed .gitignore block instead of appending a second header', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            fs.writeFileSync(
+                path.join(projectRoot, '.gitignore'),
+                [
+                    'node_modules/',
+                    '# Octopus-agent-orchestrator managed ignores',
+                    'AGENTS.md',
+                    'TASK.md',
+                    '.antigravity/rules.md'
+                ].join('\n'),
+                'utf8'
+            );
+
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            });
+
+            const gitignore = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+            assert.equal((gitignore.match(/# Octopus-agent-orchestrator managed ignores/g) || []).length, 1);
+            assert.ok(gitignore.includes('node_modules/'));
+            assert.ok(gitignore.includes('.antigravity/'));
+            assert.ok(!gitignore.includes('.antigravity/rules.md'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

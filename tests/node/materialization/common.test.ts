@@ -7,7 +7,9 @@ import {
     getActiveAgentEntrypointFiles,
     convertActiveAgentEntrypointFilesToString,
     getProviderOrchestratorProfileDefinitions,
-    getGitHubSkillBridgeProfileDefinitions
+    getGitHubSkillBridgeProfileDefinitions,
+    getManagedGitignoreEntries,
+    getManagedGitignoreCleanupEntries
 } from '../../../src/materialization/common';
 
 describe('getCanonicalEntrypointFile', () => {
@@ -105,6 +107,38 @@ describe('getProviderOrchestratorProfileDefinitions', () => {
             assert.ok(p.orchestratorRelativePath);
             assert.ok(Array.isArray(p.gitignoreEntries));
         }
+    });
+
+    it('uses directory-only ignores for directory-scoped providers', () => {
+        const profiles = getProviderOrchestratorProfileDefinitions();
+        const windsurf = profiles.find((p) => p.providerLabel === 'Windsurf');
+        const junie = profiles.find((p) => p.providerLabel === 'Junie');
+        const antigravity = profiles.find((p) => p.providerLabel === 'Antigravity');
+        assert.deepEqual(windsurf!.gitignoreEntries, ['.windsurf/']);
+        assert.deepEqual(junie!.gitignoreEntries, ['.junie/']);
+        assert.deepEqual(antigravity!.gitignoreEntries, ['.antigravity/']);
+    });
+});
+
+describe('managed gitignore entries', () => {
+    it('includes all supported entrypoints in the baseline', () => {
+        const entries = getManagedGitignoreEntries(false);
+        assert.ok(entries.includes('CLAUDE.md'));
+        assert.ok(entries.includes('AGENTS.md'));
+        assert.ok(entries.includes('GEMINI.md'));
+        assert.ok(entries.includes('QWEN.md'));
+        assert.ok(entries.includes('.github/copilot-instructions.md'));
+    });
+
+    it('keeps legacy nested provider file ignores only in cleanup mode', () => {
+        const baseline = getManagedGitignoreEntries(false);
+        const cleanup = getManagedGitignoreCleanupEntries(false);
+        assert.ok(!baseline.includes('.windsurf/rules/rules.md'));
+        assert.ok(!baseline.includes('.junie/guidelines.md'));
+        assert.ok(!baseline.includes('.antigravity/rules.md'));
+        assert.ok(cleanup.includes('.windsurf/rules/rules.md'));
+        assert.ok(cleanup.includes('.junie/guidelines.md'));
+        assert.ok(cleanup.includes('.antigravity/rules.md'));
     });
 });
 

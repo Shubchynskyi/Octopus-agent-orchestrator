@@ -213,6 +213,45 @@ describe('runUninstall', () => {
         }
     });
 
+    it('removes legacy nested provider ignore entries from managed .gitignore blocks', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            fs.writeFileSync(
+                path.join(projectRoot, '.gitignore'),
+                [
+                    'node_modules/',
+                    '# Octopus-agent-orchestrator managed ignores',
+                    '.antigravity/',
+                    '.antigravity/rules.md',
+                    '.windsurf/',
+                    '.windsurf/rules/rules.md'
+                ].join('\n'),
+                'utf8'
+            );
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            if (fs.existsSync(path.join(projectRoot, '.gitignore'))) {
+                const content = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+                assert.ok(content.includes('node_modules/'));
+                assert.ok(!content.includes('.antigravity/'));
+                assert.ok(!content.includes('.antigravity/rules.md'));
+                assert.ok(!content.includes('.windsurf/'));
+                assert.ok(!content.includes('.windsurf/rules/rules.md'));
+            }
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('strips managed blocks from qwen settings', () => {
         const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
         try {

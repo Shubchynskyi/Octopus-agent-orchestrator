@@ -9,13 +9,14 @@ import {
 import { pathExists, readTextFile } from '../core/fs';
 import { detectLineEnding } from '../core/line-endings';
 import { readJsonFile } from '../core/json';
-import { getActiveAgentEntrypointFiles, getCanonicalEntrypointFile, getManagedGitignoreEntries } from '../materialization/common';
+import { getActiveAgentEntrypointFiles, getCanonicalEntrypointFile, getManagedGitignoreCleanupEntries } from '../materialization/common';
 import {
     MANAGED_START,
     MANAGED_END,
     COMMIT_GUARD_START,
     COMMIT_GUARD_END,
-    CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES
+    CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES,
+    GITIGNORE_MANAGED_COMMENT
 } from '../materialization/content-builders';
 import {
     copyPathRecursive,
@@ -136,8 +137,7 @@ export const QWEN_SETTINGS_RELATIVE = '.qwen/settings.json';
 export const CLAUDE_LOCAL_SETTINGS_RELATIVE = '.claude/settings.local.json';
 export const PRE_COMMIT_HOOK_RELATIVE = '.git/hooks/pre-commit';
 
-export const GITIGNORE_MANAGED_COMMENT = '# Octopus-agent-orchestrator managed ignores';
-export const GITIGNORE_MANAGED_ENTRIES = Object.freeze(getManagedGitignoreEntries(true));
+export const GITIGNORE_MANAGED_ENTRIES = Object.freeze(getManagedGitignoreCleanupEntries(true));
 
 // ---------------------------------------------------------------------------
 // Boolean answer parsing (mirrors Convert-ToBooleanAnswer)

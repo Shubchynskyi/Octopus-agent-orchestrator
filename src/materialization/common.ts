@@ -146,20 +146,28 @@ export function getProviderOrchestratorProfileDefinitions() {
             entrypointFile: '.windsurf/rules/rules.md',
             providerLabel: 'Windsurf',
             orchestratorRelativePath: '.windsurf/agents/orchestrator.md',
-            gitignoreEntries: ['.windsurf/', '.windsurf/rules/rules.md']
+            gitignoreEntries: ['.windsurf/']
         },
         {
             entrypointFile: '.junie/guidelines.md',
             providerLabel: 'Junie',
             orchestratorRelativePath: '.junie/agents/orchestrator.md',
-            gitignoreEntries: ['.junie/', '.junie/guidelines.md']
+            gitignoreEntries: ['.junie/']
         },
         {
             entrypointFile: '.antigravity/rules.md',
             providerLabel: 'Antigravity',
             orchestratorRelativePath: '.antigravity/agents/orchestrator.md',
-            gitignoreEntries: ['.antigravity/', '.antigravity/rules.md']
+            gitignoreEntries: ['.antigravity/']
         }
+    ];
+}
+
+export function getLegacyManagedGitignoreEntries(): string[] {
+    return [
+        '.antigravity/rules.md',
+        '.junie/guidelines.md',
+        '.windsurf/rules/rules.md'
     ];
 }
 
@@ -188,6 +196,14 @@ export function getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess = 
         selected.add('.claude/');
     }
 
+    return [...selected].sort();
+}
+
+export function getManagedGitignoreCleanupEntries(enableClaudeOrchestratorFullAccess = false): string[] {
+    const selected = new Set<string>(getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess));
+    for (const legacyEntry of getLegacyManagedGitignoreEntries()) {
+        selected.add(legacyEntry);
+    }
     return [...selected].sort();
 }
 
