@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 2.4.1
+- fixed `completion-gate` timeline parsing so one corrupted JSONL line no longer truncates the rest of the task timeline; later valid events are still processed and invalid lines are reported as parse errors instead of aborting the scan
+- expanded the managed `.gitignore` baseline written during install/setup so all supported agent entrypoints and provider bridge directories are ignored from the start, preventing later agent-file additions from showing up as unexpected tracked files
 - added interactive prompting and `--active-agent-files` support to the `reinit` command, aligning it with the `setup` onboarding flow and allowing intentional changes to active agent entrypoints in existing workspaces
 - strengthened orchestration rules: mandatory gate/tooling failures now force an immediate `BLOCKED` status, requiring detailed infrastructure failure reporting; explicitly stated that mandatory gates cannot be waived by user preferences regarding rebuilds or tests
 - hardened required-review routing on delegation-capable providers: review receipts now carry reviewer execution metadata, same-agent fallback is rejected for Codex/Claude/Copilot, conditional providers require an explicit fallback reason, and review-context artifacts publish provider-aware routing policy for reviewer launch

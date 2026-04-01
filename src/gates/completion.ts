@@ -80,7 +80,8 @@ export function collectOrderedTimelineEvents(timelinePath: string, errors: strin
             seq++;
         } catch {
             errors.push(`Task timeline contains invalid JSON line: ${normalizePath(resolvedPath)}`);
-            break;
+            seq++;
+            continue;
         }
     }
 

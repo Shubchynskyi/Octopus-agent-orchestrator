@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
+    collectOrderedTimelineEvents,
     extractMarkdownSectionLines,
     isMeaningfulReviewEntry,
     getFindingsBySeverity,
@@ -17,6 +18,41 @@ import {
 import type { TimelineEventEntry } from '../../../src/gates/completion';
 
 describe('gates/completion', () => {
+    describe('collectOrderedTimelineEvents', () => {
+        it('continues scanning valid events after an invalid JSON line', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-completion-timeline-'));
+            const timelinePath = path.join(tempDir, 'timeline.jsonl');
+
+            try {
+                fs.writeFileSync(
+                    timelinePath,
+                    [
+                        JSON.stringify({ event_type: 'TASK_MODE_ENTERED', timestamp_utc: '2026-01-01T00:00:00.000Z' }),
+                        '{"event_type":',
+                        JSON.stringify({ event_type: 'COMPILE_GATE_PASSED', timestamp_utc: '2026-01-01T00:02:00.000Z' }),
+                        JSON.stringify({ event_type: 'REVIEW_GATE_PASSED', timestamp_utc: '2026-01-01T00:03:00.000Z' })
+                    ].join('\n') + '\n',
+                    'utf8'
+                );
+
+                const errors: string[] = [];
+                const events = collectOrderedTimelineEvents(timelinePath, errors);
+
+                assert.equal(errors.length, 1);
+                assert.deepEqual(
+                    events.map((entry) => entry.event_type),
+                    ['TASK_MODE_ENTERED', 'COMPILE_GATE_PASSED', 'REVIEW_GATE_PASSED']
+                );
+                assert.deepEqual(
+                    events.map((entry) => entry.sequence),
+                    [0, 2, 3]
+                );
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+    });
+
     describe('extractMarkdownSectionLines', () => {
         it('extracts lines under matching heading', () => {
             const lines = [
