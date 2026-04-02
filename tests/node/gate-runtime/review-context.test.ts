@@ -6,6 +6,7 @@ import * as path from 'node:path';
 
 import {
     applyReviewerRoutingMetadata,
+    buildReviewReceipt,
     compactMarkdownContent,
     getCompactReviewBudget,
     auditReviewArtifactCompaction,
@@ -234,4 +235,31 @@ test('applyReviewerRoutingMetadata updates review-context routing fields and ret
     assert.equal(result.contextSha256, stringSha256(fs.readFileSync(contextPath, 'utf8')));
 
     fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('buildReviewReceipt defaults trust_level to LOCAL_ASSERTED', () => {
+    const receipt = buildReviewReceipt({
+        taskId: 'T-1001',
+        reviewType: 'code',
+        preflightSha256: 'preflight',
+        scopeSha256: 'scope',
+        reviewContextSha256: 'context',
+        reviewArtifactSha256: 'artifact'
+    });
+
+    assert.equal(receipt.trust_level, 'LOCAL_ASSERTED');
+});
+
+test('buildReviewReceipt preserves explicit trust_level', () => {
+    const receipt = buildReviewReceipt({
+        taskId: 'T-1001',
+        reviewType: 'code',
+        preflightSha256: 'preflight',
+        scopeSha256: 'scope',
+        reviewContextSha256: 'context',
+        reviewArtifactSha256: 'artifact',
+        trustLevel: 'LOCAL_AUDITED'
+    });
+
+    assert.equal(receipt.trust_level, 'LOCAL_AUDITED');
 });

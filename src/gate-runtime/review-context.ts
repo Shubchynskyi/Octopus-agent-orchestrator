@@ -303,6 +303,7 @@ export interface ReviewReceipt {
     reviewer_execution_mode: string | null;
     reviewer_identity: string | null;
     reviewer_fallback_reason: string | null;
+    trust_level?: string;
     recorded_at_utc: string;
 }
 
@@ -342,6 +343,7 @@ export function buildReviewReceipt(options: {
     reviewerExecutionMode?: string | null;
     reviewerIdentity?: string | null;
     reviewerFallbackReason?: string | null;
+    trustLevel?: string;
 }): ReviewReceipt {
     return {
         schema_version: 2,
@@ -354,6 +356,7 @@ export function buildReviewReceipt(options: {
         reviewer_execution_mode: options.reviewerExecutionMode ?? null,
         reviewer_identity: options.reviewerIdentity ?? null,
         reviewer_fallback_reason: options.reviewerFallbackReason ?? null,
+        trust_level: options.trustLevel || 'LOCAL_ASSERTED',
         recorded_at_utc: new Date().toISOString()
     };
 }

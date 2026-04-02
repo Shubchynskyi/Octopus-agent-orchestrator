@@ -1343,6 +1343,7 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(reviewResult.exitCode, 0);
         assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_PASSED');
+        assert.ok(reviewResult.outputLines.includes('TrustStatus: LOCAL_AUDITED'));
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -1363,6 +1364,7 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
         assert.equal(completionResult.outcome, 'PASS');
+        assert.equal(completionResult.review_artifacts?.test?.receipt?.trust_level, 'LOCAL_AUDITED');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

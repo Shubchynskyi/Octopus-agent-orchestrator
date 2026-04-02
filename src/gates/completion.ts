@@ -1116,6 +1116,19 @@ export function formatCompletionGateResult(result: Record<string, unknown>): str
         `Outcome: ${result.outcome}`
     ];
 
+    const trustLevels = new Set<string>();
+    if (result.review_artifacts && typeof result.review_artifacts === 'object') {
+        for (const key of Object.keys(result.review_artifacts)) {
+            const artifact = (result.review_artifacts as any)[key];
+            if (artifact && artifact.receipt && artifact.receipt.trust_level) {
+                trustLevels.add(artifact.receipt.trust_level);
+            }
+        }
+    }
+    if (trustLevels.size > 0) {
+        lines.push(`TrustStatus: ${Array.from(trustLevels).join(', ')}`);
+    }
+
     if (Array.isArray(result.violations) && result.violations.length > 0) {
         lines.push('Violations:');
         for (const violation of result.violations) {

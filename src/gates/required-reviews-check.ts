@@ -188,6 +188,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         let reviewerExecutionMode: string | null = null;
         let reviewerIdentity: string | null = null;
         let reviewerFallbackReason: string | null = null;
+        let trustLevel: string | null = null;
         let routingPolicySummary: Record<string, unknown> | null = null;
         if (reviewArtifacts[reviewKey]) {
             const artifactPath = reviewArtifacts[reviewKey].path;
@@ -275,6 +276,9 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                         if (receipt.reviewer_fallback_reason) {
                             reviewerFallbackReason = String(receipt.reviewer_fallback_reason);
                         }
+                        if (receipt.trust_level) {
+                            trustLevel = String(receipt.trust_level);
+                        }
                     } catch {
                         errors.push(`Review receipt for '${reviewKey}' is invalid JSON: ${normalizePath(receiptPath)}.`);
                     }
@@ -361,6 +365,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
             reviewer_execution_mode: reviewerExecutionMode,
             reviewer_identity: reviewerIdentity,
             reviewer_fallback_reason: reviewerFallbackReason,
+            trust_level: trustLevel,
             reviewer_routing_policy: routingPolicySummary
         };
     }

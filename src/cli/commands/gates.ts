@@ -2473,10 +2473,22 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         zero_diff_guard: zeroDiffGuard
     };
 
+    const trustLevels = new Set<string>();
+    if (baseResult.review_checks && typeof baseResult.review_checks === 'object') {
+        for (const key of Object.keys(baseResult.review_checks)) {
+            const check = (baseResult.review_checks as any)[key];
+            if (check && check.trust_level) {
+                trustLevels.add(check.trust_level);
+            }
+        }
+    }
+    const trustStatusLine = trustLevels.size > 0 ? `TrustStatus: ${Array.from(trustLevels).join(', ')}` : null;
+
     if (status === 'FAILED') {
         const failureOutputLines = [
             'REVIEW_GATE_FAILED',
             `Mode: ${validatedPreflight.mode}`,
+            ...(trustStatusLine ? [trustStatusLine] : []),
             'Violations:',
             ...allViolations.map(function (item: string) { return `- ${item}`; })
         ];
@@ -2541,11 +2553,13 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
             'REVIEW_GATE_PASSED_WITH_OVERRIDE',
             `Mode: ${validatedPreflight.mode}`,
             'SkippedReviews: code',
-            ...(overrideArtifactPath ? [`OverrideArtifact: ${gateHelpers.normalizePath(overrideArtifactPath)}`] : [])
+            ...(overrideArtifactPath ? [`OverrideArtifact: ${gateHelpers.normalizePath(overrideArtifactPath)}`] : []),
+            ...(trustStatusLine ? [trustStatusLine] : [])
         ]
         : [
             'REVIEW_GATE_PASSED',
-            `Mode: ${validatedPreflight.mode}`
+            `Mode: ${validatedPreflight.mode}`,
+            ...(trustStatusLine ? [trustStatusLine] : [])
         ];
     if (artifactEvidence.compaction_warning_count > 0) {
         successOutputLines.push(`CompactionWarnings: ${artifactEvidence.compaction_warning_count}`);

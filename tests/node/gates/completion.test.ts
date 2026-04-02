@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import {
     collectOrderedTimelineEvents,
     extractMarkdownSectionLines,
+    formatCompletionGateResult,
     isMeaningfulReviewEntry,
     getFindingsBySeverity,
     validateStageSequence,
@@ -456,6 +457,25 @@ describe('gates/completion', () => {
                 'Codex'
             );
             assert.ok(result.violations.some(v => v.includes('REVIEWER_DELEGATION_ROUTED telemetry')));
+        });
+    });
+
+    describe('formatCompletionGateResult', () => {
+        it('includes TrustStatus when review receipts carry trust levels', () => {
+            const output = formatCompletionGateResult({
+                task_id: 'T-1001',
+                status: 'PASSED',
+                outcome: 'PASS',
+                review_artifacts: {
+                    code: {
+                        receipt: {
+                            trust_level: 'LOCAL_AUDITED'
+                        }
+                    }
+                }
+            });
+
+            assert.match(output, /TrustStatus: LOCAL_AUDITED/);
         });
     });
 });

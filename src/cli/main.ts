@@ -1765,7 +1765,8 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 reviewArtifactSha256: artifactSha256,
                 reviewerExecutionMode,
                 reviewerIdentity,
-                reviewerFallbackReason
+                reviewerFallbackReason,
+                trustLevel: 'LOCAL_AUDITED'
             });
 
             const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
