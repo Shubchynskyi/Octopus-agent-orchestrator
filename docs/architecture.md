@@ -44,6 +44,7 @@ bin/octopus.js
 | `.windsurf/rules/rules.md` | Windsurf entrypoint |
 | `.junie/guidelines.md` | Junie entrypoint |
 | `.antigravity/rules.md` | Antigravity entrypoint |
+| `.agents/workflows/start-task.md` | Shared start-task router opened by root entrypoints and provider bridges |
 | `TASK.md` | Shared task queue |
 
 One entrypoint is canonical. Additional entrypoints are created only when they were explicitly confirmed as active during agent initialization.
@@ -114,6 +115,8 @@ Gate pipeline:
 10. completion-gate
 11. DONE
 ```
+
+Root entrypoints and provider bridges must route task execution through `.agents/workflows/start-task.md`; that file is a thin shared router, not a second workflow source.
 
 All gate events are logged to `runtime/task-events/<task-id>.jsonl` with hash-chain integrity.
 

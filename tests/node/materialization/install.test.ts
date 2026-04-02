@@ -506,6 +506,41 @@ describe('runInstall', () => {
         }
     });
 
+    it('creates the shared start-task router for root entrypoint providers too', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Codex',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Codex',
+                initAnswersPath: answersPath
+            });
+
+            const workflowPath = path.join(projectRoot, '.agents', 'workflows', 'start-task.md');
+            const entrypointPath = path.join(projectRoot, 'AGENTS.md');
+            assert.ok(fs.existsSync(workflowPath));
+            const workflow = fs.readFileSync(workflowPath, 'utf8');
+            const entrypoint = fs.readFileSync(entrypointPath, 'utf8');
+            assert.ok(workflow.includes('shared start-task router'));
+            assert.ok(entrypoint.includes('.agents/workflows/start-task.md'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('creates Antigravity bridge checklist workflow when Antigravity is active', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

@@ -40,16 +40,14 @@ tsc-target-errors.txt
 /.github/copilot-instructions.md
 
 # Octopus-agent-orchestrator managed ignores
+.agents/workflows/start-task.md
 .antigravity/
-.antigravity/rules.md
 .claude/
 .github/agents/
 .github/copilot-instructions.md
 .junie/
-.junie/guidelines.md
 .qwen/
 .windsurf/
-.windsurf/rules/rules.md
 AGENTS.md
 CLAUDE.md
 GEMINI.md

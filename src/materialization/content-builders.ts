@@ -253,8 +253,9 @@ export function buildRedirectManagedBlock(
         `Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.`,
         '',
         `Hard stop: read \`${canonicalFile}\` first and follow its routing links before responding to anything.`,
-        `Hard stop: before any task execution, open \`TASK.md\` and \`${canonicalFile}\`.`,
+        `Hard stop: before any task execution, open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.`,
         'Do not implement tasks directly without orchestration preflight and required review gates.',
+        'Treat `.agents/workflows/start-task.md` as the shared start-task router for root entrypoints and provider bridges; it routes to the canonical workflow and does not replace `80-task-workflow.md`.',
         'After opening downstream workflow files, record them via `node bin/octopus.js gate load-rule-pack ...` in a self-hosted source checkout, or `node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack ...` inside a materialized/deployed workspace.',
         'Before each required reviewer invocation, run `node bin/octopus.js gate build-review-context ...` in a self-hosted source checkout, or `node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context ...` inside a materialized/deployed workspace; completion for code-changing tasks expects review-skill telemetry from that step.',
         'Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are expected local artifacts; never `git add -f` them unless the user explicitly asks to version orchestrator internals.',
@@ -323,7 +324,7 @@ This bridge is a router, not a second workflow.
 Required:
 1. Open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
 2. Execute every code task only as \`Execute task <task-id> depth=<1|2|3>\`.
-3. Follow the checklist in \`.agents/workflows/start-task.md\` exactly.
+3. Follow the shared checklist in \`.agents/workflows/start-task.md\` exactly.
 4. Do not bypass gates, fake review artifacts, or use provider-default review flow outside Octopus.
 5. If any mandatory gate command fails, stop, keep the task blocked, and report the exact command, cwd, CLI path, and stderr.
 
@@ -338,10 +339,11 @@ ${MANAGED_END}`.trim();
 
 Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
 
-Hard stop: first open \`${canonicalFile}\` and \`TASK.md\`.
+Hard stop: first open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
 Do not implement tasks directly without orchestration preflight and required review gates.
 Ignored orchestration control-plane files (for example \`TASK.md\`, \`Octopus-agent-orchestrator/runtime/**\`, and \`Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
 This provider profile is a strict bridge to Octopus skills and the Node gate router.
+Treat \`.agents/workflows/start-task.md\` as the shared router for every provider surface; it routes to canonical orchestration and does not replace \`80-task-workflow.md\`.
 Do not execute task or review workflow with provider-default reviewer agents that bypass this bridge.
 
 ## Required Execution Contract
@@ -390,18 +392,20 @@ Bridge path for this provider: \`${bridgePath}\`.
 ${MANAGED_END}`.trim();
 }
 
-export function buildAntigravityStartTaskWorkflowContent(canonicalFile: string): string {
+export function buildSharedStartTaskWorkflowContent(canonicalFile: string): string {
     return `${MANAGED_START}
 ---
-description: "Mandatory router for any Antigravity task execution through Octopus orchestration."
+description: "Mandatory shared router for any task execution through Octopus orchestration."
 ---
 
 # Start Task
 
-This checklist routes to the canonical Octopus workflow. It does not replace \`80-task-workflow.md\` or the orchestration skill.
+This checklist is the shared start-task router for root entrypoints and provider bridges.
+It routes to the canonical Octopus workflow and does not replace \`80-task-workflow.md\` or the orchestration skill.
 
 Before any code changes:
-- Open \`${canonicalFile}\`, \`TASK.md\`, and \`.antigravity/agents/orchestrator.md\`.
+- Open \`${canonicalFile}\` and \`TASK.md\`.
+- If an active provider bridge exists, open it too before implementation.
 - Move the task to \`IN_PROGRESS\`.
 - Enter orchestrator mode: \`Execute task <task-id> depth=<1|2|3>\`.
 

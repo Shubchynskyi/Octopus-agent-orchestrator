@@ -12,6 +12,7 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 ├── .claude/settings.local.json   # Optional (when ClaudeOrchestratorFullAccess=true): Claude Code local permission allowlist for the Node CLI
 ├── .qwen/settings.json           # Optional (only when already present): Qwen context bootstrap (`TASK.md` + current canonical entrypoint)
 ├── TASK.md                       # Task queue for orchestration (recommended gitignore)
+├── .agents/workflows/start-task.md # Shared start-task router for root entrypoints and provider bridges
 ├── .antigravity/rules.md         # Platform instruction file (recommended gitignore)
 ├── .github/copilot-instructions.md
 ├── .github/agents/orchestrator.md # GitHub Agents orchestration profile
@@ -65,6 +66,7 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 - `.claude/settings.local.json` - optional (when `ClaudeOrchestratorFullAccess=true`): Claude Code local permission allowlist for the Node CLI.
 - `.qwen/settings.json` - optional Qwen context bootstrap for `TASK.md` plus the current canonical entrypoint (only updated when the file already exists).
 - `TASK.md` - canonical task list for agent execution workflow.
+- `.agents/workflows/start-task.md` - shared start-task router opened by root entrypoints and provider bridges before task execution.
 - `.github/agents/orchestrator.md` - mandatory orchestration profile for GitHub Agents task execution.
 - `.github/agents/reviewer.md` and `.github/agents/*-review.md` - GitHub review-profile bridges to canonical `live/skills/*`.
 - `.github/agents/api-review.md`, `.github/agents/test-review.md`, `.github/agents/performance-review.md`, `.github/agents/infra-review.md`, `.github/agents/dependency-review.md` - optional specialist bridges (enabled by capability flags).

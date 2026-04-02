@@ -15,7 +15,7 @@ import {
     buildRedirectManagedBlock,
     buildCommitGuardManagedBlock,
     buildProviderOrchestratorAgentContent,
-    buildAntigravityStartTaskWorkflowContent,
+    buildSharedStartTaskWorkflowContent,
     buildGitHubSkillBridgeAgentContent,
     buildQwenSettingsContent,
     buildClaudeLocalSettingsContent,
@@ -140,6 +140,7 @@ describe('buildRedirectManagedBlock', () => {
         assert.ok(result!.includes('redirect'));
         assert.ok(result!.includes('CLAUDE.md'));
         assert.ok(result!.includes('GitHub Copilot Agents'));
+        assert.ok(result!.includes('.agents/workflows/start-task.md'));
     });
 
     it('shows no-bridge message when no providers', () => {
@@ -168,6 +169,7 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result!.includes('Skill Routing'));
         assert.ok(result!.includes('Task Timeline Logging'));
         assert.ok(result!.includes('.github/agents/orchestrator.md'));
+        assert.ok(result!.includes('.agents/workflows/start-task.md'));
     });
 
     it('builds a compact Antigravity router instead of a full duplicate workflow', () => {
@@ -178,13 +180,14 @@ describe('buildProviderOrchestratorAgentContent', () => {
     });
 });
 
-describe('buildAntigravityStartTaskWorkflowContent', () => {
-    it('builds a compact checklist that routes to canonical orchestration gates', () => {
-        const result = buildAntigravityStartTaskWorkflowContent('AGENTS.md');
+describe('buildSharedStartTaskWorkflowContent', () => {
+    it('builds a compact checklist that routes every surface to canonical orchestration gates', () => {
+        const result = buildSharedStartTaskWorkflowContent('AGENTS.md');
         assert.ok(result.includes('# Start Task'));
         assert.ok(result.includes('gate enter-task-mode'));
         assert.ok(result.includes('gate completion-gate'));
-        assert.ok(result.includes('.antigravity/agents/orchestrator.md'));
+        assert.ok(result.includes('shared start-task router'));
+        assert.ok(result.includes('If an active provider bridge exists'));
     });
 });
 

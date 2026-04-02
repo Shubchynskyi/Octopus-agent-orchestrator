@@ -2,6 +2,8 @@ import { ALL_AGENT_ENTRYPOINT_FILES, SOURCE_OF_TRUTH_VALUES, SOURCE_TO_ENTRYPOIN
 
 type SourceOfTruthValue = keyof typeof SOURCE_TO_ENTRYPOINT_MAP;
 
+export const SHARED_START_TASK_WORKFLOW_RELATIVE_PATH = '.agents/workflows/start-task.md';
+
 const ACTIVE_AGENT_FILE_ALIAS_MAP: Record<string, string> = {
     'claude': 'CLAUDE.md',
     'claude.md': 'CLAUDE.md',
@@ -158,8 +160,7 @@ export function getProviderOrchestratorProfileDefinitions() {
             entrypointFile: '.antigravity/rules.md',
             providerLabel: 'Antigravity',
             orchestratorRelativePath: '.antigravity/agents/orchestrator.md',
-            workflowRelativePath: '.agents/workflows/start-task.md',
-            gitignoreEntries: ['.antigravity/', '.agents/workflows/start-task.md']
+            gitignoreEntries: ['.antigravity/']
         }
     ];
 }
@@ -180,7 +181,8 @@ export function getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess = 
     const selected = new Set<string>([
         'Octopus-agent-orchestrator/',
         'TASK.md',
-        '.qwen/'
+        '.qwen/',
+        SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
     ]);
     const directoryScopedProviderEntrypoints = new Set<string>(getLegacyManagedGitignoreEntries());
 

@@ -116,8 +116,7 @@ describe('getProviderOrchestratorProfileDefinitions', () => {
         const antigravity = profiles.find((p) => p.providerLabel === 'Antigravity');
         assert.deepEqual(windsurf!.gitignoreEntries, ['.windsurf/']);
         assert.deepEqual(junie!.gitignoreEntries, ['.junie/']);
-        assert.deepEqual(antigravity!.gitignoreEntries, ['.antigravity/', '.agents/workflows/start-task.md']);
-        assert.equal(antigravity!.workflowRelativePath, '.agents/workflows/start-task.md');
+        assert.deepEqual(antigravity!.gitignoreEntries, ['.antigravity/']);
     });
 });
 
