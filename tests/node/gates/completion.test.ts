@@ -46,6 +46,7 @@ describe('gates/completion', () => {
             const reviewPath = path.join(reviewsRoot, `${taskId}-review-gate.json`);
             const docImpactPath = path.join(reviewsRoot, `${taskId}-doc-impact.json`);
             const noOpPath = path.join(reviewsRoot, `${taskId}-no-op.json`);
+            const handshakePath = path.join(reviewsRoot, `${taskId}-handshake.json`);
             const protectedManifestPath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'protected-control-plane-manifest.json');
             const protectedFilePath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'src', 'cli', 'main.ts');
 
@@ -139,12 +140,36 @@ describe('gates/completion', () => {
                 preflight_path: normalizePath(preflightPath)
             });
 
+            writeJson(handshakePath, {
+                schema_version: 1,
+                timestamp_utc: '2026-04-02T16:59:59.000Z',
+                event_source: 'handshake-diagnostics',
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider: 'Codex',
+                canonical_entrypoint: 'AGENTS.md',
+                canonical_entrypoint_exists: true,
+                provider_bridge: null,
+                provider_bridge_exists: false,
+                start_task_router_path: '.agents/workflows/start-task.md',
+                start_task_router_exists: true,
+                execution_context: 'materialized-bundle',
+                cli_path: 'node Octopus-agent-orchestrator/bin/octopus.js',
+                effective_cwd: normalizePath(repoRoot),
+                workspace_root: normalizePath(repoRoot),
+                diagnostics: [],
+                violations: []
+            });
+
             fs.mkdirSync(path.dirname(timelinePath), { recursive: true });
+            const handshakeArtifactHash = fileSha256(handshakePath);
             fs.writeFileSync(
                 timelinePath,
                 [
                     { event_type: 'TASK_MODE_ENTERED', timestamp_utc: '2026-04-02T17:00:00.000Z' },
                     { event_type: 'RULE_PACK_LOADED', timestamp_utc: '2026-04-02T17:00:01.000Z' },
+                    { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED', timestamp_utc: '2026-04-02T16:59:59.500Z', details: { artifact_hash: handshakeArtifactHash } },
                     { event_type: 'COMPILE_GATE_PASSED', timestamp_utc: '2026-04-02T17:00:02.000Z' },
                     { event_type: 'REVIEW_PHASE_STARTED', timestamp_utc: '2026-04-02T17:00:03.000Z' },
                     { event_type: 'REVIEW_GATE_PASSED', timestamp_utc: '2026-04-02T17:00:04.000Z' }
@@ -161,6 +186,7 @@ describe('gates/completion', () => {
                 reviewPath,
                 docImpactPath,
                 noOpPath,
+                handshakePath,
                 protectedManifestPath,
                 timelinePath,
                 protectedFilePath
@@ -182,6 +208,7 @@ describe('gates/completion', () => {
                     reviewEvidencePath: workspace.reviewPath,
                     docImpactPath: workspace.docImpactPath,
                     noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
                     timelinePath: workspace.timelinePath
                 });
 
@@ -209,6 +236,7 @@ describe('gates/completion', () => {
                     reviewEvidencePath: workspace.reviewPath,
                     docImpactPath: workspace.docImpactPath,
                     noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
                     timelinePath: workspace.timelinePath
                 });
 
@@ -253,6 +281,7 @@ describe('gates/completion', () => {
                     reviewEvidencePath: workspace.reviewPath,
                     docImpactPath: workspace.docImpactPath,
                     noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
                     timelinePath: workspace.timelinePath
                 });
 
@@ -671,6 +700,112 @@ describe('gates/completion', () => {
             assert.ok(result.violations.some((entry) => entry.includes('inconsistent reviewer identity')));
         });
 
+        it('fails when receipt execution mode disagrees with review-context execution mode', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: 'self:T-123'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'same_agent_fallback',
+                            reviewer_identity: 'self:T-123',
+                            reviewer_fallback_reason: 'provider limitation',
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Antigravity'
+            );
+
+            assert.ok(result.violations.some(v => v.includes('inconsistent execution mode')));
+        });
+
+        it('fails when telemetry execution mode contradicts review-context execution mode', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'same_agent_fallback',
+                                reviewer_session_id: 'self:T-123'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'same_agent_fallback',
+                            reviewer_identity: 'self:T-123',
+                            reviewer_fallback_reason: 'provider limitation',
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Antigravity'
+            );
+
+            assert.ok(result.violations.some(v =>
+                v.includes('inconsistent execution mode') && v.includes('REVIEWER_DELEGATION_ROUTED')
+            ));
+        });
+
         it('fails when code changed but review telemetry is missing', () => {
             const events = [
                 makeEvent('COMPILE_GATE_PASSED', 0),
@@ -704,6 +839,278 @@ describe('gates/completion', () => {
                 'Codex'
             );
             assert.ok(result.violations.some(v => v.includes('REVIEWER_DELEGATION_ROUTED telemetry')));
+        });
+
+        // T-1005: Receipt field presence enforcement tests
+        it('fails when receipt is missing reviewer_execution_mode', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: null,
+                            reviewer_identity: 'agent:code-reviewer',
+                            reviewer_fallback_reason: null,
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some(v => v.includes('receipt is missing reviewer_execution_mode')));
+        });
+
+        it('fails when receipt is missing reviewer_identity', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: null,
+                            reviewer_fallback_reason: null,
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some(v => v.includes('receipt is missing reviewer_identity')));
+        });
+
+        it('fails when receipt uses same_agent_fallback without reviewer_fallback_reason', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: 'self:T-123'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'same_agent_fallback',
+                                reviewer_session_id: 'self:T-123',
+                                fallback_reason: null
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'same_agent_fallback',
+                            reviewer_identity: 'self:T-123',
+                            reviewer_fallback_reason: null,
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Qwen'
+            );
+
+            assert.ok(result.violations.some(v =>
+                v.includes('same_agent_fallback') && v.includes('reviewer_fallback_reason')
+            ));
+        });
+
+        it('fails when receipt claims delegated_subagent on delegation-required provider but execution mode is fallback', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: 'self:T-123'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'same_agent_fallback',
+                                reviewer_session_id: 'self:T-123',
+                                fallback_reason: 'provider does not support delegation'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'same_agent_fallback',
+                            reviewer_identity: 'self:T-123',
+                            reviewer_fallback_reason: 'provider does not support delegation',
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some(v =>
+                v.includes('receipt must use delegated_subagent') && v.includes('Codex')
+            ));
+            assert.ok(result.violations.some(v =>
+                v.includes('same_agent_fallback') && v.includes('fallback is not allowed')
+            ));
+        });
+
+        it('fails when receipt uses delegated_subagent on single-agent provider', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            reviewer_fallback_reason: null,
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Gemini'
+            );
+
+            assert.ok(result.violations.some(v =>
+                v.includes('receipt cannot use delegated_subagent') && v.includes('Gemini')
+            ));
         });
     });
 

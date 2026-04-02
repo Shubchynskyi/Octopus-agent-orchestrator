@@ -14,6 +14,7 @@ import {
     evaluateProtectedControlPlaneManifest
 } from './helpers';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
+import { getHandshakeEvidence, getHandshakeEvidenceViolations } from './handshake-diagnostics';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from './rule-pack';
 import { readRuntimeReviewerProvider, resolveReviewerRoutingPolicy } from './reviewer-routing';
 import { collectTaskTimelineEventTypes, getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
@@ -26,6 +27,7 @@ import { collectTaskTimelineEventTypes, getTaskModeEvidence, getTaskModeEvidence
 export const STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze([
     'TASK_MODE_ENTERED',
     'RULE_PACK_LOADED',
+    'HANDSHAKE_DIAGNOSTICS_RECORDED',
     'PREFLIGHT_CLASSIFIED',
     'IMPLEMENTATION_STARTED',
     'COMPILE_GATE_PASSED',
@@ -539,6 +541,50 @@ export function validateReviewSkillEvidence(
                             `('${String(receipt.reviewer_execution_mode)}').`
                         );
                     }
+                    // T-1005: Enforce receipt field presence (not just consistency)
+                    if (!receiptExecutionMode) {
+                        result.violations.push(
+                            `Required review '${key}' receipt is missing reviewer_execution_mode. ` +
+                            'Every receipt must include reviewer_execution_mode for routing enforcement.'
+                        );
+                    }
+                    if (!receiptReviewerIdentity) {
+                        result.violations.push(
+                            `Required review '${key}' receipt is missing reviewer_identity. ` +
+                            'Every receipt must include reviewer_identity for routing enforcement.'
+                        );
+                    }
+                    if (receiptExecutionMode === 'same_agent_fallback' && !receiptFallbackReason) {
+                        result.violations.push(
+                            `Required review '${key}' receipt used same_agent_fallback without reviewer_fallback_reason. ` +
+                            'Fallback receipts must include reviewer_fallback_reason.'
+                        );
+                    }
+                    // T-1005: Provider policy enforcement against receipt fields
+                    if (receiptExecutionMode) {
+                        if (routingPolicy.delegation_required && receiptExecutionMode !== 'delegated_subagent') {
+                            result.violations.push(
+                                `Required review '${key}' receipt must use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
+                                'Same-agent self-review is invalid on delegation-capable providers.'
+                            );
+                        }
+                        if (routingPolicy.capability_level === 'single_agent_only' && receiptExecutionMode === 'delegated_subagent') {
+                            result.violations.push(
+                                `Required review '${key}' receipt cannot use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
+                                'Explicit same_agent_fallback evidence is required on single-agent providers.'
+                            );
+                        }
+                        if (!routingPolicy.fallback_allowed && receiptExecutionMode === 'same_agent_fallback') {
+                            result.violations.push(
+                                `Required review '${key}' receipt used same_agent_fallback on provider '${routingPolicy.source_of_truth || 'unknown'}', but fallback is not allowed.`
+                            );
+                        }
+                        if (routingPolicy.fallback_reason_required && receiptExecutionMode === 'same_agent_fallback' && !receiptFallbackReason) {
+                            result.violations.push(
+                                `Required review '${key}' receipt used same_agent_fallback on provider '${routingPolicy.source_of_truth || 'unknown'}' without reviewer_fallback_reason.`
+                            );
+                        }
+                    }
                     if (receiptExecutionMode && actualExecutionMode && receiptExecutionMode !== actualExecutionMode) {
                         result.violations.push(
                             `Required review '${key}' has inconsistent execution mode between receipt (${receiptExecutionMode}) ` +
@@ -926,6 +972,7 @@ export interface RunCompletionGateOptions {
     docImpactPath?: string;
     timelinePath?: string;
     noOpArtifactPath?: string;
+    handshakePath?: string;
 }
 
 export function runCompletionGate(options: RunCompletionGateOptions) {
@@ -957,6 +1004,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         taskModePath: options.taskModePath || ''
     });
     const noOpEvidence = getNoOpEvidence(repoRoot, resolvedTaskId, options.noOpArtifactPath || '');
+    const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, {
+        artifactPath: options.handshakePath || '',
+        timelinePath
+    });
 
     const preflight = validatedPreflight.preflight || {};
     const preflightTriggers = toPlainRecord(preflight.triggers) || {};
@@ -1023,6 +1074,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     ensurePassedArtifactStatus(docImpactEvidence, 'Doc impact gate', errors);
     errors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
     errors.push(...getRulePackEvidenceViolations(rulePackEvidence));
+    errors.push(...getHandshakeEvidenceViolations(handshakeEvidence));
 
     // --- T-003: ordered timeline + stage-sequence enforcement ---
     const timelineErrors: string[] = [];
@@ -1037,6 +1089,9 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     }
     if (!timelineEventTypes.has('RULE_PACK_LOADED')) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing RULE_PACK_LOADED.`);
+    }
+    if (!timelineEventTypes.has('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
+        errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before preflight.`);
     }
     if (!timelineEventTypes.has('COMPILE_GATE_PASSED')) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing COMPILE_GATE_PASSED.`);
@@ -1151,6 +1206,19 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     stageSequence.review_artifact_keys = reviewSkillEvidence.artifact_keys;
     stageSequence.reviewer_execution_modes = reviewSkillEvidence.reviewer_execution_modes;
 
+    // T-1005: Build reviewer routing enforcement summary
+    const routingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth);
+    const reviewerRoutingEnforcement = {
+        source_of_truth: routingPolicy.source_of_truth,
+        capability_level: routingPolicy.capability_level,
+        delegation_required: routingPolicy.delegation_required,
+        expected_execution_mode: routingPolicy.expected_execution_mode,
+        fallback_allowed: routingPolicy.fallback_allowed,
+        fallback_reason_required: routingPolicy.fallback_reason_required,
+        observed_execution_modes: reviewSkillEvidence.reviewer_execution_modes,
+        enforcement_level: 'hard_block'
+    };
+
     const status = errors.length > 0 ? 'FAILED' : 'PASSED';
     const outcome = errors.length > 0 ? 'FAIL' : 'PASS';
 
@@ -1162,12 +1230,14 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         reviews_root: normalizePath(reviewsRoot),
         task_mode_path: taskModeEvidence.evidence_path,
         rule_pack_path: rulePackEvidence.evidence_path,
+        handshake_path: handshakeEvidence.evidence_path,
         compile_evidence_path: normalizePath(compileEvidencePath),
         review_evidence_path: normalizePath(reviewEvidencePath),
         doc_impact_path: normalizePath(docImpactPath),
         timeline_path: normalizePath(timelinePath),
         review_artifacts: reviewArtifacts,
         stage_sequence_evidence: stageSequence,
+        reviewer_routing_enforcement: reviewerRoutingEnforcement,
         zero_diff_evidence: zeroDiffEvidence,
         violations: errors
     };

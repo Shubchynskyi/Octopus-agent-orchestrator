@@ -98,6 +98,34 @@ describe('gates/build-review-context', () => {
             assert.equal(policy.fallback_reason_required, true);
         });
 
+        it('marks single-agent providers as fallback-allowed with reason required', () => {
+            for (const provider of ['Gemini', 'Qwen']) {
+                const policy = resolveReviewerRoutingPolicy(provider);
+                assert.equal(policy.capability_level, 'single_agent_only', `${provider} capability_level`);
+                assert.equal(policy.delegation_required, false, `${provider} delegation_required`);
+                assert.equal(policy.fallback_allowed, true, `${provider} fallback_allowed`);
+                assert.equal(policy.fallback_reason_required, true, `${provider} fallback_reason_required`);
+                assert.equal(policy.expected_execution_mode, 'same_agent_fallback', `${provider} expected_execution_mode`);
+            }
+        });
+
+        it('marks unknown providers as fallback-allowed with reason required', () => {
+            const policy = resolveReviewerRoutingPolicy('UnknownProvider');
+            assert.equal(policy.capability_level, 'unknown');
+            assert.equal(policy.delegation_required, false);
+            assert.equal(policy.fallback_allowed, true);
+            assert.equal(policy.fallback_reason_required, true);
+            assert.equal(policy.expected_execution_mode, 'same_agent_fallback');
+        });
+
+        it('marks null/empty provider as unknown with fallback reason required', () => {
+            for (const value of [null, '', undefined]) {
+                const policy = resolveReviewerRoutingPolicy(value);
+                assert.equal(policy.capability_level, 'unknown', `value=${String(value)}`);
+                assert.equal(policy.fallback_reason_required, true, `value=${String(value)}`);
+            }
+        });
+
         it('prefers task-mode provider over init-answers provider for routing policy', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-build-review-context-'));
             const orchestratorRoot = path.join(repoRoot, 'Octopus-agent-orchestrator');
@@ -183,6 +211,73 @@ describe('gates/build-review-context', () => {
 
             assert.equal(result.reviewer_routing.source_of_truth, 'Qwen');
             assert.equal(result.reviewer_routing.delegation_required, false);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        // T-1005: reviewer_routing includes explicit requirement fields
+        it('includes reviewer_execution_mode_required and reviewer_identity_required for required reviews', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-build-review-context-req-'));
+            const orchestratorRoot = path.join(repoRoot, 'Octopus-agent-orchestrator');
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'reviews'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Codex'
+            }, null, 2), 'utf8');
+            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-1005-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-1005',
+                required_reviews: { code: true }
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
+                enabled: false
+            }, null, 2), 'utf8');
+            const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-1005-code-review-context.json');
+
+            const result = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: '',
+                outputPath,
+                repoRoot
+            });
+
+            assert.equal(result.reviewer_routing.reviewer_execution_mode_required, true);
+            assert.equal(result.reviewer_routing.reviewer_identity_required, true);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('sets reviewer requirement fields to false for non-required reviews', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-build-review-context-nonreq-'));
+            const orchestratorRoot = path.join(repoRoot, 'Octopus-agent-orchestrator');
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'reviews'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Codex'
+            }, null, 2), 'utf8');
+            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-1005b-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-1005b',
+                required_reviews: { code: false }
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
+                enabled: false
+            }, null, 2), 'utf8');
+            const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-1005b-code-review-context.json');
+
+            const result = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: '',
+                outputPath,
+                repoRoot
+            });
+
+            assert.equal(result.reviewer_routing.reviewer_execution_mode_required, false);
+            assert.equal(result.reviewer_routing.reviewer_identity_required, false);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
     });

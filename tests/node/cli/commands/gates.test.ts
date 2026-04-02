@@ -174,6 +174,32 @@ function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
     }, null, 2), 'utf8');
 }
 
+function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {
+    const reviewsRoot = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'reviews');
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-handshake.json`), JSON.stringify({
+        schema_version: 1,
+        timestamp_utc: new Date().toISOString(),
+        event_source: 'handshake-diagnostics',
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        provider,
+        canonical_entrypoint: 'AGENTS.md',
+        canonical_entrypoint_exists: true,
+        provider_bridge: null,
+        provider_bridge_exists: false,
+        start_task_router_path: '.agents/workflows/start-task.md',
+        start_task_router_exists: true,
+        execution_context: 'materialized-bundle',
+        cli_path: 'node Octopus-agent-orchestrator/bin/octopus.js',
+        effective_cwd: repoRoot.replace(/\\/g, '/'),
+        workspace_root: repoRoot.replace(/\\/g, '/'),
+        diagnostics: [],
+        violations: []
+    }, null, 2), 'utf8');
+}
+
 function runGit(repoRoot: string, args: string[]): childProcess.SpawnSyncReturns<string> {
     const result = childProcess.spawnSync('git', args, {
         cwd: repoRoot,
@@ -242,6 +268,24 @@ function loadPostPreflightRulePack(repoRoot: string, taskId: string, preflightPa
     });
 }
 
+function runHandshakeForTask(repoRoot: string, taskId: string, provider = 'Codex') {
+    writeHandshakeArtifact(repoRoot, taskId, provider);
+    const orchestratorRoot = path.join(repoRoot, 'Octopus-agent-orchestrator');
+    const artifactPath = path.join(orchestratorRoot, 'runtime', 'reviews', `${taskId}-handshake.json`);
+    const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+    const crypto = require('node:crypto');
+    const artifactHash = crypto.createHash('sha256').update(artifactContent).digest('hex');
+    appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        'HANDSHAKE_DIAGNOSTICS_RECORDED',
+        'PASS',
+        `Handshake diagnostics passed: provider=${provider}, context=materialized-bundle.`,
+        { provider, execution_context: 'materialized-bundle', cli_path: 'node Octopus-agent-orchestrator/bin/octopus.js', passed: true, artifact_hash: artifactHash },
+        { actor: 'gate', passThru: true }
+    );
+}
+
 describe('cli/commands/gates', () => {
     it('splits quoted command lines', () => {
         assert.deepEqual(
@@ -262,6 +306,7 @@ describe('cli/commands/gates', () => {
         });
         const rulePackResult = loadTaskEntryRulePack(repoRoot, 'T-900');
         assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, 'T-900');
         const result = runClassifyChangeCommand({
             repoRoot,
             changedFiles: ['src/app.ts'],
@@ -294,6 +339,7 @@ describe('cli/commands/gates', () => {
         });
         const rulePackResult = loadTaskEntryRulePack(repoRoot, 'T-900z');
         assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, 'T-900z');
 
         const result = runClassifyChangeCommand({
             repoRoot,
@@ -473,6 +519,7 @@ describe('cli/commands/gates', () => {
         assert.equal(taskModeResult.exitCode, 0);
         assert.equal(taskModeResult.outputLines[0], 'TASK_MODE_ENTERED');
         assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
         assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
 
         const result = await runCompileGateCommand({
@@ -574,6 +621,7 @@ describe('cli/commands/gates', () => {
             taskSummary: 'Update app flow'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         const reviewsRoot = getReviewsRoot(repoRoot);
@@ -636,6 +684,7 @@ describe('cli/commands/gates', () => {
             taskSummary: 'Update app flow'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         // T-003: code-changing tasks must carry PREFLIGHT_CLASSIFIED evidence
@@ -776,6 +825,7 @@ describe('cli/commands/gates', () => {
             taskSummary: 'Implement lifecycle hardening'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         appendTaskEvent(
@@ -1176,7 +1226,7 @@ describe('cli/commands/gates', () => {
                 capability_level: 'single_agent_only',
                 expected_execution_mode: 'same_agent_fallback',
                 fallback_allowed: true,
-                fallback_reason_required: false,
+                fallback_reason_required: true,
                 actual_execution_mode: null,
                 reviewer_session_id: null,
                 fallback_reason: null
@@ -1251,6 +1301,7 @@ describe('cli/commands/gates', () => {
             provider: 'Codex'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
             mode: 'FULL_PATH',
@@ -1404,6 +1455,7 @@ describe('cli/commands/gates', () => {
             provider: 'Antigravity'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId, 'Antigravity');
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
             mode: 'FULL_PATH',

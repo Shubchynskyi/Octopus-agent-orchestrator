@@ -12,6 +12,7 @@ import {
 import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../gate-runtime/token-telemetry';
 import { applyOutputFilterProfile } from '../../gate-runtime/output-filters';
 import {
+    emitHandshakeDiagnosticsEvent,
     emitReviewPhaseStartedEvent,
     emitMandatoryImplementationStartedEvent,
     emitMandatoryPreflightFailedEvent,
@@ -51,6 +52,11 @@ import {
 import {
     getCanonicalEntrypointFile
 } from '../../materialization/common';
+import {
+    buildHandshakeDiagnostics,
+    formatHandshakeDiagnosticsResult,
+    resolveHandshakeArtifactPath
+} from '../../gates/handshake-diagnostics';
 import {
     buildTaskModeArtifact,
     collectTaskTimelineEventTypes,
@@ -165,6 +171,19 @@ interface RecordNoOpCommandOptions {
     reason?: unknown;
     actor?: unknown;
     preflightPath?: unknown;
+    artifactPath?: string;
+    metricsPath?: string;
+    emitMetrics?: unknown;
+}
+
+interface HandshakeDiagnosticsCommandOptions {
+    repoRoot?: string;
+    taskId?: unknown;
+    provider?: unknown;
+    cliPath?: unknown;
+    effectiveCwd?: unknown;
+    canonicalEntrypoint?: unknown;
+    providerBridge?: unknown;
     artifactPath?: string;
     metricsPath?: string;
     emitMetrics?: unknown;
@@ -986,6 +1005,65 @@ export function runRecordNoOpCommand(options: RecordNoOpCommandOptions): { outpu
     };
 }
 
+export function runHandshakeDiagnosticsCommand(options: HandshakeDiagnosticsCommandOptions): { outputLines: string[]; exitCode: number } {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
+    const taskId = assertValidTaskId(String(options.taskId || '').trim());
+    const routingDecision = readRoutingDecision(repoRoot, options.provider);
+    const provider = routingDecision.provider;
+
+    const artifactPath = options.artifactPath
+        ? requireResolvedPath(resolvePathForWrite(options.artifactPath, repoRoot), 'ArtifactPath')
+        : resolveHandshakeArtifactPath(repoRoot, taskId, '');
+
+    const artifact = buildHandshakeDiagnostics({
+        taskId,
+        repoRoot,
+        provider,
+        cliPath: options.cliPath ? String(options.cliPath) : undefined,
+        effectiveCwd: options.effectiveCwd ? String(options.effectiveCwd) : undefined,
+        canonicalEntrypoint: options.canonicalEntrypoint ? String(options.canonicalEntrypoint) : undefined,
+        providerBridge: options.providerBridge ? String(options.providerBridge) : undefined
+    });
+
+    writeJsonArtifact(artifactPath, artifact);
+
+    const artifactHash = gateHelpers.fileSha256(artifactPath);
+
+    const metricsPath = options.metricsPath
+        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
+        : resolveDefaultMetricsPath(repoRoot);
+    appendMetricsIfEnabled(metricsPath, {
+        timestamp_utc: artifact.timestamp_utc,
+        event_type: 'handshake_diagnostics_recorded',
+        task_id: taskId,
+        artifact_path: gateHelpers.normalizePath(artifactPath),
+        artifact_hash: artifactHash,
+        provider: artifact.provider,
+        execution_context: artifact.execution_context,
+        cli_path: artifact.cli_path,
+        outcome: artifact.outcome
+    }, parseBooleanOption(options.emitMetrics, true));
+
+    emitHandshakeDiagnosticsEvent(
+        orchestratorRoot,
+        taskId,
+        artifact.provider,
+        artifact.execution_context,
+        artifact.cli_path,
+        artifact.outcome === 'PASS',
+        artifactHash
+    );
+
+    const outputLines = formatHandshakeDiagnosticsResult(artifact);
+    outputLines.push(`HandshakeArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`);
+
+    return {
+        outputLines,
+        exitCode: artifact.outcome === 'PASS' ? 0 : 1
+    };
+}
+
 export function splitCommandLine(commandText: unknown): string[] {
     const text = String(commandText || '').trim();
     if (!text) {
@@ -1412,6 +1490,11 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing RULE_PACK_LOADED. Run load-rule-pack before preflight.`
             );
         }
+        if (timelineErrors.length === 0 && !timelineEventTypes.has('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
+            preflightErrors.push(
+                `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before preflight.`
+            );
+        }
         if (preflightErrors.length > 0) {
             throw new Error(preflightErrors.join(' '));
         }
@@ -1558,6 +1641,9 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         } else if (!exceptionMessage && !timelineEventTypes.has('RULE_PACK_LOADED')) {
             exitCode = 1;
             exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing RULE_PACK_LOADED. Run load-rule-pack before compile gate.`;
+        } else if (!exceptionMessage && !timelineEventTypes.has('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
+            exitCode = 1;
+            exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before compile gate.`;
         }
 
         const scopeViolations: string[] = [];
@@ -2353,6 +2439,9 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         }
         if (timelineErrors.length === 0 && !timelineEventTypes.has('RULE_PACK_LOADED')) {
             errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing RULE_PACK_LOADED. Run load-rule-pack before review gate.`);
+        }
+        if (timelineErrors.length === 0 && !timelineEventTypes.has('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
+            errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before review gate.`);
         }
         reviewPhaseMissingFromTimeline = timelineErrors.length === 0 && !timelineEventTypes.has('REVIEW_PHASE_STARTED');
     }

@@ -315,6 +315,8 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
             expected_execution_mode: reviewerRoutingPolicy.expected_execution_mode,
             fallback_allowed: reviewerRoutingPolicy.fallback_allowed,
             fallback_reason_required: reviewerRoutingPolicy.fallback_reason_required,
+            reviewer_execution_mode_required: !!requiredReview,
+            reviewer_identity_required: !!requiredReview,
             actual_execution_mode: null as string | null,
             reviewer_session_id: null as string | null,
             fallback_reason: null as string | null,

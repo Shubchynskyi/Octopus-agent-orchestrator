@@ -425,6 +425,50 @@ REVIEW PASSED
             assert.ok(result.violations.some((entry: string) => entry.includes('reviewer_fallback_reason')));
         });
 
+        it('fails single-agent-provider fallback without reviewer_fallback_reason', () => {
+            const content = '# Review\nChecked `src/gates/reviewer-routing.ts` enforcement with concrete file references.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
+            const reviewContext = {
+                reviewer_routing: {
+                    source_of_truth: 'Qwen',
+                    actual_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: 'self:T-044'
+                }
+            };
+            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-044-single-agent-code', content, reviewContext);
+            fs.writeFileSync(receiptPath, JSON.stringify({
+                schema_version: 2,
+                task_id: 'T-044',
+                review_type: 'code',
+                review_artifact_sha256: artifactHash,
+                review_context_sha256: reviewContextHash,
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: 'self:T-044'
+            }));
+
+            const result = checkRequiredReviews({
+                validatedPreflight: {
+                    errors: [],
+                    resolved_task_id: 'T-044',
+                    required_reviews: { code: true } as any,
+                    preflight_path: 'preflight.json',
+                    preflight_hash: 'abc'
+                },
+                verdicts: { code: 'REVIEW PASSED' },
+                sourceOfTruth: 'Qwen',
+                reviewArtifacts: {
+                    code: {
+                        path: artifactPath,
+                        content: fs.readFileSync(artifactPath, 'utf8'),
+                        reviewContext,
+                        reviewContextSha256: reviewContextHash
+                    }
+                }
+            });
+
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.violations.some((entry: string) => entry.includes('reviewer_fallback_reason')));
+        });
+
         it('fails when review-context artifact hash changes after receipt recording', () => {
             const content = '# Review\nValidated delegated routing enforcement with concrete file references.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
             const { artifactPath, receiptPath, artifactHash } = writeReviewArtifact('T-044-context-hash-code', content);

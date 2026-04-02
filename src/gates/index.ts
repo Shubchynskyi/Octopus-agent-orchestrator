@@ -9,6 +9,7 @@ import * as completion from './completion';
 import * as taskEventsSummary from './task-events-summary';
 import * as taskMode from './task-mode';
 import * as rulePack from './rule-pack';
+import * as handshakeDiagnostics from './handshake-diagnostics';
 
 export {
     helpers,
@@ -21,5 +22,6 @@ export {
     completion,
     taskEventsSummary,
     taskMode,
-    rulePack
+    rulePack,
+    handshakeDiagnostics
 };

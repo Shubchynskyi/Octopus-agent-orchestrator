@@ -29,7 +29,8 @@ export const LIFECYCLE_EVENT_TYPES = Object.freeze({
     COMPLETION_GATE_PASSED: 'COMPLETION_GATE_PASSED',
     COMPLETION_GATE_FAILED: 'COMPLETION_GATE_FAILED',
     STATUS_CHANGED: 'STATUS_CHANGED',
-    PROVIDER_ROUTING_DECISION: 'PROVIDER_ROUTING_DECISION'
+    PROVIDER_ROUTING_DECISION: 'PROVIDER_ROUTING_DECISION',
+    HANDSHAKE_DIAGNOSTICS_RECORDED: 'HANDSHAKE_DIAGNOSTICS_RECORDED'
 });
 
 /**
@@ -39,6 +40,7 @@ export const LIFECYCLE_EVENT_TYPES = Object.freeze({
 export const MANDATORY_CODE_CHANGE_EVENTS: readonly string[] = Object.freeze([
     'TASK_MODE_ENTERED',
     'RULE_PACK_LOADED',
+    'HANDSHAKE_DIAGNOSTICS_RECORDED',
     'PREFLIGHT_CLASSIFIED',
     'IMPLEMENTATION_STARTED',
     'COMPILE_GATE_PASSED',
@@ -608,6 +610,48 @@ export function emitProviderRoutingEvent(
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : String(error);
         process.stderr.write(`WARNING: provider-routing event emit failed: ${msg}\n`);
+        return null;
+    }
+}
+
+/**
+ * Auto-emit HANDSHAKE_DIAGNOSTICS_RECORDED to the task timeline.
+ * Called when handshake-diagnostics gate completes successfully.
+ */
+export function emitHandshakeDiagnosticsEvent(
+    repoRoot: string,
+    taskId: string,
+    provider: string | null,
+    executionContext: string,
+    cliPath: string,
+    passed: boolean,
+    artifactHash: string | null = null,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    if (!repoRoot || !taskId) return null;
+    try {
+        return appendTaskEvent(
+            repoRoot,
+            taskId,
+            LIFECYCLE_EVENT_TYPES.HANDSHAKE_DIAGNOSTICS_RECORDED,
+            passed ? 'PASS' : 'FAIL',
+            `Handshake diagnostics ${passed ? 'passed' : 'failed'}: provider=${provider || 'unknown'}, context=${executionContext}.`,
+            {
+                provider,
+                execution_context: executionContext,
+                cli_path: cliPath,
+                passed,
+                artifact_hash: artifactHash
+            },
+            {
+                actor: options.actor || 'gate',
+                passThru: options.passThru ?? true,
+                eventsRoot: options.eventsRoot
+            }
+        );
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`WARNING: handshake-diagnostics event emit failed: ${msg}\n`);
         return null;
     }
 }

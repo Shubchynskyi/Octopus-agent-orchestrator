@@ -59,9 +59,9 @@ export function resolveReviewerRoutingPolicy(sourceOfTruth: unknown): ReviewerRo
                 capability_level: 'single_agent_only',
                 delegation_required: false,
                 fallback_allowed: true,
-                fallback_reason_required: false,
+                fallback_reason_required: true,
                 expected_execution_mode: 'same_agent_fallback',
-                note: `${normalized} is treated as single-agent for review routing unless provider delegation support is added later.`
+                note: `${normalized} is treated as single-agent for review routing. Fallback receipts must still include reviewer_fallback_reason.`
             };
         default:
             return {
