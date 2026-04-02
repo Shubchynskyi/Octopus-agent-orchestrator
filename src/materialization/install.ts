@@ -6,6 +6,7 @@ import { readJsonFile, writeJsonFile } from '../core/json';
 import { removeManagedBlock } from '../core/managed-blocks';
 import { normalizeLineEndings } from '../core/line-endings';
 import { resolvePathInsideRoot } from '../core/paths';
+import { writeProtectedControlPlaneManifest } from '../gates/helpers';
 import { validateInitAnswers } from '../schemas/init-answers';
 import {
     getCanonicalEntrypointFile,
@@ -595,6 +596,7 @@ export function runInstall(options: RunInstallOptions) {
 
     // Write live/version.json
     let liveVersionWritten = false;
+    let protectedControlPlaneManifestWritten = false;
     if (!dryRun) {
         ensureDirectory(path.dirname(liveVersionPath));
         writeJsonFile(liveVersionPath, {
@@ -611,6 +613,8 @@ export function runInstall(options: RunInstallOptions) {
             InitAnswersPath: resolvedInitPath
         });
         liveVersionWritten = true;
+        writeProtectedControlPlaneManifest(normalizedTarget);
+        protectedControlPlaneManifestWritten = true;
     }
 
     return {
@@ -647,6 +651,7 @@ export function runInstall(options: RunInstallOptions) {
         initInvoked,
         preCommitHookUpdated: commitGuardHookUpdated,
         liveVersionWritten,
+        protectedControlPlaneManifestWritten,
         backupRoot: dryRun ? null : backupRoot
     };
 }

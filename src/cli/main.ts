@@ -1102,6 +1102,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 '--requested-depth': { key: 'requestedDepth', type: 'string' },
                 '--effective-depth': { key: 'effectiveDepth', type: 'string' },
                 '--task-summary': { key: 'taskSummary', type: 'string' },
+                '--orchestrator-work': { key: 'orchestratorWork', type: 'boolean' },
                 '--provider': { key: 'provider', type: 'string' },
                 '--routed-to': { key: 'routedTo', type: 'string' },
                 '--actor': { key: 'actor', type: 'string' },

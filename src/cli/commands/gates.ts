@@ -136,6 +136,7 @@ interface EnterTaskModeCommandOptions {
     requestedDepth?: unknown;
     effectiveDepth?: unknown;
     taskSummary?: unknown;
+    orchestratorWork?: unknown;
     provider?: unknown;
     routedTo?: unknown;
     actor?: unknown;
@@ -708,6 +709,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         requestedDepth: parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2),
         effectiveDepth: parseTaskModeDepth(options.effectiveDepth, 'EffectiveDepth', parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2)),
         taskSummary: String(options.taskSummary || ''),
+        orchestratorWork: parseBooleanOption(options.orchestratorWork, false),
         provider: routingDecision.provider,
         routedTo: routingDecision.routedTo,
         actor: String(options.actor || 'orchestrator')
@@ -726,6 +728,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         entry_mode: taskModeArtifact.entry_mode,
         requested_depth: taskModeArtifact.requested_depth,
         effective_depth: taskModeArtifact.effective_depth,
+        orchestrator_work: taskModeArtifact.orchestrator_work,
         actor: taskModeArtifact.actor
     }, parseBooleanOption(options.emitMetrics, true));
 
@@ -742,6 +745,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 requested_depth: taskModeArtifact.requested_depth,
                 effective_depth: taskModeArtifact.effective_depth,
                 task_summary: taskModeArtifact.task_summary,
+                orchestrator_work: taskModeArtifact.orchestrator_work,
                 provider: taskModeArtifact.provider,
                 routed_to: taskModeArtifact.routed_to,
                 actor: taskModeArtifact.actor
@@ -1367,6 +1371,20 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         classificationConfig,
         reviewCapabilities
     });
+
+    // T-1010: Capture full snapshot of protected control-plane files
+    const protectedFilesSnapshot = gateHelpers.scanProtectedPathHashes(
+        repoRoot,
+        gateHelpers.getProtectedControlPlaneRoots(repoRoot)
+    );
+    const protectedManifestEvidence = gateHelpers.evaluateProtectedControlPlaneManifest(
+        repoRoot,
+        protectedFilesSnapshot
+    );
+    (result.triggers as any).protected_control_plane_snapshot = protectedFilesSnapshot;
+    (result.triggers as any).protected_control_plane_manifest_status = protectedManifestEvidence.status;
+    (result.triggers as any).protected_control_plane_manifest_path = protectedManifestEvidence.manifest_path;
+    (result.triggers as any).protected_control_plane_manifest_changed_files = protectedManifestEvidence.changed_files;
 
     if (resolvedTaskId) {
         result.task_id = resolvedTaskId;

@@ -13,6 +13,7 @@ import {
 import { getCanonicalEntrypointFile, getActiveAgentEntrypointFiles, convertActiveAgentEntrypointFilesToString } from './common';
 import { applyAssistantDefaults } from './rule-materialization';
 import { runInstall } from './install';
+import { writeProtectedControlPlaneManifest } from '../gates/helpers';
 import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
 import { DEFAULT_BUNDLE_NAME } from '../core/constants';
 import { cleanupStaleTaskEventLocks } from '../gate-runtime/task-events';
@@ -238,6 +239,7 @@ export function runReinit(options: ReinitOptions) {
     if (!invariantResult.isValid) {
         throw new Error(`Bundle invariant violation after reinit: ${invariantResult.violations.join('; ')}`);
     }
+    writeProtectedControlPlaneManifest(normalizedTarget);
 
     return {
         targetRoot: normalizedTarget,

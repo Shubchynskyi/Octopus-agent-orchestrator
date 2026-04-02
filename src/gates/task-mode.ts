@@ -34,6 +34,7 @@ export interface TaskModeArtifact {
     requested_depth: number;
     effective_depth: number;
     task_summary: string;
+    orchestrator_work: boolean;
     provider: string | null;
     routed_to: string | null;
     actor: string;
@@ -45,6 +46,7 @@ export interface BuildTaskModeArtifactOptions {
     requestedDepth: unknown;
     effectiveDepth: unknown;
     taskSummary: string;
+    orchestratorWork?: boolean;
     provider?: string | null;
     routedTo?: string | null;
     actor?: string;
@@ -62,6 +64,7 @@ export interface TaskModeEvidenceResult {
     requested_depth: number | null;
     effective_depth: number | null;
     task_summary: string | null;
+    orchestrator_work: boolean | null;
     provider: string | null;
     routed_to: string | null;
 }
@@ -134,6 +137,7 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         requested_depth: requestedDepth,
         effective_depth: effectiveDepth,
         task_summary: taskSummary,
+        orchestrator_work: !!options.orchestratorWork,
         provider: String(options.provider || '').trim() || null,
         routed_to: String(options.routedTo || '').trim() || null,
         actor
@@ -153,6 +157,7 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         requested_depth: null,
         effective_depth: null,
         task_summary: null,
+        orchestrator_work: null,
         provider: null,
         routed_to: null
     };
@@ -186,6 +191,7 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     result.evidence_source = String(artifactObject.event_source || '').trim() || null;
     result.entry_mode = String(artifactObject.entry_mode || '').trim() || null;
     result.task_summary = String(artifactObject.task_summary || '').trim() || null;
+    result.orchestrator_work = typeof artifactObject.orchestrator_work === 'boolean' ? artifactObject.orchestrator_work : null;
     result.provider = String(artifactObject.provider || '').trim() || null;
     result.routed_to = String(artifactObject.routed_to || '').trim() || null;
 

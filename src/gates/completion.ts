@@ -3,7 +3,16 @@ import * as path from 'node:path';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { normalizeReviewerExecutionMode, type ReviewReceipt } from '../gate-runtime/review-context';
 import { getReviewSkillCandidates } from './build-review-context';
-import { fileSha256, normalizePath, joinOrchestratorPath, resolvePathInsideRepo } from './helpers';
+import {
+    fileSha256,
+    normalizePath,
+    joinOrchestratorPath,
+    resolvePathInsideRepo,
+    toPlainRecord,
+    getProtectedControlPlaneRoots,
+    scanProtectedPathHashes,
+    evaluateProtectedControlPlaneManifest
+} from './helpers';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from './rule-pack';
 import { readRuntimeReviewerProvider, resolveReviewerRoutingPolicy } from './reviewer-routing';
@@ -948,6 +957,62 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         taskModePath: options.taskModePath || ''
     });
     const noOpEvidence = getNoOpEvidence(repoRoot, resolvedTaskId, options.noOpArtifactPath || '');
+
+    const preflight = validatedPreflight.preflight || {};
+    const preflightTriggers = toPlainRecord(preflight.triggers) || {};
+    const preflightProtectedSnapshot = toPlainRecord(preflightTriggers.protected_control_plane_snapshot) || {};
+    const hasProtectedSnapshot = Object.prototype.hasOwnProperty.call(preflightTriggers, 'protected_control_plane_snapshot');
+    const orchestratorWork = !!taskModeEvidence.orchestrator_work;
+    const preflightManifestStatus = String(preflightTriggers.protected_control_plane_manifest_status || '').trim().toUpperCase();
+    const preflightManifestChangedFiles = Array.isArray(preflightTriggers.protected_control_plane_manifest_changed_files)
+        ? preflightTriggers.protected_control_plane_manifest_changed_files.map((entry) => String(entry)).filter(Boolean)
+        : [];
+
+    // T-1010: Re-scan protected paths at completion to detect tampering
+    let currentProtectedSnapshot: Record<string, string> | null = null;
+    if (hasProtectedSnapshot) {
+        currentProtectedSnapshot = scanProtectedPathHashes(
+            repoRoot,
+            getProtectedControlPlaneRoots(repoRoot)
+        );
+
+        const changedFiles: string[] = [];
+        const allProtectedPaths = new Set([...Object.keys(preflightProtectedSnapshot), ...Object.keys(currentProtectedSnapshot)]);
+        for (const p of allProtectedPaths) {
+            if (preflightProtectedSnapshot[p] !== currentProtectedSnapshot[p]) {
+                changedFiles.push(p);
+            }
+        }
+
+        if (changedFiles.length > 0 && !orchestratorWork) {
+            errors.push(
+                `Control-plane files were modified in a non-orchestrator task: ${changedFiles.join(', ')}. ` +
+                "Protected orchestrator runtime paths are only allowed for tasks started with --orchestrator-work."
+            );
+        }
+    }
+
+    const protectedManifestEvidence = evaluateProtectedControlPlaneManifest(repoRoot, currentProtectedSnapshot);
+    if (!orchestratorWork) {
+        if (protectedManifestEvidence.status === 'INVALID') {
+            errors.push(
+                `Trusted protected control-plane manifest is invalid: ${protectedManifestEvidence.manifest_path}. ` +
+                'Re-run setup/update/reinit before executing ordinary tasks.'
+            );
+        } else if (protectedManifestEvidence.status === 'DRIFT') {
+            if (preflightManifestStatus === 'DRIFT') {
+                errors.push(
+                    `Trusted protected control-plane manifest was already drifted before task start: ` +
+                    `${preflightManifestChangedFiles.join(', ') || protectedManifestEvidence.changed_files.join(', ')}.`
+                );
+            } else {
+                errors.push(
+                    `Trusted protected control-plane manifest drift detected: ${protectedManifestEvidence.changed_files.join(', ')}. ` +
+                    'Run setup/update/reinit to refresh the trusted lifecycle baseline, or start the task with --orchestrator-work if it intentionally changes the orchestrator.'
+                );
+            }
+        }
+    }
 
     const compileEvidence = readJsonArtifact(compileEvidencePath, 'Compile gate', errors);
     const reviewEvidence = readJsonArtifact(reviewEvidencePath, 'Review gate', errors);

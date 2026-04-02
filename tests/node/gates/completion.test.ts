@@ -9,16 +9,263 @@ import {
     formatCompletionGateResult,
     isMeaningfulReviewEntry,
     getFindingsBySeverity,
+    runCompletionGate,
     validateStageSequence,
     detectCodeChanged,
     validateReviewSkillEvidence,
     STAGE_SEQUENCE_ORDER,
     isTrivialReview
 } from '../../../src/gates/completion';
+import { fileSha256, normalizePath } from '../../../src/gates/helpers';
 
 import type { TimelineEventEntry } from '../../../src/gates/completion';
 
 describe('gates/completion', () => {
+    describe('runCompletionGate protected control-plane diff gate', () => {
+        function writeJson(filePath: string, value: unknown): void {
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf8');
+        }
+
+        function writeRuleFile(repoRoot: string, relativePath: string): string {
+            const fullPath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'live', 'docs', 'agent-rules', relativePath);
+            fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+            fs.writeFileSync(fullPath, `# ${relativePath}\n`, 'utf8');
+            return normalizePath(fullPath);
+        }
+
+        function createCompletionWorkspace(orchestratorWork: boolean, includeProtectedSnapshot: boolean) {
+            const repoRoot = fs.mkdtempSync(path.join(process.cwd(), 'tmp-completion-protected-'));
+            const reviewsRoot = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'reviews');
+            const timelinePath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'task-events', 'T-1010.jsonl');
+            const taskId = 'T-1010';
+            const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+            const taskModePath = path.join(reviewsRoot, `${taskId}-task-mode.json`);
+            const rulePackPath = path.join(reviewsRoot, `${taskId}-rule-pack.json`);
+            const compilePath = path.join(reviewsRoot, `${taskId}-compile-gate.json`);
+            const reviewPath = path.join(reviewsRoot, `${taskId}-review-gate.json`);
+            const docImpactPath = path.join(reviewsRoot, `${taskId}-doc-impact.json`);
+            const noOpPath = path.join(reviewsRoot, `${taskId}-no-op.json`);
+            const protectedManifestPath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'protected-control-plane-manifest.json');
+            const protectedFilePath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'src', 'cli', 'main.ts');
+
+            const requiredRuleFiles = [
+                writeRuleFile(repoRoot, '00-core.md'),
+                writeRuleFile(repoRoot, '40-commands.md'),
+                writeRuleFile(repoRoot, '80-task-workflow.md'),
+                writeRuleFile(repoRoot, '90-skill-catalog.md')
+            ];
+
+            fs.mkdirSync(path.dirname(protectedFilePath), { recursive: true });
+            fs.writeFileSync(protectedFilePath, 'console.log("before");\n', 'utf8');
+
+            const triggers = includeProtectedSnapshot
+                ? {
+                    protected_control_plane_snapshot: {
+                        'Octopus-agent-orchestrator/src/cli/main.ts': fileSha256(protectedFilePath)
+                    }
+                }
+                : {};
+
+            writeJson(preflightPath, {
+                task_id: taskId,
+                changed_files: [],
+                metrics: {
+                    changed_lines_total: 0
+                },
+                required_reviews: {},
+                triggers
+            });
+
+            writeJson(taskModePath, {
+                timestamp_utc: '2026-04-02T17:00:00.000Z',
+                event_source: 'enter-task-mode',
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                entry_mode: 'EXPLICIT_TASK_EXECUTION',
+                requested_depth: 2,
+                effective_depth: 2,
+                task_summary: 'Protect orchestrator control plane',
+                orchestrator_work: orchestratorWork,
+                provider: 'Codex',
+                routed_to: 'AGENTS.md',
+                actor: 'orchestrator'
+            });
+
+            writeJson(rulePackPath, {
+                timestamp_utc: '2026-04-02T17:00:01.000Z',
+                event_source: 'load-rule-pack',
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                latest_stage: 'POST_PREFLIGHT',
+                stages: {
+                    post_preflight: {
+                        timestamp_utc: '2026-04-02T17:00:01.000Z',
+                        stage: 'POST_PREFLIGHT',
+                        status: 'PASSED',
+                        outcome: 'PASS',
+                        actor: 'orchestrator',
+                        required_rule_files: requiredRuleFiles,
+                        loaded_rule_files: requiredRuleFiles,
+                        missing_rule_files: [],
+                        extra_rule_files: [],
+                        required_rule_hashes: {},
+                        loaded_rule_hashes: {},
+                        required_rule_count: requiredRuleFiles.length,
+                        loaded_rule_count: requiredRuleFiles.length,
+                        effective_depth: 2,
+                        preflight_path: normalizePath(preflightPath),
+                        preflight_hash_sha256: fileSha256(preflightPath),
+                        required_reviews: {},
+                        violations: []
+                    }
+                }
+            });
+
+            writeJson(compilePath, { status: 'PASSED', outcome: 'PASS' });
+            writeJson(reviewPath, { status: 'PASSED', outcome: 'PASS' });
+            writeJson(docImpactPath, { status: 'PASSED', outcome: 'PASS' });
+            writeJson(noOpPath, {
+                timestamp_utc: '2026-04-02T17:00:02.500Z',
+                event_source: 'record-no-op',
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                classification: 'AUDIT_ONLY',
+                reason: 'Completion fixture for protected control-plane tests.',
+                actor: 'orchestrator',
+                preflight_path: normalizePath(preflightPath)
+            });
+
+            fs.mkdirSync(path.dirname(timelinePath), { recursive: true });
+            fs.writeFileSync(
+                timelinePath,
+                [
+                    { event_type: 'TASK_MODE_ENTERED', timestamp_utc: '2026-04-02T17:00:00.000Z' },
+                    { event_type: 'RULE_PACK_LOADED', timestamp_utc: '2026-04-02T17:00:01.000Z' },
+                    { event_type: 'COMPILE_GATE_PASSED', timestamp_utc: '2026-04-02T17:00:02.000Z' },
+                    { event_type: 'REVIEW_PHASE_STARTED', timestamp_utc: '2026-04-02T17:00:03.000Z' },
+                    { event_type: 'REVIEW_GATE_PASSED', timestamp_utc: '2026-04-02T17:00:04.000Z' }
+                ].map((entry) => JSON.stringify(entry)).join('\n') + '\n',
+                'utf8'
+            );
+
+            return {
+                repoRoot,
+                preflightPath,
+                taskModePath,
+                rulePackPath,
+                compilePath,
+                reviewPath,
+                docImpactPath,
+                noOpPath,
+                protectedManifestPath,
+                timelinePath,
+                protectedFilePath
+            };
+        }
+
+        it('fails ordinary tasks when protected control-plane files changed after preflight', () => {
+            const workspace = createCompletionWorkspace(false, true);
+
+            try {
+                fs.writeFileSync(workspace.protectedFilePath, 'console.log("after");\n', 'utf8');
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.ok(
+                    result.violations.some((entry) => String(entry).includes('Control-plane files were modified in a non-orchestrator task'))
+                );
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('keeps backward compatibility when old preflight artifacts have no protected snapshot', () => {
+            const workspace = createCompletionWorkspace(false, false);
+
+            try {
+                fs.writeFileSync(workspace.protectedFilePath, 'console.log("after");\n', 'utf8');
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'PASSED');
+                assert.equal(
+                    result.violations.some((entry) => String(entry).includes('Control-plane files were modified in a non-orchestrator task')),
+                    false
+                );
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('fails ordinary tasks when trusted protected baseline was already drifted before task start', () => {
+            const workspace = createCompletionWorkspace(false, false);
+
+            try {
+                writeJson(workspace.protectedManifestPath, {
+                    schema_version: 1,
+                    event_source: 'refresh-protected-control-plane-manifest',
+                    timestamp_utc: '2026-04-02T16:59:00.000Z',
+                    workspace_root: normalizePath(workspace.repoRoot),
+                    orchestrator_root: normalizePath(path.join(workspace.repoRoot, 'Octopus-agent-orchestrator')),
+                    protected_roots: ['Octopus-agent-orchestrator/src/cli'],
+                    protected_snapshot: {
+                        'Octopus-agent-orchestrator/src/cli/main.ts': 'stale-manifest-hash'
+                    },
+                    is_source_checkout: false
+                });
+
+                const preflight = JSON.parse(fs.readFileSync(workspace.preflightPath, 'utf8'));
+                preflight.triggers.protected_control_plane_manifest_status = 'DRIFT';
+                preflight.triggers.protected_control_plane_manifest_changed_files = ['Octopus-agent-orchestrator/src/cli/main.ts'];
+                writeJson(workspace.preflightPath, preflight);
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.ok(
+                    result.violations.some((entry) => String(entry).includes('Trusted protected control-plane manifest was already drifted before task start'))
+                );
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+    });
+
     describe('collectOrderedTimelineEvents', () => {
         it('continues scanning valid events after an invalid JSON line', () => {
             const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-completion-timeline-'));

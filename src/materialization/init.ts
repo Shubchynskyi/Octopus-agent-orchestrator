@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
 import { readJsonFile } from '../core/json';
 import { ALL_AGENT_ENTRYPOINT_FILES } from '../core/constants';
+import { writeProtectedControlPlaneManifest } from '../gates/helpers';
 import { syncReviewCapabilities, writeSkillsIndex } from '../runtime/skills';
 import {
     getCanonicalEntrypointFile,
@@ -337,6 +338,7 @@ export function runInit(options: RunInitOptions) {
         }
 
         writeSkillsIndex(bundleRoot);
+        writeProtectedControlPlaneManifest(normalizedTarget);
     }
 
     return {

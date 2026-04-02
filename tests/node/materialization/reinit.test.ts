@@ -205,6 +205,7 @@ describe('runReinit', () => {
             assert.equal(result.sourceOfTruth, 'Claude');
             assert.equal(result.canonicalEntrypoint, 'CLAUDE.md');
             assert.ok(result.changes.length > 0);
+            assert.ok(fs.existsSync(path.join(bundleRoot, 'runtime', 'protected-control-plane-manifest.json')));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

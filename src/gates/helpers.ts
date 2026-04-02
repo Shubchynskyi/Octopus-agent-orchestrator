@@ -11,6 +11,24 @@ export interface ToStringArrayOptions {
     trimValues?: boolean;
 }
 
+export interface ProtectedControlPlaneManifest {
+    schema_version: 1;
+    event_source: 'refresh-protected-control-plane-manifest';
+    timestamp_utc: string;
+    workspace_root: string;
+    orchestrator_root: string;
+    protected_roots: string[];
+    protected_snapshot: Record<string, string>;
+    is_source_checkout: boolean;
+}
+
+export interface ProtectedControlPlaneManifestEvidence {
+    status: 'MISSING' | 'INVALID' | 'MATCH' | 'DRIFT';
+    manifest_path: string;
+    changed_files: string[];
+    manifest: ProtectedControlPlaneManifest | null;
+}
+
 /**
  * Normalize a path to Unix-style, trimming whitespace and stripping leading ./
  */
@@ -44,6 +62,218 @@ export function resolveProjectRoot(startDir: string): string {
         current = parent;
     }
     return path.resolve(startDir);
+}
+
+/**
+ * Convert unknown value to a plain object record or null.
+ */
+export function toPlainRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+/**
+ * Detect whether repoRoot is the orchestrator source checkout itself.
+ */
+export function isOrchestratorSourceCheckout(repoRoot: string): boolean {
+    const packageJsonPath = path.join(path.resolve(repoRoot), 'package.json');
+    if (!fs.existsSync(packageJsonPath) || !fs.statSync(packageJsonPath).isFile()) {
+        return false;
+    }
+    try {
+        const parsed = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as Record<string, unknown>;
+        return String(parsed.name || '').trim() === 'octopus-agent-orchestrator';
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Return protected control-plane roots for this workspace.
+ * Ordinary workspaces protect only the deployed bundle.
+ * The orchestrator source checkout additionally protects root-level runtime sources.
+ */
+export function getProtectedControlPlaneRoots(repoRoot: string): string[] {
+    const roots = [
+        `${DEFAULT_BUNDLE_NAME}/src/bin`,
+        `${DEFAULT_BUNDLE_NAME}/src/cli`,
+        `${DEFAULT_BUNDLE_NAME}/src/gates`,
+        `${DEFAULT_BUNDLE_NAME}/src/gate-runtime`,
+        `${DEFAULT_BUNDLE_NAME}/src/lifecycle`,
+        `${DEFAULT_BUNDLE_NAME}/src/materialization`,
+        `${DEFAULT_BUNDLE_NAME}/bin`,
+        `${DEFAULT_BUNDLE_NAME}/dist`,
+        `${DEFAULT_BUNDLE_NAME}/live/docs/agent-rules`
+    ];
+
+    if (isOrchestratorSourceCheckout(repoRoot)) {
+        roots.push(
+            'src/bin',
+            'src/cli',
+            'src/gates',
+            'src/gate-runtime',
+            'src/lifecycle',
+            'src/materialization',
+            'bin',
+            'dist',
+            'live/docs/agent-rules'
+        );
+    }
+
+    return normalizeRootPrefixes(roots);
+}
+
+/**
+ * Scan protected roots recursively and return a map of path -> sha256 hash.
+ */
+export function scanProtectedPathHashes(repoRoot: string, protectedRoots: string[]): Record<string, string> {
+    const results: Record<string, string> = {};
+
+    const scan = (currentDir: string) => {
+        const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path.join(currentDir, entry.name);
+            const relPath = normalizePath(path.relative(repoRoot, fullPath));
+
+            if (entry.isDirectory()) {
+                scan(fullPath);
+            } else if (entry.isFile()) {
+                try {
+                    const hash = fileSha256(fullPath);
+                    if (hash) {
+                        results[relPath] = hash;
+                    }
+                } catch {
+                    results[relPath] = '<error>';
+                }
+            }
+        }
+    };
+
+    for (const root of protectedRoots) {
+        const normalizedRoot = normalizePath(root).replace(/\/$/, '');
+        if (!normalizedRoot) {
+            continue;
+        }
+        const fullRoot = path.resolve(repoRoot, normalizedRoot);
+        if (!fs.existsSync(fullRoot)) {
+            continue;
+        }
+        const stat = fs.statSync(fullRoot);
+        if (stat.isDirectory()) {
+            scan(fullRoot);
+        } else if (stat.isFile()) {
+            const relPath = normalizePath(path.relative(repoRoot, fullRoot));
+            const hash = fileSha256(fullRoot);
+            if (hash) {
+                results[relPath] = hash;
+            }
+        }
+    }
+
+    return results;
+}
+
+/**
+ * Resolve the persisted protected control-plane manifest path.
+ */
+export function resolveProtectedControlPlaneManifestPath(repoRoot: string): string {
+    return joinOrchestratorPath(repoRoot, path.join('runtime', 'protected-control-plane-manifest.json'));
+}
+
+/**
+ * Build the current trusted protected control-plane manifest from the workspace.
+ */
+export function buildProtectedControlPlaneManifest(repoRoot: string): ProtectedControlPlaneManifest {
+    const normalizedRepoRoot = path.resolve(repoRoot);
+    const protectedRoots = getProtectedControlPlaneRoots(normalizedRepoRoot);
+    const manifestPath = resolveProtectedControlPlaneManifestPath(normalizedRepoRoot);
+    return {
+        schema_version: 1,
+        event_source: 'refresh-protected-control-plane-manifest',
+        timestamp_utc: new Date().toISOString(),
+        workspace_root: normalizePath(normalizedRepoRoot),
+        orchestrator_root: normalizePath(path.dirname(path.dirname(manifestPath))),
+        protected_roots: protectedRoots,
+        protected_snapshot: scanProtectedPathHashes(normalizedRepoRoot, protectedRoots),
+        is_source_checkout: isOrchestratorSourceCheckout(normalizedRepoRoot)
+    };
+}
+
+/**
+ * Persist the trusted protected control-plane manifest after a lifecycle action.
+ */
+export function writeProtectedControlPlaneManifest(repoRoot: string): string {
+    const manifestPath = resolveProtectedControlPlaneManifestPath(repoRoot);
+    const manifest = buildProtectedControlPlaneManifest(repoRoot);
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+    return manifestPath;
+}
+
+/**
+ * Compare the current protected snapshot with the last trusted lifecycle manifest.
+ */
+export function evaluateProtectedControlPlaneManifest(
+    repoRoot: string,
+    currentSnapshot?: Record<string, string> | null
+): ProtectedControlPlaneManifestEvidence {
+    const manifestPath = resolveProtectedControlPlaneManifestPath(repoRoot);
+    const normalizedManifestPath = normalizePath(manifestPath);
+    if (!fs.existsSync(manifestPath) || !fs.statSync(manifestPath).isFile()) {
+        return {
+            status: 'MISSING',
+            manifest_path: normalizedManifestPath,
+            changed_files: [],
+            manifest: null
+        };
+    }
+
+    let manifestObject: ProtectedControlPlaneManifest;
+    try {
+        const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+        if (
+            !parsed
+            || typeof parsed !== 'object'
+            || Array.isArray(parsed)
+            || !parsed.protected_snapshot
+            || typeof parsed.protected_snapshot !== 'object'
+            || Array.isArray(parsed.protected_snapshot)
+        ) {
+            return {
+                status: 'INVALID',
+                manifest_path: normalizedManifestPath,
+                changed_files: [],
+                manifest: null
+            };
+        }
+        manifestObject = parsed as unknown as ProtectedControlPlaneManifest;
+    } catch {
+        return {
+            status: 'INVALID',
+            manifest_path: normalizedManifestPath,
+            changed_files: [],
+            manifest: null
+        };
+    }
+
+    const snapshot = currentSnapshot || scanProtectedPathHashes(repoRoot, getProtectedControlPlaneRoots(repoRoot));
+    const manifestSnapshot = manifestObject.protected_snapshot || {};
+    const changedFiles: string[] = [];
+    const allProtectedPaths = new Set([...Object.keys(manifestSnapshot), ...Object.keys(snapshot)]);
+    for (const protectedPath of allProtectedPaths) {
+        if (manifestSnapshot[protectedPath] !== snapshot[protectedPath]) {
+            changedFiles.push(protectedPath);
+        }
+    }
+
+    return {
+        status: changedFiles.length > 0 ? 'DRIFT' : 'MATCH',
+        manifest_path: normalizedManifestPath,
+        changed_files: changedFiles.sort(),
+        manifest: manifestObject
+    };
 }
 
 /**
@@ -243,4 +473,3 @@ export function resolveGitRoot(repoRoot: string): string {
     if (fs.existsSync(path.join(bundleCandidate, '.git'))) return bundleCandidate;
     return resolved;
 }
-

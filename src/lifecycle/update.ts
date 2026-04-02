@@ -7,6 +7,7 @@ import { isPathInsideRoot } from '../core/paths';
 import { validateInitAnswers } from '../schemas/init-answers';
 import { runInstall } from '../materialization/install';
 import { runInit } from '../materialization/init';
+import { writeProtectedControlPlaneManifest } from '../gates/helpers';
 import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
 import {
     buildRefreshAgentInitState,
@@ -400,6 +401,7 @@ export function runUpdate(options: RunUpdateOptions) {
                 throw new Error(`Bundle invariant violation after update: ${invariantResult.violations.join('; ')}`);
             }
             invariantStatus = 'PASS';
+            writeProtectedControlPlaneManifest(normalizedTarget);
 
             // Sync agent init state after successful update
             const previousAgentInitStateResult = readAgentInitStateSafe(normalizedTarget);

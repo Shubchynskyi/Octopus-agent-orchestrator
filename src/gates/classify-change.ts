@@ -4,6 +4,7 @@ import { matchAnyRegex } from '../gate-runtime/text-utils';
 import {
     normalizePath,
     joinOrchestratorPath,
+    getProtectedControlPlaneRoots,
     normalizeRootPrefixes,
     orchestratorRelativePath,
     testPathPrefix,
@@ -30,6 +31,7 @@ interface ClassificationConfig {
     sql_or_migration_regexes: string[];
     triggers: TriggerConfig;
     code_like_regexes: string[];
+    protected_control_plane_roots: string[];
 }
 
 interface ResolvedClassificationConfig {
@@ -49,6 +51,7 @@ interface ResolvedClassificationConfig {
     test_trigger_regexes: string[];
     performance_trigger_regexes: string[];
     code_like_regexes: string[];
+    protected_control_plane_roots: string[];
 }
 
 interface ReviewCapabilities {
@@ -149,9 +152,8 @@ export function getDefaultClassificationConfig(repoRoot: string): Classification
                 '(^|/)(performance|perf|benchmark)/'
             ]
         },
-        code_like_regexes: [
-            '\\.(java|kt|kts|groovy|ts|tsx|js|jsx|cjs|mjs|cs|go|py|rb|php|rs)$'
-        ]
+        code_like_regexes: ['\\.(java|kt|kts|groovy|ts|tsx|js|jsx|cjs|mjs|cs|go|py|rb|php|rs)$'],
+        protected_control_plane_roots: getProtectedControlPlaneRoots(repoRoot)
     };
 }
 
@@ -169,7 +171,7 @@ export function getClassificationConfig(repoRoot: string): ResolvedClassificatio
             for (const key of [
                 'metrics_path', 'runtime_roots', 'fast_path_roots',
                 'fast_path_allowed_regexes', 'fast_path_sensitive_regexes',
-                'sql_or_migration_regexes', 'code_like_regexes'
+                'sql_or_migration_regexes', 'code_like_regexes', 'protected_control_plane_roots'
             ] as const) {
                 if (key in raw) (defaults as unknown as Record<string, unknown>)[key] = raw[key];
             }
@@ -203,7 +205,8 @@ export function getClassificationConfig(repoRoot: string): ResolvedClassificatio
         infra_trigger_regexes: toStringArray(defaults.triggers.infra),
         test_trigger_regexes: toStringArray(defaults.triggers.test),
         performance_trigger_regexes: toStringArray(defaults.triggers.performance),
-        code_like_regexes: toStringArray(defaults.code_like_regexes)
+        code_like_regexes: toStringArray(defaults.code_like_regexes),
+        protected_control_plane_roots: normalizeRootPrefixes(toStringArray(defaults.protected_control_plane_roots))
     };
 }
 
@@ -318,6 +321,13 @@ export function classifyChange(options: ClassifyChangeOptions) {
     const runtimeChanged = normalizedFiles.some((p: string) => matchesConfiguredRoot(p, runtimeRoots, {
         allowNestedRoot: true
     }));
+    const runtimeCodeChanged = normalizedFiles.some((p: string) => matchesConfiguredRoot(p, runtimeRoots, {
+        allowNestedRoot: true
+    }) && testMatch(p, codeLike));
+
+    const protectedControlPlaneFiles = normalizedFiles.filter((p: string) => testPathPrefix(p, classificationConfig.protected_control_plane_roots));
+    const protectedControlPlaneChanged = protectedControlPlaneFiles.length > 0;
+
     const dbTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.db_trigger_regexes));
     const securityTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.security_trigger_regexes));
     const apiTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.api_trigger_regexes));
@@ -333,7 +343,6 @@ export function classifyChange(options: ClassifyChangeOptions) {
     const runtimeCodeLikeCount = normalizedFiles.filter(
         (p: string) => matchesConfiguredRoot(p, runtimeRoots, { allowNestedRoot: true }) && testMatch(p, codeLike)
     ).length;
-    const runtimeCodeChanged = runtimeCodeLikeCount > 0;
 
     const refactorHeuristicReasons = [];
     if (runtimeChanged && normalizedFiles.length > 0) {
@@ -412,6 +421,8 @@ export function classifyChange(options: ClassifyChangeOptions) {
         triggers: {
             runtime_changed: runtimeChanged,
             runtime_code_changed: runtimeCodeChanged,
+            protected_control_plane_changed: protectedControlPlaneChanged,
+            changed_protected_files: protectedControlPlaneFiles,
             db: dbTriggered,
             security: securityTriggered,
             api: apiTriggered,

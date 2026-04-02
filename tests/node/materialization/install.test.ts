@@ -95,7 +95,9 @@ describe('runInstall', () => {
             assert.ok(fs.existsSync(path.join(projectRoot, 'TASK.md')));
             assert.ok(fs.existsSync(path.join(projectRoot, 'CLAUDE.md')));
             assert.ok(result.liveVersionWritten);
+            assert.ok(result.protectedControlPlaneManifestWritten);
             assert.ok(fs.existsSync(path.join(bundleRoot, 'live', 'version.json')));
+            assert.ok(fs.existsSync(path.join(bundleRoot, 'runtime', 'protected-control-plane-manifest.json')));
             assert.equal(result.canonicalEntrypoint, 'CLAUDE.md');
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });

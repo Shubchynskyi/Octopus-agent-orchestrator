@@ -7,7 +7,7 @@ import {
     type ReviewReceipt
 } from '../gate-runtime/review-context';
 import { assertValidTaskId } from '../gate-runtime/task-events';
-import { fileSha256, normalizePath } from './helpers';
+import { fileSha256, normalizePath, toPlainRecord } from './helpers';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 import { normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from './reviewer-routing';
 
@@ -131,7 +131,6 @@ interface ReviewArtifactEntry {
     reviewContext?: Record<string, unknown>;
     reviewContextSha256?: string | null;
 }
-
 export interface CheckRequiredReviewsOptions {
     validatedPreflight: {
         errors: string[];
@@ -145,12 +144,6 @@ export interface CheckRequiredReviewsOptions {
     compileGateEvidence?: Record<string, unknown> | null;
     reviewArtifacts?: Record<string, ReviewArtifactEntry>;
     sourceOfTruth?: string | null;
-}
-
-function toPlainRecord(value: unknown): Record<string, unknown> | null {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : null;
 }
 
 /**

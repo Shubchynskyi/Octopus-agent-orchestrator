@@ -1,9 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import {
     classifyChange,
     getDefaultClassificationConfig,
+    getClassificationConfig,
     getReviewCapabilities
 } from '../../../src/gates/classify-change';
 
@@ -26,7 +30,8 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
         infra_trigger_regexes: defaults.triggers.infra,
         test_trigger_regexes: defaults.triggers.test,
         performance_trigger_regexes: defaults.triggers.performance,
-        code_like_regexes: defaults.code_like_regexes
+        code_like_regexes: defaults.code_like_regexes,
+        protected_control_plane_roots: defaults.protected_control_plane_roots
     };
     return { ...base, ...overrides };
 }
@@ -249,6 +254,64 @@ describe('gates/classify-change', () => {
             });
             assert.deepEqual(result.changed_files, files);
             assert.equal(result.detection_source, 'explicit_changed_files');
+        });
+
+        it('does not treat ordinary project bin/dist/src-cli paths as protected control-plane in a normal workspace', () => {
+            const result = classifyChange({
+                normalizedFiles: ['src/cli/app.ts', 'dist/app.js', 'bin/run.js'],
+                taskIntent: 'Update app runtime',
+                changedLinesTotal: 25,
+                additionsTotal: 20,
+                deletionsTotal: 5,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+
+            assert.equal(result.triggers.protected_control_plane_changed, false);
+            assert.deepEqual(result.triggers.changed_protected_files, []);
+        });
+
+        it('treats deployed bundle runtime paths as protected control-plane', () => {
+            const result = classifyChange({
+                normalizedFiles: ['Octopus-agent-orchestrator/src/cli/main.ts'],
+                taskIntent: 'Patch orchestrator runtime',
+                changedLinesTotal: 12,
+                additionsTotal: 9,
+                deletionsTotal: 3,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+
+            assert.equal(result.triggers.protected_control_plane_changed, true);
+            assert.deepEqual(result.triggers.changed_protected_files, ['Octopus-agent-orchestrator/src/cli/main.ts']);
+        });
+
+        it('treats root-level orchestrator source paths as protected only in the self-hosted source checkout', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-protected-roots-'));
+            fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'octopus-agent-orchestrator' }), 'utf8');
+
+            try {
+                const result = classifyChange({
+                    normalizedFiles: ['src/cli/main.ts'],
+                    taskIntent: 'Patch orchestrator source',
+                    changedLinesTotal: 12,
+                    additionsTotal: 9,
+                    deletionsTotal: 3,
+                    renameCount: 0,
+                    detectionSource: 'explicit_changed_files',
+                    classificationConfig: getClassificationConfig(repoRoot),
+                    reviewCapabilities: defaultCapabilities
+                });
+
+                assert.equal(result.triggers.protected_control_plane_changed, true);
+                assert.deepEqual(result.triggers.changed_protected_files, ['src/cli/main.ts']);
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
         });
     });
 });
