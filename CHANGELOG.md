@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.4.2
+- expanded the shared `start-task` router so root entrypoints and provider bridges now converge on the same orchestration checklist instead of relying on uneven provider-specific wording
+- materialized `.agents/workflows/start-task.md` as the common thin-router control layer and updated templates/docs/tests to keep root-entrypoint providers and provider-native bridges aligned
+
 ## 2.4.1
 - fixed `completion-gate` timeline parsing so one corrupted JSONL line no longer truncates the rest of the task timeline; later valid events are still processed and invalid lines are reported as parse errors instead of aborting the scan
 - expanded the managed `.gitignore` baseline written during install/setup so all supported agent entrypoints and provider bridge directories are ignored from the start, preventing later agent-file additions from showing up as unexpected tracked files
