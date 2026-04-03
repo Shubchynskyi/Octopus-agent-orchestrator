@@ -95,6 +95,7 @@ import {
 } from './commands/cli-helpers';
 import {
     runClassifyChangeCommand,
+    runCommandTimeoutDiagnosticsCommand,
     runCompileGateCommand,
     runDocImpactGateCommand,
     runEnterTaskModeCommand,
@@ -1205,6 +1206,25 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             };
             const { options } = parseOptions(gateArgv, defs);
             const result = runShellSmokePreflightCommand(options);
+            process.stdout.write(`${result.outputLines.join('\n')}\n`);
+            if (result.exitCode !== 0) {
+                process.exitCode = result.exitCode;
+            }
+            return;
+        }
+        case 'command-timeout-diagnostics': {
+            const defs = {
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--provider': { key: 'provider', type: 'string' },
+                '--effective-cwd': { key: 'effectiveCwd', type: 'string' },
+                '--command-records-path': { key: 'commandRecordsPath', type: 'string' },
+                '--artifact-path': { key: 'artifactPath', type: 'string' },
+                '--metrics-path': { key: 'metricsPath', type: 'string' },
+                '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options } = parseOptions(gateArgv, defs);
+            const result = runCommandTimeoutDiagnosticsCommand(options);
             process.stdout.write(`${result.outputLines.join('\n')}\n`);
             if (result.exitCode !== 0) {
                 process.exitCode = result.exitCode;

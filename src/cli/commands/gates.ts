@@ -14,6 +14,7 @@ import { applyOutputFilterProfile } from '../../gate-runtime/output-filters';
 import {
     emitHandshakeDiagnosticsEvent,
     emitShellSmokePreflightEvent,
+    emitCommandTimeoutDiagnosticsEvent,
     emitReviewPhaseStartedEvent,
     emitMandatoryImplementationStartedEvent,
     emitMandatoryPreflightFailedEvent,
@@ -63,6 +64,13 @@ import {
     formatShellSmokePreflightResult,
     resolveShellSmokeArtifactPath
 } from '../../gates/shell-smoke-preflight';
+import {
+    buildCommandTimeoutDiagnostics,
+    CommandPhaseTracker,
+    formatCommandTimeoutDiagnosticsResult,
+    resolveCommandTimeoutArtifactPath,
+    type CommandPhaseRecord
+} from '../../gates/command-timeout-diagnostics';
 import {
     buildTaskModeArtifact,
     collectTaskTimelineEventTypes,
@@ -201,6 +209,17 @@ interface ShellSmokePreflightCommandOptions {
     provider?: unknown;
     effectiveCwd?: unknown;
     probeTimeoutMs?: unknown;
+    artifactPath?: string;
+    metricsPath?: string;
+    emitMetrics?: unknown;
+}
+
+interface CommandTimeoutDiagnosticsCommandOptions {
+    repoRoot?: string;
+    taskId?: unknown;
+    provider?: unknown;
+    effectiveCwd?: unknown;
+    commandRecordsPath?: string;
     artifactPath?: string;
     metricsPath?: string;
     emitMetrics?: unknown;
@@ -1131,6 +1150,86 @@ export function runShellSmokePreflightCommand(options: ShellSmokePreflightComman
 
     const outputLines = formatShellSmokePreflightResult(artifact);
     outputLines.push(`ShellSmokeArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`);
+
+    return {
+        outputLines,
+        exitCode: artifact.outcome === 'PASS' ? 0 : 1
+    };
+}
+
+export function runCommandTimeoutDiagnosticsCommand(options: CommandTimeoutDiagnosticsCommandOptions): { outputLines: string[]; exitCode: number } {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
+    const taskId = assertValidTaskId(String(options.taskId || '').trim());
+    const routingDecision = readRoutingDecision(repoRoot, options.provider);
+    const provider = routingDecision.provider;
+
+    const artifactPath = options.artifactPath
+        ? requireResolvedPath(resolvePathForWrite(options.artifactPath, repoRoot), 'ArtifactPath')
+        : resolveCommandTimeoutArtifactPath(repoRoot, taskId, '');
+
+    let commands: CommandPhaseRecord[] = [];
+    const commandRecordsPath = options.commandRecordsPath ? String(options.commandRecordsPath).trim() : '';
+    if (commandRecordsPath) {
+        const resolvedRecordsPath = path.resolve(repoRoot, commandRecordsPath);
+        if (fs.existsSync(resolvedRecordsPath) && fs.statSync(resolvedRecordsPath).isFile()) {
+            try {
+                const raw = JSON.parse(fs.readFileSync(resolvedRecordsPath, 'utf8'));
+                if (Array.isArray(raw)) {
+                    commands = raw as CommandPhaseRecord[];
+                } else if (raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).commands)) {
+                    commands = (raw as Record<string, unknown>).commands as CommandPhaseRecord[];
+                }
+            } catch {
+                return {
+                    outputLines: [`ERROR: Failed to parse command records from '${commandRecordsPath}'.`],
+                    exitCode: 1
+                };
+            }
+        }
+    }
+
+    const artifact = buildCommandTimeoutDiagnostics({
+        taskId,
+        repoRoot,
+        provider,
+        effectiveCwd: options.effectiveCwd ? String(options.effectiveCwd) : undefined,
+        commands
+    });
+
+    writeJsonArtifact(artifactPath, artifact);
+
+    const artifactHash = gateHelpers.fileSha256(artifactPath);
+
+    const metricsPath = options.metricsPath
+        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
+        : resolveDefaultMetricsPath(repoRoot);
+    appendMetricsIfEnabled(metricsPath, {
+        timestamp_utc: artifact.timestamp_utc,
+        event_type: 'command_timeout_diagnostics_recorded',
+        task_id: taskId,
+        artifact_path: gateHelpers.normalizePath(artifactPath),
+        artifact_hash: artifactHash,
+        provider: artifact.provider,
+        execution_context: artifact.execution_context,
+        outcome: artifact.outcome,
+        command_count: artifact.commands.length,
+        timed_out_count: artifact.commands.filter(c => c.timed_out).length
+    }, parseBooleanOption(options.emitMetrics, true));
+
+    emitCommandTimeoutDiagnosticsEvent(
+        orchestratorRoot,
+        taskId,
+        artifact.provider,
+        artifact.execution_context,
+        artifact.outcome === 'PASS',
+        artifact.commands.length,
+        artifact.commands.filter(c => c.timed_out).length,
+        artifactHash
+    );
+
+    const outputLines = formatCommandTimeoutDiagnosticsResult(artifact);
+    outputLines.push(`CommandTimeoutArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`);
 
     return {
         outputLines,

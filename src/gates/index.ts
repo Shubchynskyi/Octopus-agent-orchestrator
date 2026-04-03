@@ -11,6 +11,7 @@ import * as taskMode from './task-mode';
 import * as rulePack from './rule-pack';
 import * as handshakeDiagnostics from './handshake-diagnostics';
 import * as shellSmokePreflight from './shell-smoke-preflight';
+import * as commandTimeoutDiagnostics from './command-timeout-diagnostics';
 
 export {
     helpers,
@@ -25,5 +26,6 @@ export {
     taskMode,
     rulePack,
     handshakeDiagnostics,
-    shellSmokePreflight
+    shellSmokePreflight,
+    commandTimeoutDiagnostics
 };

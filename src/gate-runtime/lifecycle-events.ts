@@ -31,7 +31,8 @@ export const LIFECYCLE_EVENT_TYPES = Object.freeze({
     STATUS_CHANGED: 'STATUS_CHANGED',
     PROVIDER_ROUTING_DECISION: 'PROVIDER_ROUTING_DECISION',
     HANDSHAKE_DIAGNOSTICS_RECORDED: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
-    SHELL_SMOKE_PREFLIGHT_RECORDED: 'SHELL_SMOKE_PREFLIGHT_RECORDED'
+    SHELL_SMOKE_PREFLIGHT_RECORDED: 'SHELL_SMOKE_PREFLIGHT_RECORDED',
+    COMMAND_TIMEOUT_DIAGNOSTICS_RECORDED: 'COMMAND_TIMEOUT_DIAGNOSTICS_RECORDED'
 });
 
 /**
@@ -694,6 +695,50 @@ export function emitShellSmokePreflightEvent(
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : String(error);
         process.stderr.write(`WARNING: shell-smoke-preflight event emit failed: ${msg}\n`);
+        return null;
+    }
+}
+
+/**
+ * Auto-emit COMMAND_TIMEOUT_DIAGNOSTICS_RECORDED to the task timeline.
+ * Called when command-timeout-diagnostics gate completes.
+ */
+export function emitCommandTimeoutDiagnosticsEvent(
+    repoRoot: string,
+    taskId: string,
+    provider: string | null,
+    executionContext: string,
+    passed: boolean,
+    commandCount: number,
+    timedOutCount: number,
+    artifactHash: string | null = null,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    if (!repoRoot || !taskId) return null;
+    try {
+        return appendTaskEvent(
+            repoRoot,
+            taskId,
+            LIFECYCLE_EVENT_TYPES.COMMAND_TIMEOUT_DIAGNOSTICS_RECORDED,
+            passed ? 'PASS' : 'FAIL',
+            `Command timeout diagnostics ${passed ? 'passed' : 'failed'}: provider=${provider || 'unknown'}, context=${executionContext}, commands=${commandCount}, timed_out=${timedOutCount}.`,
+            {
+                provider,
+                execution_context: executionContext,
+                passed,
+                command_count: commandCount,
+                timed_out_count: timedOutCount,
+                artifact_hash: artifactHash
+            },
+            {
+                actor: options.actor || 'gate',
+                passThru: options.passThru ?? true,
+                eventsRoot: options.eventsRoot
+            }
+        );
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`WARNING: command-timeout-diagnostics event emit failed: ${msg}\n`);
         return null;
     }
 }

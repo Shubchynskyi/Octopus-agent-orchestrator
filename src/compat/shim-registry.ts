@@ -17,7 +17,10 @@ export const GATE_COMMANDS = Object.freeze([
     'record-review-receipt',
     'log-task-event',
     'task-events-summary',
-    'human-commit'
+    'human-commit',
+    'handshake-diagnostics',
+    'shell-smoke-preflight',
+    'command-timeout-diagnostics'
 ]);
 
 export function getAllShimmedGateNames() {
