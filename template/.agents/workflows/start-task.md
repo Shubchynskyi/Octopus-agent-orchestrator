@@ -26,3 +26,4 @@ Hard stops:
 - If a mandatory gate fails or is unavailable, stop and report the exact command and stderr.
 - Do not mark `DONE` without `COMPLETION_GATE_PASSED`.
 - Do not create fake review artifacts or bypass reviewer routing.
+- The `40-commands.md` preference to avoid ad-hoc manual commands does NOT exempt mandatory gates. Gates such as `compile-gate` must execute their underlying build/test commands when the workflow requires them.

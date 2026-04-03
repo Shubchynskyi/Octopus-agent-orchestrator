@@ -2,9 +2,26 @@
 
 Primary entry point: selected source-of-truth entrypoint for this workspace.
 
-IMPORTANT: The user prefers running commands manually. Do not execute `task` commands unless the prompt explicitly asks for it.
+IMPORTANT: The user prefers running ad-hoc commands manually. Do not execute ad-hoc `task` commands (e.g., standalone `npm run build`, `npm test`, `npm run lint`) unless the prompt explicitly asks for it or a mandatory gate requires the underlying command.
+Exception — mandatory gates always run: `compile-gate`, `required-reviews-check`, `doc-impact-gate`, `completion-gate`, and any other gate in the mandatory sequence must execute their underlying commands (including builds, tests, or type-checks) regardless of this preference. The preference applies only to ad-hoc command execution outside the gate pipeline.
 Exception: You may run tests and iterate only when the user explicitly requests this workflow.
 Canonical gate surface is `node Octopus-agent-orchestrator/bin/octopus.js gate <name>`.
+
+### Ad-Hoc vs Mandatory Gate Commands
+The "prefer manual commands" preference and mandatory gate execution are separate concerns:
+- **Ad-hoc commands** (`npm run build`, `npm test`, `npm run lint` executed directly) — avoid unless the user requests them or you have an explicit justification.
+- **Mandatory gate commands** (`node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate`, etc.) — always execute when required by the workflow, even when the gate internally runs `npm run build` or similar. A gate wrapping a build/test command is not an ad-hoc execution; it is lifecycle-required infrastructure.
+
+Example (materialized/deployed workspace):
+```
+# ✗ Ad-hoc — avoid unless requested:
+npm run build
+npm test
+
+# ✓ Mandatory gate — always execute when required:
+node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate --task-id "T-042" --commands-path "Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md"
+# compile-gate internally runs `npm run build` — that is allowed because it is gate-driven, not ad-hoc.
+```
 
 ## Project Commands (Required)
 Replace these defaults with repository-specific commands when the real project differs.
