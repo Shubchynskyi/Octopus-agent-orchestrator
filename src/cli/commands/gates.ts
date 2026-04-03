@@ -13,6 +13,7 @@ import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../gate-runti
 import { applyOutputFilterProfile } from '../../gate-runtime/output-filters';
 import {
     emitHandshakeDiagnosticsEvent,
+    emitShellSmokePreflightEvent,
     emitReviewPhaseStartedEvent,
     emitMandatoryImplementationStartedEvent,
     emitMandatoryPreflightFailedEvent,
@@ -57,6 +58,11 @@ import {
     formatHandshakeDiagnosticsResult,
     resolveHandshakeArtifactPath
 } from '../../gates/handshake-diagnostics';
+import {
+    buildShellSmokePreflight,
+    formatShellSmokePreflightResult,
+    resolveShellSmokeArtifactPath
+} from '../../gates/shell-smoke-preflight';
 import {
     buildTaskModeArtifact,
     collectTaskTimelineEventTypes,
@@ -184,6 +190,17 @@ interface HandshakeDiagnosticsCommandOptions {
     effectiveCwd?: unknown;
     canonicalEntrypoint?: unknown;
     providerBridge?: unknown;
+    artifactPath?: string;
+    metricsPath?: string;
+    emitMetrics?: unknown;
+}
+
+interface ShellSmokePreflightCommandOptions {
+    repoRoot?: string;
+    taskId?: unknown;
+    provider?: unknown;
+    effectiveCwd?: unknown;
+    probeTimeoutMs?: unknown;
     artifactPath?: string;
     metricsPath?: string;
     emitMetrics?: unknown;
@@ -1064,6 +1081,63 @@ export function runHandshakeDiagnosticsCommand(options: HandshakeDiagnosticsComm
     };
 }
 
+export function runShellSmokePreflightCommand(options: ShellSmokePreflightCommandOptions): { outputLines: string[]; exitCode: number } {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
+    const taskId = assertValidTaskId(String(options.taskId || '').trim());
+    const routingDecision = readRoutingDecision(repoRoot, options.provider);
+    const provider = routingDecision.provider;
+
+    const artifactPath = options.artifactPath
+        ? requireResolvedPath(resolvePathForWrite(options.artifactPath, repoRoot), 'ArtifactPath')
+        : resolveShellSmokeArtifactPath(repoRoot, taskId, '');
+
+    const probeTimeoutMs = options.probeTimeoutMs ? parseInt(String(options.probeTimeoutMs), 10) : undefined;
+
+    const artifact = buildShellSmokePreflight({
+        taskId,
+        repoRoot,
+        provider,
+        effectiveCwd: options.effectiveCwd ? String(options.effectiveCwd) : undefined,
+        probeTimeoutMs: (probeTimeoutMs && probeTimeoutMs > 0) ? probeTimeoutMs : undefined
+    });
+
+    writeJsonArtifact(artifactPath, artifact);
+
+    const artifactHash = gateHelpers.fileSha256(artifactPath);
+
+    const metricsPath = options.metricsPath
+        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
+        : resolveDefaultMetricsPath(repoRoot);
+    appendMetricsIfEnabled(metricsPath, {
+        timestamp_utc: artifact.timestamp_utc,
+        event_type: 'shell_smoke_preflight_recorded',
+        task_id: taskId,
+        artifact_path: gateHelpers.normalizePath(artifactPath),
+        artifact_hash: artifactHash,
+        provider: artifact.provider,
+        execution_context: artifact.execution_context,
+        outcome: artifact.outcome
+    }, parseBooleanOption(options.emitMetrics, true));
+
+    emitShellSmokePreflightEvent(
+        orchestratorRoot,
+        taskId,
+        artifact.provider,
+        artifact.execution_context,
+        artifact.outcome === 'PASS',
+        artifactHash
+    );
+
+    const outputLines = formatShellSmokePreflightResult(artifact);
+    outputLines.push(`ShellSmokeArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`);
+
+    return {
+        outputLines,
+        exitCode: artifact.outcome === 'PASS' ? 0 : 1
+    };
+}
+
 export function splitCommandLine(commandText: unknown): string[] {
     const text = String(commandText || '').trim();
     if (!text) {
@@ -1495,6 +1569,11 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before preflight.`
             );
         }
+        if (timelineErrors.length === 0 && !timelineEventTypes.has('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
+            preflightErrors.push(
+                `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before preflight.`
+            );
+        }
         if (preflightErrors.length > 0) {
             throw new Error(preflightErrors.join(' '));
         }
@@ -1644,6 +1723,9 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         } else if (!exceptionMessage && !timelineEventTypes.has('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
             exitCode = 1;
             exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before compile gate.`;
+        } else if (!exceptionMessage && !timelineEventTypes.has('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
+            exitCode = 1;
+            exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before compile gate.`;
         }
 
         const scopeViolations: string[] = [];
@@ -2442,6 +2524,9 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         }
         if (timelineErrors.length === 0 && !timelineEventTypes.has('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
             errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before review gate.`);
+        }
+        if (timelineErrors.length === 0 && !timelineEventTypes.has('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
+            errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before review gate.`);
         }
         reviewPhaseMissingFromTimeline = timelineErrors.length === 0 && !timelineEventTypes.has('REVIEW_PHASE_STARTED');
     }

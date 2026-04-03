@@ -30,7 +30,8 @@ export const LIFECYCLE_EVENT_TYPES = Object.freeze({
     COMPLETION_GATE_FAILED: 'COMPLETION_GATE_FAILED',
     STATUS_CHANGED: 'STATUS_CHANGED',
     PROVIDER_ROUTING_DECISION: 'PROVIDER_ROUTING_DECISION',
-    HANDSHAKE_DIAGNOSTICS_RECORDED: 'HANDSHAKE_DIAGNOSTICS_RECORDED'
+    HANDSHAKE_DIAGNOSTICS_RECORDED: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+    SHELL_SMOKE_PREFLIGHT_RECORDED: 'SHELL_SMOKE_PREFLIGHT_RECORDED'
 });
 
 /**
@@ -41,6 +42,7 @@ export const MANDATORY_CODE_CHANGE_EVENTS: readonly string[] = Object.freeze([
     'TASK_MODE_ENTERED',
     'RULE_PACK_LOADED',
     'HANDSHAKE_DIAGNOSTICS_RECORDED',
+    'SHELL_SMOKE_PREFLIGHT_RECORDED',
     'PREFLIGHT_CLASSIFIED',
     'IMPLEMENTATION_STARTED',
     'COMPILE_GATE_PASSED',
@@ -652,6 +654,46 @@ export function emitHandshakeDiagnosticsEvent(
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : String(error);
         process.stderr.write(`WARNING: handshake-diagnostics event emit failed: ${msg}\n`);
+        return null;
+    }
+}
+
+/**
+ * Auto-emit SHELL_SMOKE_PREFLIGHT_RECORDED to the task timeline.
+ * Called when shell-smoke-preflight gate completes.
+ */
+export function emitShellSmokePreflightEvent(
+    repoRoot: string,
+    taskId: string,
+    provider: string | null,
+    executionContext: string,
+    passed: boolean,
+    artifactHash: string | null = null,
+    options: AutoEmitOptions = {}
+): ReturnType<typeof appendTaskEvent> {
+    if (!repoRoot || !taskId) return null;
+    try {
+        return appendTaskEvent(
+            repoRoot,
+            taskId,
+            LIFECYCLE_EVENT_TYPES.SHELL_SMOKE_PREFLIGHT_RECORDED,
+            passed ? 'PASS' : 'FAIL',
+            `Shell smoke preflight ${passed ? 'passed' : 'failed'}: provider=${provider || 'unknown'}, context=${executionContext}.`,
+            {
+                provider,
+                execution_context: executionContext,
+                passed,
+                artifact_hash: artifactHash
+            },
+            {
+                actor: options.actor || 'gate',
+                passThru: options.passThru ?? true,
+                eventsRoot: options.eventsRoot
+            }
+        );
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`WARNING: shell-smoke-preflight event emit failed: ${msg}\n`);
         return null;
     }
 }

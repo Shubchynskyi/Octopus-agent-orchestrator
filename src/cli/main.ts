@@ -41,7 +41,7 @@ import {
     emitSkillSelectedEvent
 } from '../runtime/skill-telemetry';
 import { runDoctor, formatDoctorResult } from '../validators/doctor';
-import { detectSourceBundleParity } from '../validators/workspace-layout';
+import { detectSourceBundleParity, getCanonicalEntrypoint } from '../validators/workspace-layout';
 import { explainFailure, formatExplainResult, listExplainIds } from '../validators/explain';
 import { getStatusSnapshot } from '../validators/status';
 import { getWhyBlocked, formatWhyBlockedResult } from '../validators/why-blocked';
@@ -103,7 +103,8 @@ import {
     runLoadRulePackCommand,
     runLogTaskEventCommand,
     runRecordNoOpCommand,
-    runRequiredReviewsCheckCommand
+    runRequiredReviewsCheckCommand,
+    runShellSmokePreflightCommand
 } from './commands/gates';
 import { handleOverview } from './commands/overview';
 import { handleSetup } from './commands/setup';
@@ -490,12 +491,20 @@ function handleDoctor(commandArgv: string[], packageJson: PackageJsonLike): void
         ? options.initAnswersPath
         : DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
     const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'doctor');
+    let activeAgentFilesList = answers.activeAgentFiles
+        ? answers.activeAgentFiles.split(/[,;]+/).map((s: string) => s.trim()).filter(Boolean)
+        : [];
+    if (activeAgentFilesList.length === 0) {
+        const inferred = getCanonicalEntrypoint(answers.sourceOfTruth);
+        if (inferred) activeAgentFilesList = [inferred];
+    }
     const result = runDoctor({
         targetRoot,
         sourceOfTruth: answers.sourceOfTruth,
         initAnswersPath: answers.resolvedPath,
         cleanupStaleLocks: options.cleanupStaleLocks === true,
-        dryRun: options.dryRun === true
+        dryRun: options.dryRun === true,
+        activeAgentFiles: activeAgentFilesList
     });
     console.log(formatDoctorResult(result));
     if (!result.passed) {
@@ -1183,6 +1192,25 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             }
             return;
         }
+        case 'shell-smoke-preflight': {
+            const defs = {
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--provider': { key: 'provider', type: 'string' },
+                '--effective-cwd': { key: 'effectiveCwd', type: 'string' },
+                '--probe-timeout-ms': { key: 'probeTimeoutMs', type: 'string' },
+                '--artifact-path': { key: 'artifactPath', type: 'string' },
+                '--metrics-path': { key: 'metricsPath', type: 'string' },
+                '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options } = parseOptions(gateArgv, defs);
+            const result = runShellSmokePreflightCommand(options);
+            process.stdout.write(`${result.outputLines.join('\n')}\n`);
+            if (result.exitCode !== 0) {
+                process.exitCode = result.exitCode;
+            }
+            return;
+        }
         case 'compile-gate': {
             const defs = {
                 '--commands-path': { key: 'commandsPath', type: 'string' },
@@ -1465,6 +1493,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 '--doc-impact-path': { key: 'docImpactPath', type: 'string' },
                 '--no-op-artifact-path': { key: 'noOpArtifactPath', type: 'string' },
                 '--handshake-path': { key: 'handshakePath', type: 'string' },
+                '--shell-smoke-path': { key: 'shellSmokePath', type: 'string' },
                 '--repo-root': { key: 'repoRoot', type: 'string' }
             };
             const { options: rawOptions } = parseOptions(gateArgv, defs);
@@ -1483,7 +1512,8 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 reviewEvidencePath: String(options.reviewEvidencePath || ''),
                 docImpactPath: String(options.docImpactPath || ''),
                 noOpArtifactPath: String(options.noOpArtifactPath || ''),
-                handshakePath: String(options.handshakePath || '')
+                handshakePath: String(options.handshakePath || ''),
+                shellSmokePath: String(options.shellSmokePath || '')
             });
 
             // T-004: auto-emit COMPLETION_GATE_PASSED/FAILED to task timeline

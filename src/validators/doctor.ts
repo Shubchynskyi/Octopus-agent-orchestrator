@@ -15,6 +15,11 @@ import { validateManifest, formatManifestResult } from './validate-manifest';
 import { formatVerifyResult } from './verify';
 import { runVerify } from './verify';
 import { getBundlePath, detectSourceBundleParity as getSourceBundleParity } from './workspace-layout';
+import {
+    scanProviderCompliance,
+    formatProviderComplianceDetail,
+    type ProviderComplianceResult
+} from './provider-compliance';
 
 interface DoctorOptions {
     targetRoot: string;
@@ -22,6 +27,7 @@ interface DoctorOptions {
     initAnswersPath?: string;
     cleanupStaleLocks?: boolean;
     dryRun?: boolean;
+    activeAgentFiles?: readonly string[];
 }
 
 interface TimelineEvidence {
@@ -47,6 +53,7 @@ interface DoctorResult {
     lockHealth: TaskEventLockScanResult;
     lockCleanup: TaskEventLockCleanupResult | null;
     parityResult: ReturnType<typeof getSourceBundleParity>;
+    providerComplianceResult: ProviderComplianceResult | null;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -173,8 +180,20 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         : null;
     var lockHealth = scanTaskEventLocks(bundlePath);
 
+    // T-1006: provider-control compliance scan
+    var providerComplianceResult: ProviderComplianceResult | null = null;
+    var activeAgentFiles = options.activeAgentFiles || [];
+    if (activeAgentFiles.length > 0) {
+        try {
+            providerComplianceResult = scanProviderCompliance(targetRoot, activeAgentFiles);
+        } catch {
+            // compliance scan failure is non-fatal; will show as null in output
+        }
+    }
+
     var manifestPassed = manifestResult ? manifestResult.passed : false;
-    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && !parityResult.isStale;
+    var compliancePassed = providerComplianceResult === null || providerComplianceResult.passed;
+    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed;
 
     return {
         passed: passed,
@@ -186,7 +205,8 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         timelineWarnings: timelineScan.warnings,
         lockHealth: lockHealth,
         lockCleanup: lockCleanup,
-        parityResult: parityResult
+        parityResult: parityResult,
+        providerComplianceResult: providerComplianceResult
     };
 }
 
@@ -279,6 +299,15 @@ export function formatDoctorResult(result: DoctorResult): string {
                 ' stale_reason=' + (lock.stale_reason || 'none')
             );
             lines.push('    Fix: ' + lock.remediation);
+        }
+        lines.push('');
+    }
+
+    // T-1006: provider control compliance detail
+    if (result.providerComplianceResult) {
+        var complianceLines = formatProviderComplianceDetail(result.providerComplianceResult);
+        for (const cl of complianceLines) {
+            lines.push(cl);
         }
         lines.push('');
     }

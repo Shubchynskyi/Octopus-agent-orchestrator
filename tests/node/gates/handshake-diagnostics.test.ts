@@ -500,6 +500,62 @@ describe('gates/handshake-diagnostics', () => {
             assert.equal(evidence.evidence_status, 'PASS');
             assert.equal(evidence.violations.length, 0);
         });
+
+        it('uses the latest HANDSHAKE_DIAGNOSTICS_RECORDED event when the gate is rerun', () => {
+            const artifact: HandshakeDiagnosticsArtifact = {
+                schema_version: 1,
+                timestamp_utc: new Date().toISOString(),
+                event_source: 'handshake-diagnostics',
+                task_id: 'T-HASHLATEST-01',
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider: 'Claude',
+                canonical_entrypoint: 'CLAUDE.md',
+                canonical_entrypoint_exists: true,
+                provider_bridge: null,
+                provider_bridge_exists: false,
+                start_task_router_path: '.agents/workflows/start-task.md',
+                start_task_router_exists: true,
+                execution_context: 'source-checkout',
+                cli_path: 'node bin/octopus.js',
+                effective_cwd: '/test',
+                workspace_root: '/test',
+                diagnostics: [],
+                violations: []
+            };
+
+            const reviewsDir = path.join(tempDir, 'Octopus-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const artifactPath = path.join(reviewsDir, 'T-HASHLATEST-01-handshake.json');
+            fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
+
+            const crypto = require('node:crypto');
+            const hash = crypto.createHash('sha256').update(fs.readFileSync(artifactPath)).digest('hex');
+
+            const timelineDir = path.join(tempDir, 'Octopus-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(timelineDir, { recursive: true });
+            const timelinePath = path.join(timelineDir, 'T-HASHLATEST-01.jsonl');
+            fs.writeFileSync(
+                timelinePath,
+                [
+                    JSON.stringify({
+                        event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                        timestamp_utc: '2026-04-03T10:00:00.000Z',
+                        details: { artifact_hash: 'old-stale-hash' }
+                    }),
+                    JSON.stringify({
+                        event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                        timestamp_utc: '2026-04-03T10:05:00.000Z',
+                        details: { artifact_hash: hash }
+                    })
+                ].join('\n') + '\n',
+                'utf8'
+            );
+
+            const evidence = getHandshakeEvidence(tempDir, 'T-HASHLATEST-01', { timelinePath });
+            assert.equal(evidence.evidence_status, 'PASS');
+            assert.equal(evidence.violations.length, 0);
+        });
     });
 
     describe('getHandshakeEvidenceViolations', () => {

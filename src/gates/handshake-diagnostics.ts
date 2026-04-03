@@ -386,7 +386,7 @@ export function getHandshakeEvidence(repoRoot: string, taskId: string | null, ar
 
 /**
  * Verify that a HANDSHAKE_DIAGNOSTICS_RECORDED event exists in the timeline
- * and its recorded artifact_hash matches the actual artifact hash on disk.
+ * and its latest recorded artifact_hash matches the actual artifact hash on disk.
  * Returns an empty array if verification passes or timeline is unavailable.
  */
 function verifyHandshakeTimelineBinding(
@@ -415,7 +415,6 @@ function verifyHandshakeTimelineBinding(
                 if (details && typeof details.artifact_hash === 'string') {
                     recordedHash = details.artifact_hash;
                 }
-                break;
             }
         } catch {
             // Skip malformed lines

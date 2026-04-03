@@ -10,6 +10,7 @@ import * as taskEventsSummary from './task-events-summary';
 import * as taskMode from './task-mode';
 import * as rulePack from './rule-pack';
 import * as handshakeDiagnostics from './handshake-diagnostics';
+import * as shellSmokePreflight from './shell-smoke-preflight';
 
 export {
     helpers,
@@ -23,5 +24,6 @@ export {
     taskEventsSummary,
     taskMode,
     rulePack,
-    handshakeDiagnostics
+    handshakeDiagnostics,
+    shellSmokePreflight
 };

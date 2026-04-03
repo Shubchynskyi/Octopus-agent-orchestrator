@@ -3,7 +3,6 @@ import * as path from 'node:path';
 import { ALL_AGENT_ENTRYPOINT_FILES } from '../core/constants';
 import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
 import { readJsonFile, writeJsonFile } from '../core/json';
-import { removeManagedBlock } from '../core/managed-blocks';
 import { normalizeLineEndings } from '../core/line-endings';
 import { resolvePathInsideRoot } from '../core/paths';
 import { writeProtectedControlPlaneManifest } from '../gates/helpers';
@@ -273,67 +272,6 @@ export function runInstall(options: RunInstallOptions) {
         return true;
     }
 
-    function cleanupEmptyParentDirectories(startPath: string): void {
-        let currentPath = path.dirname(startPath);
-        const stopPath = path.resolve(targetRoot);
-        while (currentPath.startsWith(stopPath) && currentPath !== stopPath) {
-            if (!pathExists(currentPath)) {
-                currentPath = path.dirname(currentPath);
-                continue;
-            }
-            const stats = fs.lstatSync(currentPath);
-            if (!stats.isDirectory()) {
-                break;
-            }
-            if (fs.readdirSync(currentPath).length > 0) {
-                break;
-            }
-            fs.rmdirSync(currentPath);
-            currentPath = path.dirname(currentPath);
-        }
-    }
-
-    function removeObsoleteManagedFile(relativePath: string): boolean {
-        const destPath = path.join(targetRoot, relativePath);
-        if (!pathExists(destPath)) {
-            return false;
-        }
-
-        const stats = fs.lstatSync(destPath);
-        if (!stats.isFile()) {
-            return false;
-        }
-
-        const existingContent = readTextFile(destPath);
-        if (!existingContent.includes(MANAGED_START) || !existingContent.includes(MANAGED_END)) {
-            return false;
-        }
-
-        const newline = existingContent.includes('\r\n') ? '\r\n' : '\n';
-        const cleanedContent = removeManagedBlock(existingContent, {
-            startMarker: MANAGED_START,
-            endMarker: MANAGED_END,
-            newline
-        });
-
-        if (cleanedContent === existingContent) {
-            return false;
-        }
-
-        backupFile(destPath, relativePath);
-        if (!dryRun) {
-            if (cleanedContent.trim()) {
-                fs.writeFileSync(destPath, cleanedContent, 'utf8');
-            } else {
-                fs.rmSync(destPath, { force: true });
-                cleanupEmptyParentDirectories(destPath);
-            }
-        }
-
-        aligned++;
-        return true;
-    }
-
     // Apply entrypoint managed block
     function applyEntrypointManagedBlock(relativePath: string, managedBlock: string): void {
         const destPath = path.join(targetRoot, relativePath);
@@ -529,6 +467,11 @@ export function runInstall(options: RunInstallOptions) {
         applyEntrypointManagedBlock(profile.relativePath, block);
     }
 
+    // T-1009: preserve user-retained entrypoints on update.
+    // Previously, any managed file not in ActiveAgentFiles was removed.
+    // Now we detect pre-existing managed files on disk and preserve them
+    // as redirect entrypoints / provider bridges instead of deleting them.
+    // Two-pass approach: discover all preserved files first, then sync content.
     const desiredManagedFileSet = new Set([
         canonicalEntryFile,
         ...redirectEntryFiles,
@@ -536,15 +479,104 @@ export function runInstall(options: RunInstallOptions) {
         ...providerOrchestratorProfiles.map((profile) => profile.orchestratorRelativePath),
         ...githubSkillBridgeProfiles.map((profile) => profile.relativePath)
     ]);
+
+    const allProviderProfiles = getProviderOrchestratorProfileDefinitions();
+    const allSkillBridgeProfiles = getGitHubSkillBridgeProfileDefinitions();
     const allManagedFileCandidates = [
         ...ALL_AGENT_ENTRYPOINT_FILES,
         SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
-        ...getProviderOrchestratorProfileDefinitions().map((profile) => profile.orchestratorRelativePath),
-        ...getGitHubSkillBridgeProfileDefinitions().map((profile) => profile.relativePath)
+        ...allProviderProfiles.map((profile) => profile.orchestratorRelativePath),
+        ...allSkillBridgeProfiles.map((profile) => profile.relativePath)
     ];
+
+    const allEntrypointFileSet = new Set(ALL_AGENT_ENTRYPOINT_FILES as readonly string[]);
+    const allProviderBridgeMap = new Map(allProviderProfiles.map((p) => [p.orchestratorRelativePath, p]));
+    const allSkillBridgeSet = new Set(allSkillBridgeProfiles.map((p) => p.relativePath));
+
+    function fileHasManagedMarkers(filePath: string): boolean {
+        if (!pathExists(filePath)) return false;
+        const content = readTextFile(filePath);
+        return content.includes(MANAGED_START) && content.includes(MANAGED_END);
+    }
+
+    // Pass 1: discover all preserved files and collect bridge paths
+    const preservedSet = new Set<string>();
+    const preservedBridgePaths: string[] = [];
+    let preserved = 0;
+
     for (const relativePath of allManagedFileCandidates) {
-        if (!desiredManagedFileSet.has(relativePath)) {
-            removeObsoleteManagedFile(relativePath);
+        if (desiredManagedFileSet.has(relativePath)) {
+            continue;
+        }
+        const destPath = path.join(targetRoot, relativePath);
+        if (!pathExists(destPath) || !fileHasManagedMarkers(destPath)) {
+            continue;
+        }
+
+        preservedSet.add(relativePath);
+        desiredManagedFileSet.add(relativePath);
+
+        if (allEntrypointFileSet.has(relativePath) && relativePath !== canonicalEntryFile) {
+            // Cascade: discover associated provider bridge
+            const providerProfile = allProviderProfiles.find((p) => p.entrypointFile === relativePath);
+            if (providerProfile && !desiredManagedFileSet.has(providerProfile.orchestratorRelativePath)) {
+                const bridgePath = path.join(targetRoot, providerProfile.orchestratorRelativePath);
+                if (fileHasManagedMarkers(bridgePath)) {
+                    preservedSet.add(providerProfile.orchestratorRelativePath);
+                    desiredManagedFileSet.add(providerProfile.orchestratorRelativePath);
+                    preservedBridgePaths.push(providerProfile.orchestratorRelativePath);
+                }
+                // Cascade: discover associated skill bridges for GitHub Copilot
+                if (relativePath === '.github/copilot-instructions.md') {
+                    for (const skillProfile of allSkillBridgeProfiles) {
+                        if (!desiredManagedFileSet.has(skillProfile.relativePath)) {
+                            const skillBridgePath = path.join(targetRoot, skillProfile.relativePath);
+                            if (fileHasManagedMarkers(skillBridgePath)) {
+                                preservedSet.add(skillProfile.relativePath);
+                                desiredManagedFileSet.add(skillProfile.relativePath);
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (allProviderBridgeMap.has(relativePath)) {
+            preservedBridgePaths.push(relativePath);
+        }
+    }
+
+    // Pass 2: sync content for all preserved files with complete bridge knowledge
+    const allBridgePaths = [...providerBridgePaths, ...preservedBridgePaths];
+
+    for (const relativePath of preservedSet) {
+        const destPath = path.join(targetRoot, relativePath);
+
+        if (allEntrypointFileSet.has(relativePath) && relativePath !== canonicalEntryFile) {
+            const redirectBlock = buildRedirectManagedBlock(relativePath, canonicalEntryFile, allBridgePaths);
+            if (syncManagedBlockOnDisk(destPath, relativePath, redirectBlock)) {
+                aligned++;
+            }
+            preserved++;
+        } else if (allProviderBridgeMap.has(relativePath)) {
+            const profile = allProviderBridgeMap.get(relativePath)!;
+            const bridgeBlock = buildProviderOrchestratorAgentContent(
+                profile.providerLabel, canonicalEntryFile, profile.orchestratorRelativePath
+            );
+            if (syncManagedBlockOnDisk(destPath, relativePath, bridgeBlock)) {
+                aligned++;
+            }
+            preserved++;
+        } else if (allSkillBridgeSet.has(relativePath)) {
+            const skillProfile = allSkillBridgeProfiles.find((p) => p.relativePath === relativePath)!;
+            const block = buildGitHubSkillBridgeAgentContent(
+                skillProfile.profileTitle, canonicalEntryFile,
+                skillProfile.skillPath, skillProfile.reviewRequirement, skillProfile.capabilityFlag
+            );
+            if (syncManagedBlockOnDisk(destPath, relativePath, block)) {
+                aligned++;
+            }
+            preserved++;
+        } else {
+            preserved++;
         }
     }
 
@@ -640,6 +672,7 @@ export function runInstall(options: RunInstallOptions) {
         filesForcedOverwrite: forcedOverwrites,
         filesSkippedExisting: skippedExisting,
         filesAligned: aligned,
+        filesPreserved: preserved,
         filesBackedUp: backedUp,
         gitignoreEntriesAdded: gitignoreAdded,
         qwenSettingsParseMode: qwenPlan.parseMode,

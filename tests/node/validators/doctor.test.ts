@@ -175,7 +175,8 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
             rootVersion: null,
             bundleVersion: null,
             remediation: null
-        }
+        },
+        providerComplianceResult: null
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -253,7 +254,8 @@ test('formatDoctorResult includes timeline completeness warnings', () => {
             rootVersion: null,
             bundleVersion: null,
             remediation: null
-        }
+        },
+        providerComplianceResult: null
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -299,6 +301,89 @@ test('runDoctor reports stale task-event locks and supports dry-run cleanup outp
         assert.ok(output.includes('Mode: DRY_RUN'));
         assert.ok(output.includes('.T-005.lock: STALE'));
         assert.ok(output.includes('runtime/reviews/ is never cleaned'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('runDoctor includes provider compliance result when activeAgentFiles provided', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-compliance-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
+    const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
+    fs.mkdirSync(bundlePath, { recursive: true });
+    fs.writeFileSync(
+        path.join(bundlePath, 'MANIFEST.md'),
+        '- bin/octopus.js\n- package.json\n',
+        'utf8'
+    );
+    // Create compliant entrypoint and router
+    fs.mkdirSync(path.join(tmpDir, '.agents', 'workflows'), { recursive: true });
+    fs.writeFileSync(
+        path.join(tmpDir, '.agents', 'workflows', 'start-task.md'),
+        [MANAGED_START, '# Start Task', 'Shared router.', MANAGED_END].join('\n'),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(tmpDir, 'AGENTS.md'),
+        [MANAGED_START, '# AGENTS.md', 'open `.agents/workflows/start-task.md`.', MANAGED_END].join('\n'),
+        'utf8'
+    );
+
+    try {
+        const result = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Codex',
+            activeAgentFiles: ['AGENTS.md']
+        });
+        assert.ok(result.providerComplianceResult !== null);
+        assert.equal(result.providerComplianceResult!.passed, true);
+        assert.equal(result.providerComplianceResult!.routerExists, true);
+
+        const output = formatDoctorResult(result);
+        assert.ok(output.includes('Provider Control Compliance'));
+        assert.ok(output.includes('Status: PASS'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('runDoctor fails when active entrypoint has compliance drift', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-drift-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
+    const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
+    fs.mkdirSync(bundlePath, { recursive: true });
+    fs.writeFileSync(
+        path.join(bundlePath, 'MANIFEST.md'),
+        '- bin/octopus.js\n- package.json\n',
+        'utf8'
+    );
+    // Create router but entrypoint without router reference
+    fs.mkdirSync(path.join(tmpDir, '.agents', 'workflows'), { recursive: true });
+    fs.writeFileSync(
+        path.join(tmpDir, '.agents', 'workflows', 'start-task.md'),
+        [MANAGED_START, '# Start Task', 'Shared router.', MANAGED_END].join('\n'),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(tmpDir, 'CLAUDE.md'),
+        [MANAGED_START, '# CLAUDE.md', 'No router ref.', MANAGED_END].join('\n'),
+        'utf8'
+    );
+
+    try {
+        const result = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude',
+            activeAgentFiles: ['CLAUDE.md']
+        });
+        assert.ok(result.providerComplianceResult !== null);
+        assert.equal(result.providerComplianceResult!.passed, false);
+        assert.equal(result.passed, false);
+
+        const output = formatDoctorResult(result);
+        assert.ok(output.includes('DRIFT_DETECTED'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

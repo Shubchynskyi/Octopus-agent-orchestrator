@@ -15,6 +15,7 @@ import {
 } from './helpers';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 import { getHandshakeEvidence, getHandshakeEvidenceViolations } from './handshake-diagnostics';
+import { getShellSmokeEvidence, getShellSmokeEvidenceViolations } from './shell-smoke-preflight';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from './rule-pack';
 import { readRuntimeReviewerProvider, resolveReviewerRoutingPolicy } from './reviewer-routing';
 import { collectTaskTimelineEventTypes, getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
@@ -28,6 +29,7 @@ export const STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze([
     'TASK_MODE_ENTERED',
     'RULE_PACK_LOADED',
     'HANDSHAKE_DIAGNOSTICS_RECORDED',
+    'SHELL_SMOKE_PREFLIGHT_RECORDED',
     'PREFLIGHT_CLASSIFIED',
     'IMPLEMENTATION_STARTED',
     'COMPILE_GATE_PASSED',
@@ -97,6 +99,19 @@ export function collectOrderedTimelineEvents(timelinePath: string, errors: strin
     }
 
     return entries;
+}
+
+function findLatestTimelineEvent(
+    events: readonly TimelineEventEntry[],
+    predicate: (entry: TimelineEventEntry) => boolean
+): TimelineEventEntry | null {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const entry = events[index];
+        if (predicate(entry)) {
+            return entry;
+        }
+    }
+    return null;
 }
 
 /**
@@ -339,9 +354,9 @@ export function validateReviewSkillEvidence(
         }
     }
 
-    const compilePassSequence = events.find((entry) => entry.event_type === 'COMPILE_GATE_PASSED')?.sequence ?? null;
-    const reviewPhaseSequence = events.find((entry) => entry.event_type === 'REVIEW_PHASE_STARTED')?.sequence ?? null;
-    const reviewGatePassSequence = events.find((entry) => (
+    const compilePassSequence = findLatestTimelineEvent(events, (entry) => entry.event_type === 'COMPILE_GATE_PASSED')?.sequence ?? null;
+    const reviewPhaseSequence = findLatestTimelineEvent(events, (entry) => entry.event_type === 'REVIEW_PHASE_STARTED')?.sequence ?? null;
+    const reviewGatePassSequence = findLatestTimelineEvent(events, (entry) => (
         entry.event_type === 'REVIEW_GATE_PASSED' || entry.event_type === 'REVIEW_GATE_PASSED_WITH_OVERRIDE'
     ))?.sequence ?? null;
 
@@ -356,17 +371,17 @@ export function validateReviewSkillEvidence(
 
     for (const key of requiredKeys) {
         const candidateSkillIds = getReviewSkillCandidates(key);
-        const selectionEvent = events.find((entry) => (
+        const selectionEvent = findLatestTimelineEvent(events, (entry) => (
             entry.event_type === 'SKILL_SELECTED' && eventMatchesReviewSkill(entry, candidateSkillIds)
         ));
-        const referenceEvent = events.find((entry) => (
+        const referenceEvent = findLatestTimelineEvent(events, (entry) => (
             entry.event_type === 'SKILL_REFERENCE_LOADED' && eventMatchesReviewSkill(entry, candidateSkillIds)
         ));
-        const recordEvent = events.find((entry) => (
+        const recordEvent = findLatestTimelineEvent(events, (entry) => (
             entry.event_type === 'REVIEW_RECORDED' && 
             String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
         ));
-        const routingEvent = events.find((entry) => (
+        const routingEvent = findLatestTimelineEvent(events, (entry) => (
             entry.event_type === 'REVIEWER_DELEGATION_ROUTED' &&
             String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
         ));
@@ -470,7 +485,7 @@ export function validateReviewSkillEvidence(
             const reviewerRouting = reviewContext?.reviewer_routing && typeof reviewContext.reviewer_routing === 'object' && !Array.isArray(reviewContext.reviewer_routing)
                 ? reviewContext.reviewer_routing as Record<string, unknown>
                 : null;
-            const routingEvent = events.find((entry) => (
+            const routingEvent = findLatestTimelineEvent(events, (entry) => (
                 entry.event_type === 'REVIEWER_DELEGATION_ROUTED' &&
                 String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
             ));
@@ -973,6 +988,7 @@ export interface RunCompletionGateOptions {
     timelinePath?: string;
     noOpArtifactPath?: string;
     handshakePath?: string;
+    shellSmokePath?: string;
 }
 
 export function runCompletionGate(options: RunCompletionGateOptions) {
@@ -1006,6 +1022,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const noOpEvidence = getNoOpEvidence(repoRoot, resolvedTaskId, options.noOpArtifactPath || '');
     const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, {
         artifactPath: options.handshakePath || '',
+        timelinePath
+    });
+    const shellSmokeEvidence = getShellSmokeEvidence(repoRoot, resolvedTaskId, {
+        artifactPath: options.shellSmokePath || '',
         timelinePath
     });
 
@@ -1075,6 +1095,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     errors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
     errors.push(...getRulePackEvidenceViolations(rulePackEvidence));
     errors.push(...getHandshakeEvidenceViolations(handshakeEvidence));
+    errors.push(...getShellSmokeEvidenceViolations(shellSmokeEvidence));
 
     // --- T-003: ordered timeline + stage-sequence enforcement ---
     const timelineErrors: string[] = [];
@@ -1092,6 +1113,9 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     }
     if (!timelineEventTypes.has('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before preflight.`);
+    }
+    if (!timelineEventTypes.has('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
+        errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before preflight.`);
     }
     if (!timelineEventTypes.has('COMPILE_GATE_PASSED')) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing COMPILE_GATE_PASSED.`);
@@ -1231,6 +1255,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         task_mode_path: taskModeEvidence.evidence_path,
         rule_pack_path: rulePackEvidence.evidence_path,
         handshake_path: handshakeEvidence.evidence_path,
+        shell_smoke_path: shellSmokeEvidence.evidence_path,
         compile_evidence_path: normalizePath(compileEvidencePath),
         review_evidence_path: normalizePath(reviewEvidencePath),
         doc_impact_path: normalizePath(docImpactPath),

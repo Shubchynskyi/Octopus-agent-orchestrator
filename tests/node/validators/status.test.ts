@@ -10,9 +10,22 @@ import {
     resolveInitAnswersPath
 } from '../../../src/validators/status';
 
+const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
+const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
+
 function writeStatusFixtureFile(filePath: string, content: string) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, content, 'utf8');
+}
+
+function makeCompliantEntrypoint(name: string): string {
+    return [
+        MANAGED_START,
+        `# ${name}`,
+        'This file is a redirect.',
+        'Hard stop: open `.agents/workflows/start-task.md`.',
+        MANAGED_END
+    ].join('\n');
 }
 
 function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options: Record<string, unknown> = {}) {
@@ -33,6 +46,21 @@ function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options:
     writeStatusFixtureFile(path.join(bundlePath, 'live', 'USAGE.md'), '# Usage\n');
     writeStatusFixtureFile(path.join(tmpDir, 'TASK.md'), '# Tasks\n');
     writeStatusFixtureFile(path.join(liveRulesPath, '40-commands.md'), 'npm install\nnpm test\nnpm run lint\n');
+
+    // T-1006: create entrypoint files and shared router for compliance checks
+    writeStatusFixtureFile(
+        path.join(tmpDir, '.agents', 'workflows', 'start-task.md'),
+        [MANAGED_START, '# Start Task', 'Shared router.', MANAGED_END].join('\n')
+    );
+    const activeFilesList = typeof activeAgentFiles === 'string'
+        ? activeAgentFiles.split(/[,;]+/).map((s: string) => s.trim()).filter(Boolean)
+        : Array.isArray(activeAgentFiles) ? activeAgentFiles as string[] : ['AGENTS.md'];
+    for (const entrypoint of activeFilesList) {
+        writeStatusFixtureFile(
+            path.join(tmpDir, entrypoint),
+            makeCompliantEntrypoint(entrypoint)
+        );
+    }
 
     if (options.agentInitState) {
         writeStatusFixtureFile(
@@ -298,6 +326,68 @@ test('getStatusSnapshot warns about incomplete task timelines', () => {
         assert.equal(snapshot.timelineHealthy, 0);
         assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('Incomplete timeline: T-001.jsonl')));
         assert.ok(output.includes('TaskTimelines: 0/1 complete'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot reports compliance drift when entrypoint lacks router reference', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+        // Overwrite AGENTS.md with non-compliant content (no router reference)
+        writeStatusFixtureFile(
+            path.join(tmpDir, 'AGENTS.md'),
+            [MANAGED_START, '# AGENTS.md', 'No router reference.', MANAGED_END].join('\n')
+        );
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.ok(snapshot.providerComplianceResult !== null);
+        assert.equal(snapshot.providerComplianceResult!.passed, false);
+        assert.equal(snapshot.readyForTasks, false);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('Provider control compliance'));
+        assert.ok(output.includes('Drift'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('formatStatusSnapshot includes compliance pass badge when compliant', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.ok(snapshot.providerComplianceResult !== null);
+        assert.equal(snapshot.providerComplianceResult!.passed, true);
+        assert.equal(snapshot.readyForTasks, true);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('[x] Provider control compliance'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

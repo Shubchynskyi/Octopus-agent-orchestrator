@@ -47,6 +47,7 @@ describe('gates/completion', () => {
             const docImpactPath = path.join(reviewsRoot, `${taskId}-doc-impact.json`);
             const noOpPath = path.join(reviewsRoot, `${taskId}-no-op.json`);
             const handshakePath = path.join(reviewsRoot, `${taskId}-handshake.json`);
+            const shellSmokePath = path.join(reviewsRoot, `${taskId}-shell-smoke.json`);
             const protectedManifestPath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'protected-control-plane-manifest.json');
             const protectedFilePath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'src', 'cli', 'main.ts');
 
@@ -162,14 +163,31 @@ describe('gates/completion', () => {
                 violations: []
             });
 
+            writeJson(shellSmokePath, {
+                schema_version: 1,
+                timestamp_utc: '2026-04-02T16:59:59.200Z',
+                event_source: 'shell-smoke-preflight',
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider: 'Codex',
+                execution_context: 'materialized-bundle',
+                effective_cwd: normalizePath(repoRoot),
+                workspace_root: normalizePath(repoRoot),
+                probes: [],
+                violations: []
+            });
+
             fs.mkdirSync(path.dirname(timelinePath), { recursive: true });
             const handshakeArtifactHash = fileSha256(handshakePath);
+            const shellSmokeArtifactHash = fileSha256(shellSmokePath);
             fs.writeFileSync(
                 timelinePath,
                 [
                     { event_type: 'TASK_MODE_ENTERED', timestamp_utc: '2026-04-02T17:00:00.000Z' },
                     { event_type: 'RULE_PACK_LOADED', timestamp_utc: '2026-04-02T17:00:01.000Z' },
                     { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED', timestamp_utc: '2026-04-02T16:59:59.500Z', details: { artifact_hash: handshakeArtifactHash } },
+                    { event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED', timestamp_utc: '2026-04-02T16:59:59.700Z', details: { artifact_hash: shellSmokeArtifactHash } },
                     { event_type: 'COMPILE_GATE_PASSED', timestamp_utc: '2026-04-02T17:00:02.000Z' },
                     { event_type: 'REVIEW_PHASE_STARTED', timestamp_utc: '2026-04-02T17:00:03.000Z' },
                     { event_type: 'REVIEW_GATE_PASSED', timestamp_utc: '2026-04-02T17:00:04.000Z' }
@@ -187,6 +205,7 @@ describe('gates/completion', () => {
                 docImpactPath,
                 noOpPath,
                 handshakePath,
+                shellSmokePath,
                 protectedManifestPath,
                 timelinePath,
                 protectedFilePath
@@ -209,6 +228,7 @@ describe('gates/completion', () => {
                     docImpactPath: workspace.docImpactPath,
                     noOpArtifactPath: workspace.noOpPath,
                     handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
                     timelinePath: workspace.timelinePath
                 });
 
@@ -237,6 +257,7 @@ describe('gates/completion', () => {
                     docImpactPath: workspace.docImpactPath,
                     noOpArtifactPath: workspace.noOpPath,
                     handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
                     timelinePath: workspace.timelinePath
                 });
 
@@ -282,6 +303,7 @@ describe('gates/completion', () => {
                     docImpactPath: workspace.docImpactPath,
                     noOpArtifactPath: workspace.noOpPath,
                     handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
                     timelinePath: workspace.timelinePath
                 });
 
@@ -517,6 +539,74 @@ describe('gates/completion', () => {
                 fsMock.existsSync = originalExists;
                 fsMock.readFileSync = originalRead;
             }
+        });
+
+        it('uses the latest reviewer routing telemetry for repeated review attempts', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:stale-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_PHASE_STARTED', 6),
+                makeEvent('SKILL_SELECTED', 7, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 8, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/Octopus-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 9, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:fresh-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 10, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 11)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:fresh-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:fresh-reviewer',
+                            reviewer_fallback_reason: null,
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/Octopus-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex'
+            );
+
+            assert.equal(
+                result.violations.some((entry) => entry.includes('stale-reviewer')),
+                false,
+                'Repeated review attempts must bind to the latest REVIEWER_DELEGATION_ROUTED event.'
+            );
         });
 
         it('fails when delegation-required provider records same-agent fallback for a required review', () => {

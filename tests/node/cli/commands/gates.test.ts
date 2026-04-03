@@ -286,6 +286,43 @@ function runHandshakeForTask(repoRoot: string, taskId: string, provider = 'Codex
     );
 }
 
+function writeShellSmokeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {
+    const reviewsRoot = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'reviews');
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-shell-smoke.json`), JSON.stringify({
+        schema_version: 1,
+        timestamp_utc: new Date().toISOString(),
+        event_source: 'shell-smoke-preflight',
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        provider,
+        execution_context: 'materialized-bundle',
+        effective_cwd: repoRoot.replace(/\\/g, '/'),
+        workspace_root: repoRoot.replace(/\\/g, '/'),
+        probes: [],
+        violations: []
+    }, null, 2), 'utf8');
+}
+
+function runShellSmokeForTask(repoRoot: string, taskId: string, provider = 'Codex') {
+    writeShellSmokeArtifact(repoRoot, taskId, provider);
+    const orchestratorRoot = path.join(repoRoot, 'Octopus-agent-orchestrator');
+    const artifactPath = path.join(orchestratorRoot, 'runtime', 'reviews', `${taskId}-shell-smoke.json`);
+    const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+    const crypto = require('node:crypto');
+    const artifactHash = crypto.createHash('sha256').update(artifactContent).digest('hex');
+    appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        'SHELL_SMOKE_PREFLIGHT_RECORDED',
+        'PASS',
+        `Shell smoke preflight passed: provider=${provider}, context=materialized-bundle.`,
+        { provider, execution_context: 'materialized-bundle', passed: true, artifact_hash: artifactHash },
+        { actor: 'gate', passThru: true }
+    );
+}
+
 describe('cli/commands/gates', () => {
     it('splits quoted command lines', () => {
         assert.deepEqual(
@@ -307,6 +344,7 @@ describe('cli/commands/gates', () => {
         const rulePackResult = loadTaskEntryRulePack(repoRoot, 'T-900');
         assert.equal(rulePackResult.exitCode, 0);
         runHandshakeForTask(repoRoot, 'T-900');
+        runShellSmokeForTask(repoRoot, 'T-900');
         const result = runClassifyChangeCommand({
             repoRoot,
             changedFiles: ['src/app.ts'],
@@ -340,6 +378,7 @@ describe('cli/commands/gates', () => {
         const rulePackResult = loadTaskEntryRulePack(repoRoot, 'T-900z');
         assert.equal(rulePackResult.exitCode, 0);
         runHandshakeForTask(repoRoot, 'T-900z');
+        runShellSmokeForTask(repoRoot, 'T-900z');
 
         const result = runClassifyChangeCommand({
             repoRoot,
@@ -520,6 +559,7 @@ describe('cli/commands/gates', () => {
         assert.equal(taskModeResult.outputLines[0], 'TASK_MODE_ENTERED');
         assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
         runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
         assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
 
         const result = await runCompileGateCommand({
@@ -622,6 +662,7 @@ describe('cli/commands/gates', () => {
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         const reviewsRoot = getReviewsRoot(repoRoot);
@@ -685,6 +726,7 @@ describe('cli/commands/gates', () => {
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         // T-003: code-changing tasks must carry PREFLIGHT_CLASSIFIED evidence
@@ -826,6 +868,7 @@ describe('cli/commands/gates', () => {
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         appendTaskEvent(
@@ -1302,6 +1345,7 @@ describe('cli/commands/gates', () => {
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
             mode: 'FULL_PATH',
@@ -1456,6 +1500,7 @@ describe('cli/commands/gates', () => {
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId, 'Antigravity');
+        runShellSmokeForTask(repoRoot, taskId, 'Antigravity');
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
             mode: 'FULL_PATH',

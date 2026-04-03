@@ -15,6 +15,11 @@ import {
     detectSourceBundleParity
 } from './workspace-layout';
 import { validateTimelineCompleteness } from '../gate-runtime/lifecycle-events';
+import {
+    scanProviderCompliance,
+    formatProviderComplianceSummary,
+    type ProviderComplianceResult
+} from './provider-compliance';
 
 type InitAnswers = ReturnType<typeof validateInitAnswers>;
 
@@ -38,6 +43,7 @@ export interface StatusSnapshot extends CliStatusSnapshot {
     timelineHealthy: number;
     timelineWarnings: string[];
     parityResult: ReturnType<typeof detectSourceBundleParity>;
+    providerComplianceResult: ProviderComplianceResult | null;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -163,8 +169,19 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
             agentInitializationPendingReason = 'VALIDATION_PENDING';
         }
     }
+    // T-1006: provider-control compliance scan
+    var providerComplianceResult: ProviderComplianceResult | null = null;
+    if (bundlePresent && currentActiveAgentFiles.length > 0) {
+        try {
+            providerComplianceResult = scanProviderCompliance(resolvedTargetRoot, currentActiveAgentFiles);
+        } catch {
+            // compliance scan failure is non-fatal for status
+        }
+    }
+
     var agentInitializationComplete = primaryInitializationComplete && agentInitializationPendingReason === null;
-    var readyForTasks = agentInitializationComplete && !parityResult.isStale;
+    var compliancePassed = providerComplianceResult === null || providerComplianceResult.passed;
+    var readyForTasks = agentInitializationComplete && !parityResult.isStale && compliancePassed;
     var recommendedNextCommand = 'npx octopus-agent-orchestrator setup';
     if (readyForTasks) recommendedNextCommand = 'Execute task T-001 depth=2';
     else if (parityResult.isStale && parityResult.remediation) recommendedNextCommand = parityResult.remediation;
@@ -239,7 +256,8 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
         timelineTaskCount: timelineTaskCount,
         timelineHealthy: timelineHealthy,
         timelineWarnings: timelineWarnings,
-        parityResult: parityResult
+        parityResult: parityResult,
+        providerComplianceResult: providerComplianceResult
     };
 }
 
@@ -272,6 +290,17 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
         if (snapshot.parityResult.isStale) {
             for (var pk = 0; pk < snapshot.parityResult.violations.length; pk++) {
                 lines.push('    Violation: ' + snapshot.parityResult.violations[pk]);
+            }
+        }
+    }
+
+    // T-1006: provider-control compliance summary
+    if (snapshot.providerComplianceResult) {
+        lines.push('  '+badge(snapshot.providerComplianceResult.passed)+' Provider control compliance');
+        if (!snapshot.providerComplianceResult.passed) {
+            var complianceLines = formatProviderComplianceSummary(snapshot.providerComplianceResult);
+            for (var ci = 1; ci < complianceLines.length; ci++) {
+                lines.push('  ' + complianceLines[ci]);
             }
         }
     }
