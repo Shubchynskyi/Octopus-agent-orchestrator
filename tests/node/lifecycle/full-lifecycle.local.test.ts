@@ -382,8 +382,10 @@ describe('full local lifecycle', () => {
                         'Restored .gitignore must contain original user entries');
                     assert.ok(restoredContent.includes('Octopus-agent-orchestrator-uninstall-backups/'),
                         'Restored .gitignore must ignore uninstall backup directory');
-                    assert.ok(restoredContent.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
-                        'Restored .gitignore must ignore uninstall backup contents');
+                    assert.ok(!restoredContent.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
+                        'Redundant wildcard entry must not be present');
+                    assert.ok(restoredContent.includes('# Backup artifacts created by Octopus Agent Orchestrator uninstall'),
+                        'Explanatory comment for uninstall backups must be present');
                 } else {
                     assert.equal(fs.readFileSync(restoredPath, 'utf8'), originalContent);
                 }

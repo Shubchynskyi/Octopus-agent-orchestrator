@@ -213,8 +213,10 @@ describe('runUninstall', () => {
                 'Managed comment must be removed');
             assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/'),
                 'Uninstall backup directory entry must be present');
-            assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
-                'Uninstall backup wildcard entry must be present');
+            assert.ok(!content.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
+                'Redundant wildcard entry must not be present');
+            assert.ok(content.includes('# Backup artifacts created by Octopus Agent Orchestrator uninstall'),
+                'Explanatory comment for uninstall backups must be present');
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -261,8 +263,10 @@ describe('runUninstall', () => {
                 'Legacy managed entry must be removed');
             assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/'),
                 'Uninstall backup directory entry must be present');
-            assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
-                'Uninstall backup wildcard entry must be present');
+            assert.ok(!content.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
+                'Redundant wildcard entry must not be present');
+            assert.ok(content.includes('# Backup artifacts created by Octopus Agent Orchestrator uninstall'),
+                'Explanatory comment for uninstall backups must be present');
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -299,8 +303,44 @@ describe('runUninstall', () => {
                 'Managed comment must be removed');
             assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/'),
                 'Uninstall backup directory entry must be present');
-            assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
-                'Uninstall backup wildcard entry must be present');
+            assert.ok(!content.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
+                'Redundant wildcard entry must not be present');
+            assert.ok(content.includes('# Backup artifacts created by Octopus Agent Orchestrator uninstall'),
+                'Explanatory comment for uninstall backups must be present');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('migrates legacy two-line backup gitignore to single entry with comment', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            // Simulate a .gitignore left by the old uninstall (two-line format, no comment)
+            fs.writeFileSync(
+                path.join(projectRoot, '.gitignore'),
+                'node_modules/\nOctopus-agent-orchestrator-uninstall-backups/\nOctopus-agent-orchestrator-uninstall-backups/**\n',
+                'utf8'
+            );
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            const content = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+            assert.ok(content.includes('node_modules/'),
+                'User entries must be preserved');
+            assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/'),
+                'Uninstall backup directory entry must be present');
+            assert.ok(!content.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
+                'Legacy wildcard entry must be removed during migration');
+            assert.ok(content.includes('# Backup artifacts created by Octopus Agent Orchestrator uninstall'),
+                'Explanatory comment must be added during migration');
         } finally {
             removePathRecursive(projectRoot);
         }

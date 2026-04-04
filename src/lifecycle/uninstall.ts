@@ -746,32 +746,48 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
 
     function ensureUninstallBackupGitignoreEntries(): void {
         const backupDirName = `${DEFAULT_BUNDLE_NAME}-uninstall-backups`;
-        const requiredEntries = [`${backupDirName}/`, `${backupDirName}/**`];
+        // A trailing-slash gitignore rule ignores the directory and everything inside it.
+        const ignoreEntry = `${backupDirName}/`;
+        const legacyWildcardEntry = `${backupDirName}/**`;
+        const commentLine = `# Backup artifacts created by Octopus Agent Orchestrator uninstall`;
 
         const filePath = path.join(normalizedTarget, '.gitignore');
         const existingContent = pathExists(filePath) ? readTextFile(filePath) : '';
         const eol = existingContent ? detectLineEnding(existingContent) : '\n';
         const existingLines = existingContent ? existingContent.split(/\r?\n/) : [];
 
-        const missingEntries = requiredEntries.filter(
-            (entry) => !existingLines.some((line) => line.trim() === entry)
-        );
-        if (missingEntries.length === 0) return;
+        const hasIgnoreEntry = existingLines.some((line) => line.trim() === ignoreEntry);
+        const hasLegacyWildcard = existingLines.some((line) => line.trim() === legacyWildcardEntry);
+        const hasComment = existingLines.some((line) => line.trim() === commentLine);
 
-        const parts: string[] = [];
-        const trimmed = existingContent.trimEnd();
-        if (trimmed) {
-            parts.push(trimmed);
-        }
-        parts.push(missingEntries.join(eol));
-        const updatedContent = parts.join(eol + eol) + eol;
+        if (hasIgnoreEntry && hasComment && !hasLegacyWildcard) return;
 
-        if (!dryRun) {
-            fs.mkdirSync(path.dirname(filePath), { recursive: true });
-            fs.writeFileSync(filePath, updatedContent, 'utf8');
+        let lines = hasLegacyWildcard
+            ? existingLines.filter((line) => line.trim() !== legacyWildcardEntry)
+            : [...existingLines];
+
+        if (!hasIgnoreEntry) {
+            const base = lines.join(eol).trimEnd();
+            const parts: string[] = [];
+            if (base) parts.push(base);
+            parts.push(`${commentLine}${eol}${ignoreEntry}`);
+            const updatedContent = parts.join(eol + eol) + eol;
+            writeResult(filePath, updatedContent);
+        } else {
+            if (!hasComment) {
+                const idx = lines.findIndex((line) => line.trim() === ignoreEntry);
+                if (idx >= 0) lines.splice(idx, 0, commentLine);
+            }
+            const updatedContent = lines.join(eol).trimEnd() + eol;
+            writeResult(filePath, updatedContent);
         }
-        if (existingContent) {
-            updatedFiles++;
+
+        function writeResult(fp: string, content: string): void {
+            if (!dryRun) {
+                fs.mkdirSync(path.dirname(fp), { recursive: true });
+                fs.writeFileSync(fp, content, 'utf8');
+            }
+            if (existingContent) updatedFiles++;
         }
     }
 
