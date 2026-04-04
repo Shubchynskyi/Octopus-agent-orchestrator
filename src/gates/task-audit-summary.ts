@@ -310,20 +310,61 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         }
     }
 
-    // Check for missing required review evidence (receipt is the authoritative artifact)
+    // Check required review evidence: receipt + review markdown must both exist,
+    // receipt must parse, and receipt integrity fields must be consistent.
+    // Schema v2 receipts do not carry a verdict field; the passing verdict lives
+    // in the review markdown and is validated by required-reviews-check.  Here we
+    // verify artifact-level integrity only: task_id, review_type, and
+    // review_artifact_sha256 must match the actual review file on disk.
+
     for (const [reviewType, required] of Object.entries(requiredReviews)) {
         if (!required) continue;
         const receiptPath = path.join(reviewsRoot, `${safeTaskId}-${reviewType}-receipt.json`);
         const reviewPath = path.join(reviewsRoot, `${safeTaskId}-${reviewType}.md`);
-        const hasReceipt = fs.existsSync(receiptPath);
+        const hasReceiptFile = fs.existsSync(receiptPath);
         const hasReview = fs.existsSync(reviewPath);
-        if (!hasReceipt) {
+
+        if (!hasReceiptFile && !hasReview) {
             blockers.push({
                 gate: `${reviewType}-review`,
-                reason: hasReview
-                    ? `Required ${reviewType} review receipt not found (review markdown exists but receipt is missing)`
-                    : `Required ${reviewType} review artifact not found`
+                reason: `Required ${reviewType} review artifact not found`
             });
+        } else if (!hasReceiptFile) {
+            blockers.push({
+                gate: `${reviewType}-review`,
+                reason: `Required ${reviewType} review receipt not found (review markdown exists but receipt is missing)`
+            });
+        } else if (!hasReview) {
+            blockers.push({
+                gate: `${reviewType}-review`,
+                reason: `Required ${reviewType} review markdown not found (receipt exists but review document is missing)`
+            });
+        } else {
+            const receipt = safeReadJson(receiptPath);
+            if (!receipt) {
+                blockers.push({
+                    gate: `${reviewType}-review`,
+                    reason: `Required ${reviewType} review receipt is malformed or unreadable`
+                });
+            } else if (receipt.task_id !== safeTaskId) {
+                blockers.push({
+                    gate: `${reviewType}-review`,
+                    reason: `Required ${reviewType} review receipt belongs to a different task: ${receipt.task_id}`
+                });
+            } else if (receipt.review_type !== reviewType) {
+                blockers.push({
+                    gate: `${reviewType}-review`,
+                    reason: `Required ${reviewType} review receipt has mismatched review type: ${receipt.review_type}`
+                });
+            } else if (typeof receipt.review_artifact_sha256 === 'string' && receipt.review_artifact_sha256) {
+                const actualHash = fileSha256(reviewPath);
+                if (actualHash && receipt.review_artifact_sha256 !== actualHash) {
+                    blockers.push({
+                        gate: `${reviewType}-review`,
+                        reason: `Required ${reviewType} review artifact was modified after receipt was issued`
+                    });
+                }
+            }
         }
     }
 
@@ -357,9 +398,17 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         (g) => g.gate === 'completion-gate' && g.status === 'PASS'
     );
     const hasFailedGate = gates.some((g) => g.status === 'FAIL');
+    const hasIntegrityFailure = integrityStatus === 'FAILED';
+
+    if (hasIntegrityFailure) {
+        blockers.push({
+            gate: 'integrity',
+            reason: `Task event timeline integrity check returned ${integrityStatus}`
+        });
+    }
 
     let status: 'PASS' | 'BLOCKED' | 'INCOMPLETE';
-    if (hasCompletionPass && blockers.length === 0) {
+    if (hasCompletionPass && blockers.length === 0 && !hasIntegrityFailure) {
         status = 'PASS';
     } else if (hasFailedGate || blockers.length > 0) {
         status = 'BLOCKED';
