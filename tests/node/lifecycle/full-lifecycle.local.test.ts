@@ -366,10 +366,27 @@ describe('full local lifecycle', () => {
             assert.ok(!fs.existsSync(bundleRoot));
             assert.ok(fs.existsSync(path.join(workspaceRoot, 'Octopus-agent-orchestrator-uninstall-backups')));
 
+            // .agents/ router directory must be removed when only orchestrator-managed content remained
+            assert.ok(!fs.existsSync(path.join(workspaceRoot, '.agents')),
+                'Expected .agents/ directory to be removed after uninstall');
+
             for (const [relativePath, originalContent] of legacyFiles) {
                 const restoredPath = path.join(workspaceRoot, relativePath);
                 assert.ok(fs.existsSync(restoredPath), `Expected restored file '${relativePath}'.`);
-                assert.equal(fs.readFileSync(restoredPath, 'utf8'), originalContent);
+
+                if (relativePath === '.gitignore') {
+                    const restoredContent = fs.readFileSync(restoredPath, 'utf8');
+                    assert.ok(restoredContent.includes('node_modules/'),
+                        'Restored .gitignore must contain original user entries');
+                    assert.ok(restoredContent.includes('.custom-cache/'),
+                        'Restored .gitignore must contain original user entries');
+                    assert.ok(restoredContent.includes('Octopus-agent-orchestrator-uninstall-backups/'),
+                        'Restored .gitignore must ignore uninstall backup directory');
+                    assert.ok(restoredContent.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
+                        'Restored .gitignore must ignore uninstall backup contents');
+                } else {
+                    assert.equal(fs.readFileSync(restoredPath, 'utf8'), originalContent);
+                }
             }
         } finally {
             fs.rmSync(workspaceRoot, { recursive: true, force: true });

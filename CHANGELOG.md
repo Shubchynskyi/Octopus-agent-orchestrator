@@ -3,6 +3,7 @@
 ## 2.4.2
 - expanded the shared `start-task` router so root entrypoints and provider bridges now converge on the same orchestration checklist instead of relying on uneven provider-specific wording
 - materialized `.agents/workflows/start-task.md` as the common thin-router control layer and updated templates/docs/tests to keep root-entrypoint providers and provider-native bridges aligned
+- fixed uninstall to remove the managed `.agents/` router directory when only orchestrator-managed content remained, and to restore `.gitignore` from initialization backup while ensuring uninstall-backup ignore entries (`Octopus-agent-orchestrator-uninstall-backups/` and `Octopus-agent-orchestrator-uninstall-backups/**`) are always present after uninstall
 
 ## 2.4.1
 - fixed `completion-gate` timeline parsing so one corrupted JSONL line no longer truncates the rest of the task timeline; later valid events are still processed and invalid lines are reported as parse errors instead of aborting the scan

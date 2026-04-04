@@ -9,7 +9,7 @@ import {
 import { pathExists, readTextFile } from '../core/fs';
 import { detectLineEnding } from '../core/line-endings';
 import { readJsonFile } from '../core/json';
-import { getActiveAgentEntrypointFiles, getCanonicalEntrypointFile, getManagedGitignoreCleanupEntries } from '../materialization/common';
+import { getActiveAgentEntrypointFiles, getCanonicalEntrypointFile, getManagedGitignoreCleanupEntries, SHARED_START_TASK_WORKFLOW_RELATIVE_PATH } from '../materialization/common';
 import {
     MANAGED_START,
     MANAGED_END,
@@ -375,6 +375,13 @@ function looksLikeManagedFileWithoutMarkers(relativePath: string, content: strin
         }
     }
 
+    const normalizedRelPath = String(relativePath || '').replace(/\\/g, '/');
+    if (normalizedRelPath.toLowerCase() === SHARED_START_TASK_WORKFLOW_RELATIVE_PATH.toLowerCase()) {
+        if (text.includes('Mandatory shared router for any task execution through Octopus orchestration.')) {
+            return true;
+        }
+    }
+
     return false;
 }
 
@@ -388,6 +395,7 @@ export function getUninstallRollbackItems(): string[] {
         ...ENTRYPOINT_FILES,
         ...PROVIDER_AGENT_FILES,
         ...GITHUB_SKILL_BRIDGE_FILES,
+        SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
         QWEN_SETTINGS_RELATIVE,
         CLAUDE_LOCAL_SETTINGS_RELATIVE,
         PRE_COMMIT_HOOK_RELATIVE,
@@ -736,6 +744,37 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
         updateOrRemoveFile(filePath, '.gitignore', updatedContent);
     }
 
+    function ensureUninstallBackupGitignoreEntries(): void {
+        const backupDirName = `${DEFAULT_BUNDLE_NAME}-uninstall-backups`;
+        const requiredEntries = [`${backupDirName}/`, `${backupDirName}/**`];
+
+        const filePath = path.join(normalizedTarget, '.gitignore');
+        const existingContent = pathExists(filePath) ? readTextFile(filePath) : '';
+        const eol = existingContent ? detectLineEnding(existingContent) : '\n';
+        const existingLines = existingContent ? existingContent.split(/\r?\n/) : [];
+
+        const missingEntries = requiredEntries.filter(
+            (entry) => !existingLines.some((line) => line.trim() === entry)
+        );
+        if (missingEntries.length === 0) return;
+
+        const parts: string[] = [];
+        const trimmed = existingContent.trimEnd();
+        if (trimmed) {
+            parts.push(trimmed);
+        }
+        parts.push(missingEntries.join(eol));
+        const updatedContent = parts.join(eol + eol) + eol;
+
+        if (!dryRun) {
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, updatedContent, 'utf8');
+        }
+        if (existingContent) {
+            updatedFiles++;
+        }
+    }
+
     function cleanupCommitGuardHook(): void {
         const filePath = path.join(normalizedTarget, PRE_COMMIT_HOOK_RELATIVE);
         if (!pathExists(filePath)) return;
@@ -908,6 +947,11 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             }
         }
 
+        // Shared start-task router
+        if (!restoreItemFromInitializationBackup(SHARED_START_TASK_WORKFLOW_RELATIVE_PATH)) {
+            removeManagedFile(SHARED_START_TASK_WORKFLOW_RELATIVE_PATH);
+        }
+
         // Qwen settings
         if (!restoreItemFromInitializationBackup(QWEN_SETTINGS_RELATIVE)) {
             cleanupQwenSettings(qwenManagedEntries);
@@ -924,6 +968,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
         if (!restoreItemFromInitializationBackup('.gitignore')) {
             cleanupGitignore();
         }
+        ensureUninstallBackupGitignoreEntries();
 
         // Test hook: allow tests to inject a failure between file cleanup and bundle removal
         if (options._testHooks && typeof options._testHooks.afterFileCleanup === 'function') {

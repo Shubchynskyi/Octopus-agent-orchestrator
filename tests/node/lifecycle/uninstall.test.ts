@@ -202,12 +202,19 @@ describe('runUninstall', () => {
             });
 
             assert.equal(result.result, 'SUCCESS');
-            if (fs.existsSync(path.join(projectRoot, '.gitignore'))) {
-                const content = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
-                assert.ok(content.includes('node_modules/'));
-                assert.ok(!content.includes('Octopus-agent-orchestrator/'));
-                assert.ok(!content.includes('Octopus-agent-orchestrator managed ignores'));
-            }
+            assert.ok(fs.existsSync(path.join(projectRoot, '.gitignore')),
+                '.gitignore must exist after uninstall (backup entries are always appended)');
+            const content = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+            assert.ok(content.includes('node_modules/'),
+                'User entries must be preserved');
+            assert.ok(!content.includes('Octopus-agent-orchestrator/'),
+                'Managed ignore entry must be removed');
+            assert.ok(!content.includes('Octopus-agent-orchestrator managed ignores'),
+                'Managed comment must be removed');
+            assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/'),
+                'Uninstall backup directory entry must be present');
+            assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
+                'Uninstall backup wildcard entry must be present');
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -239,14 +246,61 @@ describe('runUninstall', () => {
             });
 
             assert.equal(result.result, 'SUCCESS');
-            if (fs.existsSync(path.join(projectRoot, '.gitignore'))) {
-                const content = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
-                assert.ok(content.includes('node_modules/'));
-                assert.ok(!content.includes('.antigravity/'));
-                assert.ok(!content.includes('.antigravity/rules.md'));
-                assert.ok(!content.includes('.windsurf/'));
-                assert.ok(!content.includes('.windsurf/rules/rules.md'));
-            }
+            assert.ok(fs.existsSync(path.join(projectRoot, '.gitignore')),
+                '.gitignore must exist after uninstall (backup entries are always appended)');
+            const content = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+            assert.ok(content.includes('node_modules/'),
+                'User entries must be preserved');
+            assert.ok(!content.includes('.antigravity/'),
+                'Legacy managed entry must be removed');
+            assert.ok(!content.includes('.antigravity/rules.md'),
+                'Legacy managed entry must be removed');
+            assert.ok(!content.includes('.windsurf/'),
+                'Legacy managed entry must be removed');
+            assert.ok(!content.includes('.windsurf/rules/rules.md'),
+                'Legacy managed entry must be removed');
+            assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/'),
+                'Uninstall backup directory entry must be present');
+            assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
+                'Uninstall backup wildcard entry must be present');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('creates .gitignore with only backup entries when cleanup removes all managed content and no backup exists', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            // Replace .gitignore with managed-only content (no user entries)
+            fs.writeFileSync(
+                path.join(projectRoot, '.gitignore'),
+                '# Octopus-agent-orchestrator managed ignores\nOctopus-agent-orchestrator/\nAGENTS.md\n',
+                'utf8'
+            );
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.ok(fs.existsSync(path.join(projectRoot, '.gitignore')),
+                '.gitignore must be recreated with backup entries even when all managed content was removed');
+            const content = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+            assert.ok(!content.includes('Octopus-agent-orchestrator/'),
+                'Managed ignore entry must be removed');
+            assert.ok(!content.includes('AGENTS.md'),
+                'Managed ignore entry must be removed');
+            assert.ok(!content.includes('Octopus-agent-orchestrator managed ignores'),
+                'Managed comment must be removed');
+            assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/'),
+                'Uninstall backup directory entry must be present');
+            assert.ok(content.includes('Octopus-agent-orchestrator-uninstall-backups/**'),
+                'Uninstall backup wildcard entry must be present');
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -823,6 +877,9 @@ describe('runUninstall', () => {
         assert.ok(items.some((i) => i.includes('.github/agents/orchestrator.md')));
         // Should include skill bridge files
         assert.ok(items.some((i) => i.includes('.github/agents/reviewer.md')));
+        // Should include shared start-task router
+        assert.ok(items.some((i) => i.includes('.agents/workflows/start-task.md')),
+            'Rollback items must include the shared start-task router');
     });
 
     it('dry-run does not create journal or sentinel', () => {
