@@ -205,6 +205,8 @@ node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate --preflight-
 node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"
 node Octopus-agent-orchestrator/bin/octopus.js gate log-task-event --task-id "<task-id>" --event-type "PLAN_CREATED" --outcome "INFO" --message "<short stage message>" --actor "orchestrator"
 node Octopus-agent-orchestrator/bin/octopus.js gate task-events-summary --task-id "<task-id>"
+node Octopus-agent-orchestrator/bin/octopus.js gate task-audit-summary --task-id "<task-id>"
+node Octopus-agent-orchestrator/bin/octopus.js gate task-audit-summary --task-id "<task-id>" --as-json
 node Octopus-agent-orchestrator/bin/octopus.js gate build-scoped-diff --review-type "<db|security|refactor>" --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" --metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"
 node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --depth <1|2|3> --preflight-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "Octopus-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"
 node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest --manifest-path "Octopus-agent-orchestrator/MANIFEST.md"
@@ -243,3 +245,4 @@ Notes:
 - New task-event writes include a per-task hash chain (`integrity.task_sequence`, `prev_event_sha256`, `event_sha256`) to detect local tampering, replay, and out-of-order inserts after the fact.
 - Task timeline completeness is surfaced by `status` and `doctor`, not just completion-gate.
 - Human-readable timeline can be generated with `node Octopus-agent-orchestrator/bin/octopus.js gate task-events-summary`; summary output includes `IntegrityStatus`.
+- Compact task audit summary can be generated with `node Octopus-agent-orchestrator/bin/octopus.js gate task-audit-summary --task-id "<task-id>"`; shows status, gates, changed files, evidence paths, and blockers. Use `--as-json` for structured output. Non-zero exit when status is not `PASS`.

@@ -23,6 +23,7 @@ import {
 import { buildScopedDiff, resolveMetadataPath, resolveOutputPath } from '../gates/build-scoped-diff';
 import { formatCompletionGateResult, runCompletionGate } from '../gates/completion';
 import { buildTaskEventsSummary, formatTaskEventsSummaryText } from '../gates/task-events-summary';
+import { buildTaskAuditSummary, formatTaskAuditSummaryText } from '../gates/task-audit-summary';
 import {
     emitMandatoryCompletionGateEvent,
     emitReviewPhaseStartedEvent,
@@ -36,6 +37,18 @@ import {
     joinOrchestratorPath
 } from '../gates/helpers';
 import * as gateHelpers from '../gates/helpers';
+import {
+    evaluateIsolationModePreTask,
+    loadIsolationModeConfig
+} from '../gates/isolation-mode';
+import {
+    compareSandboxToLive,
+    prepareSandbox,
+    resolveGateExecutionPath,
+    resolveIsolatedOrchestratorRoot,
+    resolveSandboxRoot,
+    validateSandbox
+} from '../gates/isolation-sandbox';
 import {
     emitSkillReferenceLoadedEvent,
     emitSkillSelectedEvent
@@ -1276,7 +1289,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             );
             const pathsConfigPath = options.pathsConfigPath
                 ? requireResolvedPath(gateHelpers.resolvePathInsideRepo(String(options.pathsConfigPath), repoRoot), 'PathsConfigPath')
-                : gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'config', 'paths.json'));
+                : resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'paths.json'));
             const outputPath = resolveOutputPath(String(options.outputPath || ''), preflightPath, reviewType, repoRoot);
             const metadataPath = resolveMetadataPath(String(options.metadataPath || ''), preflightPath, reviewType, repoRoot);
             const fullDiffPath = options.fullDiffPath
@@ -1328,7 +1341,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                     gateHelpers.resolvePathInsideRepo(String(options.tokenEconomyConfigPath), repoRoot, { allowMissing: true }),
                     'TokenEconomyConfigPath'
                 )
-                : gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
+                : resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
             const outputPath = resolveContextOutputPath(String(options.outputPath || ''), preflightPath, reviewType, repoRoot);
             const scopedDiffMetadataPath = resolveScopedDiffMetadataPath(
                 String(options.scopedDiffMetadataPath || ''),
@@ -1352,7 +1365,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 if (taskId) {
                     const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
                     const skillId = resolveReviewSkillId(reviewType, repoRoot);
-                    const skillPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'skills', skillId, 'SKILL.md'));
+                    const skillPath = resolveGateExecutionPath(repoRoot, path.join('live', 'skills', skillId, 'SKILL.md'));
 
                     emitReviewPhaseStartedEvent(orchestratorRoot, taskId, {
                         review_type: reviewType,
@@ -1420,6 +1433,42 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 fs.writeFileSync(outputPath, rendered, 'utf8');
             }
             process.stdout.write(rendered);
+            return;
+        }
+        case 'task-audit-summary': {
+            const defs = {
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--repo-root': { key: 'repoRoot', type: 'string' },
+                '--events-root': { key: 'eventsRoot', type: 'string' },
+                '--reviews-root': { key: 'reviewsRoot', type: 'string' },
+                '--output-path': { key: 'outputPath', type: 'string' },
+                '--as-json': { key: 'asJson', type: 'boolean' }
+            };
+            const { options: rawOptions } = parseOptions(gateArgv, defs);
+            const options = rawOptions as ParsedOptionsRecord;
+            const repoRoot = normalizePathValue(options.repoRoot || '.');
+            ensureDirectoryExists(repoRoot, 'Repo root');
+            const auditSummary = buildTaskAuditSummary({
+                taskId: parseRequiredText(options.taskId, 'TaskId'),
+                repoRoot,
+                eventsRoot: options.eventsRoot ? String(options.eventsRoot) : null,
+                reviewsRoot: options.reviewsRoot ? String(options.reviewsRoot) : null
+            });
+            const rendered = options.asJson === true
+                ? `${JSON.stringify(auditSummary, null, 2)}\n`
+                : `${formatTaskAuditSummaryText(auditSummary)}\n`;
+            if (options.outputPath) {
+                const outputPath = requireResolvedPath(
+                    gateHelpers.resolvePathInsideRepo(String(options.outputPath), repoRoot, { allowMissing: true }),
+                    'OutputPath'
+                );
+                fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+                fs.writeFileSync(outputPath, rendered, 'utf8');
+            }
+            process.stdout.write(rendered);
+            if (auditSummary.status !== 'PASS') {
+                process.exitCode = 1;
+            }
             return;
         }
         case 'log-task-event': {
@@ -1856,6 +1905,148 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             const exitCode = await runHumanCommitCommand(gateArgv, { cwd: process.cwd() });
             if (exitCode !== 0) {
                 process.exitCode = exitCode;
+            }
+            return;
+        }
+        case 'validate-isolation': {
+            const defs = {
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options } = parseOptions(gateArgv, defs);
+            const isolationRepoRoot = path.resolve(String(options.repoRoot || '.'));
+            const evidence = evaluateIsolationModePreTask(isolationRepoRoot);
+            const sandboxValidation = validateSandbox(isolationRepoRoot);
+            const sandboxResolution = resolveIsolatedOrchestratorRoot(isolationRepoRoot);
+            const lines: string[] = [];
+            lines.push(evidence.isolation_enabled ? 'ISOLATION_MODE_ENABLED' : 'ISOLATION_MODE_DISABLED');
+            lines.push(`Enforcement: ${evidence.enforcement}`);
+            lines.push(`ManifestStatus: ${evidence.manifest_status}`);
+            lines.push(`ProtectedFileCount: ${evidence.protected_file_count}`);
+            if (evidence.drift_files.length > 0) {
+                lines.push(`DriftFiles: ${evidence.drift_files.join(', ')}`);
+            }
+            lines.push(`SandboxExists: ${sandboxValidation.exists}`);
+            lines.push(`SandboxManifestValid: ${sandboxValidation.manifest_valid}`);
+            lines.push(`SandboxFileCount: ${sandboxValidation.file_count}`);
+            lines.push(`SandboxReadOnlyIntact: ${sandboxValidation.read_only_intact}`);
+            lines.push(`SandboxDriftFiles: ${sandboxValidation.drift_files.length}`);
+            lines.push(`UsingSandbox: ${sandboxResolution.using_sandbox}`);
+            lines.push(`ResolvedRoot: ${normalizePath(sandboxResolution.resolved_root)}`);
+            lines.push(`SandboxReason: ${sandboxResolution.reason}`);
+            if (evidence.violations.length > 0) {
+                lines.push('Violations:');
+                for (const v of evidence.violations) {
+                    lines.push(`  - ${v}`);
+                }
+            }
+            if (evidence.warnings.length > 0) {
+                lines.push('Warnings:');
+                for (const w of evidence.warnings) {
+                    lines.push(`  - ${w}`);
+                }
+            }
+            if (sandboxValidation.errors.length > 0) {
+                lines.push('SandboxErrors:');
+                for (const e of sandboxValidation.errors) {
+                    lines.push(`  - ${e}`);
+                }
+            }
+            lines.push(`SameUserNotice: ${evidence.same_user_limitation_notice}`);
+            console.log(lines.join('\n'));
+
+            if (evidence.violations.length > 0 && evidence.enforcement === 'STRICT') {
+                process.exitCode = 1;
+            }
+
+            if (options.taskId) {
+                const orchestratorRoot = gateHelpers.joinOrchestratorPath(isolationRepoRoot, '');
+                const eventType = evidence.isolation_enabled
+                    ? 'ISOLATION_MODE_VALIDATED'
+                    : 'ISOLATION_MODE_SKIPPED';
+                appendTaskEvent(
+                    orchestratorRoot,
+                    String(options.taskId),
+                    eventType,
+                    evidence.violations.length > 0 ? 'WARN' : 'PASS',
+                    `Isolation mode ${evidence.isolation_enabled ? 'enabled' : 'disabled'}, enforcement=${evidence.enforcement}, manifest=${evidence.manifest_status}, sandbox=${sandboxResolution.using_sandbox}`,
+                    {
+                        isolation_enabled: evidence.isolation_enabled,
+                        enforcement: evidence.enforcement,
+                        manifest_status: evidence.manifest_status,
+                        violations_count: evidence.violations.length,
+                        warnings_count: evidence.warnings.length,
+                        sandbox_exists: sandboxValidation.exists,
+                        sandbox_using: sandboxResolution.using_sandbox,
+                        sandbox_reason: sandboxResolution.reason
+                    }
+                );
+            }
+            return;
+        }
+        case 'prepare-isolation': {
+            const defs = {
+                '--task-id': { key: 'taskId', type: 'string' },
+                '--repo-root': { key: 'repoRoot', type: 'string' }
+            };
+            const { options } = parseOptions(gateArgv, defs);
+            const isolationRepoRoot = path.resolve(String(options.repoRoot || '.'));
+            const config = loadIsolationModeConfig(isolationRepoRoot);
+
+            if (!config.enabled) {
+                console.log('ISOLATION_MODE_DISABLED');
+                console.log('Enable isolation mode in live/config/isolation-mode.json before preparing the sandbox.');
+                return;
+            }
+
+            const result = prepareSandbox(isolationRepoRoot);
+            const lines: string[] = [];
+            lines.push('ISOLATION_SANDBOX_PREPARED');
+            lines.push(`SandboxRoot: ${normalizePath(result.sandbox_root)}`);
+            lines.push(`ManifestPath: ${normalizePath(result.sandbox_manifest_path)}`);
+            lines.push(`FileCount: ${result.file_count}`);
+            lines.push(`ReadOnlyApplied: ${result.read_only_applied}`);
+            if (result.skipped_directories.length > 0) {
+                lines.push(`SkippedDirectories: ${result.skipped_directories.join(', ')}`);
+            }
+            if (result.errors.length > 0) {
+                lines.push('Errors:');
+                for (const e of result.errors) {
+                    lines.push(`  - ${e}`);
+                }
+            }
+
+            // Verify sandbox matches live
+            const comparison = compareSandboxToLive(isolationRepoRoot);
+            lines.push(`SandboxMatchesLive: ${comparison.match}`);
+            if (!comparison.match) {
+                if (comparison.live_only.length > 0) {
+                    lines.push(`LiveOnly: ${comparison.live_only.length} file(s)`);
+                }
+                if (comparison.content_differs.length > 0) {
+                    lines.push(`ContentDiffers: ${comparison.content_differs.length} file(s)`);
+                }
+            }
+
+            lines.push(`SameUserNotice: ${config.same_user_limitation_notice}`);
+            console.log(lines.join('\n'));
+
+            if (options.taskId) {
+                const orchestratorRoot = gateHelpers.joinOrchestratorPath(isolationRepoRoot, '');
+                appendTaskEvent(
+                    orchestratorRoot,
+                    String(options.taskId),
+                    'ISOLATION_SANDBOX_PREPARED',
+                    result.errors.length > 0 ? 'WARN' : 'PASS',
+                    `Sandbox prepared: ${result.file_count} files, read_only=${result.read_only_applied}, matches_live=${comparison.match}`,
+                    {
+                        file_count: result.file_count,
+                        read_only_applied: result.read_only_applied,
+                        sandbox_matches_live: comparison.match,
+                        errors_count: result.errors.length,
+                        sandbox_root: normalizePath(result.sandbox_root)
+                    }
+                );
             }
             return;
         }

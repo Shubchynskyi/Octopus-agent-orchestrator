@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildReviewContextSections } from '../gate-runtime/review-context';
 import { normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
+import { resolveGateExecutionPath, resolveGateExecutionPathPosix } from './isolation-sandbox';
 import { readRuntimeReviewerProvider, resolveReviewerRoutingPolicy } from './reviewer-routing';
 
 /**
@@ -173,7 +174,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         : selectRulePackFiles(reviewType, depth);
 
     const omittedRuleFiles = fullRuleFiles.filter(f => !selectedRuleFiles.includes(f));
-    const ruleFilesBasePath = orchestratorRelativePath(repoRoot, 'live/docs/agent-rules');
+    const ruleFilesBasePath = resolveGateExecutionPathPosix(repoRoot, 'live/docs/agent-rules');
     const selectedRulePaths = selectedRuleFiles.map(f => `${ruleFilesBasePath}/${f}`);
     const fullRulePaths = fullRuleFiles.map(f => `${ruleFilesBasePath}/${f}`);
     const omittedRulePaths = omittedRuleFiles.map(f => `${ruleFilesBasePath}/${f}`);

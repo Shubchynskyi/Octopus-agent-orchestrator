@@ -20,7 +20,9 @@ export const GATE_COMMANDS = Object.freeze([
     'human-commit',
     'handshake-diagnostics',
     'shell-smoke-preflight',
-    'command-timeout-diagnostics'
+    'command-timeout-diagnostics',
+    'validate-isolation',
+    'prepare-isolation'
 ]);
 
 export function getAllShimmedGateNames() {

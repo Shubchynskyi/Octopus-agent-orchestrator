@@ -11,6 +11,7 @@ import {
     toPosix,
     toStringArray
 } from './helpers';
+import { resolveGateExecutionPath } from './isolation-sandbox';
 
 interface TriggerConfig {
     db: string[];
@@ -162,7 +163,7 @@ export function getDefaultClassificationConfig(repoRoot: string): Classification
  */
 export function getClassificationConfig(repoRoot: string): ResolvedClassificationConfig {
     const defaults = getDefaultClassificationConfig(repoRoot);
-    const configPath = joinOrchestratorPath(repoRoot, 'live/config/paths.json');
+    const configPath = resolveGateExecutionPath(repoRoot, 'live/config/paths.json');
     let source = 'defaults';
 
     if (fs.existsSync(configPath)) {
@@ -218,7 +219,7 @@ export function getReviewCapabilities(repoRoot: string): ReviewCapabilities {
         code: true, db: true, security: true, refactor: true,
         api: false, test: false, performance: false, infra: false, dependency: false
     };
-    const configPath = joinOrchestratorPath(repoRoot, 'live/config/review-capabilities.json');
+    const configPath = resolveGateExecutionPath(repoRoot, 'live/config/review-capabilities.json');
     if (!fs.existsSync(configPath)) return capabilities;
     try {
         const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;

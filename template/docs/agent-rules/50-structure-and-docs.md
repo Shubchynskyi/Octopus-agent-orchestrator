@@ -87,6 +87,7 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 - `node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check` - mandatory post-review gate checker.
 - `node Octopus-agent-orchestrator/bin/octopus.js gate log-task-event` - task timeline event logger by task id.
 - `node Octopus-agent-orchestrator/bin/octopus.js gate task-events-summary` - human-readable task timeline summary by task id.
+- `node Octopus-agent-orchestrator/bin/octopus.js gate task-audit-summary` - compact task audit showing status, gates, changed files, evidence paths, and blockers.
 - `node Octopus-agent-orchestrator/bin/octopus.js gate build-scoped-diff` - reviewer scoped-diff artifact builder with fallback metadata.
 - `node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context` - reviewer context artifact builder for token economy rule-pack selection.
 - `node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest` - manifest duplicate-entry validator.

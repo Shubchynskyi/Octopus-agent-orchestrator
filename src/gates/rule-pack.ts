@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { selectRulePackFiles } from './build-review-context';
 import { fileSha256, joinOrchestratorPath, normalizePath, resolvePathInsideRepo } from './helpers';
+import { resolveGateExecutionPath } from './isolation-sandbox';
 import { validatePreflightForReview } from './required-reviews-check';
 import { getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
 
@@ -97,7 +98,7 @@ function getRulePackStageKey(stage: RulePackStageLabel): 'task_entry' | 'post_pr
 }
 
 function getRulePackRulesRoot(repoRoot: string): string {
-    return joinOrchestratorPath(repoRoot, path.join('live', 'docs', 'agent-rules'));
+    return resolveGateExecutionPath(repoRoot, path.join('live', 'docs', 'agent-rules'));
 }
 
 function getRulePackRequiredEntryFiles(repoRoot: string): string[] {

@@ -84,6 +84,8 @@ import {
     resolveNoOpArtifactPath
 } from '../../gates/no-op';
 import * as gateHelpers from '../../gates/helpers';
+import { loadIsolationModeConfig } from '../../gates/isolation-mode';
+import { resolveIsolatedOrchestratorRoot, resolveGateExecutionPath } from '../../gates/isolation-sandbox';
 
 type ClassificationResult = ReturnType<typeof classifyChange>;
 type CompileCommandProfile = ReturnType<typeof getCompileCommandProfile>;
@@ -1551,7 +1553,7 @@ function resolveOutputFiltersPath(repoRoot: string, explicitPath: string): strin
             'OutputFiltersPath'
         );
     }
-    return gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'config', 'output-filters.json'));
+    return resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'output-filters.json'));
 }
 
 function writeCompileEvidence(
@@ -1637,6 +1639,45 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     (result.triggers as any).protected_control_plane_manifest_path = protectedManifestEvidence.manifest_path;
     (result.triggers as any).protected_control_plane_manifest_changed_files = protectedManifestEvidence.changed_files;
 
+    // T-1011: Capture isolation mode config state in preflight triggers
+    const isolationConfig = loadIsolationModeConfig(repoRoot);
+    (result.triggers as any).isolation_mode_enabled = isolationConfig.enabled;
+    (result.triggers as any).isolation_mode_enforcement = isolationConfig.enforcement;
+    (result.triggers as any).isolation_mode_use_sandbox = isolationConfig.use_sandbox;
+
+    // T-1011: Capture sandbox resolution state
+    const sandboxResolution = resolveIsolatedOrchestratorRoot(repoRoot);
+    (result.triggers as any).isolation_sandbox_active = sandboxResolution.using_sandbox;
+    (result.triggers as any).isolation_sandbox_resolved_root = gateHelpers.normalizePath(sandboxResolution.resolved_root);
+    (result.triggers as any).isolation_sandbox_reason = sandboxResolution.reason;
+
+    // T-1011: Enforce pre-task isolation constraints automatically
+    let isolationViolationMessage: string | null = null;
+    if (isolationConfig.enabled && isolationConfig.require_manifest_match_before_task) {
+        if (protectedManifestEvidence.status === 'MISSING') {
+            const msg = 'Control-plane isolation requires a trusted manifest, but none was found. Run setup/update/reinit to generate one.';
+            if (isolationConfig.enforcement === 'STRICT') {
+                isolationViolationMessage = msg;
+            }
+            (result.triggers as any).isolation_mode_pre_task_warning = msg;
+        } else if (protectedManifestEvidence.status === 'INVALID') {
+            const msg = `Trusted control-plane manifest at '${gateHelpers.normalizePath(protectedManifestEvidence.manifest_path)}' is malformed. Re-run setup/update/reinit.`;
+            if (isolationConfig.enforcement === 'STRICT') {
+                isolationViolationMessage = msg;
+            }
+            (result.triggers as any).isolation_mode_pre_task_warning = msg;
+        } else if (protectedManifestEvidence.status === 'DRIFT' && isolationConfig.refuse_on_preflight_drift) {
+            const msg = `Control-plane isolation detected drift in ${protectedManifestEvidence.changed_files.length} file(s) before task start: ${protectedManifestEvidence.changed_files.join(', ')}. Refresh the trusted manifest or disable isolation mode.`;
+            if (isolationConfig.enforcement === 'STRICT') {
+                isolationViolationMessage = msg;
+            }
+            (result.triggers as any).isolation_mode_pre_task_warning = msg;
+        }
+    }
+    if (isolationViolationMessage) {
+        (result as any).isolation_mode_violation = isolationViolationMessage;
+    }
+
     if (resolvedTaskId) {
         result.task_id = resolvedTaskId;
 
@@ -1676,6 +1717,14 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         if (preflightErrors.length > 0) {
             throw new Error(preflightErrors.join(' '));
         }
+
+        // T-1011: Fail preflight in STRICT isolation mode when violations exist
+        if (isolationViolationMessage) {
+            throw new Error(`Control-plane isolation (STRICT) blocked preflight: ${isolationViolationMessage}`);
+        }
+    } else if (isolationViolationMessage) {
+        // Even without a task ID, STRICT isolation blocks preflight
+        throw new Error(`Control-plane isolation (STRICT) blocked preflight: ${isolationViolationMessage}`);
     }
 
     const outputPath = options.outputPath ? resolvePathForWrite(options.outputPath, repoRoot) : null;
@@ -1780,7 +1829,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     try {
         const commandsPathValue = options.commandsPath
             ? options.commandsPath
-            : gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'docs', 'agent-rules', '40-commands.md'));
+            : resolveGateExecutionPath(repoRoot, path.join('live', 'docs', 'agent-rules', '40-commands.md'));
         resolvedCommandsPath = requireResolvedPath(
             gateHelpers.resolvePathInsideRepo(commandsPathValue, repoRoot),
             'CommandsPath'

@@ -12,6 +12,8 @@ import * as rulePack from './rule-pack';
 import * as handshakeDiagnostics from './handshake-diagnostics';
 import * as shellSmokePreflight from './shell-smoke-preflight';
 import * as commandTimeoutDiagnostics from './command-timeout-diagnostics';
+import * as isolationMode from './isolation-mode';
+import * as isolationSandbox from './isolation-sandbox';
 
 export {
     helpers,
@@ -27,5 +29,7 @@ export {
     rulePack,
     handshakeDiagnostics,
     shellSmokePreflight,
-    commandTimeoutDiagnostics
+    commandTimeoutDiagnostics,
+    isolationMode,
+    isolationSandbox
 };

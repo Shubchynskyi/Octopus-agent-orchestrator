@@ -13,6 +13,8 @@ import {
     scanProtectedPathHashes,
     evaluateProtectedControlPlaneManifest
 } from './helpers';
+import { evaluateIsolationModePostTask, loadIsolationModeConfig } from './isolation-mode';
+import { validateSandbox, compareSandboxToLive } from './isolation-sandbox';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 import { getHandshakeEvidence, getHandshakeEvidenceViolations } from './handshake-diagnostics';
 import { getShellSmokeEvidence, getShellSmokeEvidenceViolations } from './shell-smoke-preflight';
@@ -1040,6 +1042,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         : [];
 
     // T-1010: Re-scan protected paths at completion to detect tampering
+    // T-1011: When isolation mode is enabled, enforcement level governs
+    //         whether drift is a hard error (STRICT) or a logged warning (LOG_ONLY).
+    const isolationConfig = loadIsolationModeConfig(repoRoot);
+    const isolationWarnings: string[] = [];
     let currentProtectedSnapshot: Record<string, string> | null = null;
     if (hasProtectedSnapshot) {
         currentProtectedSnapshot = scanProtectedPathHashes(
@@ -1056,10 +1062,14 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         }
 
         if (changedFiles.length > 0 && !orchestratorWork) {
-            errors.push(
+            const driftMessage =
                 `Control-plane files were modified in a non-orchestrator task: ${changedFiles.join(', ')}. ` +
-                "Protected orchestrator runtime paths are only allowed for tasks started with --orchestrator-work."
-            );
+                "Protected orchestrator runtime paths are only allowed for tasks started with --orchestrator-work.";
+            if (isolationConfig.enabled && isolationConfig.enforcement === 'LOG_ONLY') {
+                isolationWarnings.push(driftMessage + ' (LOG_ONLY mode — logged as warning)');
+            } else {
+                errors.push(driftMessage);
+            }
         }
     }
 
@@ -1071,16 +1081,17 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
                 'Re-run setup/update/reinit before executing ordinary tasks.'
             );
         } else if (protectedManifestEvidence.status === 'DRIFT') {
-            if (preflightManifestStatus === 'DRIFT') {
-                errors.push(
-                    `Trusted protected control-plane manifest was already drifted before task start: ` +
-                    `${preflightManifestChangedFiles.join(', ') || protectedManifestEvidence.changed_files.join(', ')}.`
-                );
+            const driftFiles = preflightManifestStatus === 'DRIFT'
+                ? (preflightManifestChangedFiles.join(', ') || protectedManifestEvidence.changed_files.join(', '))
+                : protectedManifestEvidence.changed_files.join(', ');
+            const manifestDriftMessage = preflightManifestStatus === 'DRIFT'
+                ? `Trusted protected control-plane manifest was already drifted before task start: ${driftFiles}.`
+                : `Trusted protected control-plane manifest drift detected: ${driftFiles}. ` +
+                  'Run setup/update/reinit to refresh the trusted lifecycle baseline, or start the task with --orchestrator-work if it intentionally changes the orchestrator.';
+            if (isolationConfig.enabled && isolationConfig.enforcement === 'LOG_ONLY') {
+                isolationWarnings.push(manifestDriftMessage + ' (LOG_ONLY mode — logged as warning)');
             } else {
-                errors.push(
-                    `Trusted protected control-plane manifest drift detected: ${protectedManifestEvidence.changed_files.join(', ')}. ` +
-                    'Run setup/update/reinit to refresh the trusted lifecycle baseline, or start the task with --orchestrator-work if it intentionally changes the orchestrator.'
-                );
+                errors.push(manifestDriftMessage);
             }
         }
     }
@@ -1096,6 +1107,39 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     errors.push(...getRulePackEvidenceViolations(rulePackEvidence));
     errors.push(...getHandshakeEvidenceViolations(handshakeEvidence));
     errors.push(...getShellSmokeEvidenceViolations(shellSmokeEvidence));
+
+    // T-1011: post-task isolation mode enforcement (complements T-1010 drift check above)
+    if (hasProtectedSnapshot && !orchestratorWork && isolationConfig.enabled) {
+        const typedSnapshot: Record<string, string> = {};
+        for (const [k, v] of Object.entries(preflightProtectedSnapshot)) {
+            typedSnapshot[k] = String(v);
+        }
+        const isolationEvidence = evaluateIsolationModePostTask(repoRoot, typedSnapshot);
+        errors.push(...isolationEvidence.violations);
+        isolationWarnings.push(...isolationEvidence.warnings);
+    }
+
+    // T-1011: Sandbox integrity check at completion
+    if (isolationConfig.enabled && isolationConfig.use_sandbox && !orchestratorWork) {
+        const sandboxState = validateSandbox(repoRoot);
+        if (sandboxState.exists) {
+            if (sandboxState.drift_files.length > 0) {
+                const sbMessage = `Isolation sandbox was modified during task (${sandboxState.drift_files.length} file(s) drifted). ` +
+                    'This indicates the sandbox was tampered with during execution.';
+                if (isolationConfig.enforcement === 'STRICT') {
+                    errors.push(sbMessage);
+                } else {
+                    isolationWarnings.push(sbMessage + ' (LOG_ONLY mode — logged as warning)');
+                }
+            }
+            if (!sandboxState.read_only_intact) {
+                isolationWarnings.push(
+                    'Isolation sandbox read-only flags were removed on some files. ' +
+                    'Same-user limitation: read-only attributes are advisory, not a security boundary.'
+                );
+            }
+        }
+    }
 
     // --- T-003: ordered timeline + stage-sequence enforcement ---
     const timelineErrors: string[] = [];
@@ -1264,6 +1308,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         stage_sequence_evidence: stageSequence,
         reviewer_routing_enforcement: reviewerRoutingEnforcement,
         zero_diff_evidence: zeroDiffEvidence,
+        isolation_mode_warnings: isolationWarnings,
         violations: errors
     };
 }
@@ -1293,6 +1338,13 @@ export function formatCompletionGateResult(result: Record<string, unknown>): str
         lines.push('Violations:');
         for (const violation of result.violations) {
             lines.push(`- ${violation}`);
+        }
+    }
+
+    if (Array.isArray(result.isolation_mode_warnings) && result.isolation_mode_warnings.length > 0) {
+        lines.push('IsolationModeWarnings:');
+        for (const warning of result.isolation_mode_warnings) {
+            lines.push(`- ${warning}`);
         }
     }
 

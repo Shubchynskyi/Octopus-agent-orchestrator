@@ -251,7 +251,7 @@ export function runInit(options: RunInitOptions) {
     });
 
     // Handle managed config merge (token-economy enabled flag)
-    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs'];
+    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'isolation-mode'];
     const configMergeStatuses: Record<string, string> = {};
 
     for (const configName of managedConfigNames) {
@@ -359,6 +359,7 @@ export function runInit(options: RunInitOptions) {
         tokenEconomyConfigMergeStatus: configMergeStatuses['token-economy'] || 'n/a',
         outputFiltersConfigMergeStatus: configMergeStatuses['output-filters'] || 'n/a',
         skillPacksConfigMergeStatus: configMergeStatuses['skill-packs'] || 'n/a',
+        isolationModeConfigMergeStatus: configMergeStatuses['isolation-mode'] || 'n/a',
         reviewCapabilitiesSync,
         skillsIndexPath,
         ruleSourceMap,
@@ -541,6 +542,8 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         `- Output filters config merge status: ${configMergeStatuses['output-filters'] || 'n/a'}`,
         '- Skill packs config sync policy: preserve existing live values, normalize legacy keys/shapes, and fill missing keys from template.',
         `- Skill packs config merge status: ${configMergeStatuses['skill-packs'] || 'n/a'}`,
+        '- Isolation mode config sync policy: preserve existing live values, fill missing keys from template.',
+        `- Isolation mode config merge status: ${configMergeStatuses['isolation-mode'] || 'n/a'}`,
         `- Assistant response language: ${lang}`,
         `- Assistant response brevity: ${brevity}`,
         `- Source of truth entrypoint: ${trimmedSoT}`,
