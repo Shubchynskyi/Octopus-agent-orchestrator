@@ -28,6 +28,7 @@ import {
     restoreRollbackSnapshot,
     type RollbackRecord,
     validateTargetRoot,
+    withLifecycleOperationLock,
     writeRollbackRecords,
     writeUninstallSentinel
 } from './common';
@@ -435,6 +436,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
     } = options;
 
     const normalizedTarget = validateTargetRoot(targetRoot, bundleRoot);
+    return withLifecycleOperationLock(normalizedTarget, 'uninstall', () => {
     const orchestratorRoot = path.join(normalizedTarget, DEFAULT_BUNDLE_NAME);
 
     // Resolve init answers path (allow missing)
@@ -1061,4 +1063,5 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
         warnings,
         result: dryRun ? 'DRY_RUN' : 'SUCCESS'
     };
+    });
 }

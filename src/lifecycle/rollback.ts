@@ -20,6 +20,7 @@ import {
     restoreRollbackSnapshot,
     restoreSyncedItemsFromBackup,
     validateTargetRoot,
+    withLifecycleOperationLockAsync,
     writeRollbackRecords,
     writeSyncBackupMetadata,
     writeUpdateSentinel
@@ -705,12 +706,15 @@ export function runSnapshotRollback(options: RunSnapshotRollbackOptions) {
  * @param {Function} [options.materializationRunner]
  */
 export async function runRollback(options: RunRollbackOptions) {
-    const { targetVersion = null } = options;
-    if (targetVersion) {
-        return await runRollbackToVersion({
-            ...options,
-            targetVersion
-        });
-    }
-    return runSnapshotRollback(options);
+    const normalizedTarget = validateTargetRoot(options.targetRoot, options.bundleRoot);
+    return await withLifecycleOperationLockAsync(normalizedTarget, 'rollback', async () => {
+        const { targetVersion = null } = options;
+        if (targetVersion) {
+            return await runRollbackToVersion({
+                ...options,
+                targetVersion
+            });
+        }
+        return runSnapshotRollback(options);
+    });
 }

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+- hardened filesystem lock crash safety: `acquireFilesystemLock` and `acquireFilesystemLockAsync` now clean up the lock directory when the owner-metadata write fails between `mkdirSync` and `writeFileSync`, preventing orphaned locks without ownership information
+- hardened stale-lock detection: `inspectLock` now treats lock directories with missing or corrupt `owner.json` metadata as stale (`staleReason: 'owner_dead'`) instead of waiting for the age-based timeout, enabling immediate reclamation of crash-orphaned locks
+- fixed concurrent async lifecycle lock bypass: `withLifecycleOperationLockAsync` now serializes independent async callers targeting the same root via a per-target promise queue, preventing the synchronous re-entrancy shortcut from letting concurrent async operations skip the filesystem lock
+- added unit tests for core filesystem lock primitives (`acquireFilesystemLock`, `acquireFilesystemLockAsync`, `releaseFilesystemLock`, `scanTaskEventLocks`, `cleanupStaleTaskEventLocks`) covering acquire/release lifecycle, stale-lock reclamation for missing metadata and dead PIDs, lock contention behavior, and dry-run cleanup
+- added unit tests for lifecycle operation lock primitives (`withLifecycleOperationLock`, `withLifecycleOperationLockAsync`) covering synchronous re-entrancy, concurrent async serialization, dead-process lock recovery, and error-path lock release
+- fixed lifecycle lock to mirror grace-period recovery for SIGKILL-orphaned metadata: `inspectLifecycleOperationLock` now checks the lock directory age when metadata is missing or corrupt, reclaiming the lock after a 2-second grace period instead of blocking forever until the 30-second stale timeout
+- fixed TOCTOU race in concurrent dead-process lock recovery: both `tryRemoveStaleLock` (task-events) and `acquireLifecycleOperationLock` (lifecycle) now use atomic rename instead of direct remove when reclaiming stale locks, preventing a concurrent recoverer from deleting a freshly re-acquired valid lock
+- added tests for lifecycle lock grace-period recovery covering SIGKILL-orphaned locks (missing metadata aged past grace period), corrupt metadata recovery, partial metadata (hostname-only, no PID) recovery, and within-grace-period rejection; added test for TOCTOU-safe stale recovery verifying no leftover temporary directories; added test for task-event lock partial-metadata (invalid_shape) recovery
+
 ## 2.4.2
 - expanded the shared `start-task` router so root entrypoints and provider bridges now converge on the same orchestration checklist instead of relying on uneven provider-specific wording
 - materialized `.agents/workflows/start-task.md` as the common thin-router control layer and updated templates/docs/tests to keep root-entrypoint providers and provider-native bridges aligned

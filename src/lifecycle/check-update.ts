@@ -22,7 +22,8 @@ import {
     writeSyncBackupMetadata,
     writeUpdateSentinel,
     restoreSyncedItemsFromBackup,
-    validateTargetRoot
+    validateTargetRoot,
+    withLifecycleOperationLockAsync
 } from './common';
 import {
     type TrustValidationResult,
@@ -596,6 +597,7 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         result.checkUpdateResult = result.updateAvailable ? 'UPDATE_AVAILABLE' : 'UP_TO_DATE';
 
         if (result.updateAvailable && apply) {
+            await withLifecycleOperationLockAsync(normalizedTarget, 'update', async () => {
             const syncPreexistingMap: Record<string, boolean> = {};
             const DEFERRED_VERSION_ITEM = 'VERSION';
 
@@ -673,7 +675,7 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                     writeUpdateSentinel(deployedBundleRoot, {
                         startedAt: new Date().toISOString(),
                         fromVersion: currentVersion,
-                        toVersion: result.latestVersion
+                        toVersion: latestVersion
                     });
 
                     if (updateRunner) {
@@ -753,6 +755,7 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                 }
                 throw new Error(`Update apply failed. Error: ${originalError}`);
             }
+            });
         }
     } finally {
         source.cleanup();

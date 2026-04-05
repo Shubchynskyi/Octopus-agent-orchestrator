@@ -9,6 +9,11 @@ const DEFAULT_LOCK_STALE_MS = 30000;
 const MAX_LOCK_RETRIES = 500;
 const LOCK_CONTENTION_WARN_THRESHOLD = 10;
 
+// Grace period before treating a lock with missing/corrupt metadata as stale.
+// A freshly-created lock directory may lack owner.json for a brief instant
+// between mkdirSync and writeFileSync; only reclaim it after this threshold.
+const LOCK_METADATA_GRACE_MS = 2000;
+
 interface LockOptions {
     timeoutMs?: unknown;
     retryMs?: unknown;
@@ -274,6 +279,23 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
         };
     }
 
+    // Lock directory exists but owner metadata is missing, corrupt, or lacks
+    // a usable PID for liveness verification. Only reclaim after a grace period
+    // so a just-created lock whose metadata write is in flight is not prematurely
+    // removed by a concurrent acquirer. Checking pid===null covers all cases:
+    // missing owner.json, invalid JSON, invalid shape, and partial-but-parseable
+    // metadata that lacks the PID field.
+    if (metadata.pid === null
+        && ageMs !== null && ageMs >= LOCK_METADATA_GRACE_MS) {
+        return {
+            exists: true,
+            ageMs,
+            metadata,
+            ownerAlive: null,
+            staleReason: 'owner_dead'
+        };
+    }
+
     if (staleMs > 0 && ageMs >= staleMs) {
         return {
             exists: true,
@@ -320,12 +342,23 @@ function tryRemoveStaleLock(lockPath: string, staleMs: number): { removed: boole
         return { removed: false, inspection };
     }
 
+    // Atomically rename the stale lock to avoid a TOCTOU race where a
+    // concurrent recoverer could remove a freshly re-acquired valid lock.
+    // Only the process that succeeds at the rename proceeds with cleanup.
+    const tempPath = lockPath + '.stale-' + process.pid + '-' + Date.now();
     try {
-        removeLockPath(lockPath);
-        return { removed: true, inspection };
+        fs.renameSync(lockPath, tempPath);
     } catch {
         return { removed: false, inspection };
     }
+
+    try {
+        removeLockPath(tempPath);
+    } catch {
+        // Best-effort cleanup of the renamed stale directory.
+    }
+
+    return { removed: true, inspection };
 }
 
 interface AcquireLockTelemetry {
@@ -333,7 +366,7 @@ interface AcquireLockTelemetry {
     elapsedMs: number;
 }
 
-function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): { handle: LockHandle; telemetry: AcquireLockTelemetry } {
+export function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): { handle: LockHandle; telemetry: AcquireLockTelemetry } {
     const timeoutMs = toPositiveInteger(options.timeoutMs, DEFAULT_LOCK_TIMEOUT_MS);
     const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
     const startedAt = Date.now();
@@ -342,7 +375,14 @@ function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): { h
     while (true) {
         try {
             fs.mkdirSync(lockPath);
-            writeLockMetadata(lockPath);
+            try {
+                writeLockMetadata(lockPath);
+            } catch (metadataError: unknown) {
+                // Remove the lock directory so a failed metadata write does
+                // not leave an orphaned lock without ownership information.
+                fs.rmSync(lockPath, { recursive: true, force: true });
+                throw metadataError;
+            }
             const elapsedMs = Date.now() - startedAt;
             return { handle: { lockPath }, telemetry: { retries: 0, elapsedMs } };
         } catch (error: unknown) {
@@ -368,7 +408,7 @@ function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): { h
     }
 }
 
-async function acquireFilesystemLockAsync(lockPath: string, options: LockOptions = {}): Promise<{ handle: LockHandle; telemetry: AcquireLockTelemetry }> {
+export async function acquireFilesystemLockAsync(lockPath: string, options: LockOptions = {}): Promise<{ handle: LockHandle; telemetry: AcquireLockTelemetry }> {
     const timeoutMs = toPositiveInteger(options.timeoutMs, DEFAULT_LOCK_TIMEOUT_MS);
     const retryMs = toPositiveInteger(options.retryMs, DEFAULT_LOCK_RETRY_MS);
     const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
@@ -380,7 +420,14 @@ async function acquireFilesystemLockAsync(lockPath: string, options: LockOptions
     while (true) {
         try {
             fs.mkdirSync(lockPath);
-            writeLockMetadata(lockPath);
+            try {
+                writeLockMetadata(lockPath);
+            } catch (metadataError: unknown) {
+                // Remove the lock directory so a failed metadata write does
+                // not leave an orphaned lock without ownership information.
+                fs.rmSync(lockPath, { recursive: true, force: true });
+                throw metadataError;
+            }
             const elapsedMs = Date.now() - startedAt;
             return { handle: { lockPath }, telemetry: { retries, elapsedMs } };
         } catch (error: unknown) {
@@ -428,7 +475,7 @@ async function acquireFilesystemLockAsync(lockPath: string, options: LockOptions
     }
 }
 
-function releaseFilesystemLock(lockHandle: LockHandle | null): void {
+export function releaseFilesystemLock(lockHandle: LockHandle | null): void {
     if (!lockHandle || !lockHandle.lockPath) {
         return;
     }

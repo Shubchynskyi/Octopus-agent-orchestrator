@@ -17,6 +17,7 @@ import { writeProtectedControlPlaneManifest } from '../gates/helpers';
 import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
 import { DEFAULT_BUNDLE_NAME } from '../core/constants';
 import { cleanupStaleTaskEventLocks } from '../gate-runtime/task-events';
+import { withLifecycleOperationLock } from '../lifecycle/common';
 
 interface ReinitOptions {
     targetRoot: string;
@@ -100,6 +101,7 @@ export function runReinit(options: ReinitOptions) {
         );
     }
 
+    return withLifecycleOperationLock(normalizedTarget, 'reinit', () => {
     // Resolve init answers path
     const resolvedInitPath = path.isAbsolute(initAnswersPath)
         ? initAnswersPath
@@ -260,6 +262,7 @@ export function runReinit(options: ReinitOptions) {
         verifyStatus: skipVerify ? 'SKIPPED' : 'NOT_RUN',
         manifestValidationStatus: skipManifestValidation ? 'SKIPPED' : 'NOT_RUN'
     };
+    });
 }
 
 /**

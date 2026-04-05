@@ -23,6 +23,7 @@ import {
     getTimestamp,
     getRollbackRecordsPath,
     restoreRollbackSnapshot,
+    withLifecycleOperationLock,
     validateTargetRoot,
     writeRollbackRecords
 } from './common';
@@ -190,6 +191,7 @@ export function runUpdate(options: RunUpdateOptions) {
     } = options;
 
     const normalizedTarget = validateTargetRoot(targetRoot, bundleRoot);
+    return withLifecycleOperationLock(normalizedTarget, 'update', () => {
     // Resolve init answers path
     let initAnswersResolvedPath;
     if (path.isAbsolute(initAnswersPath)) {
@@ -553,4 +555,5 @@ export function runUpdate(options: RunUpdateOptions) {
         manifestValidationStatus: manifestStatus,
         updateReportPath: dryRun ? 'not-generated-in-dry-run' : updateReportRelativePath
     };
+    });
 }

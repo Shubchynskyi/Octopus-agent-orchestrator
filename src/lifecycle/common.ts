@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -73,6 +74,29 @@ export const ROLLBACK_RECORDS_FILE_NAME = 'rollback-records.json';
 export const SYNC_BACKUP_METADATA_FILE_NAME = 'sync-backup-metadata.json';
 export const UPDATE_SENTINEL_FILE_NAME = '.update-in-progress';
 export const UNINSTALL_SENTINEL_FILE_NAME = '.uninstall-in-progress';
+export const LIFECYCLE_OPERATION_LOCK_DIR_NAME = '.lifecycle-operation.lock';
+export const LIFECYCLE_OPERATION_LOCK_OWNER_FILE_NAME = 'owner.json';
+
+interface LifecycleOperationLockMetadata extends JsonObject {
+    pid: number | null;
+    hostname: string | null;
+    operation: string | null;
+    acquired_at_utc: string | null;
+    target_root: string | null;
+}
+
+interface LifecycleOperationLockInspection {
+    exists: boolean;
+    ownerAlive: boolean | null;
+    metadata: LifecycleOperationLockMetadata;
+}
+
+// Grace period before treating a lifecycle lock with missing/corrupt metadata
+// as reclaimable. Mirrors LOCK_METADATA_GRACE_MS from gate-runtime/task-events
+// to prevent SIGKILL-orphaned lock directories from blocking forever.
+const LIFECYCLE_LOCK_METADATA_GRACE_MS = 2000;
+
+const ACTIVE_LIFECYCLE_OPERATION_LOCKS = new Map<string, number>();
 
 // ---------------------------------------------------------------------------
 // Version comparison used by update flows.
@@ -167,6 +191,234 @@ export function getTimestamp(): string {
         `${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}-` +
         `${pad3(now.getMilliseconds())}`
     );
+}
+
+function getErrorCode(error: unknown): string {
+    return error != null && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+}
+
+function isProcessLikelyAlive(pid: number | null): boolean | null {
+    if (!pid || !Number.isInteger(pid) || pid <= 0) {
+        return null;
+    }
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error: unknown) {
+        const errorCode = getErrorCode(error);
+        if (errorCode === 'EPERM') {
+            return true;
+        }
+        if (errorCode === 'ESRCH') {
+            return false;
+        }
+        return null;
+    }
+}
+
+function readLifecycleOperationLockMetadata(lockPath: string): LifecycleOperationLockMetadata {
+    const ownerPath = path.join(lockPath, LIFECYCLE_OPERATION_LOCK_OWNER_FILE_NAME);
+    try {
+        const raw = fs.readFileSync(ownerPath, 'utf8');
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        return {
+            pid: typeof parsed.pid === 'number' && Number.isInteger(parsed.pid) && parsed.pid > 0 ? parsed.pid : null,
+            hostname: typeof parsed.hostname === 'string' && parsed.hostname.trim() ? parsed.hostname.trim() : null,
+            operation: typeof parsed.operation === 'string' && parsed.operation.trim() ? parsed.operation.trim() : null,
+            acquired_at_utc: typeof parsed.acquired_at_utc === 'string' && parsed.acquired_at_utc.trim()
+                ? parsed.acquired_at_utc.trim()
+                : null,
+            target_root: typeof parsed.target_root === 'string' && parsed.target_root.trim() ? parsed.target_root.trim() : null
+        };
+    } catch {
+        return {
+            pid: null,
+            hostname: null,
+            operation: null,
+            acquired_at_utc: null,
+            target_root: null
+        };
+    }
+}
+
+function inspectLifecycleOperationLock(lockPath: string): LifecycleOperationLockInspection {
+    if (!fs.existsSync(lockPath)) {
+        return {
+            exists: false,
+            ownerAlive: null,
+            metadata: {
+                pid: null,
+                hostname: null,
+                operation: null,
+                acquired_at_utc: null,
+                target_root: null
+            }
+        };
+    }
+    const metadata = readLifecycleOperationLockMetadata(lockPath);
+
+    // If metadata is missing, corrupt, or lacks a usable PID (partial write from
+    // SIGKILL between mkdir and full metadata write), check lock directory age.
+    // After the grace period, treat as dead owner so the lock can be reclaimed
+    // instead of blocking forever. The PID is the key field for liveness checks;
+    // metadata with hostname but no PID cannot be verified and should be treated
+    // the same as fully missing metadata.
+    if (metadata.pid === null) {
+        try {
+            const stats = fs.statSync(lockPath);
+            const ageMs = Math.max(0, Date.now() - stats.mtimeMs);
+            if (ageMs >= LIFECYCLE_LOCK_METADATA_GRACE_MS) {
+                return { exists: true, ownerAlive: false, metadata };
+            }
+        } catch {
+            // statSync failed — lock may have been removed concurrently
+        }
+        return { exists: true, ownerAlive: null, metadata };
+    }
+
+    const localHost = os.hostname();
+    const sameHost = metadata.hostname !== null && metadata.hostname === localHost;
+    return {
+        exists: true,
+        ownerAlive: sameHost ? isProcessLikelyAlive(metadata.pid) : null,
+        metadata
+    };
+}
+
+function writeLifecycleOperationLockMetadata(lockPath: string, targetRoot: string, operation: string): void {
+    const ownerPath = path.join(lockPath, LIFECYCLE_OPERATION_LOCK_OWNER_FILE_NAME);
+    const payload: LifecycleOperationLockMetadata = {
+        pid: process.pid,
+        hostname: os.hostname(),
+        operation,
+        acquired_at_utc: new Date().toISOString(),
+        target_root: targetRoot
+    };
+    fs.writeFileSync(ownerPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+}
+
+export function getLifecycleOperationLockPath(targetRoot: string): string {
+    const normalizedTarget = path.resolve(targetRoot);
+    return path.join(normalizedTarget, 'Octopus-agent-orchestrator', 'runtime', LIFECYCLE_OPERATION_LOCK_DIR_NAME);
+}
+
+function acquireLifecycleOperationLock(targetRoot: string, operation: string): () => void {
+    const normalizedTarget = path.resolve(targetRoot);
+    const heldCount = ACTIVE_LIFECYCLE_OPERATION_LOCKS.get(normalizedTarget) || 0;
+    if (heldCount > 0) {
+        ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, heldCount + 1);
+        return function releaseNestedLock() {
+            const currentCount = ACTIVE_LIFECYCLE_OPERATION_LOCKS.get(normalizedTarget) || 0;
+            if (currentCount <= 1) {
+                ACTIVE_LIFECYCLE_OPERATION_LOCKS.delete(normalizedTarget);
+            } else {
+                ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, currentCount - 1);
+            }
+        };
+    }
+
+    const lockPath = getLifecycleOperationLockPath(normalizedTarget);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    try {
+        fs.mkdirSync(lockPath);
+    } catch (error: unknown) {
+        const errorCode = getErrorCode(error);
+        if (errorCode !== 'EEXIST') {
+            throw error;
+        }
+
+        const inspection = inspectLifecycleOperationLock(lockPath);
+        if (inspection.exists && inspection.ownerAlive === false) {
+            // Atomically rename the stale lock to avoid a TOCTOU race where a
+            // concurrent recoverer could remove a freshly re-acquired valid lock.
+            // Only the process that succeeds at the rename proceeds with cleanup.
+            const tempPath = lockPath + '.stale-' + process.pid + '-' + Date.now();
+            try {
+                fs.renameSync(lockPath, tempPath);
+            } catch {
+                throw error;
+            }
+            fs.rmSync(tempPath, { recursive: true, force: true });
+            fs.mkdirSync(lockPath);
+        } else {
+            const ownerPid = inspection.metadata.pid != null ? String(inspection.metadata.pid) : 'unknown';
+            const ownerHost = inspection.metadata.hostname || 'unknown';
+            const ownerOperation = inspection.metadata.operation || 'unknown';
+            throw new Error(
+                `Another lifecycle operation is already running for '${normalizedTarget}' ` +
+                `(operation='${ownerOperation}', pid=${ownerPid}, host=${ownerHost}, lock='${lockPath}').`
+            );
+        }
+    }
+
+    try {
+        writeLifecycleOperationLockMetadata(lockPath, normalizedTarget, operation);
+    } catch (error: unknown) {
+        fs.rmSync(lockPath, { recursive: true, force: true });
+        throw error;
+    }
+
+    ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, 1);
+    return function releaseLock() {
+        const currentCount = ACTIVE_LIFECYCLE_OPERATION_LOCKS.get(normalizedTarget) || 0;
+        if (currentCount <= 1) {
+            ACTIVE_LIFECYCLE_OPERATION_LOCKS.delete(normalizedTarget);
+            fs.rmSync(lockPath, { recursive: true, force: true });
+            return;
+        }
+        ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, currentCount - 1);
+    };
+}
+
+export function withLifecycleOperationLock<T>(targetRoot: string, operation: string, callback: () => T): T {
+    const release = acquireLifecycleOperationLock(targetRoot, operation);
+    try {
+        return callback();
+    } finally {
+        release();
+    }
+}
+
+const LIFECYCLE_ASYNC_QUEUES = new Map<string, Promise<void>>();
+
+export async function withLifecycleOperationLockAsync<T>(
+    targetRoot: string,
+    operation: string,
+    callback: () => Promise<T>
+): Promise<T> {
+    const normalizedTarget = path.resolve(targetRoot);
+
+    // Serialize concurrent async callers targeting the same root.
+    // Without this gate, the synchronous ACTIVE_LIFECYCLE_OPERATION_LOCKS
+    // re-entrancy check lets independent async operations bypass the
+    // filesystem lock when another async holder has yielded.
+    // Note: this does NOT support async re-entrancy (nested async calls
+    // for the same target will deadlock). Use the sync variant for nesting.
+    let previous = LIFECYCLE_ASYNC_QUEUES.get(normalizedTarget);
+    while (previous) {
+        await previous;
+        previous = LIFECYCLE_ASYNC_QUEUES.get(normalizedTarget);
+    }
+
+    let resolveQueue!: () => void;
+    const queueEntry = new Promise<void>((r) => { resolveQueue = r; });
+    LIFECYCLE_ASYNC_QUEUES.set(normalizedTarget, queueEntry);
+
+    let release: (() => void) | null = null;
+    try {
+        release = acquireLifecycleOperationLock(targetRoot, operation);
+        return await callback();
+    } finally {
+        if (release) {
+            release();
+        }
+        if (LIFECYCLE_ASYNC_QUEUES.get(normalizedTarget) === queueEntry) {
+            LIFECYCLE_ASYNC_QUEUES.delete(normalizedTarget);
+        }
+        resolveQueue();
+    }
 }
 
 // ---------------------------------------------------------------------------

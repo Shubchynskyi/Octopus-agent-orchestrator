@@ -67,6 +67,7 @@ import { getWhyBlocked, formatWhyBlockedResult } from '../validators/why-blocked
 import { formatManifestResult, validateManifest } from '../validators/validate-manifest';
 import { formatVerifyResult, runVerify } from '../validators/verify';
 import { runCheckUpdate, type CheckUpdateRunnerOptions } from '../lifecycle/check-update';
+import { withLifecycleOperationLockAsync } from '../lifecycle/common';
 import { runContractMigrations } from '../lifecycle/contract-migrations';
 import { runRollback } from '../lifecycle/rollback';
 import { assertExplicitCliTrustOverride } from '../lifecycle/update-trust';
@@ -346,6 +347,7 @@ async function handleInstall(commandArgv: string[], packageJson: PackageJsonLike
         packageRoot
     );
     try {
+        await withLifecycleOperationLockAsync(targetRoot, 'install', async () => {
         const bundlePath = getBundlePath(targetRoot);
         const sourceResolved = path.resolve(source.sourceRoot);
         const bundleResolved = path.resolve(bundlePath);
@@ -376,6 +378,7 @@ async function handleInstall(commandArgv: string[], packageJson: PackageJsonLike
             'filesDeployed', 'initInvoked', 'liveVersionWritten',
             'dryRun'
         ]);
+        });
     } finally {
         source.cleanup();
     }

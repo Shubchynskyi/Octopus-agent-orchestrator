@@ -35,6 +35,7 @@ import {
     syncManagedGitignoreBlockInContent,
     syncManagedBlockInContent
 } from './content-builders';
+import { withLifecycleOperationLock } from '../lifecycle/common';
 
 interface RunInstallOptions {
     targetRoot: string;
@@ -157,6 +158,7 @@ export function runInstall(options: RunInstallOptions) {
     const trimmedBrevity = (assistantBrevity || '').trim().toLowerCase();
     const trimmedSourceOfTruth = (sourceOfTruth || '').trim();
 
+    return withLifecycleOperationLock(normalizedTarget, 'install', () => {
     // Read and validate init answers
     const resolvedInitPath = resolvePathInsideRoot(targetRoot, initAnswersPath);
     if (!pathExists(resolvedInitPath)) {
@@ -709,6 +711,7 @@ export function runInstall(options: RunInstallOptions) {
         protectedControlPlaneManifestWritten,
         backupRoot: dryRun ? null : backupRoot
     };
+    });
 }
 
 /**

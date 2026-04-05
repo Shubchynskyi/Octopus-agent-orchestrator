@@ -4,9 +4,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
+import { runCheckUpdate } from '../../../src/lifecycle/check-update';
 import { runUpdate, getUpdateRollbackItems } from '../../../src/lifecycle/update';
 import { runContractMigrations } from '../../../src/lifecycle/contract-migrations';
-import { removePathRecursive } from '../../../src/lifecycle/common';
+import { getLifecycleOperationLockPath, removePathRecursive } from '../../../src/lifecycle/common';
 import { formatManifestResult, validateManifest } from '../../../src/validators/validate-manifest';
 import { formatVerifyResult, runVerify } from '../../../src/validators/verify';
 
@@ -52,6 +53,19 @@ function seedStaleTaskEventLock(bundleRoot: string, lockName: string) {
     }), 'utf8');
     fs.utimesSync(path.join(lockPath, 'owner.json'), oldDate, oldDate);
     fs.utimesSync(lockPath, oldDate, oldDate);
+}
+
+function seedLifecycleOperationLock(projectRoot: string, pid: number, hostname: string = os.hostname()) {
+    const lockPath = getLifecycleOperationLockPath(projectRoot);
+    fs.mkdirSync(lockPath, { recursive: true });
+    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        pid,
+        hostname,
+        operation: 'update',
+        acquired_at_utc: '2026-04-05T00:00:00.000Z',
+        target_root: path.resolve(projectRoot)
+    }, null, 2), 'utf8');
+    return lockPath;
 }
 
 function setupUpdateWorkspace(repoRoot: string) {
@@ -227,6 +241,33 @@ describe('runUpdate', () => {
             assert.equal(result.rollbackStatus, 'NOT_NEEDED');
             assert.ok(!result.rollbackSnapshotCreated);
             assert.equal(result.updateReportPath, 'not-generated-in-dry-run');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('blocks check-update apply when another lifecycle operation lock exists', async () => {
+        const { projectRoot, bundleRoot } = setupSyncedUpdateWorkspace(repoRoot);
+        try {
+            const sourceBundleRoot = path.join(projectRoot, 'update-source');
+            copyDirRecursive(bundleRoot, sourceBundleRoot);
+            fs.writeFileSync(path.join(sourceBundleRoot, 'VERSION'), '9.9.9\n', 'utf8');
+            seedLifecycleOperationLock(projectRoot, process.pid);
+
+            await assert.rejects(() => runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: sourceBundleRoot,
+                apply: true,
+                noPrompt: true,
+                trustOverride: true,
+                updateRunner() {
+                    throw new Error('updateRunner should not execute while lifecycle lock is held');
+                }
+            }), /Another lifecycle operation is already running/);
+
+            assert.equal(fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(), fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim());
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'bundle-backups')), 'apply must stop before bundle sync starts');
         } finally {
             removePathRecursive(projectRoot);
         }

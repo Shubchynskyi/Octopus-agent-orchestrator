@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import { runInstall } from '../../../src/materialization/install';
+import { getLifecycleOperationLockPath } from '../../../src/lifecycle/common';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -63,6 +64,19 @@ function writeInitAnswers(bundleRoot: string, answers: Record<string, unknown>) 
     fs.mkdirSync(path.dirname(answersPath), { recursive: true });
     fs.writeFileSync(answersPath, JSON.stringify(answers, null, 2));
     return answersPath;
+}
+
+function seedLifecycleOperationLock(projectRoot: string, pid: number, hostname: string = os.hostname()) {
+    const lockPath = getLifecycleOperationLockPath(projectRoot);
+    fs.mkdirSync(lockPath, { recursive: true });
+    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        pid,
+        hostname,
+        operation: 'update',
+        acquired_at_utc: '2026-04-05T00:00:00.000Z',
+        target_root: path.resolve(projectRoot)
+    }, null, 2));
+    return lockPath;
 }
 
 describe('runInstall', () => {
@@ -161,6 +175,66 @@ describe('runInstall', () => {
             });
 
             assert.ok(!fs.existsSync(path.join(projectRoot, '.qwen', 'settings.json')));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('fails when another live lifecycle operation lock exists', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+            const lockPath = seedLifecycleOperationLock(projectRoot, process.pid);
+
+            assert.throws(() => runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            }), /Another lifecycle operation is already running/);
+            assert.ok(fs.existsSync(lockPath), 'live lock must be preserved');
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('reclaims stale lifecycle operation locks before install', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+            const lockPath = seedLifecycleOperationLock(projectRoot, 99999999);
+
+            const result = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            });
+
+            assert.ok(result.liveVersionWritten);
+            assert.ok(!fs.existsSync(lockPath), 'stale lock should be removed after successful install');
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

@@ -41,6 +41,7 @@ import {
     readAgentInitStateSafe,
     writeAgentInitState
 } from '../../runtime/agent-init-state';
+import { withLifecycleOperationLockAsync } from '../../lifecycle/common';
 import { serializeInitAnswers } from '../../schemas/init-answers';
 import { runInstall } from '../../materialization/install';
 import { runInit } from '../../materialization/init';
@@ -341,6 +342,7 @@ export async function handleSetup(
 
     const source = await acquireSourceRoot(options.repoUrl, options.branch, packageRoot);
     try {
+        await withLifecycleOperationLockAsync(targetRoot, 'setup', async () => {
         const promptedAnswers: SetupAnswers | null = canUseInteractivePrompts
             ? await collectSetupAnswersInteractively(
                 targetRoot,
@@ -481,6 +483,7 @@ export async function handleSetup(
         if (!snapshot.agentInitializationComplete) {
             printSetupHandoff(snapshot);
         }
+        });
     } finally {
         source.cleanup();
     }
