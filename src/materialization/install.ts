@@ -30,6 +30,7 @@ import {
       buildGitHubSkillBridgeAgentContent,
     buildQwenSettingsContent,
     buildClaudeLocalSettingsContent,
+    buildVscodeSettingsContent,
     buildGitignoreEntries,
     syncManagedGitignoreBlockInContent,
     syncManagedBlockInContent
@@ -446,6 +447,26 @@ export function runInstall(options: RunInstallOptions) {
         claudeNeedsUpdate = false;
     }
 
+    // VS Code settings — IDE exclude patterns for generated directories
+    const vscodeRelPath = '.vscode/settings.json';
+    const vscodePath = path.join(targetRoot, vscodeRelPath);
+    const vscodeExisting = pathExists(vscodePath) ? readTextFile(vscodePath) : null;
+    const vscodePlan = buildVscodeSettingsContent(vscodeExisting);
+    let vscodeSettingsUpdated = false;
+
+    if (vscodePlan.needsUpdate) {
+        if (pathExists(vscodePath)) {
+            backupFile(vscodePath, vscodeRelPath);
+        }
+        if (!dryRun) {
+            ensureDirectory(path.dirname(vscodePath));
+            fs.writeFileSync(vscodePath, vscodePlan.content, 'utf8');
+        }
+        vscodeSettingsUpdated = true;
+        if (pathExists(vscodePath) && preserveExisting) aligned++;
+        else deployed++;
+    }
+
     // Provider orchestrator profiles
     for (const profile of providerOrchestratorProfiles) {
         const block = buildProviderOrchestratorAgentContent(
@@ -681,6 +702,7 @@ export function runInstall(options: RunInstallOptions) {
         claudeLocalSettingsParseMode: claudeParseMode,
         claudeLocalSettingsNeedsUpdate: claudeNeedsUpdate,
         claudeLocalSettingsUpdated: claudeUpdated,
+        vscodeSettingsUpdated,
         initInvoked,
         preCommitHookUpdated: commitGuardHookUpdated,
         liveVersionWritten,

@@ -547,3 +547,50 @@ export function detectMissingManagedEntries(filePath: string, requiredEntries: r
     }
     return missing;
 }
+
+export interface NestedBundleDuplicationResult {
+    duplicatesFound: boolean;
+    duplicatePaths: string[];
+}
+
+/**
+ * Detect nested deployed bundles that would cause IDEs and language services
+ * to index two copies of the same codebase. Scans immediate children of the
+ * deployed bundle directory for another Octopus-agent-orchestrator tree.
+ */
+export function detectNestedBundleDuplication(targetRoot: string): NestedBundleDuplicationResult {
+    const duplicatePaths: string[] = [];
+    const bundlePath = getBundlePath(targetRoot);
+
+    if (!pathExists(bundlePath)) {
+        return { duplicatesFound: false, duplicatePaths };
+    }
+
+    // Check for nested bundle inside the deployed bundle
+    const nestedBundlePath = path.join(bundlePath, DEFAULT_BUNDLE_NAME);
+    if (pathExists(nestedBundlePath)) {
+        const nestedLauncher = path.join(nestedBundlePath, 'bin', 'octopus.js');
+        if (pathExists(nestedLauncher)) {
+            duplicatePaths.push(
+                path.join(DEFAULT_BUNDLE_NAME, DEFAULT_BUNDLE_NAME).replace(/\\/g, '/')
+            );
+        }
+    }
+
+    // Check for dist/ inside the bundle containing another compiled tree
+    const bundleDistSrc = path.join(bundlePath, 'dist', 'src');
+    const bundleDistSrcMat = path.join(bundleDistSrc, 'materialization');
+    if (pathExists(bundleDistSrc) && pathExists(bundleDistSrcMat)) {
+        const nestedNodeModules = path.join(bundlePath, 'node_modules');
+        if (pathExists(nestedNodeModules)) {
+            duplicatePaths.push(
+                (DEFAULT_BUNDLE_NAME + '/node_modules').replace(/\\/g, '/')
+            );
+        }
+    }
+
+    return {
+        duplicatesFound: duplicatePaths.length > 0,
+        duplicatePaths
+    };
+}

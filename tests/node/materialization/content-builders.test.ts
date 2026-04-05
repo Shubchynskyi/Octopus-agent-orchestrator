@@ -19,6 +19,9 @@ import {
     buildGitHubSkillBridgeAgentContent,
     buildQwenSettingsContent,
     buildClaudeLocalSettingsContent,
+    buildVscodeSettingsContent,
+    stripJsoncComments,
+    IDE_EXCLUDED_DIRECTORIES,
     buildGitignoreEntries,
     buildManagedGitignoreBlock,
     syncManagedGitignoreBlockInContent,
@@ -373,5 +376,143 @@ describe('syncManagedBlockInContent', () => {
         assert.ok(result!.changed);
         assert.ok(result!.content.includes(MANAGED_START));
         assert.ok(!result.content.includes('existing content'));
+    });
+});
+
+describe('buildVscodeSettingsContent', () => {
+    it('creates settings with all IDE_EXCLUDED_DIRECTORIES when starting from empty', () => {
+        const result = buildVscodeSettingsContent(null);
+        assert.equal(result.needsUpdate, true);
+        assert.equal(result.parseMode, 'default');
+
+        const parsed = JSON.parse(result.content);
+        for (const dir of IDE_EXCLUDED_DIRECTORIES) {
+            const pattern = `**/${dir}`;
+            assert.equal(parsed['files.exclude'][pattern], true, `files.exclude should have ${pattern}`);
+            assert.equal(parsed['search.exclude'][pattern], true, `search.exclude should have ${pattern}`);
+            assert.equal(parsed['files.watcherExclude'][pattern], true, `files.watcherExclude should have ${pattern}`);
+        }
+    });
+
+    it('merges into existing settings without losing user entries', () => {
+        const existing = JSON.stringify({
+            'editor.fontSize': 14,
+            'files.exclude': { '**/.git': true },
+            'search.exclude': { '**/coverage': true }
+        }, null, 2);
+        const result = buildVscodeSettingsContent(existing);
+        assert.equal(result.needsUpdate, true);
+        assert.equal(result.parseMode, 'merge-existing');
+
+        const parsed = JSON.parse(result.content);
+        assert.equal(parsed['editor.fontSize'], 14, 'should preserve user settings');
+        assert.equal(parsed['files.exclude']['**/.git'], true, 'should preserve existing excludes');
+        assert.equal(parsed['search.exclude']['**/coverage'], true, 'should preserve existing excludes');
+        assert.equal(parsed['files.exclude']['**/Octopus-agent-orchestrator'], true);
+        assert.equal(parsed['search.exclude']['**/Octopus-agent-orchestrator'], true);
+    });
+
+    it('reports no update needed when all patterns already present', () => {
+        const excludeMap: Record<string, boolean> = {};
+        for (const dir of IDE_EXCLUDED_DIRECTORIES) {
+            excludeMap[`**/${dir}`] = true;
+        }
+        const existing = JSON.stringify({
+            'files.exclude': { ...excludeMap },
+            'search.exclude': { ...excludeMap },
+            'files.watcherExclude': { ...excludeMap }
+        }, null, 2);
+        const result = buildVscodeSettingsContent(existing);
+        assert.equal(result.needsUpdate, false);
+        assert.equal(result.parseMode, 'merge-existing');
+    });
+
+    it('handles invalid JSON gracefully', () => {
+        const result = buildVscodeSettingsContent('not valid json');
+        assert.equal(result.needsUpdate, true);
+        assert.equal(result.parseMode, 'invalid-json');
+        const parsed = JSON.parse(result.content);
+        assert.equal(parsed['files.exclude']['**/dist'], true);
+    });
+
+    it('handles JSONC with comments without losing user settings', () => {
+        const jsonc = [
+            '{',
+            '  // User comment about font size',
+            '  "editor.fontSize": 14,',
+            '  /* Block comment */',
+            '  "files.exclude": { "**/.git": true }',
+            '}'
+        ].join('\n');
+        const result = buildVscodeSettingsContent(jsonc);
+        assert.equal(result.needsUpdate, true);
+        assert.equal(result.parseMode, 'merge-existing');
+        const parsed = JSON.parse(result.content);
+        assert.equal(parsed['editor.fontSize'], 14, 'should preserve user settings from JSONC');
+        assert.equal(parsed['files.exclude']['**/.git'], true, 'should preserve existing excludes');
+        assert.equal(parsed['files.exclude']['**/dist'], true, 'should add orchestrator excludes');
+    });
+
+    it('handles JSONC with trailing commas', () => {
+        const jsonc = '{\n  "editor.fontSize": 14,\n  "files.exclude": { "**/.git": true, },\n}';
+        const result = buildVscodeSettingsContent(jsonc);
+        assert.equal(result.parseMode, 'merge-existing');
+        const parsed = JSON.parse(result.content);
+        assert.equal(parsed['editor.fontSize'], 14);
+        assert.equal(parsed['files.exclude']['**/.git'], true);
+    });
+});
+
+describe('stripJsoncComments', () => {
+    it('strips single-line comments', () => {
+        const result = stripJsoncComments('{ // comment\n  "key": "val" }');
+        assert.ok(JSON.parse(result));
+        assert.equal(JSON.parse(result).key, 'val');
+    });
+
+    it('strips block comments', () => {
+        const result = stripJsoncComments('{ /* comment */ "key": "val" }');
+        assert.equal(JSON.parse(result).key, 'val');
+    });
+
+    it('preserves comment-like sequences inside strings', () => {
+        const result = stripJsoncComments('{ "url": "http://example.com" }');
+        assert.equal(JSON.parse(result).url, 'http://example.com');
+    });
+
+    it('returns empty string for empty input', () => {
+        assert.equal(stripJsoncComments(''), '');
+    });
+
+    it('handles trailing commas', () => {
+        const jsonc = '{ "a": 1, "b": 2, }';
+        const result = stripJsoncComments(jsonc);
+        const parsed = JSON.parse(result);
+        assert.equal(parsed.a, 1);
+        assert.equal(parsed.b, 2);
+    });
+
+    it('handles JSONC with both comments and trailing commas', () => {
+        const jsonc = [
+            '{',
+            '  // this is a comment',
+            '  "editor.fontSize": 14,',
+            '  "files.exclude": {',
+            '    "**/.git": true, // trailing comma',
+            '  },',
+            '}'
+        ].join('\n');
+        const result = stripJsoncComments(jsonc);
+        const parsed = JSON.parse(result);
+        assert.equal(parsed['editor.fontSize'], 14);
+        assert.equal(parsed['files.exclude']['**/.git'], true);
+    });
+
+    it('preserves comma-bracket sequences inside strings', () => {
+        const input = '{ "text": ",}", "n": 1 }';
+        const result = stripJsoncComments(input);
+        const parsed = JSON.parse(result);
+        assert.equal(parsed.text, ',}', 'comma-bracket inside string must not be altered');
+        assert.equal(parsed.n, 1);
     });
 });

@@ -66,8 +66,45 @@ One entrypoint is canonical. Additional entrypoints are created only when they w
 |---|---|
 | `.claude/settings.local.json` | `ClaudeOrchestratorFullAccess=true` |
 | `.qwen/settings.json` | Only when the project already contains this file; managed entries mirror `TASK.md` plus the current canonical entrypoint |
+| `.vscode/settings.json` | Always materialized; adds `files.exclude`, `search.exclude`, and `files.watcherExclude` patterns for generated directories |
 | `.git/hooks/pre-commit` | `EnforceNoAutoCommit=true` |
 | `.gitignore` | Managed entries for agent artifacts |
+
+## IDE Responsiveness Hardening
+
+Generated trees (`Octopus-agent-orchestrator/`, `dist/`, `.node-build/`, `.scripts-build/`, `node_modules/`) can degrade IDE responsiveness when indexed. The installer ships product-level safeguards:
+
+### VS Code Exclude Patterns
+
+Install materializes `.vscode/settings.json` with exclude patterns under `files.exclude`, `search.exclude`, and `files.watcherExclude` for all heavy generated directories. If a project already has a `.vscode/settings.json`, install merges the required patterns without removing existing settings.
+
+### Nested Bundle Duplication Detection
+
+`doctor` detects nested deployed bundles where `Octopus-agent-orchestrator/Octopus-agent-orchestrator/` contains another launcher. This condition means one project silently produces two indexed copies of the same codebase. Doctor reports these as `DUPLICATES_FOUND` with remediation guidance.
+
+### Self-Hosted Source Checkout Layout
+
+In a self-hosted checkout the directory structure looks like:
+
+```text
+project-root/
+├── src/                        # TypeScript source (compile-time)
+├── dist/                       # Compiled JS runtime (generated, gitignored)
+├── .node-build/                # Node foundation test build (generated, gitignored)
+├── .scripts-build/             # Script build output (generated, gitignored)
+├── bin/octopus.js              # Source CLI launcher (generated, gitignored)
+├── node_modules/               # Dependencies (gitignored)
+├── Octopus-agent-orchestrator/ # Deployed bundle (gitignored, materialized by install)
+│   ├── live/                   # Canonical rules, config, skills
+│   ├── runtime/                # Task events, reviews, rollbacks
+│   ├── dist/                   # Bundle compiled runtime
+│   └── bin/octopus.js          # Bundle CLI launcher
+├── .vscode/settings.json       # IDE exclude patterns (tracked)
+├── .gitignore                  # Managed ignores (tracked)
+└── tests/                      # Test suite
+```
+
+All generated directories are both gitignored and excluded from IDE indexing by the shipped `.vscode/settings.json`.
 
 ## What Is Materialized Inside Orchestrator
 

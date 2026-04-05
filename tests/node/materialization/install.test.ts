@@ -1158,4 +1158,76 @@ describe('runInstall', () => {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }
     });
+
+    it('materializes .vscode/settings.json with IDE exclude patterns', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            const result = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            });
+
+            assert.equal(result.vscodeSettingsUpdated, true);
+            const vscodePath = path.join(projectRoot, '.vscode', 'settings.json');
+            assert.ok(fs.existsSync(vscodePath), '.vscode/settings.json should exist');
+            const settings = JSON.parse(fs.readFileSync(vscodePath, 'utf8'));
+            assert.equal(settings['files.exclude']['**/Octopus-agent-orchestrator'], true);
+            assert.equal(settings['search.exclude']['**/dist'], true);
+            assert.equal(settings['files.watcherExclude']['**/node_modules'], true);
+            assert.equal(settings['files.exclude']['**/runtime'], true, 'runtime directory should be excluded');
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('merges into existing .vscode/settings.json preserving user settings', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const vscodePath = path.join(projectRoot, '.vscode', 'settings.json');
+            fs.mkdirSync(path.dirname(vscodePath), { recursive: true });
+            fs.writeFileSync(vscodePath, JSON.stringify({ 'editor.fontSize': 16 }, null, 2));
+
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                preserveExisting: true,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            });
+
+            const settings = JSON.parse(fs.readFileSync(vscodePath, 'utf8'));
+            assert.equal(settings['editor.fontSize'], 16, 'user settings should be preserved');
+            assert.equal(settings['files.exclude']['**/Octopus-agent-orchestrator'], true);
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
 });

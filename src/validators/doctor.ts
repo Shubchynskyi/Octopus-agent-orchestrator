@@ -14,7 +14,7 @@ import { validateTimelineCompleteness } from '../gate-runtime/lifecycle-events';
 import { validateManifest, formatManifestResult } from './validate-manifest';
 import { formatVerifyResult } from './verify';
 import { runVerify } from './verify';
-import { getBundlePath, detectSourceBundleParity as getSourceBundleParity } from './workspace-layout';
+import { getBundlePath, detectSourceBundleParity as getSourceBundleParity, detectNestedBundleDuplication, type NestedBundleDuplicationResult } from './workspace-layout';
 import {
     scanProviderCompliance,
     formatProviderComplianceDetail,
@@ -54,6 +54,7 @@ interface DoctorResult {
     lockCleanup: TaskEventLockCleanupResult | null;
     parityResult: ReturnType<typeof getSourceBundleParity>;
     providerComplianceResult: ProviderComplianceResult | null;
+    nestedBundleDuplication: NestedBundleDuplicationResult;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -191,9 +192,12 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         }
     }
 
+    // T-1008: detect nested deployed bundle duplication
+    var nestedBundleDuplication = detectNestedBundleDuplication(targetRoot);
+
     var manifestPassed = manifestResult ? manifestResult.passed : false;
     var compliancePassed = providerComplianceResult === null || providerComplianceResult.passed;
-    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed;
+    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed && !nestedBundleDuplication.duplicatesFound;
 
     return {
         passed: passed,
@@ -206,7 +210,8 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         lockHealth: lockHealth,
         lockCleanup: lockCleanup,
         parityResult: parityResult,
-        providerComplianceResult: providerComplianceResult
+        providerComplianceResult: providerComplianceResult,
+        nestedBundleDuplication: nestedBundleDuplication
     };
 }
 
@@ -309,6 +314,17 @@ export function formatDoctorResult(result: DoctorResult): string {
         for (const cl of complianceLines) {
             lines.push(cl);
         }
+        lines.push('');
+    }
+
+    // T-1008: nested bundle duplication warning
+    if (result.nestedBundleDuplication.duplicatesFound) {
+        lines.push('Nested Bundle Duplication (IDE Index Risk)');
+        lines.push('  Status: DUPLICATES_FOUND');
+        for (const dp of result.nestedBundleDuplication.duplicatePaths) {
+            lines.push('  Duplicate: ' + dp);
+        }
+        lines.push('  Fix: Remove nested copies or ensure .vscode/settings.json excludes them from indexing.');
         lines.push('');
     }
 

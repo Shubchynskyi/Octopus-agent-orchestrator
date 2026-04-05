@@ -23,7 +23,8 @@ import {
     getMissingProjectCommands,
     readUtf8IfExists,
     detectSourceBundleParity,
-    validateBundleInvariants
+    validateBundleInvariants,
+    detectNestedBundleDuplication
 } from '../../../src/validators/workspace-layout';
 
 test('detectSourceBundleParity returns isSourceCheckout false for empty dir', () => {
@@ -382,6 +383,63 @@ test('detectGitignoreViolations returns all entries when no .gitignore', () => {
     try {
         const missing = detectGitignoreViolations(tmpDir, ['entry1', 'entry2']);
         assert.deepEqual(missing, ['entry1', 'entry2']);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectNestedBundleDuplication returns no duplicates for empty dir', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nested-dup-test-'));
+    try {
+        const result = detectNestedBundleDuplication(tmpDir);
+        assert.equal(result.duplicatesFound, false);
+        assert.deepEqual(result.duplicatePaths, []);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectNestedBundleDuplication detects nested bundle with launcher', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nested-dup-test-'));
+    try {
+        const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+        const nestedBundlePath = path.join(bundlePath, 'Octopus-agent-orchestrator');
+        const nestedBinDir = path.join(nestedBundlePath, 'bin');
+        fs.mkdirSync(nestedBinDir, { recursive: true });
+        fs.writeFileSync(path.join(nestedBundlePath, 'bin', 'octopus.js'), '#!/usr/bin/env node', 'utf8');
+
+        const result = detectNestedBundleDuplication(tmpDir);
+        assert.equal(result.duplicatesFound, true);
+        assert.ok(result.duplicatePaths.some(p => p.includes('Octopus-agent-orchestrator/Octopus-agent-orchestrator')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectNestedBundleDuplication ignores nested dir without launcher', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nested-dup-test-'));
+    try {
+        const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+        const nestedBundlePath = path.join(bundlePath, 'Octopus-agent-orchestrator');
+        fs.mkdirSync(nestedBundlePath, { recursive: true });
+
+        const result = detectNestedBundleDuplication(tmpDir);
+        assert.equal(result.duplicatesFound, false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectNestedBundleDuplication detects node_modules inside bundle with dist surface', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nested-dup-test-'));
+    try {
+        const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+        fs.mkdirSync(path.join(bundlePath, 'dist', 'src', 'materialization'), { recursive: true });
+        fs.mkdirSync(path.join(bundlePath, 'node_modules'), { recursive: true });
+
+        const result = detectNestedBundleDuplication(tmpDir);
+        assert.equal(result.duplicatesFound, true);
+        assert.ok(result.duplicatePaths.some(p => p.includes('node_modules')));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

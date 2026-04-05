@@ -22,6 +22,7 @@ export const INSTALL_BACKUP_CANDIDATE_PATHS = Object.freeze([
     '.antigravity/rules.md', '.github/copilot-instructions.md',
     '.junie/guidelines.md', '.windsurf/rules/rules.md',
     '.qwen/settings.json', '.claude/settings.local.json',
+    '.vscode/settings.json',
     '.git/hooks/pre-commit', '.gitignore',
     '.agents/workflows/start-task.md',
     '.github/agents/orchestrator.md', '.windsurf/agents/orchestrator.md',
@@ -88,6 +89,70 @@ interface GitignoreManagedBlockSyncResult extends ManagedBlockSyncResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Strips single-line (//) and block comments from JSONC content,
+ * then removes trailing commas before closing brackets/braces
+ * so the result can be parsed with standard JSON.parse.
+ * Both passes are string-aware to avoid modifying quoted values.
+ */
+export function stripJsoncComments(text: string): string {
+    // Pass 1: strip comments (string-aware)
+    let stripped = '';
+    let i = 0;
+    while (i < text.length) {
+        if (text[i] === '"') {
+            const start = i;
+            i++;
+            while (i < text.length && text[i] !== '"') {
+                if (text[i] === '\\') i++;
+                i++;
+            }
+            i++;
+            stripped += text.slice(start, i);
+        } else if (text[i] === '/' && i + 1 < text.length && text[i + 1] === '/') {
+            while (i < text.length && text[i] !== '\n') i++;
+        } else if (text[i] === '/' && i + 1 < text.length && text[i + 1] === '*') {
+            i += 2;
+            while (i + 1 < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+            i += 2;
+        } else {
+            stripped += text[i];
+            i++;
+        }
+    }
+
+    // Pass 2: remove trailing commas (string-aware)
+    let result = '';
+    i = 0;
+    while (i < stripped.length) {
+        if (stripped[i] === '"') {
+            const start = i;
+            i++;
+            while (i < stripped.length && stripped[i] !== '"') {
+                if (stripped[i] === '\\') i++;
+                i++;
+            }
+            i++;
+            result += stripped.slice(start, i);
+        } else if (stripped[i] === ',') {
+            let j = i + 1;
+            while (j < stripped.length && /\s/.test(stripped[j])) j++;
+            if (j < stripped.length && (stripped[j] === '}' || stripped[j] === ']')) {
+                // Trailing comma — skip it, preserve whitespace
+                result += stripped.slice(i + 1, j);
+                i = j;
+            } else {
+                result += stripped[i];
+                i++;
+            }
+        } else {
+            result += stripped[i];
+            i++;
+        }
+    }
+    return result;
 }
 
 function escapeRegex(text: string): string {
@@ -718,4 +783,69 @@ export function syncManagedBlockInContent(content: string | null | undefined, ma
     }
 
     return { content: newContent, changed: newContent !== (content || '') };
+}
+
+/**
+ * Directories that IDEs and language services should not index in workspaces
+ * where Octopus Agent Orchestrator is present.
+ */
+export const IDE_EXCLUDED_DIRECTORIES: readonly string[] = Object.freeze([
+    'Octopus-agent-orchestrator',
+    'dist',
+    '.node-build',
+    '.scripts-build',
+    'node_modules',
+    'runtime'
+]);
+
+/**
+ * Merges IDE exclude patterns into VS Code settings JSON.
+ * Adds entries under files.exclude, search.exclude, and files.watcherExclude
+ * so generated/heavy directories do not degrade IDE responsiveness.
+ */
+export function buildVscodeSettingsContent(
+    existingContent: string | null | undefined
+): SettingsBuildResult {
+    let settingsMap: Record<string, unknown> = {};
+    let needsUpdate = false;
+    let parseMode: SettingsParseMode = 'default';
+
+    if (existingContent && existingContent.trim()) {
+        try {
+            const stripped = stripJsoncComments(existingContent);
+            const parsed: unknown = JSON.parse(stripped);
+            if (isRecord(parsed)) {
+                settingsMap = parsed;
+                parseMode = 'merge-existing';
+            } else {
+                needsUpdate = true;
+                parseMode = 'invalid-root';
+            }
+        } catch {
+            needsUpdate = true;
+            parseMode = 'invalid-json';
+        }
+    } else {
+        needsUpdate = true;
+    }
+
+    const excludeKeys = ['files.exclude', 'search.exclude', 'files.watcherExclude'] as const;
+    for (const key of excludeKeys) {
+        const existing = settingsMap[key];
+        const map: Record<string, unknown> = isRecord(existing) ? { ...existing } : {};
+        for (const dir of IDE_EXCLUDED_DIRECTORIES) {
+            const pattern = `**/${dir}`;
+            if (map[pattern] !== true) {
+                map[pattern] = true;
+                needsUpdate = true;
+            }
+        }
+        settingsMap[key] = map;
+    }
+
+    return {
+        content: JSON.stringify(settingsMap, null, 2),
+        needsUpdate,
+        parseMode
+    };
 }

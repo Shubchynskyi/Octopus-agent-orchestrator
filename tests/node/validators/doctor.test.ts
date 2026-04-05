@@ -176,7 +176,8 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
             bundleVersion: null,
             remediation: null
         },
-        providerComplianceResult: null
+        providerComplianceResult: null,
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] }
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -255,7 +256,8 @@ test('formatDoctorResult includes timeline completeness warnings', () => {
             bundleVersion: null,
             remediation: null
         },
-        providerComplianceResult: null
+        providerComplianceResult: null,
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] }
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -384,6 +386,112 @@ test('runDoctor fails when active entrypoint has compliance drift', () => {
 
         const output = formatDoctorResult(result);
         assert.ok(output.includes('DRIFT_DETECTED'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('formatDoctorResult shows nested bundle duplication warning', () => {
+    const fakeResult = {
+        passed: true,
+        targetRoot: '/tmp/test',
+        verifyResult: {
+            passed: true,
+            targetRoot: '/tmp/test',
+            sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md',
+            bundleVersion: '1.0.0',
+            requiredPathsChecked: 10,
+            violations: {
+                missingPaths: [],
+                initAnswersContractViolations: [],
+                versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [],
+                pathsContractViolations: [],
+                tokenEconomyContractViolations: [],
+                outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [],
+                skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [],
+                templatePlaceholderViolations: [],
+                commandsContractViolations: [],
+                manifestContractViolations: [],
+                coreRuleContractViolations: [],
+                entrypointContractViolations: [],
+                taskContractViolations: [],
+                qwenSettingsViolations: [],
+                skillsIndexContractViolations: [],
+                skillPackContractViolations: [],
+                gitignoreMissing: []
+            },
+            totalViolationCount: 0
+        },
+        manifestResult: {
+            passed: true,
+            manifestPath: '/tmp/test/MANIFEST.md',
+            entriesChecked: 5,
+            duplicates: [],
+            diagnostics: []
+        },
+        manifestError: null,
+        timelineEvidence: [],
+        timelineWarnings: [],
+        lockHealth: {
+            lock_root: '/tmp/test/runtime/task-events',
+            subsystem_scope_note: 'Only runtime/task-events/*.lock participates in the task-event lock subsystem. runtime/reviews/ is never cleaned by these diagnostics.',
+            locks: [],
+            active_count: 0,
+            stale_count: 0
+        },
+        lockCleanup: null,
+        parityResult: {
+            isSourceCheckout: false,
+            isStale: false,
+            violations: [],
+            rootVersion: null,
+            bundleVersion: null,
+            remediation: null
+        },
+        providerComplianceResult: null,
+        nestedBundleDuplication: {
+            duplicatesFound: true,
+            duplicatePaths: ['Octopus-agent-orchestrator/Octopus-agent-orchestrator']
+        }
+    };
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Nested Bundle Duplication'));
+    assert.ok(output.includes('DUPLICATES_FOUND'));
+    assert.ok(output.includes('Octopus-agent-orchestrator/Octopus-agent-orchestrator'));
+});
+
+test('runDoctor detects nested bundle duplication in real workspace', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-nested-test-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    fs.mkdirSync(bundlePath, { recursive: true });
+    fs.writeFileSync(
+        path.join(bundlePath, 'MANIFEST.md'),
+        '- bin/octopus.js\n- package.json\n',
+        'utf8'
+    );
+
+    // Create nested bundle with launcher
+    const nestedBundlePath = path.join(bundlePath, 'Octopus-agent-orchestrator', 'bin');
+    fs.mkdirSync(nestedBundlePath, { recursive: true });
+    fs.writeFileSync(path.join(nestedBundlePath, 'octopus.js'), '#!/usr/bin/env node', 'utf8');
+
+    try {
+        const result = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude'
+        });
+        assert.equal(result.nestedBundleDuplication.duplicatesFound, true);
+        assert.ok(result.nestedBundleDuplication.duplicatePaths.length > 0);
+        assert.equal(result.passed, false, 'doctor overall verdict should fail when nested duplication is detected');
+
+        const output = formatDoctorResult(result);
+        assert.ok(output.includes('Nested Bundle Duplication'));
+        assert.ok(output.includes('DUPLICATES_FOUND'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
