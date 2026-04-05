@@ -6,7 +6,7 @@ import {
     auditReviewArtifactCompaction,
     normalizeReviewerExecutionMode
 } from '../gate-runtime/review-context';
-import { assertValidTaskId, appendTaskEvent } from '../gate-runtime/task-events';
+import { assertValidTaskId, appendTaskEvent, appendTaskEventAsync } from '../gate-runtime/task-events';
 import { fileSha256 } from '../gate-runtime/hash';
 import {
     DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
@@ -26,10 +26,15 @@ import { buildTaskEventsSummary, formatTaskEventsSummaryText } from '../gates/ta
 import { buildTaskAuditSummary, formatTaskAuditSummaryText } from '../gates/task-audit-summary';
 import {
     emitMandatoryCompletionGateEvent,
+    emitMandatoryCompletionGateEventAsync,
     emitReviewPhaseStartedEvent,
+    emitReviewPhaseStartedEventAsync,
     emitReviewerDelegationRoutedEvent,
+    emitReviewerDelegationRoutedEventAsync,
     emitReviewRecordedEvent,
-    emitStatusChangedEvent
+    emitReviewRecordedEventAsync,
+    emitStatusChangedEvent,
+    emitStatusChangedEventAsync
 } from '../gate-runtime/lifecycle-events';
 import {
     fileSha256 as gateFileSha256,
@@ -51,7 +56,8 @@ import {
 } from '../gates/isolation-sandbox';
 import {
     emitSkillReferenceLoadedEvent,
-    emitSkillSelectedEvent
+    emitSkillReferenceLoadedEventAsync,
+    emitSkillSelectedEventAsync
 } from '../runtime/skill-telemetry';
 import { runDoctor, formatDoctorResult } from '../validators/doctor';
 import { detectSourceBundleParity, getCanonicalEntrypoint } from '../validators/workspace-layout';
@@ -1367,18 +1373,18 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                     const skillId = resolveReviewSkillId(reviewType, repoRoot);
                     const skillPath = resolveGateExecutionPath(repoRoot, path.join('live', 'skills', skillId, 'SKILL.md'));
 
-                    emitReviewPhaseStartedEvent(orchestratorRoot, taskId, {
+                    await emitReviewPhaseStartedEventAsync(orchestratorRoot, taskId, {
                         review_type: reviewType,
                         depth,
                         preflight_path: gateHelpers.normalizePath(preflightPath),
                         output_path: result.output_path,
                         review_context_artifact_path: result.rule_context.artifact_path
                     });
-                    emitSkillSelectedEvent(orchestratorRoot, taskId, skillId, null, 'required_review');
+                    await emitSkillSelectedEventAsync(orchestratorRoot, taskId, skillId, null, 'required_review');
                     if (fs.existsSync(skillPath) && fs.statSync(skillPath).isFile()) {
-                        emitSkillReferenceLoadedEvent(orchestratorRoot, taskId, gateHelpers.normalizePath(skillPath), skillId, 'review_skill');
+                        await emitSkillReferenceLoadedEventAsync(orchestratorRoot, taskId, gateHelpers.normalizePath(skillPath), skillId, 'review_skill');
                     }
-                    emitSkillReferenceLoadedEvent(
+                    await emitSkillReferenceLoadedEventAsync(
                         orchestratorRoot,
                         taskId,
                         gateHelpers.normalizePath(result.rule_context.artifact_path),
@@ -1590,7 +1596,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             if (completionTaskId) {
                 const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
                 try {
-                    emitMandatoryCompletionGateEvent(orchestratorRoot, completionTaskId, result.outcome === 'PASS', {
+                    await emitMandatoryCompletionGateEventAsync(orchestratorRoot, completionTaskId, result.outcome === 'PASS', {
                         status: result.status,
                         outcome: result.outcome,
                         preflight_path: result.preflight_path,
@@ -1603,7 +1609,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                     );
                 }
                 if (result.outcome === 'PASS') {
-                    emitStatusChangedEvent(orchestratorRoot, completionTaskId, 'IN_REVIEW', 'DONE');
+                    await emitStatusChangedEventAsync(orchestratorRoot, completionTaskId, 'IN_REVIEW', 'DONE');
                 }
             }
 
@@ -1715,7 +1721,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 fallbackReason: reviewerFallbackReason
             });
             const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
-            emitReviewerDelegationRoutedEvent(
+            await emitReviewerDelegationRoutedEventAsync(
                 orchestratorRoot,
                 taskId,
                 reviewType,
@@ -1897,7 +1903,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2), 'utf8');
 
             const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
-            emitReviewRecordedEvent(orchestratorRoot, taskId, reviewType, receipt);
+            await emitReviewRecordedEventAsync(orchestratorRoot, taskId, reviewType, receipt);
             console.log(`REVIEW_RECORDED: ${reviewType} (Receipt: ${normalizePath(receiptPath)})`);
             return;
         }
@@ -1964,7 +1970,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 const eventType = evidence.isolation_enabled
                     ? 'ISOLATION_MODE_VALIDATED'
                     : 'ISOLATION_MODE_SKIPPED';
-                appendTaskEvent(
+                await appendTaskEventAsync(
                     orchestratorRoot,
                     String(options.taskId),
                     eventType,
@@ -2033,7 +2039,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
 
             if (options.taskId) {
                 const orchestratorRoot = gateHelpers.joinOrchestratorPath(isolationRepoRoot, '');
-                appendTaskEvent(
+                await appendTaskEventAsync(
                     orchestratorRoot,
                     String(options.taskId),
                     'ISOLATION_SANDBOX_PREPARED',

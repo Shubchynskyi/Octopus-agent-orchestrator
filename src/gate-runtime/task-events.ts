@@ -6,7 +6,8 @@ import * as path from 'node:path';
 const DEFAULT_LOCK_TIMEOUT_MS = 5000;
 const DEFAULT_LOCK_RETRY_MS = 25;
 const DEFAULT_LOCK_STALE_MS = 30000;
-const LOCK_SLEEP_ARRAY = new Int32Array(new SharedArrayBuffer(4));
+const MAX_LOCK_RETRIES = 500;
+const LOCK_CONTENTION_WARN_THRESHOLD = 10;
 
 interface LockOptions {
     timeoutMs?: unknown;
@@ -88,6 +89,12 @@ interface AppendTaskEventResult {
     all_tasks_log_path: string;
     integrity: TaskEventIntegrity | null;
     warnings: string[];
+    lock_telemetry?: {
+        task_lock_retries: number;
+        task_lock_elapsed_ms: number;
+        aggregate_lock_retries: number;
+        aggregate_lock_elapsed_ms: number;
+    };
 }
 
 export type TaskEventAppendResult = AppendTaskEventResult;
@@ -132,11 +139,13 @@ function toPositiveInteger(value: unknown, fallback: number): number {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function sleepMs(milliseconds: number): void {
+function sleepMsAsync(milliseconds: number): Promise<void> {
     if (!milliseconds || milliseconds <= 0) {
-        return;
+        return Promise.resolve();
     }
-    Atomics.wait(LOCK_SLEEP_ARRAY, 0, 0, milliseconds);
+    return new Promise((resolve) => {
+        setTimeout(resolve, milliseconds);
+    });
 }
 
 function writeLockMetadata(lockPath: string): void {
@@ -319,9 +328,13 @@ function tryRemoveStaleLock(lockPath: string, staleMs: number): { removed: boole
     }
 }
 
-function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): LockHandle {
+interface AcquireLockTelemetry {
+    retries: number;
+    elapsedMs: number;
+}
+
+function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): { handle: LockHandle; telemetry: AcquireLockTelemetry } {
     const timeoutMs = toPositiveInteger(options.timeoutMs, DEFAULT_LOCK_TIMEOUT_MS);
-    const retryMs = toPositiveInteger(options.retryMs, DEFAULT_LOCK_RETRY_MS);
     const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
     const startedAt = Date.now();
     let lastInspection: LockInspectionResult = inspectLock(lockPath, staleMs);
@@ -330,7 +343,8 @@ function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): Loc
         try {
             fs.mkdirSync(lockPath);
             writeLockMetadata(lockPath);
-            return { lockPath };
+            const elapsedMs = Date.now() - startedAt;
+            return { handle: { lockPath }, telemetry: { retries: 0, elapsedMs } };
         } catch (error: unknown) {
             const errCode = error != null && typeof error === 'object' && 'code' in error
                 ? (error as { code?: string }).code
@@ -346,11 +360,70 @@ function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): Loc
             }
 
             const waitedMs = Date.now() - startedAt;
-            if (waitedMs >= timeoutMs) {
-                throw new Error(formatLockDiagnostic(lockPath, lastInspection, timeoutMs, waitedMs));
+            throw new Error(
+                formatLockDiagnostic(lockPath, lastInspection, timeoutMs, waitedMs)
+                + '; retries=0; wait_strategy=immediate_fail'
+            );
+        }
+    }
+}
+
+async function acquireFilesystemLockAsync(lockPath: string, options: LockOptions = {}): Promise<{ handle: LockHandle; telemetry: AcquireLockTelemetry }> {
+    const timeoutMs = toPositiveInteger(options.timeoutMs, DEFAULT_LOCK_TIMEOUT_MS);
+    const retryMs = toPositiveInteger(options.retryMs, DEFAULT_LOCK_RETRY_MS);
+    const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
+    const startedAt = Date.now();
+    let lastInspection: LockInspectionResult = inspectLock(lockPath, staleMs);
+    let retries = 0;
+    let contentionWarned = false;
+
+    while (true) {
+        try {
+            fs.mkdirSync(lockPath);
+            writeLockMetadata(lockPath);
+            const elapsedMs = Date.now() - startedAt;
+            return { handle: { lockPath }, telemetry: { retries, elapsedMs } };
+        } catch (error: unknown) {
+            const errCode = error != null && typeof error === 'object' && 'code' in error
+                ? (error as { code?: string }).code
+                : undefined;
+            if (errCode !== 'EEXIST') {
+                throw error;
             }
 
-            sleepMs(retryMs);
+            const staleAttempt = tryRemoveStaleLock(lockPath, staleMs);
+            lastInspection = staleAttempt.inspection;
+            if (staleAttempt.removed) {
+                continue;
+            }
+
+            retries += 1;
+
+            if (!contentionWarned && retries >= LOCK_CONTENTION_WARN_THRESHOLD) {
+                contentionWarned = true;
+                const elapsedMs = Date.now() - startedAt;
+                process.stderr.write(
+                    `WARNING: lock contention on ${lockPath} (retries=${retries}, elapsed_ms=${elapsedMs})\n`
+                );
+            }
+
+            if (retries >= MAX_LOCK_RETRIES) {
+                const elapsedMs = Date.now() - startedAt;
+                throw new Error(
+                    formatLockDiagnostic(lockPath, lastInspection, timeoutMs, elapsedMs)
+                    + `; retries=${retries}; max_retries=${MAX_LOCK_RETRIES}`
+                );
+            }
+
+            const waitedMs = Date.now() - startedAt;
+            if (waitedMs >= timeoutMs) {
+                throw new Error(
+                    formatLockDiagnostic(lockPath, lastInspection, timeoutMs, waitedMs)
+                    + `; retries=${retries}`
+                );
+            }
+
+            await sleepMsAsync(retryMs);
         }
     }
 }
@@ -502,12 +575,21 @@ export function cleanupStaleTaskEventLocks(
     };
 }
 
-function withFilesystemLock<T>(lockPath: string, options: LockOptions, callback: () => T): T {
-    const lockHandle = acquireFilesystemLock(lockPath, options);
+function withFilesystemLock<T>(lockPath: string, options: LockOptions, callback: () => T): { result: T; telemetry: AcquireLockTelemetry } {
+    const { handle, telemetry } = acquireFilesystemLock(lockPath, options);
     try {
-        return callback();
+        return { result: callback(), telemetry };
     } finally {
-        releaseFilesystemLock(lockHandle);
+        releaseFilesystemLock(handle);
+    }
+}
+
+async function withFilesystemLockAsync<T>(lockPath: string, options: LockOptions, callback: () => Promise<T> | T): Promise<{ result: T; telemetry: AcquireLockTelemetry }> {
+    const { handle, telemetry } = await acquireFilesystemLockAsync(lockPath, options);
+    try {
+        return { result: await callback(), telemetry };
+    } finally {
+        releaseFilesystemLock(handle);
     }
 }
 
@@ -957,14 +1039,130 @@ export function appendTaskEvent(
         task_event_log_path: taskFilePath.replace(/\\/g, '/'),
         all_tasks_log_path: allTasksPath.replace(/\\/g, '/'),
         integrity: null,
-        warnings: []
+        warnings: [],
+        lock_telemetry: {
+            task_lock_retries: 0,
+            task_lock_elapsed_ms: 0,
+            aggregate_lock_retries: 0,
+            aggregate_lock_elapsed_ms: 0
+        }
     };
 
     let line: string | null = null;
     try {
         fs.mkdirSync(eventsRoot, { recursive: true });
 
-        withFilesystemLock(taskLockPath, lockOptions, function (): void {
+        const taskLockResult = withFilesystemLock(taskLockPath, lockOptions, function (): void {
+            const appendState = readTaskEventAppendState(taskFilePath, safeTaskId);
+            const previousSequence = appendState.last_integrity_sequence;
+            const previousHash = appendState.last_event_sha256;
+            const nextSequence = (typeof previousSequence === 'number')
+                ? (previousSequence + 1)
+                : (appendState.matching_events + 1);
+
+            event.integrity = {
+                schema_version: 1,
+                task_sequence: nextSequence,
+                prev_event_sha256: previousHash
+            };
+            const eventForHash: Record<string, unknown> = { ...event };
+            const eventSha256 = buildEventIntegrityHash(eventForHash);
+            if (eventSha256 == null) {
+                throw new Error('Failed to build event integrity hash.');
+            }
+            event.integrity.event_sha256 = eventSha256;
+            const serializedLine = JSON.stringify(event);
+            line = serializedLine;
+
+            fs.appendFileSync(taskFilePath, serializedLine + '\n', 'utf8');
+            result.integrity = Object.assign({}, event.integrity);
+        });
+        if (result.lock_telemetry) {
+            result.lock_telemetry.task_lock_retries = taskLockResult.telemetry.retries;
+            result.lock_telemetry.task_lock_elapsed_ms = taskLockResult.telemetry.elapsedMs;
+        }
+    } catch (err: unknown) {
+        const warning = `task-event append failed: ${getErrorMessage(err)}`;
+        result.warnings.push(warning);
+        process.stderr.write(`WARNING: ${warning}\n`);
+        return passThru ? result : null;
+    }
+
+    try {
+        const aggLockResult = withFilesystemLock(aggregateLockPath, lockOptions, function (): void {
+            fs.appendFileSync(allTasksPath, (line || '') + '\n', 'utf8');
+        });
+        if (result.lock_telemetry) {
+            result.lock_telemetry.aggregate_lock_retries = aggLockResult.telemetry.retries;
+            result.lock_telemetry.aggregate_lock_elapsed_ms = aggLockResult.telemetry.elapsedMs;
+        }
+    } catch (err: unknown) {
+        const warning = `task-event aggregate append failed: ${getErrorMessage(err)}`;
+        result.warnings.push(warning);
+        process.stderr.write(`WARNING: ${warning}\n`);
+    }
+
+    return passThru ? result : null;
+}
+
+export async function appendTaskEventAsync(
+    repoRoot: string,
+    taskId: string,
+    eventType: string,
+    outcome: string,
+    message: string,
+    details: unknown,
+    options: AppendTaskEventOptions = {}
+): Promise<AppendTaskEventResult | null> {
+    const actor = options.actor || 'gate';
+    const passThru = options.passThru || false;
+    const eventsRoot = options.eventsRoot
+        ? path.resolve(String(options.eventsRoot))
+        : path.join(repoRoot, 'runtime', 'task-events');
+
+    if (!taskId) {
+        return null;
+    }
+
+    const safeTaskId = assertValidTaskId(taskId);
+    const taskFilePath = path.join(eventsRoot, `${safeTaskId}.jsonl`);
+    const allTasksPath = path.join(eventsRoot, 'all-tasks.jsonl');
+    const taskLockPath = path.join(eventsRoot, `.${safeTaskId}.lock`);
+    const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
+    const lockOptions: LockOptions = {
+        timeoutMs: options.lockTimeoutMs,
+        retryMs: options.lockRetryMs,
+        staleMs: options.lockStaleMs
+    };
+
+    const event: TaskEvent = {
+        timestamp_utc: new Date().toISOString(),
+        task_id: safeTaskId,
+        event_type: eventType,
+        outcome: outcome,
+        actor: actor,
+        message: message,
+        details: details
+    };
+
+    const result: AppendTaskEventResult = {
+        task_event_log_path: taskFilePath.replace(/\\/g, '/'),
+        all_tasks_log_path: allTasksPath.replace(/\\/g, '/'),
+        integrity: null,
+        warnings: [],
+        lock_telemetry: {
+            task_lock_retries: 0,
+            task_lock_elapsed_ms: 0,
+            aggregate_lock_retries: 0,
+            aggregate_lock_elapsed_ms: 0
+        }
+    };
+
+    let line: string | null = null;
+    try {
+        fs.mkdirSync(eventsRoot, { recursive: true });
+
+        const taskLockResult = await withFilesystemLockAsync(taskLockPath, lockOptions, async function (): Promise<void> {
             const appendState = readTaskEventAppendState(taskFilePath, safeTaskId);
             const previousSequence = appendState.last_integrity_sequence;
             const previousHash = appendState.last_event_sha256;
@@ -988,12 +1186,16 @@ export function appendTaskEvent(
 
             const preWriteDelayMs = toPositiveInteger(options.preWriteDelayMs, 0);
             if (preWriteDelayMs > 0) {
-                sleepMs(preWriteDelayMs);
+                await sleepMsAsync(preWriteDelayMs);
             }
 
             fs.appendFileSync(taskFilePath, serializedLine + '\n', 'utf8');
             result.integrity = Object.assign({}, event.integrity);
         });
+        if (result.lock_telemetry) {
+            result.lock_telemetry.task_lock_retries = taskLockResult.telemetry.retries;
+            result.lock_telemetry.task_lock_elapsed_ms = taskLockResult.telemetry.elapsedMs;
+        }
     } catch (err: unknown) {
         const warning = `task-event append failed: ${getErrorMessage(err)}`;
         result.warnings.push(warning);
@@ -1002,9 +1204,13 @@ export function appendTaskEvent(
     }
 
     try {
-        withFilesystemLock(aggregateLockPath, lockOptions, function (): void {
+        const aggLockResult = await withFilesystemLockAsync(aggregateLockPath, lockOptions, async function (): Promise<void> {
             fs.appendFileSync(allTasksPath, (line || '') + '\n', 'utf8');
         });
+        if (result.lock_telemetry) {
+            result.lock_telemetry.aggregate_lock_retries = aggLockResult.telemetry.retries;
+            result.lock_telemetry.aggregate_lock_elapsed_ms = aggLockResult.telemetry.elapsedMs;
+        }
     } catch (err: unknown) {
         const warning = `task-event aggregate append failed: ${getErrorMessage(err)}`;
         result.warnings.push(warning);
@@ -1024,6 +1230,39 @@ export function appendMandatoryTaskEvent(
     options: AppendTaskEventOptions = {}
 ): TaskEventAppendResult {
     const result = appendTaskEvent(
+        repoRoot,
+        taskId,
+        eventType,
+        outcome,
+        message,
+        details,
+        {
+            ...options,
+            passThru: true
+        }
+    );
+
+    if (!result) {
+        throw new Error(`Mandatory lifecycle event '${eventType}' append failed without diagnostics.`);
+    }
+    if (result.warnings.length > 0) {
+        throw new Error(
+            `Mandatory lifecycle event '${eventType}' append failed: ${result.warnings.join(' | ')}`
+        );
+    }
+    return result;
+}
+
+export async function appendMandatoryTaskEventAsync(
+    repoRoot: string,
+    taskId: string,
+    eventType: string,
+    outcome: string,
+    message: string,
+    details: unknown,
+    options: AppendTaskEventOptions = {}
+): Promise<TaskEventAppendResult> {
+    const result = await appendTaskEventAsync(
         repoRoot,
         taskId,
         eventType,

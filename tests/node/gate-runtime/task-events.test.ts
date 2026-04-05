@@ -8,11 +8,13 @@ import { spawn } from 'node:child_process';
 import {
     assertValidTaskId,
     appendMandatoryTaskEvent,
+    appendMandatoryTaskEventAsync,
     buildEventIntegrityHash,
     cleanupStaleTaskEventLocks,
     normalizeIntegrityValue,
     inspectTaskEventFile,
     appendTaskEvent,
+    appendTaskEventAsync,
     readTaskEventAppendState,
     scanTaskEventLocks
 } from '../../../src/gate-runtime/task-events';
@@ -26,20 +28,25 @@ function runConcurrentAppendWorker(modulePath: string, orchestratorRoot: string,
     return new Promise<void>((resolve, reject) => {
         const workerScript = [
             "const fs = require('node:fs');",
-            "const { appendTaskEvent } = require(process.argv[1]);",
+            "const { appendTaskEventAsync } = require(process.argv[1]);",
             "const orchestratorRoot = process.argv[2];",
             "const startSignalPath = process.argv[3];",
             "const attempts = Number.parseInt(process.argv[4], 10);",
             "const delayMs = Number.parseInt(process.argv[5], 10);",
             "const sleepArray = new Int32Array(new SharedArrayBuffer(4));",
             "while (!fs.existsSync(startSignalPath)) { Atomics.wait(sleepArray, 0, 0, 10); }",
-            "for (let index = 0; index < attempts; index += 1) {",
-            "  const result = appendTaskEvent(orchestratorRoot, 'T-CONCURRENT', 'test', 'PASS', `Event ${index + 1}`, { worker: process.pid, attempt: index }, { passThru: true, lockTimeoutMs: 30000, lockRetryMs: 1, preWriteDelayMs: delayMs });",
-            "  if (!result || (Array.isArray(result.warnings) && result.warnings.length > 0)) {",
-            "    const warningText = result && Array.isArray(result.warnings) ? result.warnings.join('; ') : 'appendTaskEvent returned null';",
-            "    throw new Error(warningText);",
+            "(async () => {",
+            "  for (let index = 0; index < attempts; index += 1) {",
+            "    const result = await appendTaskEventAsync(orchestratorRoot, 'T-CONCURRENT', 'test', 'PASS', `Event ${index + 1}`, { worker: process.pid, attempt: index }, { passThru: true, lockTimeoutMs: 30000, lockRetryMs: 1, preWriteDelayMs: delayMs });",
+            "    if (!result || (Array.isArray(result.warnings) && result.warnings.length > 0)) {",
+            "      const warningText = result && Array.isArray(result.warnings) ? result.warnings.join('; ') : 'appendTaskEventAsync returned null';",
+            "      throw new Error(warningText);",
+            "    }",
             "  }",
-            "}"
+            "})().catch((error) => {",
+            "  process.stderr.write(String(error && error.stack ? error.stack : error));",
+            "  process.exitCode = 1;",
+            "});"
         ].join('\n');
 
         const child = spawn(process.execPath, [
@@ -700,4 +707,285 @@ test('readTaskEventAppendState returns empty state for missing file', () => {
     assert.equal(state.parse_errors, 0);
     assert.equal(state.last_integrity_sequence, null);
     assert.equal(state.last_event_sha256, null);
+});
+
+// --- bounded waiting and contention telemetry ---
+
+test('appendTaskEvent includes lock_telemetry in result', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-lock-telemetry-'));
+    try {
+        const result = appendTaskEvent(
+            tempDir,
+            'T-TELEM',
+            'test',
+            'PASS',
+            'Telemetry check',
+            null,
+            { passThru: true }
+        );
+
+        assert.ok(result !== null);
+        assert.ok(result!.lock_telemetry != null, 'lock_telemetry must be present');
+        assert.equal(typeof result!.lock_telemetry!.task_lock_retries, 'number');
+        assert.equal(typeof result!.lock_telemetry!.task_lock_elapsed_ms, 'number');
+        assert.equal(typeof result!.lock_telemetry!.aggregate_lock_retries, 'number');
+        assert.equal(typeof result!.lock_telemetry!.aggregate_lock_elapsed_ms, 'number');
+        assert.equal(result!.lock_telemetry!.task_lock_retries, 0, 'no contention expected');
+        assert.equal(result!.lock_telemetry!.aggregate_lock_retries, 0, 'no contention expected');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent timeout includes retry count in diagnostic', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-retry-diagnostic-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const lockPath = path.join(eventsRoot, '.T-TEST.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+
+        const result = appendTaskEvent(
+            tempDir,
+            'T-TEST',
+            'test',
+            'PASS',
+            'Should include retry count in timeout',
+            null,
+            {
+                passThru: true,
+                lockTimeoutMs: 80,
+                lockRetryMs: 5,
+                lockStaleMs: 60000
+            }
+        );
+
+        assert.ok(result !== null);
+        assert.equal(result!.warnings.length, 1);
+        assert.match(result!.warnings[0], /retries=/);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('task-events module avoids Atomics.wait and uses async timer-based waiting', () => {
+    const sourcePath = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'gate-runtime', 'task-events.ts');
+    const sourceContent = fs.readFileSync(sourcePath, 'utf8');
+    const strippedSource = sourceContent.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+    assert.equal(
+        /Atomics\.wait\s*\(/.test(strippedSource),
+        false,
+        'task-events.ts must not use Atomics.wait on the main thread'
+    );
+    assert.equal(
+        /while\s*\(\s*Date\.now\(\)\s*</.test(strippedSource),
+        false,
+        'task-events.ts must not contain a Date.now() busy-wait spin loop'
+    );
+    assert.equal(
+        /setTimeout\s*\(/.test(strippedSource),
+        true,
+        'task-events.ts should use setTimeout-backed async waiting for lock retries'
+    );
+});
+
+test('appendTaskEvent sync path fails fast on active lock without waiting', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-retry-cap-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const lockPath = path.join(eventsRoot, '.T-TEST.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+
+        const startedAt = Date.now();
+        const result = appendTaskEvent(
+            tempDir,
+            'T-TEST',
+            'test',
+            'PASS',
+            'Should fail fast on live lock',
+            null,
+            {
+                passThru: true,
+                lockTimeoutMs: 600000,
+                lockRetryMs: 1,
+                lockStaleMs: 60000
+            }
+        );
+        const elapsedMs = Date.now() - startedAt;
+
+        assert.ok(result !== null);
+        assert.equal(result!.warnings.length, 1);
+        assert.match(result!.warnings[0], /wait_strategy=immediate_fail/);
+        assert.match(result!.warnings[0], /retries=0/);
+        assert.ok(elapsedMs < 250, `sync append should fail fast, got ${elapsedMs} ms`);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEventAsync reports non-zero telemetry after contended lock acquisition', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-contention-telemetry-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const lockPath = path.join(eventsRoot, '.T-TELEM.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+
+        setTimeout(() => {
+            try {
+                fs.rmSync(lockPath, { recursive: true, force: true });
+            } catch {
+                // ignore
+            }
+        }, 80);
+
+        const result = await appendTaskEventAsync(
+            tempDir,
+            'T-TELEM',
+            'test',
+            'PASS',
+            'Should succeed after contention',
+            null,
+            {
+                passThru: true,
+                lockTimeoutMs: 5000,
+                lockRetryMs: 5,
+                lockStaleMs: 60000
+            }
+        );
+
+        assert.ok(result !== null);
+        assert.equal(result!.warnings.length, 0, 'Should succeed without warnings');
+        assert.ok(result!.lock_telemetry != null, 'lock_telemetry must be present');
+        assert.ok(result!.lock_telemetry!.task_lock_retries > 0, 'Should have non-zero retries after contention');
+        assert.ok(result!.lock_telemetry!.task_lock_elapsed_ms > 0, 'Should have non-zero elapsed time after contention');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+// --- aggregate (all-tasks) lock contention ---
+
+test('appendTaskEventAsync reports non-zero aggregate telemetry after contended all-tasks lock', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-aggregate-contention-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
+        fs.mkdirSync(aggregateLockPath, { recursive: true });
+        fs.writeFileSync(path.join(aggregateLockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+
+        setTimeout(() => {
+            try {
+                fs.rmSync(aggregateLockPath, { recursive: true, force: true });
+            } catch {
+                // ignore
+            }
+        }, 80);
+
+        const result = await appendTaskEventAsync(
+            tempDir,
+            'T-AGG-CONTEND',
+            'test',
+            'PASS',
+            'Should succeed after aggregate lock contention',
+            null,
+            {
+                passThru: true,
+                lockTimeoutMs: 5000,
+                lockRetryMs: 5,
+                lockStaleMs: 60000
+            }
+        );
+
+        assert.ok(result !== null);
+        assert.equal(result!.warnings.length, 0, 'Should succeed without warnings');
+        assert.ok(result!.lock_telemetry != null, 'lock_telemetry must be present');
+
+        // Task lock should have no contention (no pre-existing task lock)
+        assert.equal(result!.lock_telemetry!.task_lock_retries, 0, 'task lock should acquire on first attempt');
+
+        // Aggregate lock should show contention
+        assert.ok(
+            result!.lock_telemetry!.aggregate_lock_retries > 0,
+            `aggregate lock should have non-zero retries (got ${result!.lock_telemetry!.aggregate_lock_retries})`
+        );
+        assert.ok(
+            result!.lock_telemetry!.aggregate_lock_elapsed_ms > 0,
+            `aggregate lock should have non-zero elapsed time (got ${result!.lock_telemetry!.aggregate_lock_elapsed_ms})`
+        );
+
+        // Verify the event was actually written to both files
+        const taskFile = path.join(eventsRoot, 'T-AGG-CONTEND.jsonl');
+        const allTasksFile = path.join(eventsRoot, 'all-tasks.jsonl');
+        assert.ok(fs.existsSync(taskFile), 'task event file must exist');
+        assert.ok(fs.existsSync(allTasksFile), 'all-tasks aggregate file must exist');
+        const taskLines = fs.readFileSync(taskFile, 'utf8').split('\n').filter((l) => l.trim());
+        const aggLines = fs.readFileSync(allTasksFile, 'utf8').split('\n').filter((l) => l.trim());
+        assert.equal(taskLines.length, 1, 'exactly one task event line');
+        assert.equal(aggLines.length, 1, 'exactly one aggregate event line');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEventAsync aggregate lock timeout produces diagnostic with retry count', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-agg-timeout-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
+        fs.mkdirSync(aggregateLockPath, { recursive: true });
+        fs.writeFileSync(path.join(aggregateLockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+
+        // The task-lock is uncontested so the task write succeeds.
+        // The aggregate-lock is held by this process (alive), so it times out.
+        const result = await appendTaskEventAsync(
+            tempDir,
+            'T-AGG-TIMEOUT',
+            'test',
+            'PASS',
+            'Aggregate lock should time out',
+            null,
+            {
+                passThru: true,
+                lockTimeoutMs: 80,
+                lockRetryMs: 5,
+                lockStaleMs: 60000
+            }
+        );
+
+        assert.ok(result !== null);
+        // Task write succeeds, aggregate write fails → one warning
+        assert.equal(result!.warnings.length, 1, 'exactly one warning from aggregate lock timeout');
+        assert.match(result!.warnings[0], /aggregate/, 'warning must mention aggregate');
+        assert.match(result!.warnings[0], /retries=/, 'warning must include retry count');
+        assert.ok(result!.integrity !== null, 'task integrity should still be set');
+
+        // Task file should still exist (task write succeeded)
+        const taskFile = path.join(eventsRoot, 'T-AGG-TIMEOUT.jsonl');
+        assert.ok(fs.existsSync(taskFile), 'task event file must exist even when aggregate lock fails');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
 });

@@ -1,4 +1,4 @@
-import { appendTaskEvent } from '../gate-runtime/task-events';
+import { appendTaskEvent, appendTaskEventAsync } from '../gate-runtime/task-events';
 
 /**
  * Telemetry event types for skill activation and reference loading.
@@ -119,6 +119,43 @@ export function emitSkillTelemetryEvent(
     }
 }
 
+export async function emitSkillTelemetryEventAsync(
+    bundleRoot: string | null | undefined,
+    taskId: string | null | undefined,
+    eventType: SkillTelemetryEventType,
+    message: string,
+    detailOptions: SkillTelemetryDetailOptions = {},
+    appendOptions?: SkillTelemetryAppendOptions
+): Promise<SkillTelemetryResult> {
+    if (!bundleRoot || !taskId) {
+        return null;
+    }
+
+    const details = buildSkillTelemetryDetails(detailOptions);
+
+    try {
+        return await appendTaskEventAsync(
+            bundleRoot,
+            taskId,
+            eventType,
+            'INFO',
+            message,
+            details,
+            Object.assign({ actor: SKILL_TELEMETRY_ACTOR }, appendOptions || {})
+        );
+    } catch (error: unknown) {
+        try {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            process.stderr.write(
+                `WARNING: skill-telemetry emit failed: ${errorMessage}\n`
+            );
+        } catch {
+            // swallow
+        }
+        return null;
+    }
+}
+
 export function emitSkillSuggestedEvent(
     bundleRoot: string | null | undefined,
     taskId: string | null | undefined,
@@ -168,6 +205,28 @@ export function emitSkillSelectedEvent(
     );
 }
 
+export async function emitSkillSelectedEventAsync(
+    bundleRoot: string | null | undefined,
+    taskId: string | null | undefined,
+    skillId: string,
+    packId?: string | null,
+    triggerReason?: string | null,
+    appendOptions?: SkillTelemetryAppendOptions
+): Promise<SkillTelemetryResult> {
+    return emitSkillTelemetryEventAsync(
+        bundleRoot,
+        taskId,
+        SKILL_TELEMETRY_EVENT_TYPES.SKILL_SELECTED,
+        `Skill selected: ${skillId}`,
+        {
+            skillId: skillId,
+            packId: packId || null,
+            triggerReason: triggerReason || 'user_selected'
+        },
+        appendOptions
+    );
+}
+
 export function emitSkillReferenceLoadedEvent(
     bundleRoot: string | null | undefined,
     taskId: string | null | undefined,
@@ -177,6 +236,28 @@ export function emitSkillReferenceLoadedEvent(
     appendOptions?: SkillTelemetryAppendOptions
 ): SkillTelemetryResult {
     return emitSkillTelemetryEvent(
+        bundleRoot,
+        taskId,
+        SKILL_TELEMETRY_EVENT_TYPES.SKILL_REFERENCE_LOADED,
+        `Reference loaded: ${referencePath}`,
+        {
+            skillId: skillId || null,
+            referencePath: referencePath,
+            triggerReason: triggerReason || 'bridge_route'
+        },
+        appendOptions
+    );
+}
+
+export async function emitSkillReferenceLoadedEventAsync(
+    bundleRoot: string | null | undefined,
+    taskId: string | null | undefined,
+    referencePath: string,
+    skillId?: string | null,
+    triggerReason?: string | null,
+    appendOptions?: SkillTelemetryAppendOptions
+): Promise<SkillTelemetryResult> {
+    return emitSkillTelemetryEventAsync(
         bundleRoot,
         taskId,
         SKILL_TELEMETRY_EVENT_TYPES.SKILL_REFERENCE_LOADED,

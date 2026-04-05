@@ -1,6 +1,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { appendMandatoryTaskEvent, appendTaskEvent } from './task-events';
+import {
+    appendMandatoryTaskEvent,
+    appendMandatoryTaskEventAsync,
+    appendTaskEvent,
+    appendTaskEventAsync
+} from './task-events';
 
 /**
  * Canonical lifecycle event types that gates auto-emit during task execution.
@@ -244,6 +249,43 @@ function emitLifecycleEvent(
     }
 }
 
+async function emitLifecycleEventAsync(
+    repoRoot: string,
+    taskId: string,
+    eventType: string,
+    outcome: string,
+    message: string,
+    details: unknown,
+    options: AutoEmitOptions = {},
+    emitOnce = false
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    if (!repoRoot || !taskId) {
+        return null;
+    }
+    try {
+        if (emitOnce && hasTaskEvent(repoRoot, taskId, eventType, options.eventsRoot)) {
+            return null;
+        }
+        return await appendTaskEventAsync(
+            repoRoot,
+            taskId,
+            eventType,
+            outcome,
+            message,
+            details,
+            {
+                actor: options.actor || 'gate',
+                passThru: options.passThru ?? true,
+                eventsRoot: options.eventsRoot
+            }
+        );
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`WARNING: ${String(eventType).toLowerCase()} event emit failed: ${msg}\n`);
+        return null;
+    }
+}
+
 function emitMandatoryLifecycleEvent(
     repoRoot: string,
     taskId: string,
@@ -275,6 +317,37 @@ function emitMandatoryLifecycleEvent(
     );
 }
 
+async function emitMandatoryLifecycleEventAsync(
+    repoRoot: string,
+    taskId: string,
+    eventType: string,
+    outcome: string,
+    message: string,
+    details: unknown,
+    options: AutoEmitOptions = {},
+    emitOnce = false
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    if (!repoRoot || !taskId) {
+        throw new Error(`Mandatory lifecycle event '${eventType}' requires repoRoot and taskId.`);
+    }
+    if (emitOnce && hasTaskEvent(repoRoot, taskId, eventType, options.eventsRoot)) {
+        return null;
+    }
+
+    return appendMandatoryTaskEventAsync(
+        repoRoot,
+        taskId,
+        eventType,
+        outcome,
+        message,
+        details,
+        {
+            actor: options.actor || 'gate',
+            eventsRoot: options.eventsRoot
+        }
+    );
+}
+
 export function emitPlanCreatedEvent(
     repoRoot: string,
     taskId: string,
@@ -282,6 +355,24 @@ export function emitPlanCreatedEvent(
     options: AutoEmitOptions = {}
 ): ReturnType<typeof appendTaskEvent> {
     return emitLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.PLAN_CREATED,
+        'INFO',
+        'Task plan created.',
+        details,
+        options,
+        true
+    );
+}
+
+export async function emitPlanCreatedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    return emitLifecycleEventAsync(
         repoRoot,
         taskId,
         LIFECYCLE_EVENT_TYPES.PLAN_CREATED,
@@ -327,6 +418,23 @@ export function emitMandatoryPreflightStartedEvent(
     );
 }
 
+export async function emitMandatoryPreflightStartedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    return emitMandatoryLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.PREFLIGHT_STARTED,
+        'INFO',
+        'Preflight classification started.',
+        details,
+        options
+    );
+}
+
 export function emitPreflightFailedEvent(
     repoRoot: string,
     taskId: string,
@@ -351,6 +459,23 @@ export function emitMandatoryPreflightFailedEvent(
     options: AutoEmitOptions = {}
 ): ReturnType<typeof appendTaskEvent> {
     return emitMandatoryLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.PREFLIGHT_FAILED,
+        'FAIL',
+        'Preflight classification failed.',
+        details,
+        options
+    );
+}
+
+export async function emitMandatoryPreflightFailedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    return emitMandatoryLifecycleEventAsync(
         repoRoot,
         taskId,
         LIFECYCLE_EVENT_TYPES.PREFLIGHT_FAILED,
@@ -397,6 +522,24 @@ export function emitMandatoryImplementationStartedEvent(
     );
 }
 
+export async function emitMandatoryImplementationStartedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    return emitMandatoryLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.IMPLEMENTATION_STARTED,
+        'INFO',
+        'Implementation started.',
+        details,
+        options,
+        true
+    );
+}
+
 export function emitReviewPhaseStartedEvent(
     repoRoot: string,
     taskId: string,
@@ -404,6 +547,24 @@ export function emitReviewPhaseStartedEvent(
     options: AutoEmitOptions = {}
 ): ReturnType<typeof appendTaskEvent> {
     return emitLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED,
+        'INFO',
+        'Review phase started.',
+        details,
+        options,
+        true
+    );
+}
+
+export async function emitReviewPhaseStartedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    return emitLifecycleEventAsync(
         repoRoot,
         taskId,
         LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED,
@@ -433,6 +594,24 @@ export function emitReviewRecordedEvent(
     );
 }
 
+export async function emitReviewRecordedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    return emitLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEW_RECORDED,
+        'PASS',
+        `Review recorded: ${reviewType}.`,
+        details,
+        options
+    );
+}
+
 export function emitMandatoryReviewPhaseStartedEvent(
     repoRoot: string,
     taskId: string,
@@ -440,6 +619,24 @@ export function emitMandatoryReviewPhaseStartedEvent(
     options: AutoEmitOptions = {}
 ): ReturnType<typeof appendTaskEvent> {
     return emitMandatoryLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED,
+        'INFO',
+        'Review phase started.',
+        details,
+        options,
+        true
+    );
+}
+
+export async function emitMandatoryReviewPhaseStartedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    return emitMandatoryLifecycleEventAsync(
         repoRoot,
         taskId,
         LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED,
@@ -502,6 +699,24 @@ export function emitMandatoryCompletionGateEvent(
     );
 }
 
+export async function emitMandatoryCompletionGateEventAsync(
+    repoRoot: string,
+    taskId: string,
+    passed: boolean,
+    details: unknown,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    return emitMandatoryLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        passed ? LIFECYCLE_EVENT_TYPES.COMPLETION_GATE_PASSED : LIFECYCLE_EVENT_TYPES.COMPLETION_GATE_FAILED,
+        passed ? 'PASS' : 'FAIL',
+        passed ? 'Completion gate passed.' : 'Completion gate failed.',
+        details,
+        options
+    );
+}
+
 /**
  * Auto-emit STATUS_CHANGED to the task timeline.
  * Called when a task transitions between lifecycle statuses.
@@ -516,6 +731,38 @@ export function emitStatusChangedEvent(
     if (!repoRoot || !taskId) return null;
     try {
         return appendTaskEvent(
+            repoRoot,
+            taskId,
+            LIFECYCLE_EVENT_TYPES.STATUS_CHANGED,
+            'INFO',
+            `Task status changed: ${previousStatus} → ${newStatus}.`,
+            {
+                previous_status: previousStatus,
+                new_status: newStatus
+            },
+            {
+                actor: options.actor || 'orchestrator',
+                passThru: options.passThru ?? true,
+                eventsRoot: options.eventsRoot
+            }
+        );
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`WARNING: status-changed event emit failed: ${msg}\n`);
+        return null;
+    }
+}
+
+export async function emitStatusChangedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    previousStatus: string,
+    newStatus: string,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    if (!repoRoot || !taskId) return null;
+    try {
+        return await appendTaskEventAsync(
             repoRoot,
             taskId,
             LIFECYCLE_EVENT_TYPES.STATUS_CHANGED,
@@ -579,6 +826,43 @@ export function emitReviewerDelegationRoutedEvent(
     }
 }
 
+export async function emitReviewerDelegationRoutedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    executionMode: 'delegated_subagent' | 'same_agent_fallback',
+    reviewerSessionId: string,
+    fallbackReason: string | null = null,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    if (!repoRoot || !taskId) return null;
+    try {
+        return await appendTaskEventAsync(
+            repoRoot,
+            taskId,
+            LIFECYCLE_EVENT_TYPES.REVIEWER_DELEGATION_ROUTED,
+            'INFO',
+            `Reviewer delegation: ${reviewType} → ${executionMode}.`,
+            {
+                review_type: reviewType,
+                reviewer_execution_mode: executionMode,
+                reviewer_session_id: reviewerSessionId,
+                delegation_used: executionMode === 'delegated_subagent',
+                reviewer_fallback_reason: fallbackReason
+            },
+            {
+                actor: options.actor || 'orchestrator',
+                passThru: options.passThru ?? true,
+                eventsRoot: options.eventsRoot
+            }
+        );
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`WARNING: reviewer-delegation-routed event emit failed: ${msg}\n`);
+        return null;
+    }
+}
+
 /**
  * Auto-emit PROVIDER_ROUTING_DECISION to the task timeline.
  * Called when a provider bridge routes to a specific skill or profile.
@@ -594,6 +878,40 @@ export function emitProviderRoutingEvent(
     if (!repoRoot || !taskId) return null;
     try {
         return appendTaskEvent(
+            repoRoot,
+            taskId,
+            LIFECYCLE_EVENT_TYPES.PROVIDER_ROUTING_DECISION,
+            'INFO',
+            `Provider routing: ${provider} → ${routedTo}.`,
+            {
+                provider,
+                routed_to: routedTo,
+                reason
+            },
+            {
+                actor: options.actor || 'orchestrator',
+                passThru: options.passThru ?? true,
+                eventsRoot: options.eventsRoot
+            }
+        );
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`WARNING: provider-routing event emit failed: ${msg}\n`);
+        return null;
+    }
+}
+
+export async function emitProviderRoutingEventAsync(
+    repoRoot: string,
+    taskId: string,
+    provider: string,
+    routedTo: string,
+    reason: string,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    if (!repoRoot || !taskId) return null;
+    try {
+        return await appendTaskEventAsync(
             repoRoot,
             taskId,
             LIFECYCLE_EVENT_TYPES.PROVIDER_ROUTING_DECISION,
@@ -659,6 +977,44 @@ export function emitHandshakeDiagnosticsEvent(
     }
 }
 
+export async function emitHandshakeDiagnosticsEventAsync(
+    repoRoot: string,
+    taskId: string,
+    provider: string | null,
+    executionContext: string,
+    cliPath: string,
+    passed: boolean,
+    artifactHash: string | null = null,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    if (!repoRoot || !taskId) return null;
+    try {
+        return await appendTaskEventAsync(
+            repoRoot,
+            taskId,
+            LIFECYCLE_EVENT_TYPES.HANDSHAKE_DIAGNOSTICS_RECORDED,
+            passed ? 'PASS' : 'FAIL',
+            `Handshake diagnostics ${passed ? 'passed' : 'failed'}: provider=${provider || 'unknown'}, context=${executionContext}.`,
+            {
+                provider,
+                execution_context: executionContext,
+                cli_path: cliPath,
+                passed,
+                artifact_hash: artifactHash
+            },
+            {
+                actor: options.actor || 'gate',
+                passThru: options.passThru ?? true,
+                eventsRoot: options.eventsRoot
+            }
+        );
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`WARNING: handshake-diagnostics event emit failed: ${msg}\n`);
+        return null;
+    }
+}
+
 /**
  * Auto-emit SHELL_SMOKE_PREFLIGHT_RECORDED to the task timeline.
  * Called when shell-smoke-preflight gate completes.
@@ -675,6 +1031,42 @@ export function emitShellSmokePreflightEvent(
     if (!repoRoot || !taskId) return null;
     try {
         return appendTaskEvent(
+            repoRoot,
+            taskId,
+            LIFECYCLE_EVENT_TYPES.SHELL_SMOKE_PREFLIGHT_RECORDED,
+            passed ? 'PASS' : 'FAIL',
+            `Shell smoke preflight ${passed ? 'passed' : 'failed'}: provider=${provider || 'unknown'}, context=${executionContext}.`,
+            {
+                provider,
+                execution_context: executionContext,
+                passed,
+                artifact_hash: artifactHash
+            },
+            {
+                actor: options.actor || 'gate',
+                passThru: options.passThru ?? true,
+                eventsRoot: options.eventsRoot
+            }
+        );
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`WARNING: shell-smoke-preflight event emit failed: ${msg}\n`);
+        return null;
+    }
+}
+
+export async function emitShellSmokePreflightEventAsync(
+    repoRoot: string,
+    taskId: string,
+    provider: string | null,
+    executionContext: string,
+    passed: boolean,
+    artifactHash: string | null = null,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    if (!repoRoot || !taskId) return null;
+    try {
+        return await appendTaskEventAsync(
             repoRoot,
             taskId,
             LIFECYCLE_EVENT_TYPES.SHELL_SMOKE_PREFLIGHT_RECORDED,
@@ -717,6 +1109,46 @@ export function emitCommandTimeoutDiagnosticsEvent(
     if (!repoRoot || !taskId) return null;
     try {
         return appendTaskEvent(
+            repoRoot,
+            taskId,
+            LIFECYCLE_EVENT_TYPES.COMMAND_TIMEOUT_DIAGNOSTICS_RECORDED,
+            passed ? 'PASS' : 'FAIL',
+            `Command timeout diagnostics ${passed ? 'passed' : 'failed'}: provider=${provider || 'unknown'}, context=${executionContext}, commands=${commandCount}, timed_out=${timedOutCount}.`,
+            {
+                provider,
+                execution_context: executionContext,
+                passed,
+                command_count: commandCount,
+                timed_out_count: timedOutCount,
+                artifact_hash: artifactHash
+            },
+            {
+                actor: options.actor || 'gate',
+                passThru: options.passThru ?? true,
+                eventsRoot: options.eventsRoot
+            }
+        );
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`WARNING: command-timeout-diagnostics event emit failed: ${msg}\n`);
+        return null;
+    }
+}
+
+export async function emitCommandTimeoutDiagnosticsEventAsync(
+    repoRoot: string,
+    taskId: string,
+    provider: string | null,
+    executionContext: string,
+    passed: boolean,
+    commandCount: number,
+    timedOutCount: number,
+    artifactHash: string | null = null,
+    options: AutoEmitOptions = {}
+): Promise<ReturnType<typeof appendTaskEvent>> {
+    if (!repoRoot || !taskId) return null;
+    try {
+        return await appendTaskEventAsync(
             repoRoot,
             taskId,
             LIFECYCLE_EVENT_TYPES.COMMAND_TIMEOUT_DIAGNOSTICS_RECORDED,

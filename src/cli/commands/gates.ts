@@ -13,10 +13,14 @@ import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../gate-runti
 import { applyOutputFilterProfile } from '../../gate-runtime/output-filters';
 import {
     emitHandshakeDiagnosticsEvent,
+    emitHandshakeDiagnosticsEventAsync,
     emitShellSmokePreflightEvent,
+    emitShellSmokePreflightEventAsync,
     emitCommandTimeoutDiagnosticsEvent,
+    emitCommandTimeoutDiagnosticsEventAsync,
     emitReviewPhaseStartedEvent,
     emitMandatoryImplementationStartedEvent,
+    emitMandatoryImplementationStartedEventAsync,
     emitMandatoryPreflightFailedEvent,
     emitMandatoryPreflightStartedEvent,
     emitMandatoryReviewPhaseStartedEvent,
@@ -25,7 +29,13 @@ import {
     emitStatusChangedEvent
 } from '../../gate-runtime/lifecycle-events';
 import { auditReviewArtifactCompaction } from '../../gate-runtime/review-context';
-import { appendMandatoryTaskEvent, appendTaskEvent, assertValidTaskId } from '../../gate-runtime/task-events';
+import {
+    appendMandatoryTaskEvent,
+    appendMandatoryTaskEventAsync,
+    appendTaskEvent,
+    appendTaskEventAsync,
+    assertValidTaskId
+} from '../../gate-runtime/task-events';
 import { auditCommandCompactness } from '../../gates/task-events-summary';
 import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../gates/classify-change';
 import {
@@ -1889,7 +1899,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             exitCode = 1;
             exceptionMessage = `Preflight scope drift detected. Re-run classify-change before compile gate. ${scopeViolations.join(' ')}`;
         } else if (!exceptionMessage) {
-            emitMandatoryImplementationStartedEvent(orchestratorRoot, resolvedTaskId, {
+            await emitMandatoryImplementationStartedEventAsync(orchestratorRoot, resolvedTaskId, {
                 preflight_path: gateHelpers.normalizePath(resolvedPreflightPath),
                 commands_path: normalizeOptionalPath(resolvedCommandsPath),
                 changed_files_count: preflightContext.changed_files.length,
@@ -2009,7 +2019,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         appendMetricsIfEnabled(metricsPath, failureEvent, parseBooleanOption(options.emitMetrics, true));
         let failureReason = exceptionMessage;
         try {
-            appendMandatoryTaskEvent(orchestratorRoot, resolvedTaskId, 'COMPILE_GATE_FAILED', 'FAIL', 'Compile gate failed.', failureEvent);
+            await appendMandatoryTaskEventAsync(orchestratorRoot, resolvedTaskId, 'COMPILE_GATE_FAILED', 'FAIL', 'Compile gate failed.', failureEvent);
         } catch (eventError: unknown) {
             failureReason = `Compile gate failed and mandatory lifecycle event 'COMPILE_GATE_FAILED' could not be appended. Original gate error: ${exceptionMessage} | Event append error: ${getErrorMessage(eventError)}`;
         }
@@ -2050,7 +2060,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     };
     appendMetricsIfEnabled(metricsPath, successEvent, parseBooleanOption(options.emitMetrics, true));
     try {
-        appendMandatoryTaskEvent(orchestratorRoot, resolvedTaskId, 'COMPILE_GATE_PASSED', 'PASS', 'Compile gate passed.', successEvent);
+        await appendMandatoryTaskEventAsync(orchestratorRoot, resolvedTaskId, 'COMPILE_GATE_PASSED', 'PASS', 'Compile gate passed.', successEvent);
     } catch (error: unknown) {
         const failureReason = `Compile gate succeeded but mandatory lifecycle event 'COMPILE_GATE_PASSED' could not be appended. ${getErrorMessage(error)}`;
         writeCompileEvidence(compileEvidencePath, resolvedTaskId, gateContext, 'FAILED', 'FAIL', failureReason);
