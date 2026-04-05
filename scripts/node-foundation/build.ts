@@ -2,6 +2,10 @@ import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+const REPO_CLI_SYNC_LOCK_TIMEOUT_MS = 15000;
+const REPO_CLI_SYNC_RETRY_MS = 50;
+const REPO_CLI_SYNC_MAX_RETRIES = 20;
+
 export interface BuildResult {
     buildRoot: string;
     copiedFiles: string[];
@@ -9,6 +13,18 @@ export interface BuildResult {
     manifestPath: string;
     repoRoot: string;
 }
+
+export interface RepoCliSyncFsLike {
+    chmodSync: typeof fs.chmodSync;
+    existsSync: typeof fs.existsSync;
+    mkdirSync: typeof fs.mkdirSync;
+    readFileSync: typeof fs.readFileSync;
+    renameSync: typeof fs.renameSync;
+    rmSync: typeof fs.rmSync;
+    writeFileSync: typeof fs.writeFileSync;
+}
+
+const DEFAULT_REPO_CLI_SYNC_FS: RepoCliSyncFsLike = fs;
 
 export function getRepoRoot(): string {
     let current = __dirname;
@@ -79,20 +95,134 @@ function runTsc(args: string[], repoRoot: string): void {
     }
 }
 
-function syncRepoCliEntrypoint(compiledRoot: string, repoRoot: string): string {
+function getErrorCode(error: unknown): string {
+    return error != null && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+}
+
+function isRetryableCliSyncError(error: unknown): boolean {
+    const errorCode = getErrorCode(error);
+    return errorCode === 'EBUSY' || errorCode === 'EPERM' || errorCode === 'EACCES' || errorCode === 'EEXIST';
+}
+
+function sleepSync(milliseconds: number): void {
+    if (!milliseconds || milliseconds <= 0) {
+        return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function safeUnlink(filePath: string, fileSystem: RepoCliSyncFsLike): void {
+    try {
+        fileSystem.rmSync(filePath, { force: true });
+    } catch {
+        // best-effort temp cleanup
+    }
+}
+
+function makeTempCliPath(repoCliPath: string): string {
+    return `${repoCliPath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+}
+
+function readFileIfExists(filePath: string, fileSystem: RepoCliSyncFsLike): Buffer | null {
+    try {
+        return fileSystem.readFileSync(filePath);
+    } catch (error: unknown) {
+        const errorCode = getErrorCode(error);
+        if (errorCode === 'ENOENT') {
+            return null;
+        }
+        throw error;
+    }
+}
+
+function fileContentMatches(filePath: string, expectedContent: Buffer, fileSystem: RepoCliSyncFsLike): boolean {
+    const currentContent = readFileIfExists(filePath, fileSystem);
+    return currentContent !== null && Buffer.compare(currentContent, expectedContent) === 0;
+}
+
+function ensureExecutableMode(filePath: string, fileSystem: RepoCliSyncFsLike): void {
+    try {
+        fileSystem.chmodSync(filePath, 0o755);
+    } catch {
+        // Best-effort on Windows.
+    }
+}
+
+function acquireRepoCliSyncLock(lockPath: string, fileSystem: RepoCliSyncFsLike): void {
+    const startedAt = Date.now();
+    while (true) {
+        try {
+            fileSystem.mkdirSync(lockPath);
+            return;
+        } catch (error: unknown) {
+            const errorCode = getErrorCode(error);
+            if (errorCode !== 'EEXIST') {
+                throw error;
+            }
+            if (Date.now() - startedAt >= REPO_CLI_SYNC_LOCK_TIMEOUT_MS) {
+                throw new Error(`Timed out acquiring repo CLI sync lock: ${lockPath}`);
+            }
+            sleepSync(REPO_CLI_SYNC_RETRY_MS);
+        }
+    }
+}
+
+function releaseRepoCliSyncLock(lockPath: string, fileSystem: RepoCliSyncFsLike): void {
+    try {
+        fileSystem.rmSync(lockPath, { recursive: true, force: true });
+    } catch {
+        // best-effort lock cleanup
+    }
+}
+
+function replaceRepoCliEntrypoint(repoCliPath: string, desiredContent: Buffer, fileSystem: RepoCliSyncFsLike): void {
+    for (let attempt = 0; attempt <= REPO_CLI_SYNC_MAX_RETRIES; attempt += 1) {
+        const tempCliPath = makeTempCliPath(repoCliPath);
+        try {
+            if (fileContentMatches(repoCliPath, desiredContent, fileSystem)) {
+                ensureExecutableMode(repoCliPath, fileSystem);
+                return;
+            }
+
+            fileSystem.writeFileSync(tempCliPath, desiredContent);
+            ensureExecutableMode(tempCliPath, fileSystem);
+
+            safeUnlink(repoCliPath, fileSystem);
+            fileSystem.renameSync(tempCliPath, repoCliPath);
+            ensureExecutableMode(repoCliPath, fileSystem);
+            return;
+        } catch (error: unknown) {
+            safeUnlink(tempCliPath, fileSystem);
+
+            if (fileContentMatches(repoCliPath, desiredContent, fileSystem)) {
+                ensureExecutableMode(repoCliPath, fileSystem);
+                return;
+            }
+            if (!isRetryableCliSyncError(error) || attempt >= REPO_CLI_SYNC_MAX_RETRIES) {
+                throw error;
+            }
+            sleepSync(REPO_CLI_SYNC_RETRY_MS);
+        }
+    }
+}
+
+export function syncRepoCliEntrypoint(compiledRoot: string, repoRoot: string, fileSystem: RepoCliSyncFsLike = DEFAULT_REPO_CLI_SYNC_FS): string {
     const compiledCliPath = path.join(compiledRoot, 'src', 'bin', 'octopus.js');
-    if (!fs.existsSync(compiledCliPath)) {
+    if (!fileSystem.existsSync(compiledCliPath)) {
         throw new Error(`Compiled CLI launcher not found: ${compiledCliPath}`);
     }
 
     const repoCliPath = path.join(repoRoot, 'bin', 'octopus.js');
-    fs.mkdirSync(path.dirname(repoCliPath), { recursive: true });
-    fs.copyFileSync(compiledCliPath, repoCliPath);
-
+    const repoCliLockPath = path.join(path.dirname(repoCliPath), '.octopus-cli-sync.lock');
+    const compiledCliContent = fileSystem.readFileSync(compiledCliPath);
+    fileSystem.mkdirSync(path.dirname(repoCliPath), { recursive: true });
+    acquireRepoCliSyncLock(repoCliLockPath, fileSystem);
     try {
-        fs.chmodSync(repoCliPath, 0o755);
-    } catch {
-        // Best-effort on Windows.
+        replaceRepoCliEntrypoint(repoCliPath, compiledCliContent, fileSystem);
+    } finally {
+        releaseRepoCliSyncLock(repoCliLockPath, fileSystem);
     }
 
     return repoCliPath;
