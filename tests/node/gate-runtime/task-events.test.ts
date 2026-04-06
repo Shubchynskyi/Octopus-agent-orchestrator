@@ -890,6 +890,205 @@ test('forEachJsonlLine handles large files with many lines', () => {
     }
 });
 
+// --- UTF-8 chunk-boundary safety ---
+
+test('forEachJsonlLine preserves multi-byte UTF-8 at chunk boundary', () => {
+    // Ж (U+0416) is 2 bytes in UTF-8: 0xD0 0x96
+    // Build a file where a multi-byte character straddles a chunk boundary
+    // by making the first line exactly fill a chunk minus 1 byte, so the 2-byte
+    // Ж on the next line is split across two reads.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-jsonl-utf8-'));
+    try {
+        const filePath = path.join(tempDir, 'utf8.jsonl');
+        // Construct file as raw bytes to control exact byte layout.
+        // Line 1 payload: {"v":"<ASCII padding>"}\n — sized so the total byte length
+        // up to and including the newline equals exactly CHUNK_SIZE - 1.
+        // Then line 2 starts with a multi-byte char: {"k":"Ж"}\n
+        // With a small chunk size we can simulate the boundary easily.
+        const line2 = '{"k":"Ж"}\n';
+        const line2Bytes = Buffer.from(line2, 'utf8');
+        // Use the chunk size constant (64 KiB) to force a split.
+        // Line1 must consume exactly (65536 - 1) bytes including the trailing \n.
+        const prefix = '{"v":"';
+        const suffix = '"}\n';
+        const paddingNeeded = 65536 - 1 - Buffer.byteLength(prefix, 'utf8') - Buffer.byteLength(suffix, 'utf8');
+        const line1 = prefix + 'A'.repeat(paddingNeeded) + suffix;
+        const line1Bytes = Buffer.from(line1, 'utf8');
+        // Verify our math: first chunk read (64KiB) gets line1Bytes + 1 byte of line2Bytes
+        assert.equal(line1Bytes.length, 65535, 'line1 should be exactly 65535 bytes');
+        fs.writeFileSync(filePath, Buffer.concat([line1Bytes, line2Bytes]));
+
+        const collected: string[] = [];
+        forEachJsonlLine(filePath, (line) => {
+            collected.push(line);
+        });
+
+        assert.equal(collected.length, 2);
+        // The critical assertion: Ж must not be corrupted to replacement characters
+        assert.equal(collected[1], '{"k":"Ж"}');
+        const parsed = JSON.parse(collected[1]);
+        assert.equal(parsed.k, 'Ж');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('forEachJsonlLine preserves 3-byte and 4-byte UTF-8 at chunk boundaries', () => {
+    // € (U+20AC) is 3 bytes: 0xE2 0x82 0xAC
+    // 𐍈 (U+10348) is 4 bytes: 0xF0 0x90 0x8D 0x88
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-jsonl-utf8-mb-'));
+    try {
+        const filePath = path.join(tempDir, 'utf8mb.jsonl');
+        const line2 = '{"price":"€100","symbol":"𐍈"}\n';
+        const line2Bytes = Buffer.from(line2, 'utf8');
+        const prefix = '{"v":"';
+        const suffix = '"}\n';
+        // Fill first chunk to exactly 65536 - 2 so that 2 of line2's first 3-byte char's bytes are in chunk 1
+        const paddingNeeded = 65536 - 2 - Buffer.byteLength(prefix, 'utf8') - Buffer.byteLength(suffix, 'utf8');
+        const line1 = prefix + 'B'.repeat(paddingNeeded) + suffix;
+        const line1Bytes = Buffer.from(line1, 'utf8');
+        assert.equal(line1Bytes.length, 65534);
+        fs.writeFileSync(filePath, Buffer.concat([line1Bytes, line2Bytes]));
+
+        const collected: string[] = [];
+        forEachJsonlLine(filePath, (line) => {
+            collected.push(line);
+        });
+
+        assert.equal(collected.length, 2);
+        const parsed = JSON.parse(collected[1]);
+        assert.equal(parsed.price, '€100');
+        assert.equal(parsed.symbol, '𐍈');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('readTaskEventAppendState preserves multi-byte UTF-8 in tail-read (fast path)', () => {
+    // Reproduces the reported false event_sha256 mismatch: if Ж is corrupted
+    // to replacement chars, the hash computed on the parsed event won't match
+    // the stored hash.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-tail-utf8-'));
+    try {
+        const taskId = 'T-UTF8';
+        const payload = { task_id: taskId, gate: 'test', status: 'PASS', detail: 'Содержит Ж кириллицу' };
+        const eventObj: Record<string, unknown> = { ...payload };
+        // Add integrity block like appendTaskEvent would
+        const eventSha256 = buildEventIntegrityHash(eventObj as Record<string, unknown>);
+        assert.ok(eventSha256, 'hash must be computed');
+        eventObj.integrity = { task_sequence: 1, event_sha256: eventSha256 };
+
+        const eventLine = JSON.stringify(eventObj);
+        // Build a file with filler to push the last line past the tail chunk boundary (4096 bytes)
+        const fillerLine = JSON.stringify({ task_id: taskId, gate: 'filler', status: 'PASS', detail: 'x'.repeat(4000) });
+        const content = fillerLine + '\n' + eventLine + '\n';
+        const eventFile = path.join(tempDir, 'task-events', `${taskId}.jsonl`);
+        fs.mkdirSync(path.dirname(eventFile), { recursive: true });
+        fs.writeFileSync(eventFile, content, 'utf8');
+
+        const state = readTaskEventAppendState(eventFile, taskId);
+        assert.equal(state.last_event_sha256, eventSha256);
+        assert.equal(state.matching_events, 1);
+        assert.equal(state.parse_errors, 0);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('inspectTaskEventFile preserves multi-byte UTF-8 across chunk boundaries', () => {
+    // End-to-end: write events with Cyrillic, verify no integrity violations
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-inspect-utf8-'));
+    try {
+        const taskId = 'T-INTEG-UTF8';
+        // Build a chain of events containing multi-byte UTF-8 with integrity hashes
+        const events: string[] = [];
+        let prevHash: string | null = null;
+        for (let i = 1; i <= 3; i++) {
+            const payload: Record<string, unknown> = {
+                task_id: taskId,
+                gate: 'test',
+                status: 'PASS',
+                detail: `Событие ${i} — проверка целостности Ж€𐍈`
+            };
+            const integrityBlock: Record<string, unknown> = {
+                task_sequence: i,
+                prev_event_sha256: prevHash
+            };
+            payload.integrity = integrityBlock;
+            const hash = buildEventIntegrityHash(payload);
+            assert.ok(hash);
+            integrityBlock.event_sha256 = hash;
+            events.push(JSON.stringify(payload));
+            prevHash = hash;
+        }
+
+        // Pad first event line to force chunk boundary split within multi-byte chars
+        const paddingNeeded = 65536 - Buffer.byteLength(events[0], 'utf8') - 1; // -1 for \n
+        if (paddingNeeded > 0) {
+            // Insert a large filler event before the real events
+            const filler: Record<string, unknown> = {
+                task_id: taskId, gate: 'filler', status: 'PASS',
+                detail: 'x'.repeat(paddingNeeded - 80) // approximate to push past boundary
+            };
+            events.unshift(JSON.stringify(filler));
+        }
+
+        const eventFile = path.join(tempDir, `${taskId}.jsonl`);
+        fs.writeFileSync(eventFile, events.join('\n') + '\n', 'utf8');
+
+        const result = inspectTaskEventFile(eventFile, taskId);
+        assert.equal(result.parse_errors, 0, `parse errors: ${result.violations.join('; ')}`);
+        // No integrity violations related to hash mismatch
+        const hashViolations = result.violations.filter(v => v.includes('hash'));
+        assert.equal(hashViolations.length, 0, `hash violations: ${hashViolations.join('; ')}`);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('readLastNonEmptyLine (via readTaskEventAppendStateFast) handles Cyrillic at tail chunk boundary', () => {
+    // Direct regression test for the Ж -> ├Р├Ц corruption.
+    // The tail reader uses 4096-byte chunks. Place a Cyrillic-heavy JSON line
+    // so that the last line's multi-byte characters span the 4096-byte boundary
+    // from end of file.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-tail-boundary-'));
+    try {
+        const taskId = 'T-TAIL';
+        // Build the target last line with known Cyrillic content
+        const cyrillicDetail = 'ЖЖЖЖЖЖЖЖЖЖ'.repeat(10); // 100 Cyrillic Ж chars = 200 bytes
+        const lastEvent: Record<string, unknown> = {
+            task_id: taskId, gate: 'g', status: 'PASS', detail: cyrillicDetail,
+            integrity: { task_sequence: 1 }
+        };
+        const hash = buildEventIntegrityHash(lastEvent);
+        (lastEvent.integrity as Record<string, unknown>).event_sha256 = hash;
+        const lastLine = JSON.stringify(lastEvent);
+        const lastLineBytes = Buffer.from(lastLine + '\n', 'utf8');
+
+        // Filler to push the last line so it starts inside the 4096-byte window
+        // but its beginning is in the previous chunk.
+        // File size = filler + lastLineBytes; we want lastLineBytes to straddle 4096.
+        const fillerSize = 4096 - Math.floor(lastLineBytes.length / 2);
+        const fillerPayload = JSON.stringify({ task_id: taskId, gate: 'filler', status: 'PASS', detail: 'f'.repeat(Math.max(1, fillerSize - 80)) });
+        // Ensure filler + '\n' is roughly fillerSize bytes
+        const content = Buffer.concat([
+            Buffer.from(fillerPayload + '\n', 'utf8'),
+            lastLineBytes
+        ]);
+
+        const eventFile = path.join(tempDir, `${taskId}.jsonl`);
+        fs.mkdirSync(path.dirname(eventFile), { recursive: true });
+        fs.writeFileSync(eventFile, content);
+
+        const state = readTaskEventAppendState(eventFile, taskId);
+        assert.ok(state.last_event_sha256, 'should have extracted event_sha256');
+        assert.equal(state.last_event_sha256, hash, 'hash must match — no UTF-8 corruption');
+        assert.equal(state.parse_errors, 0);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
 // --- bounded waiting and contention telemetry ---
 
 test('appendTaskEvent includes lock_telemetry in result', () => {

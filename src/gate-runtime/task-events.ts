@@ -3,6 +3,7 @@ import { redactHostname as redactHostnameValue } from '../core/redaction';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 
 const DEFAULT_LOCK_TIMEOUT_MS = 5000;
 const DEFAULT_LOCK_RETRY_MS = 25;
@@ -829,6 +830,12 @@ const TAIL_READ_CHUNK_SIZE = 4096;
  * Read the last non-empty line from a JSONL file using reverse fd-based reads.
  * Avoids loading the entire file into memory.
  * Matches Python _read_last_non_empty_line.
+ *
+ * Uses raw-byte accumulation with byte-level newline scanning so that
+ * multi-byte UTF-8 characters straddling chunk boundaries are never
+ * split during decoding.  0x0A (\n) is a single-byte codepoint in
+ * UTF-8 and can never appear inside a multi-byte sequence, so searching
+ * for it in raw bytes is safe.
  */
 function readLastNonEmptyLine(filePath: string): string | null {
     let fd: number | null = null;
@@ -847,29 +854,34 @@ function readLastNonEmptyLine(filePath: string): string | null {
         const fileSize = stat.size;
         const chunkSize = Math.min(TAIL_READ_CHUNK_SIZE, fileSize);
         let offset = fileSize;
-        let trailing = '';
+        let accumulated = Buffer.alloc(0);
 
         while (offset > 0) {
             const readSize = Math.min(chunkSize, offset);
             offset -= readSize;
             const buf = Buffer.alloc(readSize);
             fs.readSync(fd, buf, 0, readSize, offset);
-            const chunk = buf.toString('utf8');
-            trailing = chunk + trailing;
+            accumulated = Buffer.concat([buf, accumulated]);
 
-            const lines = trailing.split('\n');
-            // Scan from end to find the last non-empty line
-            for (let i = lines.length - 1; i >= 0; i--) {
-                if (lines[i].trim()) {
-                    return lines[i];
+            // Scan accumulated bytes from the end for the last non-empty line.
+            // Walk backwards over 0x0A boundaries.
+            let end = accumulated.length;
+            while (end > 0) {
+                // Find the newline preceding `end`
+                const nlPos = accumulated.lastIndexOf(0x0A, end - 1);
+                const lineStart = nlPos + 1; // 0 if no newline found
+                const lineBytes = accumulated.subarray(lineStart, end);
+                // Check non-empty (skip whitespace-only segments)
+                if (lineBytes.length > 0 && lineBytes.some(b => b !== 0x20 && b !== 0x09 && b !== 0x0D)) {
+                    return lineBytes.toString('utf8').trim();
                 }
+                end = nlPos >= 0 ? nlPos : 0;
             }
-            // All lines so far are empty; keep the first fragment for the next iteration
-            // in case a line spans the chunk boundary
-            trailing = lines[0];
+            // All content so far is empty lines — continue reading earlier chunks
         }
 
-        return trailing.trim() ? trailing : null;
+        const text = accumulated.toString('utf8').trim();
+        return text || null;
     } catch {
         return null;
     } finally {
@@ -883,6 +895,9 @@ function readLastNonEmptyLine(filePath: string): string | null {
  * Iterate over each non-empty line in a JSONL file using chunked synchronous reads.
  * Avoids loading the entire file into memory. The callback receives the trimmed line
  * text and its 1-based line index. Return `false` from the callback to stop early.
+ *
+ * Uses a StringDecoder to safely decode UTF-8 across chunk boundaries, preventing
+ * corruption of multi-byte characters that straddle read boundaries.
  *
  * Returns the total number of lines visited (including empty ones that were skipped).
  */
@@ -905,6 +920,7 @@ export function forEachJsonlLine(
         fd = fs.openSync(filePath, 'r');
         const fileSize = stat.size;
         const buf = Buffer.alloc(Math.min(JSONL_READ_CHUNK_SIZE, fileSize));
+        const decoder = new StringDecoder('utf8');
         let offset = 0;
         let remainder = '';
         let lineIndex = 0;
@@ -916,7 +932,8 @@ export function forEachJsonlLine(
             if (bytesRead === 0) break;
             offset += bytesRead;
 
-            const chunk = remainder + buf.toString('utf8', 0, bytesRead);
+            const decoded = decoder.write(buf.subarray(0, bytesRead));
+            const chunk = remainder + decoded;
             const lines = chunk.split('\n');
             // Last element may be an incomplete line — save as remainder
             remainder = lines.pop() || '';
@@ -928,6 +945,14 @@ export function forEachJsonlLine(
                     stopped = true;
                     break;
                 }
+            }
+        }
+
+        // Flush any remaining bytes from the decoder (incomplete multi-byte at EOF)
+        if (!stopped) {
+            const flushed = decoder.end();
+            if (flushed) {
+                remainder += flushed;
             }
         }
 
