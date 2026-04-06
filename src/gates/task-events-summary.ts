@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-events';
+import { assertValidTaskId, inspectTaskEventFile, forEachJsonlLine } from '../gate-runtime/task-events';
 import { coerceIntLike } from '../gate-runtime/token-telemetry';
 import { resolvePathInsideRepo, toPosix } from './helpers';
 
@@ -408,7 +408,10 @@ export function buildTaskEventsSummary(options: BuildTaskEventsSummaryOptions) {
         throw new Error(`Task events file not found: ${taskEventFile}`);
     }
 
-    const rawLines = fs.readFileSync(taskEventFile, 'utf8').split('\n').filter(function (line) { return line.trim(); });
+    const rawLines: string[] = [];
+    forEachJsonlLine(taskEventFile, (line: string) => {
+        rawLines.push(line);
+    });
     const events: Record<string, unknown>[] = [];
     let parseErrors = 0;
     const integrityReport = inspectTaskEventFile(taskEventFile, safeTaskId);

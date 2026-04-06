@@ -751,25 +751,129 @@ export function assertValidTaskId(value: unknown): string {
     return taskId;
 }
 
+// Default chunk size for streaming JSONL reads (64 KiB).
+const JSONL_READ_CHUNK_SIZE = 64 * 1024;
+
+// Chunk size for reverse tail reads (4 KiB — last lines are typically small).
+const TAIL_READ_CHUNK_SIZE = 4096;
+
 /**
- * Read the last non-empty line from a JSONL file (fast path).
+ * Read the last non-empty line from a JSONL file using reverse fd-based reads.
+ * Avoids loading the entire file into memory.
  * Matches Python _read_last_non_empty_line.
  */
 function readLastNonEmptyLine(filePath: string): string | null {
+    let fd: number | null = null;
     try {
-        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+        let stat: fs.Stats;
+        try {
+            stat = fs.statSync(filePath);
+        } catch {
             return null;
         }
-        const content = fs.readFileSync(filePath, 'utf8');
-        const lines = content.split('\n');
-        for (let i = lines.length - 1; i >= 0; i--) {
-            if (lines[i].trim()) {
-                return lines[i];
-            }
+        if (!stat.isFile() || stat.size === 0) {
+            return null;
         }
-        return null;
+
+        fd = fs.openSync(filePath, 'r');
+        const fileSize = stat.size;
+        const chunkSize = Math.min(TAIL_READ_CHUNK_SIZE, fileSize);
+        let offset = fileSize;
+        let trailing = '';
+
+        while (offset > 0) {
+            const readSize = Math.min(chunkSize, offset);
+            offset -= readSize;
+            const buf = Buffer.alloc(readSize);
+            fs.readSync(fd, buf, 0, readSize, offset);
+            const chunk = buf.toString('utf8');
+            trailing = chunk + trailing;
+
+            const lines = trailing.split('\n');
+            // Scan from end to find the last non-empty line
+            for (let i = lines.length - 1; i >= 0; i--) {
+                if (lines[i].trim()) {
+                    return lines[i];
+                }
+            }
+            // All lines so far are empty; keep the first fragment for the next iteration
+            // in case a line spans the chunk boundary
+            trailing = lines[0];
+        }
+
+        return trailing.trim() ? trailing : null;
     } catch {
         return null;
+    } finally {
+        if (fd != null) {
+            try { fs.closeSync(fd); } catch { /* best-effort */ }
+        }
+    }
+}
+
+/**
+ * Iterate over each non-empty line in a JSONL file using chunked synchronous reads.
+ * Avoids loading the entire file into memory. The callback receives the trimmed line
+ * text and its 1-based line index. Return `false` from the callback to stop early.
+ *
+ * Returns the total number of lines visited (including empty ones that were skipped).
+ */
+export function forEachJsonlLine(
+    filePath: string,
+    callback: (line: string, lineNumber: number) => void | false
+): number {
+    let fd: number | null = null;
+    try {
+        let stat: fs.Stats;
+        try {
+            stat = fs.statSync(filePath);
+        } catch {
+            return 0;
+        }
+        if (!stat.isFile() || stat.size === 0) {
+            return 0;
+        }
+
+        fd = fs.openSync(filePath, 'r');
+        const fileSize = stat.size;
+        const buf = Buffer.alloc(Math.min(JSONL_READ_CHUNK_SIZE, fileSize));
+        let offset = 0;
+        let remainder = '';
+        let lineIndex = 0;
+        let stopped = false;
+
+        while (offset < fileSize && !stopped) {
+            const toRead = Math.min(buf.length, fileSize - offset);
+            const bytesRead = fs.readSync(fd, buf, 0, toRead, offset);
+            if (bytesRead === 0) break;
+            offset += bytesRead;
+
+            const chunk = remainder + buf.toString('utf8', 0, bytesRead);
+            const lines = chunk.split('\n');
+            // Last element may be an incomplete line — save as remainder
+            remainder = lines.pop() || '';
+
+            for (const rawLine of lines) {
+                lineIndex++;
+                if (!rawLine.trim()) continue;
+                if (callback(rawLine, lineIndex) === false) {
+                    stopped = true;
+                    break;
+                }
+            }
+        }
+
+        // Process trailing remainder (file not ending with newline)
+        if (!stopped && remainder.trim()) {
+            lineIndex++;
+            callback(remainder, lineIndex);
+        }
+
+        return lineIndex;
+    } finally {
+        if (fd != null) {
+            try { fs.closeSync(fd); } catch { /* best-effort */ }
+        }
     }
 }
 
@@ -816,7 +920,7 @@ export function readTaskEventAppendStateFast(taskFilePath: string, taskId: strin
 }
 
 /**
- * Full-scan: read append state by parsing all events.
+ * Full-scan: read append state by streaming all events line-by-line.
  * Matches Python _read_task_event_append_state.
  */
 export function readTaskEventAppendState(taskFilePath: string, taskId: string): TaskEventAppendState {
@@ -840,35 +944,24 @@ export function readTaskEventAppendState(taskFilePath: string, taskId: string): 
         return fastState;
     }
 
-    let content: string;
-    try {
-        content = fs.readFileSync(taskFilePath, 'utf8');
-    } catch {
-        return state;
-    }
-
-    for (const rawLine of content.split('\n')) {
-        if (!rawLine.trim()) {
-            continue;
-        }
-
+    forEachJsonlLine(taskFilePath, (rawLine: string) => {
         let event: Record<string, unknown>;
         try {
             event = JSON.parse(rawLine) as Record<string, unknown>;
         } catch {
             state.parse_errors++;
-            continue;
+            return;
         }
 
         const eventTaskId = toTrimmedString(event.task_id);
         if (eventTaskId && eventTaskId !== taskId) {
-            continue;
+            return;
         }
 
         state.matching_events++;
         const integrity = event.integrity;
         if (!integrity || typeof integrity !== 'object') {
-            continue;
+            return;
         }
 
         const integrityRecord = integrity as Record<string, unknown>;
@@ -878,13 +971,14 @@ export function readTaskEventAppendState(taskFilePath: string, taskId: string): 
             state.last_integrity_sequence = sequence;
             state.last_event_sha256 = eventSha256;
         }
-    }
+    });
 
     return state;
 }
 
 /**
  * Inspect a task event file for integrity violations.
+ * Uses chunked streaming to avoid loading the entire file into memory.
  * Matches Python inspect_task_event_file exactly.
  */
 export function inspectTaskEventFile(taskEventFile: string, taskId: string): InspectTaskEventResult {
@@ -916,133 +1010,123 @@ export function inspectTaskEventFile(taskEventFile: string, taskId: string): Ins
         return result;
     }
 
-    let content: string;
-    try {
-        content = fs.readFileSync(taskEventFile, 'utf8');
-    } catch {
-        result.status = 'MISSING';
-        result.violations.push(`Task events file not found: ${result.source_path}`);
-        return result;
-    }
-
     let lastEventHash: string | null = null;
     let expectedSequence: number | null = null;
     let integrityStarted = false;
     const seenHashes = new Set<string>();
 
-    const lines = content.split('\n');
-    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-        const rawLine = lines[lineIndex];
-        if (!rawLine.trim()) {
-            continue;
-        }
+    try {
+        forEachJsonlLine(taskEventFile, (rawLine: string, lineNumber: number) => {
+            result.events_scanned++;
 
-        const lineNumber = lineIndex + 1;
-        result.events_scanned++;
-
-        let event: Record<string, unknown>;
-        try {
-            event = JSON.parse(rawLine) as Record<string, unknown>;
-        } catch {
-            result.parse_errors++;
-            result.violations.push(`Task timeline contains invalid JSON at line ${lineNumber}.`);
-            continue;
-        }
-
-        const eventTaskId = toTrimmedString(event.task_id);
-        if (eventTaskId && eventTaskId !== taskId) {
-            result.task_id_mismatches++;
-            result.violations.push(
-                `Task timeline contains foreign task_id '${eventTaskId}' at line ${lineNumber}.`
-            );
-            continue;
-        }
-
-        result.matching_events++;
-        const integrity = event.integrity;
-        if (!integrity || typeof integrity !== 'object') {
-            if (integrityStarted) {
-                result.violations.push(
-                    `Task timeline contains legacy/unverified event after integrity chain start at line ${lineNumber}.`
-                );
-            } else {
-                result.legacy_event_count++;
+            let event: Record<string, unknown>;
+            try {
+                event = JSON.parse(rawLine) as Record<string, unknown>;
+            } catch {
+                result.parse_errors++;
+                result.violations.push(`Task timeline contains invalid JSON at line ${lineNumber}.`);
+                return;
             }
-            continue;
-        }
 
-        const integrityRecord = integrity as Record<string, unknown>;
-        const schemaVersion = integrityRecord.schema_version;
-        const taskSequence = integrityRecord.task_sequence;
-        let prevEventSha256 = integrityRecord.prev_event_sha256;
-        const eventSha256 = toTrimmedLowerCaseString(integrityRecord.event_sha256);
-
-        if (schemaVersion !== 1) {
-            result.violations.push(
-                `Task timeline integrity schema mismatch at line ${lineNumber}: expected 1, got '${schemaVersion}'.`
-            );
-            continue;
-        }
-        if (typeof taskSequence !== 'number' || taskSequence <= 0) {
-            result.violations.push(`Task timeline has invalid task_sequence at line ${lineNumber}.`);
-            continue;
-        }
-        if (prevEventSha256 != null && !String(prevEventSha256).trim()) {
-            prevEventSha256 = null;
-        }
-        if (!eventSha256) {
-            result.violations.push(`Task timeline missing event_sha256 at line ${lineNumber}.`);
-            continue;
-        }
-
-        if (!integrityStarted) {
-            integrityStarted = true;
-            expectedSequence = result.legacy_event_count + 1;
-            if (prevEventSha256 != null) {
+            const eventTaskId = toTrimmedString(event.task_id);
+            if (eventTaskId && eventTaskId !== taskId) {
+                result.task_id_mismatches++;
                 result.violations.push(
-                    `Task timeline first integrity event must have null prev_event_sha256 (line ${lineNumber}).`
+                    `Task timeline contains foreign task_id '${eventTaskId}' at line ${lineNumber}.`
+                );
+                return;
+            }
+
+            result.matching_events++;
+            const integrity = event.integrity;
+            if (!integrity || typeof integrity !== 'object') {
+                if (integrityStarted) {
+                    result.violations.push(
+                        `Task timeline contains legacy/unverified event after integrity chain start at line ${lineNumber}.`
+                    );
+                } else {
+                    result.legacy_event_count++;
+                }
+                return;
+            }
+
+            const integrityRecord = integrity as Record<string, unknown>;
+            const schemaVersion = integrityRecord.schema_version;
+            const taskSequence = integrityRecord.task_sequence;
+            let prevEventSha256 = integrityRecord.prev_event_sha256;
+            const eventSha256 = toTrimmedLowerCaseString(integrityRecord.event_sha256);
+
+            if (schemaVersion !== 1) {
+                result.violations.push(
+                    `Task timeline integrity schema mismatch at line ${lineNumber}: expected 1, got '${schemaVersion}'.`
+                );
+                return;
+            }
+            if (typeof taskSequence !== 'number' || taskSequence <= 0) {
+                result.violations.push(`Task timeline has invalid task_sequence at line ${lineNumber}.`);
+                return;
+            }
+            if (prevEventSha256 != null && !String(prevEventSha256).trim()) {
+                prevEventSha256 = null;
+            }
+            if (!eventSha256) {
+                result.violations.push(`Task timeline missing event_sha256 at line ${lineNumber}.`);
+                return;
+            }
+
+            if (!integrityStarted) {
+                integrityStarted = true;
+                expectedSequence = result.legacy_event_count + 1;
+                if (prevEventSha256 != null) {
+                    result.violations.push(
+                        `Task timeline first integrity event must have null prev_event_sha256 (line ${lineNumber}).`
+                    );
+                }
+            }
+
+            if (taskSequence !== expectedSequence) {
+                result.violations.push(
+                    `Task timeline sequence mismatch at line ${lineNumber}: expected ${expectedSequence}, got ${taskSequence}.`
                 );
             }
-        }
 
-        if (taskSequence !== expectedSequence) {
-            result.violations.push(
-                `Task timeline sequence mismatch at line ${lineNumber}: expected ${expectedSequence}, got ${taskSequence}.`
-            );
-        }
+            const expectedPrevHash = lastEventHash;
+            const normalizedPrevHash = prevEventSha256 != null
+                ? String(prevEventSha256).trim().toLowerCase()
+                : null;
+            if (normalizedPrevHash !== expectedPrevHash) {
+                result.violations.push(
+                    `Task timeline prev_event_sha256 mismatch at line ${lineNumber}.`
+                );
+            }
 
-        const expectedPrevHash = lastEventHash;
-        const normalizedPrevHash = prevEventSha256 != null
-            ? String(prevEventSha256).trim().toLowerCase()
-            : null;
-        if (normalizedPrevHash !== expectedPrevHash) {
-            result.violations.push(
-                `Task timeline prev_event_sha256 mismatch at line ${lineNumber}.`
-            );
-        }
+            const recalculatedHash = buildEventIntegrityHash(event);
+            if (recalculatedHash !== eventSha256) {
+                result.violations.push(
+                    `Task timeline event_sha256 mismatch at line ${lineNumber}.`
+                );
+            }
 
-        const recalculatedHash = buildEventIntegrityHash(event);
-        if (recalculatedHash !== eventSha256) {
-            result.violations.push(
-                `Task timeline event_sha256 mismatch at line ${lineNumber}.`
-            );
-        }
+            if (seenHashes.has(eventSha256)) {
+                result.duplicate_event_hashes.push(eventSha256);
+                result.violations.push(
+                    `Task timeline duplicate/replayed event detected at line ${lineNumber}.`
+                );
+            }
+            seenHashes.add(eventSha256);
 
-        if (seenHashes.has(eventSha256)) {
-            result.duplicate_event_hashes.push(eventSha256);
-            result.violations.push(
-                `Task timeline duplicate/replayed event detected at line ${lineNumber}.`
-            );
-        }
-        seenHashes.add(eventSha256);
-
-        result.integrity_event_count++;
-        if (result.first_integrity_sequence == null) {
-            result.first_integrity_sequence = taskSequence;
-        }
-        result.last_integrity_sequence = taskSequence;
-        lastEventHash = eventSha256;
-        expectedSequence = taskSequence + 1;
+            result.integrity_event_count++;
+            if (result.first_integrity_sequence == null) {
+                result.first_integrity_sequence = taskSequence;
+            }
+            result.last_integrity_sequence = taskSequence;
+            lastEventHash = eventSha256;
+            expectedSequence = taskSequence + 1;
+        });
+    } catch {
+        result.status = 'MISSING';
+        result.violations.push(`Task events file not found: ${result.source_path}`);
+        return result;
     }
 
     if (result.violations.length > 0) {

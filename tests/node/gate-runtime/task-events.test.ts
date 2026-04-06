@@ -16,7 +16,8 @@ import {
     appendTaskEvent,
     appendTaskEventAsync,
     readTaskEventAppendState,
-    scanTaskEventLocks
+    scanTaskEventLocks,
+    forEachJsonlLine
 } from '../../../src/gate-runtime/task-events';
 import { stringSha256 } from '../../../src/gate-runtime/hash';
 
@@ -746,6 +747,145 @@ test('readTaskEventAppendState returns empty state for missing file', () => {
     assert.equal(state.parse_errors, 0);
     assert.equal(state.last_integrity_sequence, null);
     assert.equal(state.last_event_sha256, null);
+});
+
+test('readTaskEventAppendState uses streaming fallback for legacy events', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-append-state-stream-'));
+    try {
+        const filePath = path.join(tempDir, 'legacy.jsonl');
+        const events = [
+            { task_id: 'T-001', event_type: 'test', outcome: 'PASS' },
+            { task_id: 'T-001', event_type: 'test2', outcome: 'PASS' }
+        ];
+        fs.writeFileSync(filePath, events.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf8');
+
+        const state = readTaskEventAppendState(filePath, 'T-001');
+        assert.equal(state.matching_events, 2);
+        assert.equal(state.parse_errors, 0);
+        assert.equal(state.last_integrity_sequence, null);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('readTaskEventAppendState streaming fallback counts parse errors', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-append-state-err-'));
+    try {
+        const filePath = path.join(tempDir, 'bad.jsonl');
+        fs.writeFileSync(filePath, 'NOT JSON\n{"task_id":"T-001","event_type":"x"}\n', 'utf8');
+
+        const state = readTaskEventAppendState(filePath, 'T-001');
+        assert.equal(state.matching_events, 1);
+        assert.equal(state.parse_errors, 1);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+// --- forEachJsonlLine ---
+
+test('forEachJsonlLine iterates non-empty lines with correct line numbers', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-jsonl-iter-'));
+    try {
+        const filePath = path.join(tempDir, 'test.jsonl');
+        fs.writeFileSync(filePath, '{"a":1}\n\n{"b":2}\n{"c":3}\n', 'utf8');
+
+        const collected: Array<{ line: string; num: number }> = [];
+        forEachJsonlLine(filePath, (line, num) => {
+            collected.push({ line, num });
+        });
+
+        assert.equal(collected.length, 3);
+        assert.equal(collected[0].line, '{"a":1}');
+        assert.equal(collected[0].num, 1);
+        assert.equal(collected[1].line, '{"b":2}');
+        assert.equal(collected[1].num, 3);
+        assert.equal(collected[2].line, '{"c":3}');
+        assert.equal(collected[2].num, 4);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('forEachJsonlLine returns 0 for missing file', () => {
+    const count = forEachJsonlLine('/nonexistent/path.jsonl', () => {});
+    assert.equal(count, 0);
+});
+
+test('forEachJsonlLine returns 0 for empty file', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-jsonl-empty-'));
+    try {
+        const filePath = path.join(tempDir, 'empty.jsonl');
+        fs.writeFileSync(filePath, '', 'utf8');
+        const count = forEachJsonlLine(filePath, () => {});
+        assert.equal(count, 0);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('forEachJsonlLine supports early stop via false return', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-jsonl-stop-'));
+    try {
+        const filePath = path.join(tempDir, 'stop.jsonl');
+        fs.writeFileSync(filePath, '{"a":1}\n{"b":2}\n{"c":3}\n', 'utf8');
+
+        const collected: string[] = [];
+        forEachJsonlLine(filePath, (line) => {
+            collected.push(line);
+            if (collected.length >= 2) return false;
+        });
+
+        assert.equal(collected.length, 2);
+        assert.equal(collected[0], '{"a":1}');
+        assert.equal(collected[1], '{"b":2}');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('forEachJsonlLine handles file without trailing newline', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-jsonl-notrail-'));
+    try {
+        const filePath = path.join(tempDir, 'notrail.jsonl');
+        fs.writeFileSync(filePath, '{"a":1}\n{"b":2}', 'utf8');
+
+        const collected: string[] = [];
+        forEachJsonlLine(filePath, (line) => {
+            collected.push(line);
+        });
+
+        assert.equal(collected.length, 2);
+        assert.equal(collected[1], '{"b":2}');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('forEachJsonlLine handles large files with many lines', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-jsonl-large-'));
+    try {
+        const filePath = path.join(tempDir, 'large.jsonl');
+        const lineCount = 5000;
+        const lines: string[] = [];
+        for (let i = 0; i < lineCount; i++) {
+            lines.push(JSON.stringify({ index: i, padding: 'x'.repeat(100) }));
+        }
+        fs.writeFileSync(filePath, lines.join('\n') + '\n', 'utf8');
+
+        let count = 0;
+        let lastIndex = -1;
+        forEachJsonlLine(filePath, (line) => {
+            count++;
+            const parsed = JSON.parse(line);
+            lastIndex = parsed.index;
+        });
+
+        assert.equal(count, lineCount);
+        assert.equal(lastIndex, lineCount - 1);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
 });
 
 // --- bounded waiting and contention telemetry ---
