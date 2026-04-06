@@ -189,7 +189,7 @@ Execute task T-401 depth=2
  7. Review gate check                → REVIEW_GATE_PASSED ✅
     octopus gate required-reviews-check --task-id "T-401" --code-review-verdict "pass" --security-review-verdict "pass"
  8. Doc impact gate                  → DOC_IMPACT_ASSESSED ✅
-    octopus gate doc-impact-gate --task-id "T-401" --decision "no-update-needed"
+    octopus gate doc-impact-gate --task-id "T-401" --decision "NO_DOC_UPDATES"
  9. Completion gate                  → COMPLETION_GATE_PASSED ✅
     octopus gate completion-gate --task-id "T-401"
 10. Mark DONE                        → TASK_DONE

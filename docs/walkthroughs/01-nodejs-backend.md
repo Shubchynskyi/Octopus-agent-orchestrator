@@ -183,7 +183,7 @@ Execute task T-101 depth=2
  6. Review gate check                → REVIEW_GATE_PASSED ✅
     octopus gate required-reviews-check --task-id "T-101" --code-review-verdict "pass"
  7. Doc impact gate                  → DOC_IMPACT_ASSESSED ✅
-    octopus gate doc-impact-gate --task-id "T-101" --decision "no-update-needed"
+    octopus gate doc-impact-gate --task-id "T-101" --decision "NO_DOC_UPDATES"
  8. Completion gate                  → COMPLETION_GATE_PASSED ✅
     octopus gate completion-gate --task-id "T-101"
  9. Mark DONE                        → TASK_DONE + summary + commit suggestion

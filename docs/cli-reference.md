@@ -275,7 +275,7 @@ Canonical gate surface is `octopus gate <name>` or `node bin/octopus.js gate <na
 | Compile gate | `octopus gate compile-gate --task-id "T-001"` |
 | Review gate | `octopus gate required-reviews-check --task-id "T-001" --code-review-verdict "..."` |
 | Audited no-op | `octopus gate record-no-op --task-id "T-001" --reason "Already implemented in current branch"` |
-| Doc impact | `octopus gate doc-impact-gate --task-id "T-001" --decision "..."` |
+| Doc impact | `octopus gate doc-impact-gate --task-id "T-001" --decision "NO_DOC_UPDATES"` |
 | Completion gate | `octopus gate completion-gate --task-id "T-001"` |
 | Scoped diff | `octopus gate build-scoped-diff --review-type "db"` |
 | Review context | `octopus gate build-review-context --review-type "code" --depth 2` |
@@ -285,6 +285,8 @@ Canonical gate surface is `octopus gate <name>` or `node bin/octopus.js gate <na
 | Human commit | `octopus gate human-commit --message "<message>"` |
 
 Full gate examples live in `template/docs/agent-rules/40-commands.md`.
+
+`doc-impact-gate` accepts only `DOCS_UPDATED` and `NO_DOC_UPDATES` for `--decision`. `NO_DOC_UPDATES` is fail-closed and cannot be combined with `docs_updated`, `behavior_changed=true`, or `changelog_updated=true`.
 
 Zero-diff task contract:
 - A clean-tree `classify-change` result is baseline-only evidence, not proof that the task is complete.

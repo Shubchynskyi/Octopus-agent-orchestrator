@@ -3,6 +3,12 @@ import * as path from 'node:path';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { fileSha256, normalizePath, parseBool, toStringArray } from './helpers';
 
+/** Valid decision values for the doc-impact gate. */
+export const VALID_DOC_IMPACT_DECISIONS: readonly string[] = Object.freeze([
+    'DOCS_UPDATED',
+    'NO_DOC_UPDATES'
+]);
+
 /**
  * Validate preflight for doc-impact gate.
  */
@@ -93,6 +99,14 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
     }
 
     // Validation rules
+
+    // Reject unknown decision values (fail-closed).
+    if (!VALID_DOC_IMPACT_DECISIONS.includes(decision)) {
+        errors.push(
+            `Unknown decision '${decision}'. Valid values: ${VALID_DOC_IMPACT_DECISIONS.join(', ')}.`
+        );
+    }
+
     if (!rationale || rationale.length < 12) {
         errors.push('Rationale is required (>= 12 chars).');
     }
@@ -105,6 +119,21 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
     if (behaviorChanged && !changelogUpdated) {
         errors.push('BehaviorChanged=true requires ChangelogUpdated=true.');
     }
+
+    // NO_DOC_UPDATES contract: docs_updated, changelog_updated, and
+    // behavior_changed must all be unset / false.
+    if (decision === 'NO_DOC_UPDATES') {
+        if (docsUpdated.length > 0) {
+            errors.push('Decision NO_DOC_UPDATES is incompatible with a non-empty docs_updated list.');
+        }
+        if (changelogUpdated) {
+            errors.push('Decision NO_DOC_UPDATES is incompatible with ChangelogUpdated=true.');
+        }
+        if (behaviorChanged) {
+            errors.push('Decision NO_DOC_UPDATES is incompatible with BehaviorChanged=true.');
+        }
+    }
+
     if (sensitiveTriggersFired.length > 0 && decision === 'NO_DOC_UPDATES' && !sensitiveReviewed) {
         const triggersStr = sensitiveTriggersFired.join(', ');
         errors.push(
