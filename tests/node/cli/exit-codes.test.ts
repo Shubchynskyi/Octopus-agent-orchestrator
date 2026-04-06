@@ -92,6 +92,33 @@ test('classifies lifecycle lock contention as LOCK_CONTENTION', () => {
     );
 });
 
+test('classifies file-lock timeout (immediate_fail) as LOCK_CONTENTION', () => {
+    assert.equal(
+        classifyErrorExitCode(new Error(
+            'Timed out acquiring file lock: /project/.task-events.lock; waited_ms=0; timeout_ms=1000; lock_age_ms=500; owner_pid=5678; owner_alive=yes; owner_hostname=***; owner_created_at_utc=2025-01-01T00:00:00Z; owner_metadata_status=ok; stale_reason=none; retries=0; wait_strategy=immediate_fail'
+        )),
+        EXIT_LOCK_CONTENTION
+    );
+});
+
+test('classifies file-lock timeout (retry exhaustion) as LOCK_CONTENTION', () => {
+    assert.equal(
+        classifyErrorExitCode(new Error(
+            'Timed out acquiring file lock: /project/.task-events.lock; waited_ms=5000; timeout_ms=5000; lock_age_ms=6000; owner_pid=9999; owner_alive=unknown; owner_hostname=***; owner_created_at_utc=unknown; owner_metadata_status=missing; stale_reason=none; retries=42'
+        )),
+        EXIT_LOCK_CONTENTION
+    );
+});
+
+test('classifies file-lock timeout (max retries) as LOCK_CONTENTION', () => {
+    assert.equal(
+        classifyErrorExitCode(new Error(
+            'Timed out acquiring file lock: /project/.agg.lock; waited_ms=3000; timeout_ms=5000; lock_age_ms=4000; owner_pid=1111; owner_alive=yes; owner_hostname=***; owner_created_at_utc=2025-06-01T00:00:00Z; owner_metadata_status=ok; stale_reason=none; retries=200; max_retries=200'
+        )),
+        EXIT_LOCK_CONTENTION
+    );
+});
+
 test('classifies missing bundle as PRECONDITION_FAILURE', () => {
     assert.equal(
         classifyErrorExitCode(new Error('Deployed bundle not found: /project/Octopus-agent-orchestrator')),

@@ -21,7 +21,7 @@ export const EXIT_GATE_FAILURE = 3;
 /** Validation failure (doctor, verify, manifest, workspace checks). */
 export const EXIT_VALIDATION_FAILURE = 4;
 
-/** Lifecycle lock contention – another operation holds the lock. */
+/** Lock contention – another operation holds a lifecycle or file lock. */
 export const EXIT_LOCK_CONTENTION = 5;
 
 /** Precondition not met (missing build output, missing artifact, stale bundle). */
@@ -50,7 +50,8 @@ const USAGE_PATTERNS: ReadonlyArray<string | RegExp> = [
 ];
 
 const LOCK_CONTENTION_PATTERNS: ReadonlyArray<string | RegExp> = [
-    'Another lifecycle operation is already running'
+    'Another lifecycle operation is already running',
+    'Timed out acquiring file lock:'
 ];
 
 const PRECONDITION_PATTERNS: ReadonlyArray<string | RegExp> = [
