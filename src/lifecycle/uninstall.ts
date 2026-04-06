@@ -21,6 +21,8 @@ import {
 import {
     copyPathRecursive,
     createRollbackSnapshot,
+    ensureRelativeSafe,
+    ensureWithinRoot,
     getTimestamp,
     readUninstallSentinel,
     removePathRecursive,
@@ -102,6 +104,7 @@ export interface RunUninstallResult {
     warningsCount: number;
     warnings: string[];
     result: 'DRY_RUN' | 'SUCCESS';
+    previewAffectedFiles: string[];
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -446,6 +449,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
     } else {
         initAnswersCandidatePath = path.resolve(normalizedTarget, initAnswersPath);
     }
+    ensureWithinRoot(normalizedTarget, initAnswersCandidatePath, 'Uninstall init answers path');
 
     const liveVersionPath = path.join(orchestratorRoot, 'live', 'version.json');
     const timestamp = getTimestamp();
@@ -459,6 +463,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
     let deletedDirectories = 0;
     let restoredFiles = 0;
     const warnings: string[] = [];
+    const previewAffectedFiles: string[] = [];
     let preservedRuntimePath: string | null = null;
     let preservedProjectMemoryPath: string | null = null;
     let rollbackSnapshotPath: string | null = null;
@@ -516,6 +521,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
 
     function updateOrRemoveFile(filePath: string, relativePath: string, content: string): void {
         backupItem(filePath, relativePath, false, false);
+        previewAffectedFiles.push(relativePath);
 
         if (!content || !content.trim()) {
             if (!dryRun) {
@@ -533,7 +539,9 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
     }
 
     function removeManagedFile(relativePath: string): void {
+        ensureRelativeSafe(relativePath, 'Uninstall managed file path');
         const filePath = path.join(normalizedTarget, relativePath);
+        ensureWithinRoot(normalizedTarget, filePath, 'Uninstall managed file');
         if (!pathExists(filePath)) return;
 
         const content = readTextFile(filePath);
@@ -564,6 +572,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
     }
 
     function restoreItemFromInitializationBackup(relativePath: string): boolean {
+        ensureRelativeSafe(relativePath, 'Uninstall restore path');
         const bp = getInitBackupPath(relativePath);
         if (!bp) return false;
 
@@ -574,6 +583,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
         }
 
         const destinationPath = path.join(normalizedTarget, relativePath);
+        ensureWithinRoot(normalizedTarget, destinationPath, 'Uninstall restore destination');
         backupItem(destinationPath, relativePath, false, false);
 
         if (!dryRun) {
@@ -594,6 +604,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
         }
 
         restoredFiles++;
+        previewAffectedFiles.push(relativePath);
         return true;
     }
 
@@ -817,6 +828,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
     function removeBundleDirectory(): void {
         if (!fs.existsSync(orchestratorRoot) || !fs.lstatSync(orchestratorRoot).isDirectory()) return;
 
+        previewAffectedFiles.push(DEFAULT_BUNDLE_NAME + '/');
         const keepRuntime = keepRuntimeArtifactsValue;
         const runtimePath = path.join(orchestratorRoot, 'runtime');
 
@@ -1061,7 +1073,8 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
         rollbackStatus,
         warningsCount: warnings.length,
         warnings,
-        result: dryRun ? 'DRY_RUN' : 'SUCCESS'
+        result: dryRun ? 'DRY_RUN' : 'SUCCESS',
+        previewAffectedFiles: dryRun ? [...new Set(previewAffectedFiles)] : []
     };
     });
 }

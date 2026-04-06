@@ -675,3 +675,222 @@ describe('findSnapshotByVersion', () => {
         }
     });
 });
+
+// ---------------------------------------------------------------------------
+// Ownership boundary hardening (T-013)
+// ---------------------------------------------------------------------------
+
+describe('rollback ownership boundaries (T-013)', () => {
+    it('rejects snapshot path that escapes target root via absolute path', async () => {
+        const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-rb-boundary-'));
+        const bundleRoot = path.join(workspaceRoot, 'Octopus-agent-orchestrator');
+        fs.mkdirSync(bundleRoot, { recursive: true });
+        fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '1.0.0\n', 'utf8');
+        try {
+            const outsidePath = path.resolve(workspaceRoot, '..', 'evil-snapshot');
+            await assert.rejects(
+                runRollback({
+                    targetRoot: workspaceRoot,
+                    bundleRoot,
+                    snapshotPath: outsidePath
+                }),
+                /resolves outside permitted root/
+            );
+        } finally {
+            removePathRecursive(workspaceRoot);
+        }
+    });
+
+    it('rejects snapshot path that escapes target root via relative traversal', async () => {
+        const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-rb-boundary-'));
+        const bundleRoot = path.join(workspaceRoot, 'Octopus-agent-orchestrator');
+        fs.mkdirSync(bundleRoot, { recursive: true });
+        fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '1.0.0\n', 'utf8');
+        try {
+            await assert.rejects(
+                runRollback({
+                    targetRoot: workspaceRoot,
+                    bundleRoot,
+                    snapshotPath: '../escape'
+                }),
+                /resolves outside permitted root/
+            );
+        } finally {
+            removePathRecursive(workspaceRoot);
+        }
+    });
+
+    it('rejects init answers path outside target root in version rollback', async () => {
+        const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-rb-boundary-'));
+        const bundleRoot = path.join(workspaceRoot, 'Octopus-agent-orchestrator');
+        fs.mkdirSync(bundleRoot, { recursive: true });
+        fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '2.0.0\n', 'utf8');
+        try {
+            const outsideAnswers = path.resolve(workspaceRoot, '..', 'evil-answers.json');
+            await assert.rejects(
+                runRollback({
+                    targetRoot: workspaceRoot,
+                    bundleRoot,
+                    targetVersion: '1.0.0',
+                    initAnswersPath: outsideAnswers
+                }),
+                /resolves outside permitted root/
+            );
+        } finally {
+            removePathRecursive(workspaceRoot);
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Dry-run preview enrichment (T-013)
+// ---------------------------------------------------------------------------
+
+describe('rollback dry-run preview (T-013)', () => {
+    const repoRoot = findRepoRoot();
+
+    it('version rollback dry-run returns previewAffectedItems', async () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            const newerSource = path.join(projectRoot, 'newer-source');
+            copyDirRecursive(bundleRoot, newerSource);
+            injectBundleUpdate(newerSource, 'NEWER_MARKER', '9.9.9');
+
+            await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: newerSource,
+                apply: true,
+                noPrompt: true,
+                trustOverride: true,
+                updateRunner: (runnerOptions) => runUpdate({
+                    targetRoot: runnerOptions.targetRoot,
+                    bundleRoot,
+                    initAnswersPath: runnerOptions.initAnswersPath,
+                    skipVerify: true,
+                    skipManifestValidation: true
+                })
+            });
+
+            const olderSource = path.join(projectRoot, 'older-source');
+            copyDirRecursive(bundleRoot, olderSource);
+            fs.writeFileSync(path.join(olderSource, 'VERSION'), '1.0.0\n', 'utf8');
+
+            const dryResult = await runRollback({
+                targetRoot: projectRoot,
+                bundleRoot,
+                targetVersion: '1.0.0',
+                sourcePath: olderSource,
+                initAnswersPath: answersPath,
+                dryRun: true
+            });
+
+            assert.equal(dryResult.dryRun, true);
+            const preview = (dryResult as Record<string, unknown>).previewAffectedItems as string[];
+            assert.ok(Array.isArray(preview), 'previewAffectedItems must be an array');
+            assert.ok(preview.length > 0, 'previewAffectedItems must not be empty in dry-run');
+            assert.ok(preview.some(item => item.includes('VERSION')), 'preview must include VERSION');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('snapshot rollback dry-run returns previewAffectedItems from records', async () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            const newerSource = path.join(projectRoot, 'newer-source');
+            copyDirRecursive(bundleRoot, newerSource);
+            injectBundleUpdate(newerSource, 'NEWER_MARKER', '9.9.9');
+
+            await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: newerSource,
+                apply: true,
+                noPrompt: true,
+                trustOverride: true,
+                updateRunner: (runnerOptions) => runUpdate({
+                    targetRoot: runnerOptions.targetRoot,
+                    bundleRoot,
+                    initAnswersPath: runnerOptions.initAnswersPath,
+                    skipVerify: true,
+                    skipManifestValidation: true
+                })
+            });
+
+            const dryResult = await runRollback({
+                targetRoot: projectRoot,
+                bundleRoot,
+                dryRun: true
+            });
+
+            assert.equal(dryResult.rollbackMode, 'snapshot');
+            assert.equal(dryResult.dryRun, true);
+            const preview = (dryResult as Record<string, unknown>).previewAffectedItems as string[];
+            assert.ok(Array.isArray(preview), 'previewAffectedItems must be an array');
+            assert.ok(preview.length > 0, 'snapshot preview must list affected paths');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('non-dry-run rollback returns empty previewAffectedItems', async () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            const newerSource = path.join(projectRoot, 'newer-source');
+            copyDirRecursive(bundleRoot, newerSource);
+            injectBundleUpdate(newerSource, 'NEWER_MARKER', '9.9.9');
+
+            await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: newerSource,
+                apply: true,
+                noPrompt: true,
+                trustOverride: true,
+                updateRunner: (runnerOptions) => runUpdate({
+                    targetRoot: runnerOptions.targetRoot,
+                    bundleRoot,
+                    initAnswersPath: runnerOptions.initAnswersPath,
+                    skipVerify: true,
+                    skipManifestValidation: true
+                })
+            });
+
+            const result = await runRollback({
+                targetRoot: projectRoot,
+                bundleRoot
+            });
+
+            const preview = (result as Record<string, unknown>).previewAffectedItems as string[];
+            assert.ok(Array.isArray(preview), 'previewAffectedItems must be an array');
+            assert.equal(preview.length, 0, 'non-dry-run must return empty preview');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+});

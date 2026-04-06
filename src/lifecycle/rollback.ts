@@ -10,6 +10,7 @@ import {
     compareVersionStrings,
     copyPathRecursive,
     createRollbackSnapshot,
+    ensureWithinRoot,
     getRollbackRecordsPath,
     getSyncBackupMetadataPath,
     getTimestamp,
@@ -96,10 +97,12 @@ export function listRollbackSnapshotPaths(targetRoot: string): string[] {
 }
 
 export function resolveRollbackSnapshotPath(targetRoot: string, snapshotPath?: string | null): string {
+    const normalizedTarget = path.resolve(targetRoot);
     if (snapshotPath) {
-        return path.isAbsolute(snapshotPath)
+        const resolved = path.isAbsolute(snapshotPath)
             ? snapshotPath
-            : path.resolve(targetRoot, snapshotPath);
+            : path.resolve(normalizedTarget, snapshotPath);
+        return ensureWithinRoot(normalizedTarget, resolved, 'Rollback snapshot path');
     }
 
     const candidates = listRollbackSnapshotPaths(targetRoot);
@@ -178,6 +181,7 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
     const initAnswersResolvedPath = path.isAbsolute(initAnswersPath)
         ? initAnswersPath
         : path.resolve(normalizedTarget, initAnswersPath);
+    ensureWithinRoot(normalizedTarget, initAnswersResolvedPath, 'Init answers path');
     if (!pathExists(initAnswersResolvedPath)) {
         throw new Error(
             `Init answers artifact not found: ${initAnswersResolvedPath}. ` +
@@ -284,6 +288,7 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
     }
 
     const DEFERRED_VERSION_ITEM = 'VERSION';
+    const previewAffectedItems: string[] = [];
 
     try {
         // --- Step 3: Create safety snapshot ---
@@ -296,6 +301,11 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
             writeRollbackRecords(safetySnapshotPath, safetyRecords);
             safetySnapshotCreated = true;
             safetySnapshotRecordCount = safetyRecords.length;
+        } else {
+            const rollbackItems = getUpdateRollbackItems(normalizedTarget, initAnswersResolvedPath);
+            for (const item of rollbackItems) {
+                previewAffectedItems.push(item);
+            }
         }
 
         // --- Step 4: Sync bundle items from source ---
@@ -336,6 +346,14 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
             }
             syncStatus = 'SUCCESS';
         } else {
+            for (const item of BUNDLE_SYNC_ITEMS) {
+                if (item === DEFERRED_VERSION_ITEM) continue;
+                const sourceItemPath = path.join(sourceRoot, item);
+                if (fs.existsSync(sourceItemPath)) {
+                    previewAffectedItems.push(`${DEFAULT_BUNDLE_NAME}/${item}`);
+                }
+            }
+            previewAffectedItems.push(`${DEFAULT_BUNDLE_NAME}/${DEFERRED_VERSION_ITEM}`);
             syncStatus = 'SKIPPED_DRY_RUN';
         }
 
@@ -507,7 +525,8 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
         safetySnapshotRecordCount,
         safetyRollbackStatus,
         bundleSyncBackupPath: dryRun ? 'not-created-in-dry-run' : bundleSyncBackupRelativePath,
-        rollbackReportPath: dryRun ? 'not-generated-in-dry-run' : rollbackReportRelativePath
+        rollbackReportPath: dryRun ? 'not-generated-in-dry-run' : rollbackReportRelativePath,
+        previewAffectedItems: dryRun ? previewAffectedItems : []
     };
 }
 
@@ -682,7 +701,10 @@ export function runSnapshotRollback(options: RunSnapshotRollbackOptions) {
         safetySnapshotCreated,
         safetySnapshotRecordCount,
         safetyRollbackStatus,
-        rollbackReportPath: dryRun ? 'not-generated-in-dry-run' : rollbackReportRelativePath
+        rollbackReportPath: dryRun ? 'not-generated-in-dry-run' : rollbackReportRelativePath,
+        previewAffectedItems: dryRun
+            ? rollbackRecords.map((record) => record.relativePath)
+            : []
     };
 }
 

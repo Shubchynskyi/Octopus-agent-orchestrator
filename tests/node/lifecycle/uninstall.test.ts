@@ -944,3 +944,107 @@ describe('runUninstall', () => {
         }
     });
 });
+
+// ---------------------------------------------------------------------------
+// Uninstall ownership boundary hardening (T-013)
+// ---------------------------------------------------------------------------
+
+describe('uninstall ownership boundaries (T-013)', () => {
+    const repoRoot = findRepoRoot();
+
+    it('rejects init answers path that escapes target root', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const outsideAnswers = path.resolve(projectRoot, '..', 'evil-answers.json');
+            assert.throws(
+                () => runUninstall({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    initAnswersPath: outsideAnswers,
+                    noPrompt: true,
+                    keepPrimaryEntrypoint: 'no',
+                    keepTaskFile: 'no',
+                    keepRuntimeArtifacts: 'no'
+                }),
+                /resolves outside permitted root/
+            );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('rejects relative init answers path with traversal', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            assert.throws(
+                () => runUninstall({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    initAnswersPath: '../../escape/answers.json',
+                    noPrompt: true,
+                    keepPrimaryEntrypoint: 'no',
+                    keepTaskFile: 'no',
+                    keepRuntimeArtifacts: 'no'
+                }),
+                /resolves outside permitted root/
+            );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Uninstall dry-run preview enrichment (T-013)
+// ---------------------------------------------------------------------------
+
+describe('uninstall dry-run preview (T-013)', () => {
+    const repoRoot = findRepoRoot();
+
+    it('dry-run returns previewAffectedFiles with specific paths', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                dryRun: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'DRY_RUN');
+            const preview = result.previewAffectedFiles;
+            assert.ok(Array.isArray(preview), 'previewAffectedFiles must be an array');
+            assert.ok(preview.length > 0, 'dry-run preview must list affected paths');
+            assert.ok(
+                preview.some(f => f === 'Octopus-agent-orchestrator/'),
+                'preview must include bundle directory'
+            );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('non-dry-run returns empty previewAffectedFiles', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            const preview = result.previewAffectedFiles;
+            assert.ok(Array.isArray(preview), 'previewAffectedFiles must be an array');
+            assert.equal(preview.length, 0, 'non-dry-run must return empty preview');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+});

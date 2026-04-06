@@ -10,14 +10,14 @@ function normalizePath(p: string): string {
     return path.resolve(p);
 }
 
-function isSubpath(parent: string, child: string): boolean {
+export function isSubpath(parent: string, child: string): boolean {
     const p = normalizePath(parent).toLowerCase();
     const c = normalizePath(child).toLowerCase();
     if (p === c) return true; // allow exact equality
     return c.startsWith(p + path.sep);
 }
 
-function ensureWithinRoot(root: string, candidate: string, description = 'Path'): string {
+export function ensureWithinRoot(root: string, candidate: string, description = 'Path'): string {
     const resolved = normalizePath(candidate);
     const resolvedRoot = normalizePath(root);
     if (!isSubpath(resolvedRoot, resolved)) {
@@ -26,7 +26,7 @@ function ensureWithinRoot(root: string, candidate: string, description = 'Path')
     return resolved;
 }
 
-function ensureRelativeSafe(rel: string, description = 'Relative path'): void {
+export function ensureRelativeSafe(rel: string, description = 'Relative path'): void {
     if (path.isAbsolute(rel)) {
         throw new Error(`${description} must be relative, absolute path provided: ${rel}`);
     }
