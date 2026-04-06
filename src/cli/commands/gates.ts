@@ -3,6 +3,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+    EXIT_GATE_FAILURE,
+    EXIT_GENERAL_FAILURE,
+    EXIT_USAGE_ERROR
+} from '../exit-codes';
+import {
     DEFAULT_COMPILE_TIMEOUT_MS,
     DEFAULT_GIT_TIMEOUT_MS,
     spawnStreamed,
@@ -953,7 +958,7 @@ export function runLoadRulePackCommand(options: LoadRulePackCommandOptions): { o
                 'Violations:',
                 ...stageArtifact.violations.map(function (item) { return `- ${item}`; })
             ],
-            exitCode: 1
+            exitCode: EXIT_GATE_FAILURE
         };
     }
 
@@ -1099,7 +1104,7 @@ export function runHandshakeDiagnosticsCommand(options: HandshakeDiagnosticsComm
 
     return {
         outputLines,
-        exitCode: artifact.outcome === 'PASS' ? 0 : 1
+        exitCode: artifact.outcome === 'PASS' ? 0 : EXIT_GATE_FAILURE
     };
 }
 
@@ -1156,7 +1161,7 @@ export function runShellSmokePreflightCommand(options: ShellSmokePreflightComman
 
     return {
         outputLines,
-        exitCode: artifact.outcome === 'PASS' ? 0 : 1
+        exitCode: artifact.outcome === 'PASS' ? 0 : EXIT_GATE_FAILURE
     };
 }
 
@@ -1186,7 +1191,7 @@ export function runCommandTimeoutDiagnosticsCommand(options: CommandTimeoutDiagn
             } catch {
                 return {
                     outputLines: [`ERROR: Failed to parse command records from '${commandRecordsPath}'.`],
-                    exitCode: 1
+                    exitCode: EXIT_USAGE_ERROR
                 };
             }
         }
@@ -1236,7 +1241,7 @@ export function runCommandTimeoutDiagnosticsCommand(options: CommandTimeoutDiagn
 
     return {
         outputLines,
-        exitCode: artifact.outcome === 'PASS' ? 0 : 1
+        exitCode: artifact.outcome === 'PASS' ? 0 : EXIT_GATE_FAILURE
     };
 }
 
@@ -1424,7 +1429,7 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
 
     if (result.timedOut) {
         return {
-            exitCode: 1,
+            exitCode: EXIT_GENERAL_FAILURE,
             outputLines: [
                 ...splitOutputLines(result.stdout),
                 ...splitOutputLines(result.stderr),
@@ -1437,7 +1442,7 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
 
     if (result.cancelled) {
         return {
-            exitCode: 1,
+            exitCode: EXIT_GENERAL_FAILURE,
             outputLines: [
                 ...splitOutputLines(result.stdout),
                 ...splitOutputLines(result.stderr),
@@ -1498,7 +1503,7 @@ export function executeCommand(commandText: string, options: ExecuteCommandOptio
 
     if (result.timedOut) {
         return {
-            exitCode: 1,
+            exitCode: EXIT_GENERAL_FAILURE,
             outputLines: [...outputLines, `Process timed out after ${timeoutMs} ms.`],
             timedOut: true
         };
@@ -1513,7 +1518,7 @@ export function executeCommand(commandText: string, options: ExecuteCommandOptio
     }
 
     return {
-        exitCode: result.status == null ? 1 : result.status,
+        exitCode: result.status == null ? EXIT_GENERAL_FAILURE : result.status,
         outputLines,
         timedOut: false
     };
@@ -1848,10 +1853,10 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         const taskModeViolations = getTaskModeEvidenceViolations(taskModeEvidence);
         const rulePackViolations = getRulePackEvidenceViolations(rulePackEvidence);
         if (taskModeViolations.length > 0) {
-            exitCode = 1;
+            exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = taskModeViolations.join(' ');
         } else if (rulePackViolations.length > 0) {
-            exitCode = 1;
+            exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = rulePackViolations.join(' ');
         }
         const preflightChangedFiles = expandValueList(preflightContext.changed_files, { splitDelimiters: false });
@@ -1866,16 +1871,16 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         const timelineErrors: string[] = [];
         const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, timelineErrors);
         if (!exceptionMessage && timelineErrors.length > 0) {
-            exitCode = 1;
+            exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = timelineErrors.join(' ');
         } else if (!exceptionMessage && !timelineEventTypes.has('RULE_PACK_LOADED')) {
-            exitCode = 1;
+            exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing RULE_PACK_LOADED. Run load-rule-pack before compile gate.`;
         } else if (!exceptionMessage && !timelineEventTypes.has('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
-            exitCode = 1;
+            exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before compile gate.`;
         } else if (!exceptionMessage && !timelineEventTypes.has('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
-            exitCode = 1;
+            exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before compile gate.`;
         }
 
@@ -1889,7 +1894,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             );
         }
         if (!exceptionMessage && scopeViolations.length > 0) {
-            exitCode = 1;
+            exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = `Preflight scope drift detected. Re-run classify-change before compile gate. ${scopeViolations.join(' ')}`;
         } else if (!exceptionMessage) {
             await emitMandatoryImplementationStartedEventAsync(orchestratorRoot, resolvedTaskId, {
@@ -1934,7 +1939,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     } catch (error) {
         exceptionMessage = getErrorMessage(error);
         if (exitCode === 0) {
-            exitCode = 1;
+            exitCode = EXIT_GATE_FAILURE;
         }
     }
 
@@ -2045,7 +2050,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             outputLines.push(visibleSavingsLine);
         }
         outputLines.push(`Reason: ${failureReason}`);
-        return { outputLines, exitCode: 1 };
+        return { outputLines, exitCode: EXIT_GATE_FAILURE };
     }
 
     const successEvent = {
@@ -2067,7 +2072,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                 `CompileSummary: FAILED | duration_ms=${durationMs} | exit_code=0 | errors=${errorCount} | warnings=${warningCount}`,
                 `Reason: ${failureReason}`
             ],
-            exitCode: 1
+            exitCode: EXIT_GATE_FAILURE
         };
     }
     writeCompileEvidence(compileEvidencePath, resolvedTaskId, gateContext, 'PASSED', 'PASS', null);
@@ -2151,7 +2156,7 @@ export function runDocImpactGateCommand(options: DocImpactGateCommandOptions): {
                 'Violations:',
                 ...artifact.violations.map(function (item: string) { return `- ${item}`; })
             ],
-            exitCode: 1
+            exitCode: EXIT_GATE_FAILURE
         };
     }
 
@@ -2263,7 +2268,7 @@ export function runLogTaskEventCommand(options: LogTaskEventCommandOptions): { o
 
     return {
         outputText: `${JSON.stringify(result, null, 2)}\n`,
-        exitCode: cleanupFailed ? 1 : 0
+        exitCode: cleanupFailed ? EXIT_GENERAL_FAILURE : 0
     };
 }
 
@@ -2892,7 +2897,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         if (failureVisibleSavingsLine) {
             outputLines.push(failureVisibleSavingsLine);
         }
-        return { outputLines, exitCode: 1 };
+        return { outputLines, exitCode: EXIT_GATE_FAILURE };
     }
 
     const successOutputLines = skipCode

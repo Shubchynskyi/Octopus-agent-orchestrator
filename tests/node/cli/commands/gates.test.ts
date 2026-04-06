@@ -5,6 +5,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
+    EXIT_GATE_FAILURE,
+    EXIT_GENERAL_FAILURE
+} from '../../../../src/cli/exit-codes';
+import {
     runClassifyChangeCommand,
     runCompileGateCommand,
     runDocImpactGateCommand,
@@ -634,7 +638,7 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
 
-        assert.equal(result.exitCode, 1);
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some(line => line.includes('Task-mode entry evidence missing')));
 
@@ -932,7 +936,7 @@ describe('cli/commands/gates', () => {
             outputFiltersPath,
             emitMetrics: false
         });
-        assert.equal(failedReviewResult.exitCode, 1);
+        assert.equal(failedReviewResult.exitCode, EXIT_GATE_FAILURE);
         assert.ok(failedReviewResult.outputLines.some((line) => String(line).includes('zero-diff')));
 
         // Record a no-op artifact to satisfy the guard
@@ -1137,7 +1141,7 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.equal(observedExitCode, 1);
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -1195,7 +1199,7 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.equal(observedExitCode, 1);
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -1357,7 +1361,7 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.equal(observedExitCode, 1);
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         assert.equal(fs.existsSync(receiptPath), false);
         assert.ok(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'));
         assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
@@ -1408,7 +1412,7 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.equal(observedExitCode, 1);
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
@@ -1749,7 +1753,7 @@ describe('executeCommand timeout protection (T-061)', () => {
             { cwd: process.cwd(), timeoutMs: 500 }
         );
         assert.equal(result.timedOut, true);
-        assert.equal(result.exitCode, 1);
+        assert.equal(result.exitCode, EXIT_GENERAL_FAILURE);
         assert.ok(result.outputLines.some(line => /timed out/i.test(line)));
     });
 

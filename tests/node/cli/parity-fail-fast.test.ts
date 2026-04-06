@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as childProcess from 'node:child_process';
+import { EXIT_PRECONDITION_FAILURE } from '../../../src/cli/exit-codes';
 
 function findRepoRoot(startDir: string): string {
     let current = path.resolve(startDir);
@@ -56,7 +57,7 @@ test('CLI blocks task execution commands when bundle is stale (T-034)', () => {
 
         const combined = (result.stdout || '') + (result.stderr || '');
         
-        assert.equal(result.status, 1, 'Expected CLI to exit with code 1');
+        assert.equal(result.status, EXIT_PRECONDITION_FAILURE, `Expected CLI to exit with code ${EXIT_PRECONDITION_FAILURE} (PRECONDITION_FAILURE)`);
         assert.ok(
             combined.includes('Source Parity Violation: The deployed bundle is stale'),
             'Expected CLI to print parity violation message'

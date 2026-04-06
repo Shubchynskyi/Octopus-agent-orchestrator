@@ -132,6 +132,11 @@ import { writeReviewArtifactJson } from '../gate-runtime/review-artifacts';
 import { handleOverview } from './commands/overview';
 import { handleSetup } from './commands/setup';
 import { handleSkills } from './commands/skills';
+import {
+    classifyErrorExitCode,
+    EXIT_GATE_FAILURE,
+    EXIT_VALIDATION_FAILURE
+} from './exit-codes';
 import { installSignalHandlers } from './signal-handler';
 
 type ParsedOptionValue = string | boolean | string[] | undefined;
@@ -490,7 +495,7 @@ function handleStatusWhyBlocked(commandArgv: string[]): void {
     console.log(formatWhyBlockedResult(result));
 
     if (result.has_blocked_tasks) {
-        process.exitCode = 1;
+        process.exitCode = EXIT_VALIDATION_FAILURE;
     }
 }
 
@@ -589,7 +594,7 @@ function handleDoctorExplain(commandArgv: string[]): void {
     console.log(formatExplainResult(result));
 
     if (!result.found) {
-        process.exitCode = 1;
+        process.exitCode = EXIT_VALIDATION_FAILURE;
     }
 }
 
@@ -1598,7 +1603,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             }
             process.stdout.write(rendered);
             if (auditSummary.status !== 'PASS') {
-                process.exitCode = 1;
+                process.exitCode = EXIT_GATE_FAILURE;
             }
             return;
         }
@@ -1740,7 +1745,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
 
             process.stdout.write(`${formatCompletionGateResult(result)}\n`);
             if (result.outcome !== 'PASS') {
-                process.exitCode = 1;
+                process.exitCode = EXIT_GATE_FAILURE;
             }
             return;
         }
@@ -2092,7 +2097,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             console.log(lines.join('\n'));
 
             if (evidence.violations.length > 0 && evidence.enforcement === 'STRICT') {
-                process.exitCode = 1;
+                process.exitCode = EXIT_GATE_FAILURE;
             }
 
             if (options.taskId) {
@@ -2238,7 +2243,7 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
         case 'agent-init': {
             const result = handleAgentInit(commandArgv, packageJson);
             if (result && result.readyForTasks === false) {
-                process.exitCode = 1;
+                process.exitCode = EXIT_VALIDATION_FAILURE;
             }
             return;
         }
@@ -2281,7 +2286,7 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
         case 'skills': {
             const result = handleSkills(commandArgv, packageJson);
             if (result && typeof result === 'object' && 'passed' in result && result.passed === false) {
-                process.exitCode = 1;
+                process.exitCode = EXIT_VALIDATION_FAILURE;
             }
             return;
         }
@@ -2302,7 +2307,7 @@ export async function runCliMainWithHandling(
     } catch (error: unknown) {
         console.error(getFailureMarker(resolvedCommand));
         console.error(error instanceof Error ? error.message : String(error));
-        process.exitCode = 1;
+        process.exitCode = classifyErrorExitCode(error);
     }
 }
 
