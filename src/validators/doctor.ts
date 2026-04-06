@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../core/constants';
+import { DEFAULT_INIT_ANSWERS_RELATIVE_PATH, NODE_ENGINE_RANGE } from '../core/constants';
 import { pathExists } from '../core/fs';
 import {
     cleanupStaleTaskEventLocks,
@@ -24,6 +24,17 @@ import {
     evaluateProtectedControlPlaneManifest,
     type ProtectedControlPlaneManifestEvidence
 } from '../gates/helpers';
+import {
+    readUpdateSentinel,
+    readUninstallSentinel,
+    getLifecycleOperationLockPath,
+    type UpdateSentinelMetadata,
+    type UninstallSentinelMetadata
+} from '../lifecycle/common';
+import {
+    listRollbackSnapshotPaths,
+    getRollbackSnapshotsRoot
+} from '../lifecycle/rollback';
 
 interface DoctorOptions {
     targetRoot: string;
@@ -32,6 +43,295 @@ interface DoctorOptions {
     cleanupStaleLocks?: boolean;
     dryRun?: boolean;
     activeAgentFiles?: readonly string[];
+}
+
+// ---------------------------------------------------------------------------
+// Runtime mismatch check
+// ---------------------------------------------------------------------------
+
+export interface RuntimeMismatchEvidence {
+    passed: boolean;
+    current_node_version: string;
+    required_range: string;
+    violations: string[];
+}
+
+/**
+ * Parse a `>=X.Y.Z` range and test whether the running Node.js version
+ * satisfies it.  Handles optional `v` prefix and missing minor/patch.
+ */
+export function checkRuntimeMismatch(): RuntimeMismatchEvidence {
+    const currentVersion = process.version;
+    const requiredRange = NODE_ENGINE_RANGE;
+    const violations: string[] = [];
+
+    const rangeMatch = requiredRange.match(/^>=\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+    if (!rangeMatch) {
+        violations.push('Unable to parse engine range: ' + requiredRange);
+        return { passed: false, current_node_version: currentVersion, required_range: requiredRange, violations };
+    }
+
+    const requiredMajor = Number(rangeMatch[1]);
+    const requiredMinor = rangeMatch[2] !== undefined ? Number(rangeMatch[2]) : 0;
+    const requiredPatch = rangeMatch[3] !== undefined ? Number(rangeMatch[3]) : 0;
+
+    const versionMatch = currentVersion.match(/^v?(\d+)\.(\d+)\.(\d+)/);
+    if (!versionMatch) {
+        violations.push('Unable to parse current Node.js version: ' + currentVersion);
+        return { passed: false, current_node_version: currentVersion, required_range: requiredRange, violations };
+    }
+
+    const currentMajor = Number(versionMatch[1]);
+    const currentMinor = Number(versionMatch[2]);
+    const currentPatch = Number(versionMatch[3]);
+
+    const satisfies =
+        currentMajor > requiredMajor ||
+        (currentMajor === requiredMajor && currentMinor > requiredMinor) ||
+        (currentMajor === requiredMajor && currentMinor === requiredMinor && currentPatch >= requiredPatch);
+
+    if (!satisfies) {
+        violations.push(
+            'Node.js ' + currentVersion + ' does not satisfy required range ' + requiredRange +
+            '. Upgrade to ' + NODE_ENGINE_RANGE + ' or later.'
+        );
+    }
+
+    return {
+        passed: violations.length === 0,
+        current_node_version: currentVersion,
+        required_range: requiredRange,
+        violations
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Permission check
+// ---------------------------------------------------------------------------
+
+export interface PermissionCheckEvidence {
+    passed: boolean;
+    checks: PermissionCheckEntry[];
+}
+
+export interface PermissionCheckEntry {
+    path: string;
+    kind: 'read' | 'write';
+    exists: boolean;
+    accessible: boolean;
+    error: string | null;
+}
+
+const CRITICAL_WRITABLE_RELATIVE_PATHS: readonly string[] = [
+    'Octopus-agent-orchestrator/runtime',
+    'Octopus-agent-orchestrator/live/config'
+];
+
+const CRITICAL_READABLE_RELATIVE_PATHS: readonly string[] = [
+    'Octopus-agent-orchestrator/VERSION',
+    'Octopus-agent-orchestrator/MANIFEST.md'
+];
+
+export function checkPermissions(targetRoot: string): PermissionCheckEvidence {
+    const checks: PermissionCheckEntry[] = [];
+
+    for (const relPath of CRITICAL_WRITABLE_RELATIVE_PATHS) {
+        const absPath = path.join(targetRoot, relPath);
+        const entry: PermissionCheckEntry = {
+            path: relPath,
+            kind: 'write',
+            exists: false,
+            accessible: false,
+            error: null
+        };
+        try {
+            entry.exists = fs.existsSync(absPath);
+            if (entry.exists) {
+                fs.accessSync(absPath, fs.constants.W_OK);
+                entry.accessible = true;
+            } else {
+                // Parent must be writable for directory creation
+                const parentPath = path.dirname(absPath);
+                if (fs.existsSync(parentPath)) {
+                    fs.accessSync(parentPath, fs.constants.W_OK);
+                    entry.accessible = true;
+                } else {
+                    entry.error = 'Parent directory does not exist: ' + parentPath;
+                }
+            }
+        } catch (err: unknown) {
+            entry.error = getErrorMessage(err);
+        }
+        checks.push(entry);
+    }
+
+    for (const relPath of CRITICAL_READABLE_RELATIVE_PATHS) {
+        const absPath = path.join(targetRoot, relPath);
+        const entry: PermissionCheckEntry = {
+            path: relPath,
+            kind: 'read',
+            exists: false,
+            accessible: false,
+            error: null
+        };
+        try {
+            entry.exists = fs.existsSync(absPath);
+            if (entry.exists) {
+                fs.accessSync(absPath, fs.constants.R_OK);
+                entry.accessible = true;
+            }
+        } catch (err: unknown) {
+            entry.error = getErrorMessage(err);
+        }
+        checks.push(entry);
+    }
+
+    const passed = checks.every(function (c) {
+        return !c.exists || c.accessible;
+    });
+
+    return { passed, checks };
+}
+
+// ---------------------------------------------------------------------------
+// Partial-state detection
+// ---------------------------------------------------------------------------
+
+export interface PartialStateEvidence {
+    passed: boolean;
+    update_sentinel: UpdateSentinelMetadata | null;
+    uninstall_sentinel: UninstallSentinelMetadata | null;
+    lifecycle_lock_exists: boolean;
+    lifecycle_lock_owner: Record<string, unknown> | null;
+    violations: string[];
+}
+
+export function checkPartialState(targetRoot: string): PartialStateEvidence {
+    const bundlePath = getBundlePath(targetRoot);
+    const violations: string[] = [];
+
+    // Check for interrupted update
+    const updateSentinel = readUpdateSentinel(bundlePath);
+    if (updateSentinel) {
+        const fromVer = updateSentinel.fromVersion || 'unknown';
+        const toVer = updateSentinel.toVersion || 'unknown';
+        const started = updateSentinel.startedAt || 'unknown';
+        violations.push(
+            'Interrupted update detected (from ' + fromVer + ' to ' + toVer +
+            ', started ' + started + '). Run update or rollback to recover.'
+        );
+    }
+
+    // Check for interrupted uninstall
+    const uninstallSentinel = readUninstallSentinel(targetRoot);
+    if (uninstallSentinel) {
+        const operation = uninstallSentinel.operation || 'uninstall';
+        const started = uninstallSentinel.startedAt || 'unknown';
+        violations.push(
+            'Interrupted ' + operation + ' detected (started ' + started +
+            '). Re-run uninstall or setup to recover.'
+        );
+    }
+
+    // Check for stale lifecycle operation lock
+    const lockPath = getLifecycleOperationLockPath(targetRoot);
+    const lockExists = fs.existsSync(lockPath);
+    let lockOwner: Record<string, unknown> | null = null;
+    if (lockExists) {
+        const ownerPath = path.join(lockPath, 'owner.json');
+        try {
+            if (fs.existsSync(ownerPath)) {
+                lockOwner = JSON.parse(fs.readFileSync(ownerPath, 'utf8')) as Record<string, unknown>;
+            }
+        } catch {
+            // corrupt metadata is itself a partial-state signal
+        }
+        violations.push(
+            'Lifecycle operation lock exists at ' + lockPath.replace(/\\/g, '/') +
+            '. Another operation may be in progress, or a previous operation was interrupted.'
+        );
+    }
+
+    return {
+        passed: violations.length === 0,
+        update_sentinel: updateSentinel,
+        uninstall_sentinel: uninstallSentinel,
+        lifecycle_lock_exists: lockExists,
+        lifecycle_lock_owner: lockOwner,
+        violations
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Rollback health check
+// ---------------------------------------------------------------------------
+
+export interface RollbackHealthEvidence {
+    passed: boolean;
+    snapshots_root: string;
+    snapshot_count: number;
+    snapshots: RollbackSnapshotInfo[];
+    violations: string[];
+}
+
+export interface RollbackSnapshotInfo {
+    path: string;
+    name: string;
+    has_records: boolean;
+    records_valid: boolean;
+    records_error: string | null;
+}
+
+export function checkRollbackHealth(targetRoot: string): RollbackHealthEvidence {
+    const snapshotsRoot = getRollbackSnapshotsRoot(targetRoot);
+    const violations: string[] = [];
+    const snapshots: RollbackSnapshotInfo[] = [];
+
+    const snapshotPaths = listRollbackSnapshotPaths(targetRoot);
+
+    for (const snapshotPath of snapshotPaths) {
+        const name = path.basename(snapshotPath);
+        const recordsPath = path.join(snapshotPath, 'rollback-records.json');
+        const hasRecords = fs.existsSync(recordsPath);
+        let recordsValid = false;
+        let recordsError: string | null = null;
+
+        if (hasRecords) {
+            try {
+                const parsed = JSON.parse(fs.readFileSync(recordsPath, 'utf8'));
+                if (Array.isArray(parsed) && parsed.every(function (r: unknown) {
+                    return typeof r === 'object' && r !== null &&
+                        typeof (r as Record<string, unknown>).relativePath === 'string';
+                })) {
+                    recordsValid = true;
+                } else {
+                    recordsError = 'Invalid rollback-records.json structure';
+                    violations.push('Snapshot ' + name + ': ' + recordsError);
+                }
+            } catch (err: unknown) {
+                recordsError = getErrorMessage(err);
+                violations.push('Snapshot ' + name + ': corrupt rollback-records.json — ' + recordsError);
+            }
+        } else {
+            violations.push('Snapshot ' + name + ': missing rollback-records.json');
+        }
+
+        snapshots.push({
+            path: snapshotPath.replace(/\\/g, '/'),
+            name,
+            has_records: hasRecords,
+            records_valid: recordsValid,
+            records_error: recordsError
+        });
+    }
+
+    return {
+        passed: violations.length === 0,
+        snapshots_root: snapshotsRoot.replace(/\\/g, '/'),
+        snapshot_count: snapshots.length,
+        snapshots,
+        violations
+    };
 }
 
 interface TimelineEvidence {
@@ -60,6 +360,10 @@ interface DoctorResult {
     providerComplianceResult: ProviderComplianceResult | null;
     nestedBundleDuplication: NestedBundleDuplicationResult;
     protectedManifestEvidence: ProtectedControlPlaneManifestEvidence | null;
+    runtimeMismatchEvidence: RuntimeMismatchEvidence;
+    permissionEvidence: PermissionCheckEvidence;
+    partialStateEvidence: PartialStateEvidence;
+    rollbackHealthEvidence: RollbackHealthEvidence;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -208,12 +512,24 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         // evaluation failure is non-fatal; will show as null in output
     }
 
+    // T-012: runtime mismatch check
+    var runtimeMismatchEvidence = checkRuntimeMismatch();
+
+    // T-012: permission checks on critical paths
+    var permissionEvidence = checkPermissions(targetRoot);
+
+    // T-012: partial-state detection (interrupted updates/uninstalls, stale locks)
+    var partialStateEvidence = checkPartialState(targetRoot);
+
+    // T-012: rollback snapshot health
+    var rollbackHealthEvidence = checkRollbackHealth(targetRoot);
+
     var manifestPassed = manifestResult ? manifestResult.passed : false;
     var compliancePassed = providerComplianceResult === null || providerComplianceResult.passed;
     var protectedManifestOk = protectedManifestEvidence === null
         || protectedManifestEvidence.status === 'MATCH'
         || protectedManifestEvidence.status === 'MISSING';
-    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed && !nestedBundleDuplication.duplicatesFound && protectedManifestOk;
+    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed && !nestedBundleDuplication.duplicatesFound && protectedManifestOk && runtimeMismatchEvidence.passed && permissionEvidence.passed && partialStateEvidence.passed && rollbackHealthEvidence.passed;
 
     return {
         passed: passed,
@@ -228,7 +544,11 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         parityResult: parityResult,
         providerComplianceResult: providerComplianceResult,
         nestedBundleDuplication: nestedBundleDuplication,
-        protectedManifestEvidence: protectedManifestEvidence
+        protectedManifestEvidence: protectedManifestEvidence,
+        runtimeMismatchEvidence: runtimeMismatchEvidence,
+        permissionEvidence: permissionEvidence,
+        partialStateEvidence: partialStateEvidence,
+        rollbackHealthEvidence: rollbackHealthEvidence
     };
 }
 
@@ -360,6 +680,60 @@ export function formatDoctorResult(result: DoctorResult): string {
             lines.push('  Duplicate: ' + dp);
         }
         lines.push('  Fix: Remove nested copies or ensure .vscode/settings.json excludes them from indexing.');
+        lines.push('');
+    }
+
+    // T-012: runtime mismatch
+    lines.push('Runtime Compatibility');
+    lines.push('  Node: ' + result.runtimeMismatchEvidence.current_node_version);
+    lines.push('  Required: ' + result.runtimeMismatchEvidence.required_range);
+    lines.push('  Status: ' + (result.runtimeMismatchEvidence.passed ? 'OK' : 'MISMATCH'));
+    for (const rv of result.runtimeMismatchEvidence.violations) {
+        lines.push('  - ' + rv);
+    }
+    lines.push('');
+
+    // T-012: permission checks
+    var permFailed = result.permissionEvidence.checks.filter(function (c) {
+        return c.exists && !c.accessible;
+    });
+    if (permFailed.length > 0 || !result.permissionEvidence.passed) {
+        lines.push('Permission Checks');
+        lines.push('  Status: FAIL');
+        for (const pf of permFailed) {
+            lines.push('  ' + pf.path + ' (' + pf.kind + '): ' + (pf.error || 'not accessible'));
+        }
+        lines.push('  Fix: Ensure the current user has read/write access to the listed paths.');
+        lines.push('');
+    }
+
+    // T-012: partial-state detection
+    if (!result.partialStateEvidence.passed) {
+        lines.push('Partial State');
+        lines.push('  Status: DETECTED');
+        for (const pv of result.partialStateEvidence.violations) {
+            lines.push('  - ' + pv);
+        }
+        lines.push('');
+    }
+
+    // T-012: rollback health
+    if (result.rollbackHealthEvidence.snapshot_count > 0) {
+        lines.push('Rollback Snapshots');
+        lines.push('  Root: ' + result.rollbackHealthEvidence.snapshots_root);
+        lines.push('  Count: ' + result.rollbackHealthEvidence.snapshot_count);
+        lines.push('  Status: ' + (result.rollbackHealthEvidence.passed ? 'HEALTHY' : 'DEGRADED'));
+        for (const snap of result.rollbackHealthEvidence.snapshots) {
+            lines.push(
+                '  ' + snap.name + ': records=' + (snap.has_records ? 'present' : 'MISSING') +
+                (snap.has_records ? ' valid=' + (snap.records_valid ? 'yes' : 'no') : '')
+            );
+        }
+        if (result.rollbackHealthEvidence.violations.length > 0) {
+            for (const rbv of result.rollbackHealthEvidence.violations) {
+                lines.push('  Warning: ' + rbv);
+            }
+        }
         lines.push('');
     }
 

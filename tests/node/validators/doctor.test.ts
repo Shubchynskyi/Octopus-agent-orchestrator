@@ -6,11 +6,51 @@ import * as os from 'node:os';
 
 import {
     runDoctor,
-    formatDoctorResult
+    formatDoctorResult,
+    checkRuntimeMismatch,
+    checkPermissions,
+    checkPartialState,
+    checkRollbackHealth
 } from '../../../src/validators/doctor';
 import {
     writeProtectedControlPlaneManifest
 } from '../../../src/gates/helpers';
+import {
+    writeUpdateSentinel,
+    writeUninstallSentinel
+} from '../../../src/lifecycle/common';
+import {
+    getRollbackSnapshotsRoot
+} from '../../../src/lifecycle/rollback';
+import { NODE_ENGINE_RANGE } from '../../../src/core/constants';
+
+const DEFAULT_NEW_EVIDENCE = {
+    runtimeMismatchEvidence: {
+        passed: true,
+        current_node_version: process.version,
+        required_range: NODE_ENGINE_RANGE,
+        violations: []
+    },
+    permissionEvidence: {
+        passed: true,
+        checks: []
+    },
+    partialStateEvidence: {
+        passed: true,
+        update_sentinel: null,
+        uninstall_sentinel: null,
+        lifecycle_lock_exists: false,
+        lifecycle_lock_owner: null,
+        violations: []
+    },
+    rollbackHealthEvidence: {
+        passed: true,
+        snapshots_root: '/tmp/test/Octopus-agent-orchestrator/runtime/update-rollbacks',
+        snapshot_count: 0,
+        snapshots: [],
+        violations: []
+    }
+};
 
 test('runDoctor throws for missing bundle', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-test-'));
@@ -181,7 +221,8 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
         },
         providerComplianceResult: null,
         nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
-        protectedManifestEvidence: null
+        protectedManifestEvidence: null,
+        ...DEFAULT_NEW_EVIDENCE
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -262,7 +303,8 @@ test('formatDoctorResult includes timeline completeness warnings', () => {
         },
         providerComplianceResult: null,
         nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
-        protectedManifestEvidence: null
+        protectedManifestEvidence: null,
+        ...DEFAULT_NEW_EVIDENCE
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -462,7 +504,8 @@ test('formatDoctorResult shows nested bundle duplication warning', () => {
             duplicatesFound: true,
             duplicatePaths: ['Octopus-agent-orchestrator/Octopus-agent-orchestrator']
         },
-        protectedManifestEvidence: null
+        protectedManifestEvidence: null,
+        ...DEFAULT_NEW_EVIDENCE
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -689,11 +732,604 @@ test('formatDoctorResult includes protected manifest section in clean output', (
             manifest_path: '/tmp/test/Octopus-agent-orchestrator/runtime/protected-control-plane-manifest.json',
             changed_files: [],
             manifest: null
-        }
+        },
+        ...DEFAULT_NEW_EVIDENCE
     };
 
     const output = formatDoctorResult(fakeResult);
     assert.ok(output.includes('Protected Control-Plane Manifest'));
     assert.ok(output.includes('Status: MATCH'));
     assert.ok(output.includes('Doctor: PASS'));
+});
+
+// ---------------------------------------------------------------------------
+// T-012: Runtime mismatch checks
+// ---------------------------------------------------------------------------
+
+test('checkRuntimeMismatch passes for current Node.js version', () => {
+    const result = checkRuntimeMismatch();
+    assert.equal(result.passed, true);
+    assert.equal(result.current_node_version, process.version);
+    assert.equal(result.required_range, NODE_ENGINE_RANGE);
+    assert.equal(result.violations.length, 0);
+});
+
+test('checkRuntimeMismatch evidence includes expected fields', () => {
+    const result = checkRuntimeMismatch();
+    assert.ok(typeof result.passed === 'boolean');
+    assert.ok(typeof result.current_node_version === 'string');
+    assert.ok(typeof result.required_range === 'string');
+    assert.ok(Array.isArray(result.violations));
+});
+
+test('formatDoctorResult includes runtime compatibility section', () => {
+    const fakeResult = {
+        passed: false,
+        targetRoot: '/tmp/test',
+        verifyResult: {
+            passed: true,
+            targetRoot: '/tmp/test',
+            sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md',
+            bundleVersion: '1.0.0',
+            requiredPathsChecked: 10,
+            violations: {
+                missingPaths: [],
+                initAnswersContractViolations: [],
+                versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [],
+                pathsContractViolations: [],
+                tokenEconomyContractViolations: [],
+                outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [],
+                skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [],
+                templatePlaceholderViolations: [],
+                commandsContractViolations: [],
+                manifestContractViolations: [],
+                coreRuleContractViolations: [],
+                entrypointContractViolations: [],
+                taskContractViolations: [],
+                qwenSettingsViolations: [],
+                skillsIndexContractViolations: [],
+                skillPackContractViolations: [],
+                gitignoreMissing: []
+            },
+            totalViolationCount: 0
+        },
+        manifestResult: {
+            passed: true,
+            manifestPath: '/tmp/test/MANIFEST.md',
+            entriesChecked: 5,
+            duplicates: [],
+            diagnostics: []
+        },
+        manifestError: null,
+        timelineEvidence: [],
+        timelineWarnings: [],
+        lockHealth: {
+            lock_root: '/tmp/test/runtime/task-events',
+            subsystem_scope_note: 'scope note',
+            locks: [],
+            active_count: 0,
+            stale_count: 0
+        },
+        lockCleanup: null,
+        parityResult: {
+            isSourceCheckout: false,
+            isStale: false,
+            violations: [],
+            rootVersion: null,
+            bundleVersion: null,
+            remediation: null
+        },
+        providerComplianceResult: null,
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
+        protectedManifestEvidence: null,
+        runtimeMismatchEvidence: {
+            passed: false,
+            current_node_version: 'v18.0.0',
+            required_range: '>=24.0.0',
+            violations: ['Node.js v18.0.0 does not satisfy required range >=24.0.0. Upgrade to >=24.0.0 or later.']
+        },
+        permissionEvidence: { passed: true, checks: [] },
+        partialStateEvidence: {
+            passed: true,
+            update_sentinel: null,
+            uninstall_sentinel: null,
+            lifecycle_lock_exists: false,
+            lifecycle_lock_owner: null,
+            violations: []
+        },
+        rollbackHealthEvidence: {
+            passed: true,
+            snapshots_root: '/tmp/test/rollbacks',
+            snapshot_count: 0,
+            snapshots: [],
+            violations: []
+        }
+    };
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Runtime Compatibility'));
+    assert.ok(output.includes('Node: v18.0.0'));
+    assert.ok(output.includes('Status: MISMATCH'));
+    assert.ok(output.includes('Doctor: FAIL'));
+});
+
+// ---------------------------------------------------------------------------
+// T-012: Permission checks
+// ---------------------------------------------------------------------------
+
+test('checkPermissions passes for accessible workspace', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-perm-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    fs.mkdirSync(path.join(bundlePath, 'runtime'), { recursive: true });
+    fs.mkdirSync(path.join(bundlePath, 'live', 'config'), { recursive: true });
+    fs.writeFileSync(path.join(bundlePath, 'VERSION'), '1.0.0\n', 'utf8');
+    fs.writeFileSync(path.join(bundlePath, 'MANIFEST.md'), '- bin/octopus.js\n', 'utf8');
+
+    try {
+        const result = checkPermissions(tmpDir);
+        assert.equal(result.passed, true);
+        assert.ok(result.checks.length > 0);
+        for (const check of result.checks) {
+            if (check.exists) {
+                assert.equal(check.accessible, true, check.path + ' should be accessible');
+            }
+        }
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkPermissions reports when critical paths do not exist', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-perm-empty-'));
+    try {
+        const result = checkPermissions(tmpDir);
+        assert.ok(typeof result.passed === 'boolean');
+        assert.ok(result.checks.length > 0);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// T-012: Partial-state detection
+// ---------------------------------------------------------------------------
+
+test('checkPartialState passes for clean workspace', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-partial-clean-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    fs.mkdirSync(path.join(bundlePath, 'runtime'), { recursive: true });
+
+    try {
+        const result = checkPartialState(tmpDir);
+        assert.equal(result.passed, true);
+        assert.equal(result.update_sentinel, null);
+        assert.equal(result.uninstall_sentinel, null);
+        assert.equal(result.lifecycle_lock_exists, false);
+        assert.equal(result.violations.length, 0);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkPartialState detects interrupted update sentinel', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-partial-update-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    fs.mkdirSync(path.join(bundlePath, 'runtime'), { recursive: true });
+
+    writeUpdateSentinel(bundlePath, {
+        startedAt: '2026-04-01T10:00:00.000Z',
+        fromVersion: '2.3.0',
+        toVersion: '2.4.0'
+    });
+
+    try {
+        const result = checkPartialState(tmpDir);
+        assert.equal(result.passed, false);
+        assert.ok(result.update_sentinel !== null);
+        assert.equal(result.update_sentinel!.fromVersion, '2.3.0');
+        assert.ok(result.violations.some(function (v) { return v.includes('Interrupted update'); }));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkPartialState detects interrupted uninstall sentinel', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-partial-uninstall-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    fs.mkdirSync(path.join(bundlePath, 'runtime'), { recursive: true });
+
+    writeUninstallSentinel(tmpDir, {
+        startedAt: '2026-04-01T11:00:00.000Z',
+        operation: 'uninstall'
+    });
+
+    try {
+        const result = checkPartialState(tmpDir);
+        assert.equal(result.passed, false);
+        assert.ok(result.uninstall_sentinel !== null);
+        assert.ok(result.violations.some(function (v) { return v.includes('Interrupted uninstall'); }));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkPartialState detects stale lifecycle operation lock', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-partial-lock-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    const lockPath = path.join(bundlePath, 'runtime', '.lifecycle-operation.lock');
+    fs.mkdirSync(lockPath, { recursive: true });
+    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        pid: 999999,
+        hostname: os.hostname(),
+        operation: 'update',
+        acquired_at_utc: '2026-04-01T10:00:00.000Z',
+        target_root: tmpDir
+    }, null, 2), 'utf8');
+
+    try {
+        const result = checkPartialState(tmpDir);
+        assert.equal(result.passed, false);
+        assert.equal(result.lifecycle_lock_exists, true);
+        assert.ok(result.lifecycle_lock_owner !== null);
+        assert.ok(result.violations.some(function (v) { return v.includes('Lifecycle operation lock'); }));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('runDoctor fails when update sentinel is present', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-partial-e2e-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    fs.mkdirSync(path.join(bundlePath, 'runtime'), { recursive: true });
+    fs.writeFileSync(path.join(bundlePath, 'MANIFEST.md'), '- bin/octopus.js\n', 'utf8');
+
+    writeUpdateSentinel(bundlePath, {
+        startedAt: '2026-04-01T10:00:00.000Z',
+        fromVersion: '2.3.0',
+        toVersion: '2.4.0'
+    });
+
+    try {
+        const result = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude'
+        });
+        assert.equal(result.passed, false);
+        assert.equal(result.partialStateEvidence.passed, false);
+        assert.ok(result.partialStateEvidence.update_sentinel !== null);
+
+        const output = formatDoctorResult(result);
+        assert.ok(output.includes('Partial State'));
+        assert.ok(output.includes('DETECTED'));
+        assert.ok(output.includes('Interrupted update'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// T-012: Rollback health checks
+// ---------------------------------------------------------------------------
+
+test('checkRollbackHealth passes for empty rollback directory', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-rollback-empty-'));
+    try {
+        const result = checkRollbackHealth(tmpDir);
+        assert.equal(result.passed, true);
+        assert.equal(result.snapshot_count, 0);
+        assert.equal(result.violations.length, 0);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkRollbackHealth passes for valid snapshot with records', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-rollback-valid-'));
+    const snapshotsRoot = getRollbackSnapshotsRoot(tmpDir);
+    const snapshotDir = path.join(snapshotsRoot, 'update-20260401-100000');
+    fs.mkdirSync(snapshotDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(snapshotDir, 'rollback-records.json'),
+        JSON.stringify([{ relativePath: 'some/file.txt', existed: true, pathType: 'file' }]),
+        'utf8'
+    );
+
+    try {
+        const result = checkRollbackHealth(tmpDir);
+        assert.equal(result.passed, true);
+        assert.equal(result.snapshot_count, 1);
+        assert.equal(result.snapshots[0].has_records, true);
+        assert.equal(result.snapshots[0].records_valid, true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkRollbackHealth fails for snapshot missing rollback-records.json', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-rollback-norec-'));
+    const snapshotsRoot = getRollbackSnapshotsRoot(tmpDir);
+    const snapshotDir = path.join(snapshotsRoot, 'update-20260401-100000');
+    fs.mkdirSync(snapshotDir, { recursive: true });
+
+    try {
+        const result = checkRollbackHealth(tmpDir);
+        assert.equal(result.passed, false);
+        assert.equal(result.snapshot_count, 1);
+        assert.equal(result.snapshots[0].has_records, false);
+        assert.ok(result.violations.some(function (v) { return v.includes('missing rollback-records.json'); }));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkRollbackHealth fails for snapshot with corrupt records', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-rollback-corrupt-'));
+    const snapshotsRoot = getRollbackSnapshotsRoot(tmpDir);
+    const snapshotDir = path.join(snapshotsRoot, 'update-20260401-100000');
+    fs.mkdirSync(snapshotDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(snapshotDir, 'rollback-records.json'),
+        'not valid json!!!',
+        'utf8'
+    );
+
+    try {
+        const result = checkRollbackHealth(tmpDir);
+        assert.equal(result.passed, false);
+        assert.equal(result.snapshots[0].has_records, true);
+        assert.equal(result.snapshots[0].records_valid, false);
+        assert.ok(result.snapshots[0].records_error !== null);
+        assert.ok(result.violations.some(function (v) { return v.includes('corrupt rollback-records.json'); }));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkRollbackHealth fails for snapshot with invalid records structure', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-rollback-invalid-'));
+    const snapshotsRoot = getRollbackSnapshotsRoot(tmpDir);
+    const snapshotDir = path.join(snapshotsRoot, 'update-20260401-100000');
+    fs.mkdirSync(snapshotDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(snapshotDir, 'rollback-records.json'),
+        JSON.stringify([{ noRelativePath: true }]),
+        'utf8'
+    );
+
+    try {
+        const result = checkRollbackHealth(tmpDir);
+        assert.equal(result.passed, false);
+        assert.equal(result.snapshots[0].records_valid, false);
+        assert.ok(result.violations.some(function (v) { return v.includes('Invalid rollback-records.json'); }));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('formatDoctorResult includes rollback snapshot section when snapshots exist', () => {
+    const fakeResult = {
+        passed: false,
+        targetRoot: '/tmp/test',
+        verifyResult: {
+            passed: true,
+            targetRoot: '/tmp/test',
+            sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md',
+            bundleVersion: '1.0.0',
+            requiredPathsChecked: 10,
+            violations: {
+                missingPaths: [],
+                initAnswersContractViolations: [],
+                versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [],
+                pathsContractViolations: [],
+                tokenEconomyContractViolations: [],
+                outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [],
+                skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [],
+                templatePlaceholderViolations: [],
+                commandsContractViolations: [],
+                manifestContractViolations: [],
+                coreRuleContractViolations: [],
+                entrypointContractViolations: [],
+                taskContractViolations: [],
+                qwenSettingsViolations: [],
+                skillsIndexContractViolations: [],
+                skillPackContractViolations: [],
+                gitignoreMissing: []
+            },
+            totalViolationCount: 0
+        },
+        manifestResult: {
+            passed: true,
+            manifestPath: '/tmp/test/MANIFEST.md',
+            entriesChecked: 5,
+            duplicates: [],
+            diagnostics: []
+        },
+        manifestError: null,
+        timelineEvidence: [],
+        timelineWarnings: [],
+        lockHealth: {
+            lock_root: '/tmp/test/runtime/task-events',
+            subsystem_scope_note: 'scope note',
+            locks: [],
+            active_count: 0,
+            stale_count: 0
+        },
+        lockCleanup: null,
+        parityResult: {
+            isSourceCheckout: false,
+            isStale: false,
+            violations: [],
+            rootVersion: null,
+            bundleVersion: null,
+            remediation: null
+        },
+        providerComplianceResult: null,
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
+        protectedManifestEvidence: null,
+        runtimeMismatchEvidence: {
+            passed: true,
+            current_node_version: process.version,
+            required_range: NODE_ENGINE_RANGE,
+            violations: []
+        },
+        permissionEvidence: { passed: true, checks: [] },
+        partialStateEvidence: {
+            passed: true,
+            update_sentinel: null,
+            uninstall_sentinel: null,
+            lifecycle_lock_exists: false,
+            lifecycle_lock_owner: null,
+            violations: []
+        },
+        rollbackHealthEvidence: {
+            passed: false,
+            snapshots_root: '/tmp/test/rollbacks',
+            snapshot_count: 1,
+            snapshots: [{
+                path: '/tmp/test/rollbacks/update-20260401-100000',
+                name: 'update-20260401-100000',
+                has_records: false,
+                records_valid: false,
+                records_error: null
+            }],
+            violations: ['Snapshot update-20260401-100000: missing rollback-records.json']
+        }
+    };
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Rollback Snapshots'));
+    assert.ok(output.includes('Count: 1'));
+    assert.ok(output.includes('DEGRADED'));
+    assert.ok(output.includes('update-20260401-100000'));
+    assert.ok(output.includes('Doctor: FAIL'));
+});
+
+test('runDoctor includes all four new evidence fields', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-full-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    fs.mkdirSync(path.join(bundlePath, 'runtime'), { recursive: true });
+    fs.writeFileSync(path.join(bundlePath, 'MANIFEST.md'), '- bin/octopus.js\n', 'utf8');
+
+    try {
+        const result = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude'
+        });
+        assert.ok(typeof result.runtimeMismatchEvidence === 'object');
+        assert.ok(typeof result.runtimeMismatchEvidence.passed === 'boolean');
+        assert.ok(typeof result.permissionEvidence === 'object');
+        assert.ok(typeof result.permissionEvidence.passed === 'boolean');
+        assert.ok(typeof result.partialStateEvidence === 'object');
+        assert.ok(typeof result.partialStateEvidence.passed === 'boolean');
+        assert.ok(typeof result.rollbackHealthEvidence === 'object');
+        assert.ok(typeof result.rollbackHealthEvidence.passed === 'boolean');
+
+        assert.equal(result.runtimeMismatchEvidence.passed, true);
+        assert.equal(result.partialStateEvidence.passed, true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('formatDoctorResult shows partial-state section when sentinel detected', () => {
+    const fakeResult = {
+        passed: false,
+        targetRoot: '/tmp/test',
+        verifyResult: {
+            passed: true,
+            targetRoot: '/tmp/test',
+            sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md',
+            bundleVersion: '1.0.0',
+            requiredPathsChecked: 10,
+            violations: {
+                missingPaths: [],
+                initAnswersContractViolations: [],
+                versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [],
+                pathsContractViolations: [],
+                tokenEconomyContractViolations: [],
+                outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [],
+                skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [],
+                templatePlaceholderViolations: [],
+                commandsContractViolations: [],
+                manifestContractViolations: [],
+                coreRuleContractViolations: [],
+                entrypointContractViolations: [],
+                taskContractViolations: [],
+                qwenSettingsViolations: [],
+                skillsIndexContractViolations: [],
+                skillPackContractViolations: [],
+                gitignoreMissing: []
+            },
+            totalViolationCount: 0
+        },
+        manifestResult: {
+            passed: true,
+            manifestPath: '/tmp/test/MANIFEST.md',
+            entriesChecked: 5,
+            duplicates: [],
+            diagnostics: []
+        },
+        manifestError: null,
+        timelineEvidence: [],
+        timelineWarnings: [],
+        lockHealth: {
+            lock_root: '/tmp/test/runtime/task-events',
+            subsystem_scope_note: 'scope note',
+            locks: [],
+            active_count: 0,
+            stale_count: 0
+        },
+        lockCleanup: null,
+        parityResult: {
+            isSourceCheckout: false,
+            isStale: false,
+            violations: [],
+            rootVersion: null,
+            bundleVersion: null,
+            remediation: null
+        },
+        providerComplianceResult: null,
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
+        protectedManifestEvidence: null,
+        runtimeMismatchEvidence: {
+            passed: true,
+            current_node_version: process.version,
+            required_range: NODE_ENGINE_RANGE,
+            violations: []
+        },
+        permissionEvidence: { passed: true, checks: [] },
+        partialStateEvidence: {
+            passed: false,
+            update_sentinel: { startedAt: '2026-04-01T10:00:00Z', fromVersion: '2.3.0', toVersion: '2.4.0' },
+            uninstall_sentinel: null,
+            lifecycle_lock_exists: false,
+            lifecycle_lock_owner: null,
+            violations: ['Interrupted update detected (from 2.3.0 to 2.4.0, started 2026-04-01T10:00:00Z). Run update or rollback to recover.']
+        },
+        rollbackHealthEvidence: {
+            passed: true,
+            snapshots_root: '/tmp/test/rollbacks',
+            snapshot_count: 0,
+            snapshots: [],
+            violations: []
+        }
+    };
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Partial State'));
+    assert.ok(output.includes('DETECTED'));
+    assert.ok(output.includes('Interrupted update'));
+    assert.ok(output.includes('Doctor: FAIL'));
 });
