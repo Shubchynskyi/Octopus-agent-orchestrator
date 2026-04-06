@@ -123,11 +123,13 @@ jobs:
       # Lifecycle smoke using the local built CLI.
       # Stages map to: setup -> update git -> doctor -> uninstall.
       - name: Lifecycle smoke (cross-platform E2E install → update → uninstall)
+        id: lifecycle-smoke
         shell: bash
         run: |
           set -euo pipefail
 
           SMOKE_DIR="$(mktemp -d)"
+          echo "smoke_dir=$SMOKE_DIR" >> "$GITHUB_OUTPUT"
           BRANCH_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           # Always use absolute paths in cross-platform test to avoid pathing drift
           CLI="node ${GITHUB_WORKSPACE}/bin/octopus.js"
@@ -158,3 +160,55 @@ jobs:
 
           rm -rf "$SMOKE_DIR"
           echo "Lifecycle smoke PASSED on $RUNNER_OS"
+
+      # ── Failure forensics: upload runtime evidence and logs ──────────────────
+      # Captures build output, runtime state, and npm debug logs when any smoke
+      # step fails, giving investigators actionable context without re-running.
+      - name: Collect smoke failure evidence
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p smoke-failure-evidence
+
+          # npm debug logs
+          for log in "$HOME"/.npm/_logs/*.log; do
+            [ -f "$log" ] && cp "$log" smoke-failure-evidence/ || true
+          done
+
+          # Build output (dist manifest, compiled CLI entrypoint)
+          [ -d dist ] && cp -r dist smoke-failure-evidence/dist || true
+          [ -f bin/octopus.js ] && cp bin/octopus.js smoke-failure-evidence/ || true
+
+          # Lifecycle smoke workspace state (if the step got far enough to create it)
+          SMOKE_DIR="${{ steps.lifecycle-smoke.outputs.smoke_dir }}"
+          if [ -n "$SMOKE_DIR" ] && [ -d "$SMOKE_DIR" ]; then
+            # Capture orchestrator runtime artifacts and agent config
+            if [ -d "$SMOKE_DIR/Octopus-agent-orchestrator/runtime" ]; then
+              cp -r "$SMOKE_DIR/Octopus-agent-orchestrator/runtime" smoke-failure-evidence/smoke-runtime
+            fi
+            if [ -d "$SMOKE_DIR/Octopus-agent-orchestrator/live/config" ]; then
+              cp -r "$SMOKE_DIR/Octopus-agent-orchestrator/live/config" smoke-failure-evidence/smoke-config
+            fi
+            # Capture materialized entrypoints for provider-routing diagnosis
+            for f in "$SMOKE_DIR"/.antigravity/rules.md "$SMOKE_DIR"/.agents/workflows/start-task.md; do
+              [ -f "$f" ] && cp "$f" smoke-failure-evidence/ || true
+            done
+          fi
+
+          # Runner environment snapshot
+          {
+            echo "runner_os=$RUNNER_OS"
+            echo "node_version=$(node --version 2>/dev/null || echo 'unavailable')"
+            echo "npm_version=$(npm --version 2>/dev/null || echo 'unavailable')"
+            echo "date_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 'unavailable')"
+            echo "smoke_dir=$SMOKE_DIR"
+          } > smoke-failure-evidence/runner-env.txt
+
+      - name: Upload smoke failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-failure-evidence-${{ matrix.os }}
+          path: smoke-failure-evidence/
+          retention-days: 15
+          if-no-files-found: ignore
