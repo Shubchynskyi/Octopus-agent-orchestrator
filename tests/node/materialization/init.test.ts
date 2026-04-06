@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import { runInit, mergeConfig } from '../../../src/materialization/init';
+import { getLifecycleOperationLockPath } from '../../../src/lifecycle/common';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -39,6 +40,19 @@ function copyDirRecursive(src: string, dst: string) {
             fs.copyFileSync(srcPath, dstPath);
         }
     }
+}
+
+function seedLifecycleOperationLock(projectRoot: string, pid: number, hostname: string = os.hostname()) {
+    const lockPath = getLifecycleOperationLockPath(projectRoot);
+    fs.mkdirSync(lockPath, { recursive: true });
+    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        pid,
+        hostname,
+        operation: 'update',
+        acquired_at_utc: '2026-04-06T00:00:00.000Z',
+        target_root: path.resolve(projectRoot)
+    }, null, 2), 'utf8');
+    return lockPath;
 }
 
 describe('runInit', () => {
@@ -160,6 +174,44 @@ describe('runInit', () => {
             assert.ok(fs.existsSync(configPath));
             const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
             assert.equal(config.enabled, false);
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('fails when another live lifecycle operation lock exists', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const lockPath = seedLifecycleOperationLock(projectRoot, process.pid);
+
+            assert.throws(() => runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            }), /Another lifecycle operation is already running/);
+            assert.ok(fs.existsSync(lockPath), 'live lock must be preserved');
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('reclaims stale lifecycle operation lock before init', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const lockPath = seedLifecycleOperationLock(projectRoot, 99999999);
+
+            const result = runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            assert.equal(result.ruleFilesMaterialized, 12);
+            assert.ok(!fs.existsSync(lockPath), 'stale lock should be removed after successful init');
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

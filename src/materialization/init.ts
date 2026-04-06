@@ -22,6 +22,7 @@ import {
 } from './rule-materialization';
 import { NODE_HUMAN_COMMIT_COMMAND, NODE_INTERACTIVE_UPDATE_COMMAND, NODE_NON_INTERACTIVE_UPDATE_COMMAND } from './command-constants';
 import { migrateContextRulesToProjectMemory, buildMigrationReportLines } from './project-memory-migration';
+import { withLifecycleOperationLock } from '../lifecycle/common';
 
 interface RunInitOptions {
     targetRoot: string;
@@ -135,6 +136,7 @@ export function runInit(options: RunInitOptions) {
         );
     }
 
+    return withLifecycleOperationLock(normalizedTarget, 'init', () => {
     const projectName = path.basename(normalizedTarget);
     const timestampIso = new Date().toISOString();
 
@@ -368,6 +370,7 @@ export function runInit(options: RunInitOptions) {
         projectDiscoveryPath,
         usagePath
     };
+    });
 }
 
 /**
