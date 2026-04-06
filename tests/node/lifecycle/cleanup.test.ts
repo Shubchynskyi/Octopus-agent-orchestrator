@@ -255,6 +255,38 @@ describe('runCleanup', () => {
             const taskEventItems = result.removed.filter(i => i.category === 'task-events');
             assert.equal(taskEventItems.length, 0);
         });
+
+        it('evicts least recently modified files, not lowest task-ids', () => {
+            const eventsDir = path.join(runtimeDir, 'task-events');
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            createTaskEventFile(eventsDir, 'T-001');
+            createTaskEventFile(eventsDir, 'T-002');
+            createTaskEventFile(eventsDir, 'T-003');
+
+            // Make T-001 the most recently modified, T-002/T-003 stale
+            const now = new Date();
+            const past = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
+            fs.utimesSync(path.join(eventsDir, 'T-001.jsonl'), now, now);
+            fs.utimesSync(path.join(eventsDir, 'T-002.jsonl'), past, past);
+            fs.utimesSync(path.join(eventsDir, 'T-003.jsonl'), past, past);
+
+            const result = runCleanup({
+                targetRoot: tmpDir,
+                bundleRoot,
+                retentionPolicy: { maxTaskEvents: 1, maxAgeDays: 365 }
+            });
+
+            const eventItems = result.removed.filter(i => i.category === 'task-events');
+            assert.equal(eventItems.length, 2);
+            const removedNames = eventItems.map(i => path.basename(i.path));
+            assert.ok(!removedNames.includes('T-001.jsonl'),
+                'T-001 (recently modified) must survive despite lowest task-id');
+            assert.ok(removedNames.includes('T-002.jsonl'),
+                'T-002 (stale) should be evicted');
+            assert.ok(removedNames.includes('T-003.jsonl'),
+                'T-003 (stale) should be evicted');
+        });
     });
 
     describe('review artifact cleanup', () => {
@@ -262,7 +294,8 @@ describe('runCleanup', () => {
             const reviewsDir = path.join(runtimeDir, 'reviews');
             fs.mkdirSync(reviewsDir, { recursive: true });
 
-            // Create review artifacts for 4 tasks
+            // Create review artifacts for 4 tasks (sequential creation means
+            // ascending mtime order matches ascending task-id order here)
             for (let i = 1; i <= 4; i++) {
                 createReviewArtifacts(reviewsDir, `T-${String(i).padStart(3, '0')}`);
             }
@@ -275,11 +308,48 @@ describe('runCleanup', () => {
 
             assert.equal(result.result, 'SUCCESS');
             const reviewItems = result.removed.filter(i => i.category === 'reviews');
-            // T-001 and T-002 (oldest) should be removed, 3 files each = 6 files
+            // T-001 and T-002 (least recently modified) should be removed, 3 files each = 6 files
             assert.equal(reviewItems.length, 6);
             // T-003 and T-004 should remain
             const remaining = fs.readdirSync(reviewsDir);
             assert.equal(remaining.length, 6); // 3 files x 2 remaining tasks
+        });
+
+        it('evicts least recently modified task groups, not lowest task-ids', () => {
+            const reviewsDir = path.join(runtimeDir, 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+
+            createReviewArtifacts(reviewsDir, 'T-001');
+            createReviewArtifacts(reviewsDir, 'T-002');
+            createReviewArtifacts(reviewsDir, 'T-003');
+
+            // Make T-001 the most recently modified and T-002/T-003 stale
+            const now = new Date();
+            const past = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
+            for (const file of fs.readdirSync(reviewsDir)) {
+                const filePath = path.join(reviewsDir, file);
+                if (file.startsWith('T-002-') || file.startsWith('T-003-')) {
+                    fs.utimesSync(filePath, past, past);
+                } else {
+                    fs.utimesSync(filePath, now, now);
+                }
+            }
+
+            const result = runCleanup({
+                targetRoot: tmpDir,
+                bundleRoot,
+                retentionPolicy: { maxReviews: 1, maxAgeDays: 365 }
+            });
+
+            const reviewItems = result.removed.filter(i => i.category === 'reviews');
+            assert.equal(reviewItems.length, 6); // 3 files each for 2 stale tasks
+            const removedNames = reviewItems.map(i => path.basename(i.path));
+            assert.ok(removedNames.every(p => !p.startsWith('T-001-')),
+                'T-001 (recently modified) must survive despite lowest task-id');
+            assert.ok(removedNames.some(p => p.startsWith('T-002-')),
+                'T-002 (stale) should be evicted');
+            assert.ok(removedNames.some(p => p.startsWith('T-003-')),
+                'T-003 (stale) should be evicted');
         });
     });
 

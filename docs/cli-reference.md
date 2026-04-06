@@ -223,6 +223,8 @@ Notes:
 - `cleanup` only operates on supported runtime artifact categories: backups, bundle-backups, task-event logs, review artifacts, update-rollbacks, and update-reports.
 - `--dry-run` reports projected removals and bytes reclaimed without mutating the filesystem.
 - Retention accepts both a global age limit (`--max-age-days`) and per-category count limits (`--max-backups`, `--max-task-events`, `--max-reviews`, `--max-update-rollbacks`, `--max-update-reports`, `--max-bundle-backups`).
+- Count-based eviction uses **real filesystem recency** (file modification time), not task-id ordering. When the number of items exceeds the cap, the least recently modified entries are removed first. When modification times are equal, task-id / filename order is used as a deterministic tie-breaker.
+- For review artifacts, recency is determined per task group: the most recent `mtime` among all files in a `T-xxx-*` group represents that group's freshness.
 - `runtime/task-events/all-tasks.jsonl` is always preserved and is never treated as a removable task-event artifact.
 - Cleanup runs under the lifecycle operation lock to avoid concurrent mutation of the same runtime state.
 

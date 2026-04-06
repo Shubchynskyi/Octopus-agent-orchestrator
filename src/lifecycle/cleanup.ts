@@ -98,6 +98,23 @@ function fileSizeBytes(filePath: string): number {
     }
 }
 
+function fileMtimeMs(filePath: string): number {
+    try {
+        return fs.statSync(filePath).mtimeMs;
+    } catch {
+        return 0;
+    }
+}
+
+function maxGroupMtime(dir: string, files: string[]): number {
+    let max = 0;
+    for (const file of files) {
+        const mtime = fileMtimeMs(path.join(dir, file));
+        if (mtime > max) max = mtime;
+    }
+    return max;
+}
+
 /**
  * Parse a timestamp-named entry (e.g. `20260402-123132-106`) into a Date.
  * Returns null if the name does not match the expected format.
@@ -205,7 +222,9 @@ function collectUpdateNamedDirs(
 /**
  * Collect stale review artifacts for completed tasks, keeping a capped set.
  * We identify review artifacts by their `T-xxx-` prefix pattern and group
- * by task id. Oldest groups exceeding the cap are collected.
+ * by task id. Groups are ranked by most-recent file mtime (real filesystem
+ * freshness); the least recently modified groups exceeding the cap are
+ * collected. Tie-breaks on task-id number for determinism.
  */
 function collectReviewArtifacts(
     reviewsDir: string,
@@ -236,8 +255,13 @@ function collectReviewArtifacts(
         }
     }
 
-    // Sort task ids by their numeric part (oldest = lowest number first)
+    // Sort task groups by most-recent file mtime (least recently modified
+    // first) so count-based eviction removes stale groups before active ones,
+    // regardless of task-id numbering. Tie-break on task-id for determinism.
     const sortedTaskIds = Array.from(taskGroups.keys()).sort((a, b) => {
+        const mtimeA = maxGroupMtime(reviewsDir, taskGroups.get(a) || []);
+        const mtimeB = maxGroupMtime(reviewsDir, taskGroups.get(b) || []);
+        if (mtimeA !== mtimeB) return mtimeA - mtimeB;
         const numA = parseInt(a.replace('T-', ''), 10);
         const numB = parseInt(b.replace('T-', ''), 10);
         return numA - numB;
@@ -286,8 +310,9 @@ function collectReviewArtifacts(
 
 /**
  * Collect task-event JSONL files exceeding the cap.
- * Sorted by task-id number; oldest excess are collected.
- * `all-tasks.jsonl` is never collected.
+ * Sorted by file modification time (least recently modified first) so
+ * count-based eviction targets stale files before active ones.
+ * Tie-breaks on filename for determinism. `all-tasks.jsonl` is never collected.
  */
 function collectTaskEventFiles(
     eventsDir: string,
@@ -301,10 +326,19 @@ function collectTaskEventFiles(
 
     let entries: string[];
     try {
-        entries = fs.readdirSync(eventsDir).filter(e => e.endsWith('.jsonl') && e !== 'all-tasks.jsonl').sort();
+        entries = fs.readdirSync(eventsDir).filter(e => e.endsWith('.jsonl') && e !== 'all-tasks.jsonl');
     } catch {
         return [];
     }
+
+    // Sort by file mtime (least recently modified first) so count-based
+    // eviction targets stale files before active ones. Tie-break on filename.
+    entries.sort((a, b) => {
+        const mtimeA = fileMtimeMs(path.join(eventsDir, a));
+        const mtimeB = fileMtimeMs(path.join(eventsDir, b));
+        if (mtimeA !== mtimeB) return mtimeA - mtimeB;
+        return a.localeCompare(b);
+    });
 
     const excessCount = Math.max(0, entries.length - maxTaskEvents);
 
