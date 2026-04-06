@@ -535,6 +535,34 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('fails task-mode entry when the review artifact path is already locked', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900artifact-lock';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const artifactPath = path.join(repoRoot, 'Octopus-agent-orchestrator', 'runtime', 'reviews', `${taskId}-task-mode.json`);
+        const lockPath = `${artifactPath}.lock`;
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+
+        assert.throws(
+            () => runEnterTaskModeCommand({
+                repoRoot,
+                taskId,
+                taskSummary: 'Update app flow'
+            }),
+            /Timed out acquiring file lock/
+        );
+        assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('runs compile gate and writes evidence', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901';
@@ -1250,6 +1278,89 @@ describe('cli/commands/gates', () => {
         assert.equal(reviewContext.reviewer_routing.fallback_reason, 'provider bridge does not expose subagent routing');
         assert.ok(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'));
         assert.ok(events.some((event) => event.event_type === 'REVIEW_RECORDED'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-receipt fails when the receipt artifact path is already locked', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904z-lock';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        fs.writeFileSync(artifactPath, [
+            '# Code Review T-904z-lock',
+            '## Summary',
+            'Verified fallback reviewer routing with concrete implementation detail and realistic wording.',
+            '## Findings by Severity',
+            'none',
+            '## Residual Risks',
+            'none',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: {
+                source_of_truth: 'Antigravity',
+                fallback_allowed: true,
+                fallback_reason_required: true,
+                actual_execution_mode: null,
+                reviewer_session_id: null,
+                fallback_reason: null
+            }
+        }, null, 2) + '\n', 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'provider bridge does not expose subagent routing'
+            ]);
+
+            const lockPath = `${receiptPath}.lock`;
+            fs.mkdirSync(lockPath, { recursive: true });
+            fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+                pid: process.pid,
+                hostname: os.hostname(),
+                created_at_utc: new Date().toISOString()
+            }, null, 2) + '\n', 'utf8');
+
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-receipt',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'provider bridge does not expose subagent routing'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 1);
+        assert.equal(fs.existsSync(receiptPath), false);
+        assert.ok(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'));
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -36,6 +36,10 @@ import {
     appendTaskEventAsync,
     assertValidTaskId
 } from '../../gate-runtime/task-events';
+import {
+    writeReviewArtifactJson,
+    writeReviewArtifactText
+} from '../../gate-runtime/review-artifacts';
 import { auditCommandCompactness } from '../../gates/task-events-summary';
 import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../gates/classify-change';
 import {
@@ -520,19 +524,11 @@ function normalizeOptionalPath(pathValue: unknown): string | null {
     return gateHelpers.normalizePath(pathValue);
 }
 
-function ensureParentDirectory(filePath: string | null | undefined): void {
-    if (!filePath) {
-        return;
-    }
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-}
-
 function writeJsonArtifact(filePath: string | null | undefined, payload: unknown): void {
     if (!filePath) {
         return;
     }
-    ensureParentDirectory(filePath);
-    fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    writeReviewArtifactJson(filePath, payload);
 }
 
 function removeArtifactIfExists(filePath: string | null | undefined): void {
@@ -741,17 +737,12 @@ function splitOutputLines(text: unknown): string[] {
     return lines;
 }
 
-function appendCompileOutputEntry(
-    outputPath: string | null | undefined,
+function formatCompileOutputEntry(
     commandIndex: number,
     totalCommands: number,
     command: string,
     outputLines: string[]
-): void {
-    if (!outputPath) {
-        return;
-    }
-    ensureParentDirectory(outputPath);
+): string {
     const lines = [
         `==== COMMAND ${commandIndex}/${totalCommands} ====`,
         `COMMAND: ${command}`,
@@ -761,7 +752,7 @@ function appendCompileOutputEntry(
         '---- OUTPUT END ----',
         ''
     ];
-    fs.appendFileSync(outputPath, `${lines.join(os.EOL)}${os.EOL}`, 'utf8');
+    return `${lines.join(os.EOL)}${os.EOL}`;
 }
 
 export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): { outputLines: string[]; exitCode: number } {
@@ -1834,7 +1825,9 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     let selectedCommandProfile: CompileCommandProfile | null = null;
     let selectedCommandIndex = 0;
     const compileOutputLines: string[] = [];
+    const compileOutputChunks: string[] = [];
     const startedAt = Date.now();
+    let compileOutputInitialized = false;
 
     try {
         const commandsPathValue = options.commandsPath
@@ -1906,8 +1899,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                 changed_lines_total: preflightContext.changed_lines_total
             });
             preflightHash = gateHelpers.fileSha256(resolvedPreflightPath);
-            ensureParentDirectory(compileOutputPath);
-            fs.writeFileSync(compileOutputPath, '', 'utf8');
+            compileOutputInitialized = true;
 
             for (let index = 0; index < compileCommands.length; index += 1) {
                 const compileCommand = compileCommands[index];
@@ -1918,7 +1910,9 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                 compileOutputLines.push(...execution.outputLines);
                 warningCount += stats.warningLines;
                 errorCount += stats.errorLines;
-                appendCompileOutputEntry(compileOutputPath, index + 1, compileCommands.length, compileCommand, execution.outputLines);
+                compileOutputChunks.push(
+                    formatCompileOutputEntry(index + 1, compileCommands.length, compileCommand, execution.outputLines)
+                );
 
                 if (execution.exitCode !== 0) {
                     exitCode = execution.exitCode;
@@ -1932,6 +1926,9 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                     selectedCommandProfile = commandProfile;
                     selectedCommandIndex = 1;
                 }
+            }
+            if (compileOutputPath && compileOutputInitialized) {
+                writeReviewArtifactText(compileOutputPath, compileOutputChunks.join(''));
             }
         }
     } catch (error) {

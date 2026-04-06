@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildReviewContextSections } from '../gate-runtime/review-context';
+import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
 import { normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
 import { resolveGateExecutionPath, resolveGateExecutionPathPosix } from './isolation-sandbox';
 import { readRuntimeReviewerProvider, resolveReviewerRoutingPolicy } from './reviewer-routing';
@@ -248,10 +249,6 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         stripCodeBlocks: stripCodeBlocksApplied
     });
 
-    // Write rule context artifact
-    fs.mkdirSync(path.dirname(ruleContextArtifactPath), { recursive: true });
-    fs.writeFileSync(ruleContextArtifactPath, String(ruleContextSections.artifact_text), 'utf8');
-
     const ruleContextArtifact = {
         artifact_path: normalizePath(ruleContextArtifactPath),
         artifact_sha256: ruleContextSections.artifact_sha256,
@@ -325,8 +322,10 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         }
     };
 
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, JSON.stringify(result, null, 2) + '\n', 'utf8');
+    withReviewArtifactLock(outputPath, () => {
+        writeArtifactFileAtomically(ruleContextArtifactPath, String(ruleContextSections.artifact_text));
+        writeArtifactFileAtomically(outputPath, JSON.stringify(result, null, 2) + '\n');
+    });
 
     return result;
 }

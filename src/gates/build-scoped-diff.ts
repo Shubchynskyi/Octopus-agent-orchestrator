@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildScopedDiffMetadata, convertToGitPathspecs } from '../gate-runtime/scoped-diff';
+import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
 import { matchAnyRegex } from '../gate-runtime/text-utils';
 import { normalizePath, resolveGitRoot, resolvePathInsideRepo, toStringArray, toPosix } from './helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
@@ -134,10 +135,8 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
         }
     }
 
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     let outputPayload = outputDiffText || '';
     if (outputPayload && !outputPayload.endsWith('\n')) outputPayload += '\n';
-    fs.writeFileSync(outputPath, outputPayload, 'utf8');
 
     function lineCount(text: string): number {
         if (!text) return 0;
@@ -161,8 +160,10 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
         output_diff_line_count: lineCount(outputPayload)
     };
 
-    fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
-    fs.writeFileSync(metadataPath, JSON.stringify(result, null, 2) + '\n', 'utf8');
+    withReviewArtifactLock(metadataPath, () => {
+        writeArtifactFileAtomically(outputPath, outputPayload);
+        writeArtifactFileAtomically(metadataPath, JSON.stringify(result, null, 2) + '\n');
+    });
 
     return result;
 }

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import { stringSha256 } from './hash';
+import { withReviewArtifactLock, writeArtifactFileAtomically } from './review-artifacts';
 import { estimateTokenCount, DEFAULT_TOKEN_ESTIMATOR, LEGACY_TOKEN_ESTIMATOR } from './token-telemetry';
 
 interface CompactMarkdownOptions {
@@ -368,25 +369,30 @@ export function applyReviewerRoutingMetadata(
     if (!reviewContextPath || !fs.existsSync(reviewContextPath) || !fs.statSync(reviewContextPath).isFile()) {
         return { updated: false, contextSha256: null };
     }
+    return withReviewArtifactLock(reviewContextPath, () => {
+        if (!fs.existsSync(reviewContextPath) || !fs.statSync(reviewContextPath).isFile()) {
+            return { updated: false, contextSha256: null };
+        }
 
-    const parsed = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
-    const currentRouting = parsed.reviewer_routing && typeof parsed.reviewer_routing === 'object' && !Array.isArray(parsed.reviewer_routing)
-        ? parsed.reviewer_routing as Record<string, unknown>
-        : {};
+        const parsed = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const currentRouting = parsed.reviewer_routing && typeof parsed.reviewer_routing === 'object' && !Array.isArray(parsed.reviewer_routing)
+            ? parsed.reviewer_routing as Record<string, unknown>
+            : {};
 
-    parsed.reviewer_routing = {
-        ...currentRouting,
-        actual_execution_mode: update.actualExecutionMode ?? null,
-        reviewer_session_id: update.reviewerSessionId ?? null,
-        fallback_reason: update.fallbackReason ?? null
-    };
+        parsed.reviewer_routing = {
+            ...currentRouting,
+            actual_execution_mode: update.actualExecutionMode ?? null,
+            reviewer_session_id: update.reviewerSessionId ?? null,
+            fallback_reason: update.fallbackReason ?? null
+        };
 
-    const serialized = JSON.stringify(parsed, null, 2) + '\n';
-    fs.writeFileSync(reviewContextPath, serialized, 'utf8');
-    return {
-        updated: true,
-        contextSha256: stringSha256(serialized)
-    };
+        const serialized = JSON.stringify(parsed, null, 2) + '\n';
+        writeArtifactFileAtomically(reviewContextPath, serialized);
+        return {
+            updated: true,
+            contextSha256: stringSha256(serialized)
+        };
+    }).result;
 }
 
 export function buildReviewContextSections(selectedRulePaths: string[], readFileCallback: (path: string) => string, options: CompactMarkdownOptions = {}): ReviewContextSectionsResult {

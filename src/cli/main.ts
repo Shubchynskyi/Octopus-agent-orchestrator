@@ -127,6 +127,7 @@ import {
     runRequiredReviewsCheckCommand,
     runShellSmokePreflightCommand
 } from './commands/gates';
+import { writeReviewArtifactJson } from '../gate-runtime/review-artifacts';
 import { handleOverview } from './commands/overview';
 import { handleSetup } from './commands/setup';
 import { handleSkills } from './commands/skills';
@@ -154,6 +155,19 @@ function requireResolvedPath(resolvedPath: string | null, label: string): string
         throw new Error(`${label} must not be empty.`);
     }
     return resolvedPath;
+}
+
+function removeArtifactIfExists(filePath: string | null | undefined): void {
+    if (!filePath) {
+        return;
+    }
+    try {
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+            fs.rmSync(filePath, { force: true });
+        }
+    } catch {
+        // Best-effort cleanup only. The original failure should surface.
+    }
 }
 
 function toKeyValueRecord(value: unknown): Record<string, unknown> {
@@ -1903,10 +1917,15 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             });
 
             const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
-            fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2), 'utf8');
+            writeReviewArtifactJson(receiptPath, receipt);
 
             const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
-            await emitReviewRecordedEventAsync(orchestratorRoot, taskId, reviewType, receipt);
+            try {
+                await emitReviewRecordedEventAsync(orchestratorRoot, taskId, reviewType, receipt);
+            } catch (error: unknown) {
+                removeArtifactIfExists(receiptPath);
+                throw error;
+            }
             console.log(`REVIEW_RECORDED: ${reviewType} (Receipt: ${normalizePath(receiptPath)})`);
             return;
         }

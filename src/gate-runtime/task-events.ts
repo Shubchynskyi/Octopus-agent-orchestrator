@@ -390,6 +390,7 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
     const timeoutMs = toPositiveInteger(options.timeoutMs, DEFAULT_LOCK_TIMEOUT_MS);
     const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
     const startedAt = Date.now();
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     let lastInspection: LockInspectionResult = inspectLock(lockPath, staleMs);
 
     while (true) {
@@ -433,6 +434,7 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
     const retryMs = toPositiveInteger(options.retryMs, DEFAULT_LOCK_RETRY_MS);
     const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
     const startedAt = Date.now();
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     let lastInspection: LockInspectionResult = inspectLock(lockPath, staleMs);
     let retries = 0;
     let contentionWarned = false;

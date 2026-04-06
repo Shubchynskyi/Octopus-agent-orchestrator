@@ -280,5 +280,48 @@ describe('gates/build-review-context', () => {
             assert.equal(result.reviewer_routing.reviewer_identity_required, false);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
+
+        it('fails fast when the review-context artifact is locked by a live writer', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-build-review-context-locked-'));
+            const orchestratorRoot = path.join(repoRoot, 'Octopus-agent-orchestrator');
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'reviews'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Codex'
+            }, null, 2), 'utf8');
+            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-1006-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-1006',
+                required_reviews: { code: true }
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
+                enabled: false
+            }, null, 2), 'utf8');
+            const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-1006-code-review-context.json');
+            const lockPath = `${outputPath}.lock`;
+            fs.mkdirSync(lockPath, { recursive: true });
+            fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+                pid: process.pid,
+                hostname: os.hostname(),
+                created_at_utc: new Date().toISOString()
+            }, null, 2) + '\n', 'utf8');
+
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'code',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                    scopedDiffMetadataPath: '',
+                    outputPath,
+                    repoRoot
+                }),
+                /Timed out acquiring file lock/
+            );
+            assert.equal(fs.existsSync(outputPath), false);
+            assert.equal(fs.existsSync(outputPath.replace(/\.json$/, '.md')), false);
+
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
     });
 });
