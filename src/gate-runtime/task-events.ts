@@ -97,8 +97,14 @@ interface AppendTaskEventResult {
     lock_telemetry?: {
         task_lock_retries: number;
         task_lock_elapsed_ms: number;
+        task_lock_contention_level: LockContentionLevel;
+        task_lock_stale_recovered: boolean;
+        task_lock_stale_reason: 'owner_dead' | 'age_exceeded' | null;
         aggregate_lock_retries: number;
         aggregate_lock_elapsed_ms: number;
+        aggregate_lock_contention_level: LockContentionLevel;
+        aggregate_lock_stale_recovered: boolean;
+        aggregate_lock_stale_reason: 'owner_dead' | 'age_exceeded' | null;
     };
 }
 
@@ -381,9 +387,36 @@ function tryRemoveStaleLock(lockPath: string, staleMs: number): { removed: boole
     return { removed: true, inspection };
 }
 
-interface AcquireLockTelemetry {
+export type LockContentionLevel = 'none' | 'low' | 'moderate' | 'high';
+
+export function classifyLockContention(retries: number, elapsedMs: number): LockContentionLevel {
+    if (retries === 0) return 'none';
+    if (retries < LOCK_CONTENTION_WARN_THRESHOLD && elapsedMs < 500) return 'low';
+    if (retries < 100 && elapsedMs < DEFAULT_LOCK_TIMEOUT_MS / 2) return 'moderate';
+    return 'high';
+}
+
+export interface AcquireLockTelemetry {
     retries: number;
     elapsedMs: number;
+    contentionLevel: LockContentionLevel;
+    staleLockRecovered: boolean;
+    staleLockReason: 'owner_dead' | 'age_exceeded' | null;
+}
+
+export interface LockWaitDiagnostics {
+    task_lock: LockWaitEntry;
+    aggregate_lock: LockWaitEntry;
+    overall_contention_level: LockContentionLevel;
+    summary: string;
+}
+
+interface LockWaitEntry {
+    retries: number;
+    elapsed_ms: number;
+    contention_level: LockContentionLevel;
+    stale_recovered: boolean;
+    stale_reason: 'owner_dead' | 'age_exceeded' | null;
 }
 
 export function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): { handle: LockHandle; telemetry: AcquireLockTelemetry } {
@@ -392,6 +425,8 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
     const startedAt = Date.now();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     let lastInspection: LockInspectionResult = inspectLock(lockPath, staleMs);
+    let staleLockRecovered = false;
+    let staleLockReason: 'owner_dead' | 'age_exceeded' | null = null;
 
     while (true) {
         try {
@@ -405,7 +440,16 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
                 throw metadataError;
             }
             const elapsedMs = Date.now() - startedAt;
-            return { handle: { lockPath }, telemetry: { retries: 0, elapsedMs } };
+            return {
+                handle: { lockPath },
+                telemetry: {
+                    retries: 0,
+                    elapsedMs,
+                    contentionLevel: classifyLockContention(0, elapsedMs),
+                    staleLockRecovered,
+                    staleLockReason
+                }
+            };
         } catch (error: unknown) {
             const errCode = error != null && typeof error === 'object' && 'code' in error
                 ? (error as { code?: string }).code
@@ -417,6 +461,8 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
             const staleAttempt = tryRemoveStaleLock(lockPath, staleMs);
             lastInspection = staleAttempt.inspection;
             if (staleAttempt.removed) {
+                staleLockRecovered = true;
+                staleLockReason = staleAttempt.inspection.staleReason;
                 continue;
             }
 
@@ -438,6 +484,8 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
     let lastInspection: LockInspectionResult = inspectLock(lockPath, staleMs);
     let retries = 0;
     let contentionWarned = false;
+    let staleLockRecovered = false;
+    let staleLockReason: 'owner_dead' | 'age_exceeded' | null = null;
 
     while (true) {
         try {
@@ -451,7 +499,22 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
                 throw metadataError;
             }
             const elapsedMs = Date.now() - startedAt;
-            return { handle: { lockPath }, telemetry: { retries, elapsedMs } };
+            const contentionLevel = classifyLockContention(retries, elapsedMs);
+            if (contentionLevel !== 'none' && contentionLevel !== 'low') {
+                process.stderr.write(
+                    `CONTENTION_RESOLVED: lock=${lockPath}; retries=${retries}; elapsed_ms=${elapsedMs}; contention_level=${contentionLevel}; stale_recovered=${staleLockRecovered}\n`
+                );
+            }
+            return {
+                handle: { lockPath },
+                telemetry: {
+                    retries,
+                    elapsedMs,
+                    contentionLevel,
+                    staleLockRecovered,
+                    staleLockReason
+                }
+            };
         } catch (error: unknown) {
             const errCode = error != null && typeof error === 'object' && 'code' in error
                 ? (error as { code?: string }).code
@@ -463,6 +526,8 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
             const staleAttempt = tryRemoveStaleLock(lockPath, staleMs);
             lastInspection = staleAttempt.inspection;
             if (staleAttempt.removed) {
+                staleLockRecovered = true;
+                staleLockReason = staleAttempt.inspection.staleReason;
                 continue;
             }
 
@@ -471,8 +536,10 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
             if (!contentionWarned && retries >= LOCK_CONTENTION_WARN_THRESHOLD) {
                 contentionWarned = true;
                 const elapsedMs = Date.now() - startedAt;
+                const ownerPid = lastInspection.metadata.pid !== null ? String(lastInspection.metadata.pid) : 'unknown';
+                const ownerHost = lastInspection.metadata.hostname || 'unknown';
                 process.stderr.write(
-                    `WARNING: lock contention on ${lockPath} (retries=${retries}, elapsed_ms=${elapsedMs})\n`
+                    `WARNING: lock contention on ${lockPath} (retries=${retries}, elapsed_ms=${elapsedMs}, owner_pid=${ownerPid}, owner_host=${ownerHost})\n`
                 );
             }
 
@@ -1196,8 +1263,14 @@ export function appendTaskEvent(
         lock_telemetry: {
             task_lock_retries: 0,
             task_lock_elapsed_ms: 0,
+            task_lock_contention_level: 'none',
+            task_lock_stale_recovered: false,
+            task_lock_stale_reason: null,
             aggregate_lock_retries: 0,
-            aggregate_lock_elapsed_ms: 0
+            aggregate_lock_elapsed_ms: 0,
+            aggregate_lock_contention_level: 'none',
+            aggregate_lock_stale_recovered: false,
+            aggregate_lock_stale_reason: null
         }
     };
 
@@ -1233,6 +1306,9 @@ export function appendTaskEvent(
         if (result.lock_telemetry) {
             result.lock_telemetry.task_lock_retries = taskLockResult.telemetry.retries;
             result.lock_telemetry.task_lock_elapsed_ms = taskLockResult.telemetry.elapsedMs;
+            result.lock_telemetry.task_lock_contention_level = taskLockResult.telemetry.contentionLevel;
+            result.lock_telemetry.task_lock_stale_recovered = taskLockResult.telemetry.staleLockRecovered;
+            result.lock_telemetry.task_lock_stale_reason = taskLockResult.telemetry.staleLockReason;
         }
     } catch (err: unknown) {
         const warning = `task-event append failed: ${getErrorMessage(err)}`;
@@ -1248,6 +1324,9 @@ export function appendTaskEvent(
         if (result.lock_telemetry) {
             result.lock_telemetry.aggregate_lock_retries = aggLockResult.telemetry.retries;
             result.lock_telemetry.aggregate_lock_elapsed_ms = aggLockResult.telemetry.elapsedMs;
+            result.lock_telemetry.aggregate_lock_contention_level = aggLockResult.telemetry.contentionLevel;
+            result.lock_telemetry.aggregate_lock_stale_recovered = aggLockResult.telemetry.staleLockRecovered;
+            result.lock_telemetry.aggregate_lock_stale_reason = aggLockResult.telemetry.staleLockReason;
         }
     } catch (err: unknown) {
         const warning = `task-event aggregate append failed: ${getErrorMessage(err)}`;
@@ -1306,8 +1385,14 @@ export async function appendTaskEventAsync(
         lock_telemetry: {
             task_lock_retries: 0,
             task_lock_elapsed_ms: 0,
+            task_lock_contention_level: 'none',
+            task_lock_stale_recovered: false,
+            task_lock_stale_reason: null,
             aggregate_lock_retries: 0,
-            aggregate_lock_elapsed_ms: 0
+            aggregate_lock_elapsed_ms: 0,
+            aggregate_lock_contention_level: 'none',
+            aggregate_lock_stale_recovered: false,
+            aggregate_lock_stale_reason: null
         }
     };
 
@@ -1348,6 +1433,9 @@ export async function appendTaskEventAsync(
         if (result.lock_telemetry) {
             result.lock_telemetry.task_lock_retries = taskLockResult.telemetry.retries;
             result.lock_telemetry.task_lock_elapsed_ms = taskLockResult.telemetry.elapsedMs;
+            result.lock_telemetry.task_lock_contention_level = taskLockResult.telemetry.contentionLevel;
+            result.lock_telemetry.task_lock_stale_recovered = taskLockResult.telemetry.staleLockRecovered;
+            result.lock_telemetry.task_lock_stale_reason = taskLockResult.telemetry.staleLockReason;
         }
     } catch (err: unknown) {
         const warning = `task-event append failed: ${getErrorMessage(err)}`;
@@ -1363,6 +1451,9 @@ export async function appendTaskEventAsync(
         if (result.lock_telemetry) {
             result.lock_telemetry.aggregate_lock_retries = aggLockResult.telemetry.retries;
             result.lock_telemetry.aggregate_lock_elapsed_ms = aggLockResult.telemetry.elapsedMs;
+            result.lock_telemetry.aggregate_lock_contention_level = aggLockResult.telemetry.contentionLevel;
+            result.lock_telemetry.aggregate_lock_stale_recovered = aggLockResult.telemetry.staleLockRecovered;
+            result.lock_telemetry.aggregate_lock_stale_reason = aggLockResult.telemetry.staleLockReason;
         }
     } catch (err: unknown) {
         const warning = `task-event aggregate append failed: ${getErrorMessage(err)}`;
@@ -1437,4 +1528,55 @@ export async function appendMandatoryTaskEventAsync(
         );
     }
     return result;
+}
+
+function pickHigherContention(a: LockContentionLevel, b: LockContentionLevel): LockContentionLevel {
+    const order: LockContentionLevel[] = ['none', 'low', 'moderate', 'high'];
+    return order.indexOf(a) >= order.indexOf(b) ? a : b;
+}
+
+function buildLockWaitSummary(entry: LockWaitEntry, label: string): string {
+    if (entry.contention_level === 'none') return '';
+    const parts = [`${label}: contention_level=${entry.contention_level}, retries=${entry.retries}, elapsed_ms=${entry.elapsed_ms}`];
+    if (entry.stale_recovered) {
+        parts.push(`stale_recovered=true (${entry.stale_reason || 'unknown'})`);
+    }
+    return parts.join(', ');
+}
+
+export function buildLockWaitDiagnostics(lockTelemetry: AppendTaskEventResult['lock_telemetry']): LockWaitDiagnostics {
+    const taskLock: LockWaitEntry = {
+        retries: lockTelemetry?.task_lock_retries ?? 0,
+        elapsed_ms: lockTelemetry?.task_lock_elapsed_ms ?? 0,
+        contention_level: lockTelemetry?.task_lock_contention_level ?? 'none',
+        stale_recovered: lockTelemetry?.task_lock_stale_recovered ?? false,
+        stale_reason: lockTelemetry?.task_lock_stale_reason ?? null
+    };
+
+    const aggregateLock: LockWaitEntry = {
+        retries: lockTelemetry?.aggregate_lock_retries ?? 0,
+        elapsed_ms: lockTelemetry?.aggregate_lock_elapsed_ms ?? 0,
+        contention_level: lockTelemetry?.aggregate_lock_contention_level ?? 'none',
+        stale_recovered: lockTelemetry?.aggregate_lock_stale_recovered ?? false,
+        stale_reason: lockTelemetry?.aggregate_lock_stale_reason ?? null
+    };
+
+    const overallLevel = pickHigherContention(taskLock.contention_level, aggregateLock.contention_level);
+
+    const summaryParts: string[] = [];
+    const taskSummary = buildLockWaitSummary(taskLock, 'task_lock');
+    if (taskSummary) summaryParts.push(taskSummary);
+    const aggSummary = buildLockWaitSummary(aggregateLock, 'aggregate_lock');
+    if (aggSummary) summaryParts.push(aggSummary);
+
+    const summary = summaryParts.length > 0
+        ? `Lock contention detected (overall=${overallLevel}): ${summaryParts.join('; ')}`
+        : 'No lock contention detected.';
+
+    return {
+        task_lock: taskLock,
+        aggregate_lock: aggregateLock,
+        overall_contention_level: overallLevel,
+        summary
+    };
 }

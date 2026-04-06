@@ -7,7 +7,8 @@ import * as path from 'node:path';
 import {
     withLifecycleOperationLock,
     withLifecycleOperationLockAsync,
-    getLifecycleOperationLockPath
+    getLifecycleOperationLockPath,
+    getLastLifecycleLockTelemetry
 } from '../../../src/lifecycle/common';
 
 function mkTmpDir(): string {
@@ -395,6 +396,60 @@ test('withLifecycleOperationLock stale recovery does not leave .stale- temp dire
             const staleEntries = entries.filter((e: string) => e.includes('.stale-'));
             assert.equal(staleEntries.length, 0, 'no stale temp directories should remain');
         });
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Lifecycle lock telemetry (getLastLifecycleLockTelemetry)
+// ---------------------------------------------------------------------------
+
+test('getLastLifecycleLockTelemetry returns telemetry after sync lock', () => {
+    const tmp = mkTmpDir();
+    try {
+        withLifecycleOperationLock(tmp, 'tel-test', () => 'done');
+        const tel = getLastLifecycleLockTelemetry();
+        assert.ok(tel != null, 'telemetry should be available');
+        assert.ok(typeof tel!.elapsedMs === 'number');
+        assert.equal(tel!.staleLockRecovered, false);
+        assert.equal(tel!.queueWaitMs, 0);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('getLastLifecycleLockTelemetry reports stale recovery after dead lock reclaim', () => {
+    const tmp = mkTmpDir();
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: os.hostname(),
+            operation: 'dead',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+
+        withLifecycleOperationLock(tmp, 'reclaim-tel', () => 'done');
+        const tel = getLastLifecycleLockTelemetry();
+        assert.ok(tel != null, 'telemetry should be available');
+        assert.equal(tel!.staleLockRecovered, true);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('getLastLifecycleLockTelemetry returns telemetry after async lock', async () => {
+    const tmp = mkTmpDir();
+    try {
+        await withLifecycleOperationLockAsync(tmp, 'async-tel-test', async () => 'done');
+        const tel = getLastLifecycleLockTelemetry();
+        assert.ok(tel != null, 'telemetry should be available');
+        assert.ok(typeof tel!.elapsedMs === 'number');
+        assert.ok(typeof tel!.queueWaitMs === 'number');
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
     }

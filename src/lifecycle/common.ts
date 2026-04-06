@@ -91,12 +91,24 @@ interface LifecycleOperationLockInspection {
     metadata: LifecycleOperationLockMetadata;
 }
 
+export interface LifecycleLockTelemetry {
+    elapsedMs: number;
+    staleLockRecovered: boolean;
+    queueWaitMs: number;
+}
+
 // Grace period before treating a lifecycle lock with missing/corrupt metadata
 // as reclaimable. Mirrors LOCK_METADATA_GRACE_MS from gate-runtime/task-events
 // to prevent SIGKILL-orphaned lock directories from blocking forever.
 const LIFECYCLE_LOCK_METADATA_GRACE_MS = 2000;
 
 const ACTIVE_LIFECYCLE_OPERATION_LOCKS = new Map<string, number>();
+
+let lastLifecycleLockTelemetry: LifecycleLockTelemetry | null = null;
+
+export function getLastLifecycleLockTelemetry(): LifecycleLockTelemetry | null {
+    return lastLifecycleLockTelemetry;
+}
 
 // ---------------------------------------------------------------------------
 // Version comparison used by update flows.
@@ -304,21 +316,26 @@ export function getLifecycleOperationLockPath(targetRoot: string): string {
     return path.join(normalizedTarget, 'Octopus-agent-orchestrator', 'runtime', LIFECYCLE_OPERATION_LOCK_DIR_NAME);
 }
 
-function acquireLifecycleOperationLock(targetRoot: string, operation: string): () => void {
+function acquireLifecycleOperationLock(targetRoot: string, operation: string): { release: () => void; telemetry: LifecycleLockTelemetry } {
+    const startedAt = Date.now();
     const normalizedTarget = path.resolve(targetRoot);
     const heldCount = ACTIVE_LIFECYCLE_OPERATION_LOCKS.get(normalizedTarget) || 0;
     if (heldCount > 0) {
         ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, heldCount + 1);
-        return function releaseNestedLock() {
-            const currentCount = ACTIVE_LIFECYCLE_OPERATION_LOCKS.get(normalizedTarget) || 0;
-            if (currentCount <= 1) {
-                ACTIVE_LIFECYCLE_OPERATION_LOCKS.delete(normalizedTarget);
-            } else {
-                ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, currentCount - 1);
-            }
+        return {
+            release: function releaseNestedLock() {
+                const currentCount = ACTIVE_LIFECYCLE_OPERATION_LOCKS.get(normalizedTarget) || 0;
+                if (currentCount <= 1) {
+                    ACTIVE_LIFECYCLE_OPERATION_LOCKS.delete(normalizedTarget);
+                } else {
+                    ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, currentCount - 1);
+                }
+            },
+            telemetry: { elapsedMs: Date.now() - startedAt, staleLockRecovered: false, queueWaitMs: 0 }
         };
     }
 
+    let staleLockRecovered = false;
     const lockPath = getLifecycleOperationLockPath(normalizedTarget);
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     try {
@@ -342,6 +359,7 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string): (
             }
             fs.rmSync(tempPath, { recursive: true, force: true });
             fs.mkdirSync(lockPath);
+            staleLockRecovered = true;
         } else {
             const ownerPid = inspection.metadata.pid != null ? String(inspection.metadata.pid) : 'unknown';
             const ownerHost = inspection.metadata.hostname || 'unknown';
@@ -361,19 +379,29 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string): (
     }
 
     ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, 1);
-    return function releaseLock() {
-        const currentCount = ACTIVE_LIFECYCLE_OPERATION_LOCKS.get(normalizedTarget) || 0;
-        if (currentCount <= 1) {
-            ACTIVE_LIFECYCLE_OPERATION_LOCKS.delete(normalizedTarget);
-            fs.rmSync(lockPath, { recursive: true, force: true });
-            return;
-        }
-        ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, currentCount - 1);
+    const elapsedMs = Date.now() - startedAt;
+    if (staleLockRecovered) {
+        process.stderr.write(
+            `LIFECYCLE_LOCK_STALE_RECOVERED: target=${normalizedTarget}; operation=${operation}; elapsed_ms=${elapsedMs}\n`
+        );
+    }
+    return {
+        release: function releaseLock() {
+            const currentCount = ACTIVE_LIFECYCLE_OPERATION_LOCKS.get(normalizedTarget) || 0;
+            if (currentCount <= 1) {
+                ACTIVE_LIFECYCLE_OPERATION_LOCKS.delete(normalizedTarget);
+                fs.rmSync(lockPath, { recursive: true, force: true });
+                return;
+            }
+            ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, currentCount - 1);
+        },
+        telemetry: { elapsedMs, staleLockRecovered, queueWaitMs: 0 }
     };
 }
 
 export function withLifecycleOperationLock<T>(targetRoot: string, operation: string, callback: () => T): T {
-    const release = acquireLifecycleOperationLock(targetRoot, operation);
+    const { release, telemetry } = acquireLifecycleOperationLock(targetRoot, operation);
+    lastLifecycleLockTelemetry = telemetry;
     try {
         return callback();
     } finally {
@@ -389,6 +417,7 @@ export async function withLifecycleOperationLockAsync<T>(
     callback: () => Promise<T>
 ): Promise<T> {
     const normalizedTarget = path.resolve(targetRoot);
+    const queueStartedAt = Date.now();
 
     // Serialize concurrent async callers targeting the same root.
     // Without this gate, the synchronous ACTIVE_LIFECYCLE_OPERATION_LOCKS
@@ -402,13 +431,16 @@ export async function withLifecycleOperationLockAsync<T>(
         previous = LIFECYCLE_ASYNC_QUEUES.get(normalizedTarget);
     }
 
+    const queueWaitMs = Date.now() - queueStartedAt;
     let resolveQueue!: () => void;
     const queueEntry = new Promise<void>((r) => { resolveQueue = r; });
     LIFECYCLE_ASYNC_QUEUES.set(normalizedTarget, queueEntry);
 
     let release: (() => void) | null = null;
     try {
-        release = acquireLifecycleOperationLock(targetRoot, operation);
+        const lockResult = acquireLifecycleOperationLock(targetRoot, operation);
+        release = lockResult.release;
+        lastLifecycleLockTelemetry = { ...lockResult.telemetry, queueWaitMs };
         return await callback();
     } finally {
         if (release) {
