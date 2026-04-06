@@ -11,6 +11,39 @@ function normalizePath(p: string): string {
     return path.resolve(p);
 }
 
+/**
+ * Resolve the real filesystem path, following symlinks and junctions.
+ * When the full path does not exist yet, walks up to the deepest existing
+ * ancestor, resolves that with `realpathSync`, then re-appends the
+ * non-existing tail segments. This ensures that any intermediate junction
+ * or symlink that redirects outside the permitted root is detected.
+ */
+export function resolveRealPath(p: string): string {
+    const resolved = path.resolve(p);
+    try {
+        return fs.realpathSync(resolved);
+    } catch {
+        // Path does not exist – walk up to the deepest existing ancestor.
+        const tail: string[] = [];
+        let current = resolved;
+        for (;;) {
+            const parent = path.dirname(current);
+            if (parent === current) {
+                // Reached the filesystem root without finding an existing dir.
+                return path.join(current, ...tail);
+            }
+            tail.unshift(path.basename(current));
+            current = parent;
+            try {
+                const realParent = fs.realpathSync(current);
+                return path.join(realParent, ...tail);
+            } catch {
+                // Keep walking up.
+            }
+        }
+    }
+}
+
 export function isSubpath(parent: string, child: string): boolean {
     const p = normalizePath(parent).toLowerCase();
     const c = normalizePath(child).toLowerCase();
@@ -23,6 +56,16 @@ export function ensureWithinRoot(root: string, candidate: string, description = 
     const resolvedRoot = normalizePath(root);
     if (!isSubpath(resolvedRoot, resolved)) {
         throw new Error(`${description} '${candidate}' resolves outside permitted root '${root}'`);
+    }
+    // Symlink / junction-aware check: resolve the real filesystem paths so
+    // that a junction pointing outside the root is caught even when the
+    // lexical path appears to be inside the root.
+    const realCandidate = resolveRealPath(resolved);
+    const realRoot = resolveRealPath(resolvedRoot);
+    if (!isSubpath(realRoot, realCandidate)) {
+        throw new Error(
+            `${description} '${candidate}' escapes permitted root '${root}' via symlink or junction`
+        );
     }
     return resolved;
 }
