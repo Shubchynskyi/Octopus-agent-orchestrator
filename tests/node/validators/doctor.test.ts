@@ -281,7 +281,7 @@ test('runDoctor reports stale task-event locks and supports dry-run cleanup outp
     );
     fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
         pid: 999999,
-        hostname: 'stale-host',
+        hostname: os.hostname(),
         created_at_utc: '2026-03-30T10:00:00.000Z'
     }, null, 2) + '\n', 'utf8');
 

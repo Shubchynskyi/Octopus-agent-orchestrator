@@ -5,6 +5,15 @@ import * as path from 'node:path';
 const REPO_CLI_SYNC_LOCK_TIMEOUT_MS = 15000;
 const REPO_CLI_SYNC_RETRY_MS = 50;
 const REPO_CLI_SYNC_MAX_RETRIES = 20;
+const {
+    resetBuildRoot,
+    withBuildRootLock
+} = require('./build-root-lock.cjs') as {
+    resetBuildRoot: (buildRoot: string) => void;
+    withBuildRootLock: <T>(buildRoot: string, operation: () => T) => T;
+};
+
+export { withBuildRootLock };
 
 export interface BuildResult {
     buildRoot: string;
@@ -25,6 +34,7 @@ export interface RepoCliSyncFsLike {
 }
 
 const DEFAULT_REPO_CLI_SYNC_FS: RepoCliSyncFsLike = fs;
+const SCRIPT_RUNTIME_SUPPORT_FILES = Object.freeze(['build-root-lock.cjs']);
 
 export function getRepoRoot(): string {
     let current = __dirname;
@@ -66,19 +76,6 @@ function collectFiles(rootPath: string, extension: string = '.js'): string[] {
     return files.sort();
 }
 
-function resetBuildRoot(buildRoot: string): void {
-    fs.mkdirSync(buildRoot, { recursive: true });
-
-    for (const entry of fs.readdirSync(buildRoot, { withFileTypes: true })) {
-        fs.rmSync(path.join(buildRoot, entry.name), {
-            recursive: true,
-            force: true,
-            maxRetries: 5,
-            retryDelay: 50
-        });
-    }
-}
-
 function runTsc(args: string[], repoRoot: string): void {
     const tscCliPath = path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
     if (!fs.existsSync(tscCliPath)) {
@@ -92,6 +89,19 @@ function runTsc(args: string[], repoRoot: string): void {
     });
     if (result.status !== 0) {
         throw new Error('TypeScript compilation failed (exit ' + result.status + ')');
+    }
+}
+
+function copyScriptRuntimeSupportFiles(compiledRoot: string, repoRoot: string): void {
+    const compiledScriptsRoot = path.join(compiledRoot, 'scripts', 'node-foundation');
+    fs.mkdirSync(compiledScriptsRoot, { recursive: true });
+
+    for (const fileName of SCRIPT_RUNTIME_SUPPORT_FILES) {
+        const sourcePath = path.join(repoRoot, 'scripts', 'node-foundation', fileName);
+        if (!fs.existsSync(sourcePath)) {
+            throw new Error(`Script runtime support file not found: ${sourcePath}`);
+        }
+        fs.copyFileSync(sourcePath, path.join(compiledScriptsRoot, fileName));
     }
 }
 
@@ -236,69 +246,72 @@ export function syncRepoCliFromScriptsBuild(): string {
 export function buildNodeFoundation(): BuildResult {
     const repoRoot = getRepoRoot();
     const buildRoot = path.join(repoRoot, '.node-build');
+    return withBuildRootLock(buildRoot, () => {
+        resetBuildRoot(buildRoot);
 
-    resetBuildRoot(buildRoot);
+        // Compile the maintained runtime/test/build graph into .node-build.
+        runTsc(['-p', 'tsconfig.tests.json'], repoRoot);
+        copyScriptRuntimeSupportFiles(buildRoot, repoRoot);
+        const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
 
-    // Compile the maintained runtime/test/build graph into .node-build.
-    runTsc(['-p', 'tsconfig.tests.json'], repoRoot);
-    const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
+        // Collect compiled files from all source roots
+        const allFiles: string[] = [];
 
-    // Collect compiled files from all source roots
-    const allFiles: string[] = [];
-
-    for (const subdir of ['src', 'tests/node', 'scripts/node-foundation']) {
-        const compiledRoot = path.join(buildRoot, ...subdir.split('/'));
-        if (fs.existsSync(compiledRoot)) {
-            for (const absPath of collectFiles(compiledRoot, '.js')) {
-                allFiles.push(path.relative(buildRoot, absPath).split(path.sep).join('/'));
+        for (const subdir of ['src', 'tests/node', 'scripts/node-foundation']) {
+            const compiledRoot = path.join(buildRoot, ...subdir.split('/'));
+            if (fs.existsSync(compiledRoot)) {
+                for (const absPath of collectFiles(compiledRoot, '.js')) {
+                    allFiles.push(path.relative(buildRoot, absPath).split(path.sep).join('/'));
+                }
             }
         }
-    }
 
-    const manifestPath = path.join(buildRoot, 'node-foundation-manifest.json');
-    fs.writeFileSync(
-        manifestPath,
-        JSON.stringify({
-            nodeEngineRange: getNodeEngineRange(),
-            sourceRoots: ['src', 'tests/node', 'scripts/node-foundation'],
-            files: allFiles
-        }, null, 2) + '\n',
-        'utf8'
-    );
+        const manifestPath = path.join(buildRoot, 'node-foundation-manifest.json');
+        fs.writeFileSync(
+            manifestPath,
+            JSON.stringify({
+                nodeEngineRange: getNodeEngineRange(),
+                sourceRoots: ['src', 'tests/node', 'scripts/node-foundation'],
+                files: allFiles
+            }, null, 2) + '\n',
+            'utf8'
+        );
 
-    return { buildRoot, copiedFiles: allFiles, generatedCliPath, manifestPath, repoRoot };
+        return { buildRoot, copiedFiles: allFiles, generatedCliPath, manifestPath, repoRoot };
+    });
 }
 
 export function buildPublishRuntime(): BuildResult {
     const repoRoot = getRepoRoot();
     const buildRoot = path.join(repoRoot, 'dist');
+    return withBuildRootLock(buildRoot, () => {
+        resetBuildRoot(buildRoot);
 
-    resetBuildRoot(buildRoot);
+        // Compile src/ with tsc to dist/
+        runTsc(['-p', 'tsconfig.build.json'], repoRoot);
+        const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
 
-    // Compile src/ with tsc to dist/
-    runTsc(['-p', 'tsconfig.build.json'], repoRoot);
-    const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
+        // Collect compiled files
+        const srcBuildRoot = path.join(buildRoot, 'src');
+        const copiedFiles: string[] = fs.existsSync(srcBuildRoot)
+            ? collectFiles(srcBuildRoot, '.js').map((f: string) =>
+                path.relative(buildRoot, f).split(path.sep).join('/')
+            )
+            : [];
 
-    // Collect compiled files
-    const srcBuildRoot = path.join(buildRoot, 'src');
-    const copiedFiles: string[] = fs.existsSync(srcBuildRoot)
-        ? collectFiles(srcBuildRoot, '.js').map((f: string) =>
-            path.relative(buildRoot, f).split(path.sep).join('/')
-        )
-        : [];
+        const manifestPath = path.join(buildRoot, 'publish-runtime-manifest.json');
+        fs.writeFileSync(
+            manifestPath,
+            JSON.stringify({
+                nodeEngineRange: getNodeEngineRange(),
+                sourceRoots: ['src'],
+                files: copiedFiles
+            }, null, 2) + '\n',
+            'utf8'
+        );
 
-    const manifestPath = path.join(buildRoot, 'publish-runtime-manifest.json');
-    fs.writeFileSync(
-        manifestPath,
-        JSON.stringify({
-            nodeEngineRange: getNodeEngineRange(),
-            sourceRoots: ['src'],
-            files: copiedFiles
-        }, null, 2) + '\n',
-        'utf8'
-    );
-
-    return { buildRoot, copiedFiles, generatedCliPath, manifestPath, repoRoot };
+        return { buildRoot, copiedFiles, generatedCliPath, manifestPath, repoRoot };
+    });
 }
 
 export function runNodeFoundationBuild(): BuildResult {

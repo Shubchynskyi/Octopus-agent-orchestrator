@@ -177,7 +177,7 @@ test('getWhyBlocked surfaces stale task-event lock as blocking reason for matchi
         );
         fs.writeFileSync(path.join(eventsDir, '.T-005.lock', 'owner.json'), JSON.stringify({
             pid: 999999,
-            hostname: 'stale-host',
+            hostname: os.hostname(),
             created_at_utc: '2026-03-30T10:00:00.000Z'
         }, null, 2) + '\n', 'utf8');
 

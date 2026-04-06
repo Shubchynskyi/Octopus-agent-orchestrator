@@ -68,7 +68,7 @@ function seedStaleTaskEventLock(bundleRoot: string, lockName: string) {
     fs.mkdirSync(lockPath, { recursive: true });
     fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
         pid: 999999,
-        hostname: 'test-host',
+        hostname: os.hostname(),
         created_at_utc: '2020-01-01T00:00:00.000Z'
     }), 'utf8');
     fs.utimesSync(path.join(lockPath, 'owner.json'), oldDate, oldDate);
