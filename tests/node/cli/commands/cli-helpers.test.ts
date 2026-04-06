@@ -28,6 +28,7 @@ import {
     parseOptionalText,
     parseOptions,
     parseRequiredText,
+    isBooleanText,
     readBundleVersion,
     readOptionalJsonFile,
     removePathIfExists,
@@ -116,6 +117,113 @@ test('parseOptions throws when string flag missing value', () => {
         () => parseOptions(['--target-root'], defs),
         /requires a value/
     );
+});
+
+// ---------------------------------------------------------------------------
+// parseOptions: boolean space-separated value consumption
+// ---------------------------------------------------------------------------
+
+test('parseOptions consumes space-separated false for boolean flags', () => {
+    const defs = {
+        '--behavior-changed': { key: 'behaviorChanged', type: 'boolean' },
+        '--rationale': { key: 'rationale', type: 'string' }
+    };
+    const { options } = parseOptions(['--behavior-changed', 'false', '--rationale', 'none'], defs);
+    assert.equal(options.behaviorChanged, false);
+    assert.equal(options.rationale, 'none');
+});
+
+test('parseOptions consumes space-separated true for boolean flags', () => {
+    const defs = {
+        '--sensitive-scope-reviewed': { key: 'sensitiveReviewed', type: 'boolean' }
+    };
+    const { options } = parseOptions(['--sensitive-scope-reviewed', 'true'], defs);
+    assert.equal(options.sensitiveReviewed, true);
+});
+
+test('parseOptions handles mixed boolean forms in a single invocation', () => {
+    const defs = {
+        '--behavior-changed': { key: 'behaviorChanged', type: 'boolean' },
+        '--changelog-updated': { key: 'changelogUpdated', type: 'boolean' },
+        '--sensitive-scope-reviewed': { key: 'sensitiveReviewed', type: 'boolean' },
+        '--rationale': { key: 'rationale', type: 'string' }
+    };
+    const { options } = parseOptions([
+        '--behavior-changed', 'false',
+        '--changelog-updated=false',
+        '--sensitive-scope-reviewed', 'true',
+        '--rationale', 'test'
+    ], defs);
+    assert.equal(options.behaviorChanged, false);
+    assert.equal(options.changelogUpdated, false);
+    assert.equal(options.sensitiveReviewed, true);
+    assert.equal(options.rationale, 'test');
+});
+
+test('parseOptions bare boolean flag defaults to true when next arg is another flag', () => {
+    const defs = {
+        '--dry-run': { key: 'dryRun', type: 'boolean' },
+        '--no-prompt': { key: 'noPrompt', type: 'boolean' }
+    };
+    const { options } = parseOptions(['--dry-run', '--no-prompt'], defs);
+    assert.equal(options.dryRun, true);
+    assert.equal(options.noPrompt, true);
+});
+
+test('parseOptions bare boolean flag defaults to true at end of args', () => {
+    const defs = { '--dry-run': { key: 'dryRun', type: 'boolean' } };
+    const { options } = parseOptions(['--dry-run'], defs);
+    assert.equal(options.dryRun, true);
+});
+
+test('parseOptions does not consume non-boolean tokens as boolean values', () => {
+    const defs = {
+        '--dry-run': { key: 'dryRun', type: 'boolean' },
+        '--target-root': { key: 'targetRoot', type: 'string' }
+    };
+    const { options } = parseOptions(['--dry-run', '--target-root', '/workspace'], defs);
+    assert.equal(options.dryRun, true);
+    assert.equal(options.targetRoot, '/workspace');
+});
+
+test('parseOptions consumes all canonical boolean literals via space', () => {
+    const defs = { '--flag': { key: 'flag', type: 'boolean' } };
+    for (const val of ['true', 'yes', 'y', '1', 'on', 'да']) {
+        assert.equal(parseOptions(['--flag', val], defs).options.flag, true, `--flag ${val}`);
+    }
+    for (const val of ['false', 'no', 'n', '0', 'off', 'нет']) {
+        assert.equal(parseOptions(['--flag', val], defs).options.flag, false, `--flag ${val}`);
+    }
+});
+
+test('parseOptions rejects positional after boolean flag when non-boolean text follows', () => {
+    const defs = { '--flag': { key: 'flag', type: 'boolean' } };
+    assert.throws(
+        () => parseOptions(['--flag', 'notaboolean'], defs),
+        /Unexpected positional/
+    );
+});
+
+// ---------------------------------------------------------------------------
+// isBooleanText
+// ---------------------------------------------------------------------------
+
+test('isBooleanText recognizes canonical true/false literals', () => {
+    for (const val of ['true', 'false', 'yes', 'no', 'y', 'n', '1', '0', 'on', 'off', 'да', 'нет']) {
+        assert.equal(isBooleanText(val), true, `expected isBooleanText('${val}') to be true`);
+    }
+});
+
+test('isBooleanText is case-insensitive', () => {
+    assert.equal(isBooleanText('TRUE'), true);
+    assert.equal(isBooleanText('False'), true);
+    assert.equal(isBooleanText('YES'), true);
+});
+
+test('isBooleanText rejects non-boolean text', () => {
+    assert.equal(isBooleanText('maybe'), false);
+    assert.equal(isBooleanText(''), false);
+    assert.equal(isBooleanText('hello'), false);
 });
 
 // ---------------------------------------------------------------------------

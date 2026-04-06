@@ -258,7 +258,14 @@ export function parseOptions(
         if (!definition) throw new Error(`Unknown option: ${argument}`);
 
         if (definition.type === 'boolean') {
-            options[definition.key] = inlineValue === undefined ? true : parseBooleanText(inlineValue, optionName);
+            if (inlineValue !== undefined) {
+                options[definition.key] = parseBooleanText(inlineValue, optionName);
+            } else if (index + 1 < argv.length && !argv[index + 1].startsWith('-') && isBooleanText(argv[index + 1])) {
+                index += 1;
+                options[definition.key] = parseBooleanText(argv[index], optionName);
+            } else {
+                options[definition.key] = true;
+            }
             continue;
         }
 
@@ -295,6 +302,11 @@ export function getInitAnswerValue(answers: Record<string, unknown>, logicalName
         if (normalizeLogicalKey(key) === targetKey) return value;
     }
     return null;
+}
+
+export function isBooleanText(text: string): boolean {
+    const normalized = text.trim().toLowerCase();
+    return BOOLEAN_TRUE_VALUES.includes(normalized) || BOOLEAN_FALSE_VALUES.includes(normalized);
 }
 
 export function parseBooleanText(value: unknown, label: string): boolean {

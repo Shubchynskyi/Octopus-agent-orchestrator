@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { BOOLEAN_FALSE_VALUES, BOOLEAN_TRUE_VALUES, DEFAULT_BUNDLE_NAME } from '../core/constants';
 
 export interface ResolvePathOptions {
     allowMissing?: boolean;
@@ -360,8 +360,8 @@ export function parseBool(value: unknown, defaultValue = false): boolean {
     if (value == null) return !!defaultValue;
     if (typeof value === 'boolean') return value;
     const text = String(value).trim().toLowerCase();
-    if (['1', 'true', 'yes', 'y', 'on', 'да'].includes(text)) return true;
-    if (['0', 'false', 'no', 'n', 'off', 'нет'].includes(text)) return false;
+    if (BOOLEAN_TRUE_VALUES.includes(text)) return true;
+    if (BOOLEAN_FALSE_VALUES.includes(text)) return false;
     return !!defaultValue;
 }
 
