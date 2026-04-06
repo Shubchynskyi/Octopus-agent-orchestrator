@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { SOURCE_OF_TRUTH_VALUES, SOURCE_TO_ENTRYPOINT_MAP } from '../core/constants';
+import { redactPath } from '../core/redaction';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import {
     getProviderOrchestratorProfileDefinitions,
@@ -286,8 +287,8 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
         start_task_router_exists: startTaskRouterExists,
         execution_context: executionContext,
         cli_path: cliPath,
-        effective_cwd: effectiveCwd,
-        workspace_root: toPosix(repoRoot),
+        effective_cwd: redactPath(effectiveCwd, repoRoot),
+        workspace_root: redactPath(toPosix(repoRoot)),
         diagnostics,
         violations
     };

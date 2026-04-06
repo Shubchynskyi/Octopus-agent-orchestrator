@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { redactHostname as redactHostnameValue } from '../core/redaction';
 
 // ---------------------------------------------------------------------------
 // Root boundary helpers
@@ -362,7 +363,7 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string): {
             staleLockRecovered = true;
         } else {
             const ownerPid = inspection.metadata.pid != null ? String(inspection.metadata.pid) : 'unknown';
-            const ownerHost = inspection.metadata.hostname || 'unknown';
+            const ownerHost = redactHostnameValue(inspection.metadata.hostname) || 'unknown';
             const ownerOperation = inspection.metadata.operation || 'unknown';
             throw new Error(
                 `Another lifecycle operation is already running for '${normalizedTarget}' ` +

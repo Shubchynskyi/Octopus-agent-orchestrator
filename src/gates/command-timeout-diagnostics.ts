@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { redactPath } from '../core/redaction';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import {
     fileSha256,
@@ -325,8 +326,8 @@ export function buildCommandTimeoutDiagnostics(options: BuildCommandTimeoutDiagn
         outcome: hasErrors ? 'FAIL' : 'PASS',
         provider,
         execution_context: isSourceCheckout ? 'source-checkout' : 'materialized-bundle',
-        effective_cwd: effectiveCwd,
-        workspace_root: toPosix(repoRoot),
+        effective_cwd: redactPath(effectiveCwd, repoRoot),
+        workspace_root: redactPath(toPosix(repoRoot)),
         commands,
         violations,
         summary

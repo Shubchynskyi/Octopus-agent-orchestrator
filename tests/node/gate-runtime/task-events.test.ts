@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 
+import { redactHostname } from '../../../src/core/redaction';
 import {
     assertValidTaskId,
     appendMandatoryTaskEvent,
@@ -561,7 +562,8 @@ test('appendTaskEvent does not reclaim aged foreign-host lock by default', () =>
         assert.ok(result !== null);
         assert.equal(result!.warnings.length, 1);
         assert.match(result!.warnings[0], /Timed out acquiring file lock/);
-        assert.match(result!.warnings[0], /owner_hostname=remote-build-host/);
+        const expectedHostToken = redactHostname('remote-build-host');
+        assert.ok(result!.warnings[0].includes(`owner_hostname=${expectedHostToken}`), 'hostname should be redacted');
         assert.match(result!.warnings[0], /owner_alive=unknown/);
         assert.ok(fs.existsSync(lockPath), 'foreign-host lock should remain in place');
     } finally {

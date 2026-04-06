@@ -1,4 +1,5 @@
 import { stringSha256 } from './hash';
+import { redactHostname as redactHostnameValue } from '../core/redaction';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -345,7 +346,7 @@ function formatLockDiagnostic(lockPath: string, inspection: LockInspectionResult
     const ageText = typeof inspection.ageMs === 'number' ? `${inspection.ageMs}ms` : 'unknown';
     const ownerPidText = inspection.metadata.pid !== null ? String(inspection.metadata.pid) : 'unknown';
     const ownerAliveText = inspection.ownerAlive === null ? 'unknown' : (inspection.ownerAlive ? 'yes' : 'no');
-    const ownerHostText = inspection.metadata.hostname || 'unknown';
+    const ownerHostText = redactHostnameValue(inspection.metadata.hostname) || 'unknown';
     const createdAtText = inspection.metadata.created_at_utc || 'unknown';
     const staleReasonText = inspection.staleReason || 'none';
     return [
@@ -537,7 +538,7 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
                 contentionWarned = true;
                 const elapsedMs = Date.now() - startedAt;
                 const ownerPid = lastInspection.metadata.pid !== null ? String(lastInspection.metadata.pid) : 'unknown';
-                const ownerHost = lastInspection.metadata.hostname || 'unknown';
+                const ownerHost = redactHostnameValue(lastInspection.metadata.hostname) || 'unknown';
                 process.stderr.write(
                     `WARNING: lock contention on ${lockPath} (retries=${retries}, elapsed_ms=${elapsedMs}, owner_pid=${ownerPid}, owner_host=${ownerHost})\n`
                 );
@@ -613,7 +614,7 @@ function buildTaskEventLockHealth(lockRoot: string, entryName: string, inspectio
         status: inspection.staleReason ? 'STALE' : 'ACTIVE',
         age_ms: inspection.ageMs,
         owner_pid: inspection.metadata.pid,
-        owner_hostname: inspection.metadata.hostname,
+        owner_hostname: redactHostnameValue(inspection.metadata.hostname),
         owner_created_at_utc: inspection.metadata.created_at_utc,
         owner_alive: inspection.ownerAlive,
         owner_metadata_status: inspection.metadata.metadata_status,

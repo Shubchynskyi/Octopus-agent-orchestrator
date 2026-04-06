@@ -2,6 +2,7 @@ import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { redactPath } from '../core/redaction';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import {
     fileSha256,
@@ -227,8 +228,8 @@ export function buildShellSmokePreflight(options: BuildShellSmokePreflightOption
         outcome: hasErrors ? 'FAIL' : 'PASS',
         provider,
         execution_context: isSourceCheckout ? 'source-checkout' : 'materialized-bundle',
-        effective_cwd: effectiveCwd,
-        workspace_root: toPosix(repoRoot),
+        effective_cwd: redactPath(effectiveCwd, repoRoot),
+        workspace_root: redactPath(toPosix(repoRoot)),
         probes,
         violations
     };
