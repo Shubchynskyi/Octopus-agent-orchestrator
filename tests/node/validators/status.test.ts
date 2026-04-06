@@ -9,6 +9,9 @@ import {
     formatStatusSnapshot,
     resolveInitAnswersPath
 } from '../../../src/validators/status';
+import {
+    writeProtectedControlPlaneManifest
+} from '../../../src/gates/helpers';
 
 const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
 const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
@@ -388,6 +391,163 @@ test('formatStatusSnapshot includes compliance pass badge when compliant', () =>
         assert.equal(snapshot.readyForTasks, true);
         const output = formatStatusSnapshot(snapshot);
         assert.ok(output.includes('[x] Provider control compliance'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot surfaces protected-manifest MATCH when trusted manifest exists', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-pm-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        // Build and write a matching trusted manifest from the current workspace state
+        writeProtectedControlPlaneManifest(tmpDir);
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.ok(snapshot.protectedManifestEvidence !== null);
+        assert.equal(snapshot.protectedManifestEvidence!.status, 'MATCH');
+        assert.equal(snapshot.readyForTasks, true);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('Protected manifest (MATCH)'));
+        assert.ok(output.includes('[x] Protected manifest'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot surfaces protected-manifest MISSING when no trusted manifest', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-pm-missing-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.ok(snapshot.protectedManifestEvidence !== null);
+        assert.equal(snapshot.protectedManifestEvidence!.status, 'MISSING');
+        // MISSING is tolerated — workspace stays ready
+        assert.equal(snapshot.readyForTasks, true);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('Protected manifest (MISSING)'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot surfaces protected-manifest DRIFT and blocks readyForTasks', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-pm-drift-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+
+        // Create a protected file and a manifest referencing a stale hash
+        const protectedDir = path.join(bundlePath, 'dist');
+        fs.mkdirSync(protectedDir, { recursive: true });
+        fs.writeFileSync(path.join(protectedDir, 'index.js'), 'console.log("hello");', 'utf8');
+
+        fs.writeFileSync(
+            path.join(bundlePath, 'runtime', 'protected-control-plane-manifest.json'),
+            JSON.stringify({
+                schema_version: 1,
+                event_source: 'refresh-protected-control-plane-manifest',
+                timestamp_utc: new Date().toISOString(),
+                workspace_root: tmpDir.replace(/\\/g, '/'),
+                orchestrator_root: bundlePath.replace(/\\/g, '/'),
+                protected_roots: ['Octopus-agent-orchestrator/dist'],
+                protected_snapshot: {
+                    'Octopus-agent-orchestrator/dist/index.js': 'stale-hash-does-not-match'
+                },
+                is_source_checkout: false
+            }, null, 2),
+            'utf8'
+        );
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.ok(snapshot.protectedManifestEvidence !== null);
+        assert.equal(snapshot.protectedManifestEvidence!.status, 'DRIFT');
+        assert.ok(snapshot.protectedManifestEvidence!.changed_files.length > 0);
+        assert.equal(snapshot.readyForTasks, false);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('Protected manifest (DRIFT)'));
+        assert.ok(output.includes('[ ] Protected manifest'));
+        assert.ok(output.includes('Drift:'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot surfaces protected-manifest INVALID and blocks readyForTasks', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-pm-invalid-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+        fs.writeFileSync(
+            path.join(bundlePath, 'runtime', 'protected-control-plane-manifest.json'),
+            '{ invalid json',
+            'utf8'
+        );
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.ok(snapshot.protectedManifestEvidence !== null);
+        assert.equal(snapshot.protectedManifestEvidence!.status, 'INVALID');
+        assert.equal(snapshot.readyForTasks, false);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('Protected manifest (INVALID)'));
+        assert.ok(output.includes('[ ] Protected manifest'));
+        assert.ok(output.includes('malformed'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -8,6 +8,9 @@ import {
     runDoctor,
     formatDoctorResult
 } from '../../../src/validators/doctor';
+import {
+    writeProtectedControlPlaneManifest
+} from '../../../src/gates/helpers';
 
 test('runDoctor throws for missing bundle', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-test-'));
@@ -177,7 +180,8 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
             remediation: null
         },
         providerComplianceResult: null,
-        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] }
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
+        protectedManifestEvidence: null
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -257,7 +261,8 @@ test('formatDoctorResult includes timeline completeness warnings', () => {
             remediation: null
         },
         providerComplianceResult: null,
-        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] }
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
+        protectedManifestEvidence: null
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -456,7 +461,8 @@ test('formatDoctorResult shows nested bundle duplication warning', () => {
         nestedBundleDuplication: {
             duplicatesFound: true,
             duplicatePaths: ['Octopus-agent-orchestrator/Octopus-agent-orchestrator']
-        }
+        },
+        protectedManifestEvidence: null
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -495,4 +501,199 @@ test('runDoctor detects nested bundle duplication in real workspace', () => {
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+});
+
+test('runDoctor surfaces protected-manifest MATCH when trusted manifest is current', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-pm-match-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    fs.mkdirSync(bundlePath, { recursive: true });
+    fs.writeFileSync(
+        path.join(bundlePath, 'MANIFEST.md'),
+        '- bin/octopus.js\n- package.json\n',
+        'utf8'
+    );
+
+    // Build and write a matching trusted manifest from the current workspace state
+    writeProtectedControlPlaneManifest(tmpDir);
+
+    try {
+        const result = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude'
+        });
+        assert.ok(result.protectedManifestEvidence !== null);
+        assert.equal(result.protectedManifestEvidence!.status, 'MATCH');
+        // MATCH does not fail doctor
+        const output = formatDoctorResult(result);
+        assert.ok(output.includes('Protected Control-Plane Manifest'));
+        assert.ok(output.includes('Status: MATCH'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('runDoctor surfaces protected-manifest DRIFT and fails overall', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-pm-drift-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    fs.mkdirSync(bundlePath, { recursive: true });
+    fs.writeFileSync(
+        path.join(bundlePath, 'MANIFEST.md'),
+        '- bin/octopus.js\n- package.json\n',
+        'utf8'
+    );
+
+    // Create a protected file and a manifest with stale hash
+    const distDir = path.join(bundlePath, 'dist');
+    fs.mkdirSync(distDir, { recursive: true });
+    fs.writeFileSync(path.join(distDir, 'index.js'), 'console.log("hi");', 'utf8');
+
+    const runtimeDir = path.join(bundlePath, 'runtime');
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(runtimeDir, 'protected-control-plane-manifest.json'),
+        JSON.stringify({
+            schema_version: 1,
+            event_source: 'refresh-protected-control-plane-manifest',
+            timestamp_utc: new Date().toISOString(),
+            workspace_root: tmpDir.replace(/\\/g, '/'),
+            orchestrator_root: bundlePath.replace(/\\/g, '/'),
+            protected_roots: ['Octopus-agent-orchestrator/dist'],
+            protected_snapshot: {
+                'Octopus-agent-orchestrator/dist/index.js': 'stale-hash-does-not-match'
+            },
+            is_source_checkout: false
+        }, null, 2),
+        'utf8'
+    );
+
+    try {
+        const result = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude'
+        });
+        assert.ok(result.protectedManifestEvidence !== null);
+        assert.equal(result.protectedManifestEvidence!.status, 'DRIFT');
+        assert.ok(result.protectedManifestEvidence!.changed_files.length > 0);
+        assert.equal(result.passed, false, 'doctor should fail on protected-manifest DRIFT');
+
+        const output = formatDoctorResult(result);
+        assert.ok(output.includes('Protected Control-Plane Manifest'));
+        assert.ok(output.includes('Status: DRIFT'));
+        assert.ok(output.includes('DriftCount:'));
+        assert.ok(output.includes('Doctor: FAIL'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('runDoctor surfaces protected-manifest INVALID and fails overall', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-pm-invalid-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    fs.mkdirSync(bundlePath, { recursive: true });
+    fs.writeFileSync(
+        path.join(bundlePath, 'MANIFEST.md'),
+        '- bin/octopus.js\n- package.json\n',
+        'utf8'
+    );
+
+    const runtimeDir = path.join(bundlePath, 'runtime');
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(runtimeDir, 'protected-control-plane-manifest.json'),
+        '{ malformed json',
+        'utf8'
+    );
+
+    try {
+        const result = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude'
+        });
+        assert.ok(result.protectedManifestEvidence !== null);
+        assert.equal(result.protectedManifestEvidence!.status, 'INVALID');
+        assert.equal(result.passed, false, 'doctor should fail on protected-manifest INVALID');
+
+        const output = formatDoctorResult(result);
+        assert.ok(output.includes('Status: INVALID'));
+        assert.ok(output.includes('regenerate'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('formatDoctorResult includes protected manifest section in clean output', () => {
+    const fakeResult = {
+        passed: true,
+        targetRoot: '/tmp/test',
+        verifyResult: {
+            passed: true,
+            targetRoot: '/tmp/test',
+            sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md',
+            bundleVersion: '1.0.0',
+            requiredPathsChecked: 10,
+            violations: {
+                missingPaths: [],
+                initAnswersContractViolations: [],
+                versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [],
+                pathsContractViolations: [],
+                tokenEconomyContractViolations: [],
+                outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [],
+                skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [],
+                templatePlaceholderViolations: [],
+                commandsContractViolations: [],
+                manifestContractViolations: [],
+                coreRuleContractViolations: [],
+                entrypointContractViolations: [],
+                taskContractViolations: [],
+                qwenSettingsViolations: [],
+                skillsIndexContractViolations: [],
+                skillPackContractViolations: [],
+                gitignoreMissing: []
+            },
+            totalViolationCount: 0
+        },
+        manifestResult: {
+            passed: true,
+            manifestPath: '/tmp/test/MANIFEST.md',
+            entriesChecked: 5,
+            duplicates: [],
+            diagnostics: []
+        },
+        manifestError: null,
+        timelineEvidence: [],
+        timelineWarnings: [],
+        lockHealth: {
+            lock_root: '/tmp/test/runtime/task-events',
+            subsystem_scope_note: 'Only runtime/task-events/*.lock participates in the task-event lock subsystem. runtime/reviews/ is never cleaned by these diagnostics.',
+            locks: [],
+            active_count: 0,
+            stale_count: 0
+        },
+        lockCleanup: null,
+        parityResult: {
+            isSourceCheckout: false,
+            isStale: false,
+            violations: [],
+            rootVersion: null,
+            bundleVersion: null,
+            remediation: null
+        },
+        providerComplianceResult: null,
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
+        protectedManifestEvidence: {
+            status: 'MATCH' as const,
+            manifest_path: '/tmp/test/Octopus-agent-orchestrator/runtime/protected-control-plane-manifest.json',
+            changed_files: [],
+            manifest: null
+        }
+    };
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Protected Control-Plane Manifest'));
+    assert.ok(output.includes('Status: MATCH'));
+    assert.ok(output.includes('Doctor: PASS'));
 });

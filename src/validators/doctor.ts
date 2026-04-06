@@ -20,6 +20,10 @@ import {
     formatProviderComplianceDetail,
     type ProviderComplianceResult
 } from './provider-compliance';
+import {
+    evaluateProtectedControlPlaneManifest,
+    type ProtectedControlPlaneManifestEvidence
+} from '../gates/helpers';
 
 interface DoctorOptions {
     targetRoot: string;
@@ -55,6 +59,7 @@ interface DoctorResult {
     parityResult: ReturnType<typeof getSourceBundleParity>;
     providerComplianceResult: ProviderComplianceResult | null;
     nestedBundleDuplication: NestedBundleDuplicationResult;
+    protectedManifestEvidence: ProtectedControlPlaneManifestEvidence | null;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -195,9 +200,20 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
     // T-1008: detect nested deployed bundle duplication
     var nestedBundleDuplication = detectNestedBundleDuplication(targetRoot);
 
+    // T-009: protected control-plane manifest early signal
+    var protectedManifestEvidence: ProtectedControlPlaneManifestEvidence | null = null;
+    try {
+        protectedManifestEvidence = evaluateProtectedControlPlaneManifest(targetRoot);
+    } catch {
+        // evaluation failure is non-fatal; will show as null in output
+    }
+
     var manifestPassed = manifestResult ? manifestResult.passed : false;
     var compliancePassed = providerComplianceResult === null || providerComplianceResult.passed;
-    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed && !nestedBundleDuplication.duplicatesFound;
+    var protectedManifestOk = protectedManifestEvidence === null
+        || protectedManifestEvidence.status === 'MATCH'
+        || protectedManifestEvidence.status === 'MISSING';
+    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed && !nestedBundleDuplication.duplicatesFound && protectedManifestOk;
 
     return {
         passed: passed,
@@ -211,7 +227,8 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         lockCleanup: lockCleanup,
         parityResult: parityResult,
         providerComplianceResult: providerComplianceResult,
-        nestedBundleDuplication: nestedBundleDuplication
+        nestedBundleDuplication: nestedBundleDuplication,
+        protectedManifestEvidence: protectedManifestEvidence
     };
 }
 
@@ -241,6 +258,24 @@ export function formatDoctorResult(result: DoctorResult): string {
     if (result.manifestResult) lines.push(formatManifestResult(result.manifestResult));
     else if (result.manifestError) { lines.push('MANIFEST_VALIDATION_FAILED'); lines.push('Error: '+result.manifestError); }
     lines.push('');
+
+    // T-009: protected control-plane manifest early signal
+    if (result.protectedManifestEvidence) {
+        lines.push('Protected Control-Plane Manifest');
+        lines.push('  Status: '+result.protectedManifestEvidence.status);
+        lines.push('  ManifestPath: '+result.protectedManifestEvidence.manifest_path);
+        if (result.protectedManifestEvidence.status === 'DRIFT') {
+            var driftFiles = result.protectedManifestEvidence.changed_files;
+            lines.push('  DriftCount: '+driftFiles.length);
+            for (var dfi = 0; dfi < driftFiles.length; dfi++) {
+                lines.push('  - '+driftFiles[dfi]);
+            }
+            lines.push('  Fix: Re-run setup/update/reinit to refresh the trusted manifest, or verify changes are intentional.');
+        } else if (result.protectedManifestEvidence.status === 'INVALID') {
+            lines.push('  Fix: Re-run setup/update/reinit to regenerate the trusted manifest.');
+        }
+        lines.push('');
+    }
 
     // T-004: timeline evidence summary
     if (result.timelineEvidence.length > 0) {

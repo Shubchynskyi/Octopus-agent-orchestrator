@@ -20,6 +20,10 @@ import {
     formatProviderComplianceSummary,
     type ProviderComplianceResult
 } from './provider-compliance';
+import {
+    evaluateProtectedControlPlaneManifest,
+    type ProtectedControlPlaneManifestEvidence
+} from '../gates/helpers';
 
 type InitAnswers = ReturnType<typeof validateInitAnswers>;
 
@@ -44,6 +48,7 @@ export interface StatusSnapshot extends CliStatusSnapshot {
     timelineWarnings: string[];
     parityResult: ReturnType<typeof detectSourceBundleParity>;
     providerComplianceResult: ProviderComplianceResult | null;
+    protectedManifestEvidence: ProtectedControlPlaneManifestEvidence | null;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -179,9 +184,22 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
         }
     }
 
+    // T-009: protected control-plane manifest early signal
+    var protectedManifestEvidence: ProtectedControlPlaneManifestEvidence | null = null;
+    if (bundlePresent) {
+        try {
+            protectedManifestEvidence = evaluateProtectedControlPlaneManifest(resolvedTargetRoot);
+        } catch {
+            // evaluation failure is non-fatal for status
+        }
+    }
+
     var agentInitializationComplete = primaryInitializationComplete && agentInitializationPendingReason === null;
     var compliancePassed = providerComplianceResult === null || providerComplianceResult.passed;
-    var readyForTasks = agentInitializationComplete && !parityResult.isStale && compliancePassed;
+    var protectedManifestOk = protectedManifestEvidence === null
+        || protectedManifestEvidence.status === 'MATCH'
+        || protectedManifestEvidence.status === 'MISSING';
+    var readyForTasks = agentInitializationComplete && !parityResult.isStale && compliancePassed && protectedManifestOk;
     var recommendedNextCommand = 'npx octopus-agent-orchestrator setup';
     if (readyForTasks) recommendedNextCommand = 'Execute task T-001 depth=2';
     else if (parityResult.isStale && parityResult.remediation) recommendedNextCommand = parityResult.remediation;
@@ -257,7 +275,8 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
         timelineHealthy: timelineHealthy,
         timelineWarnings: timelineWarnings,
         parityResult: parityResult,
-        providerComplianceResult: providerComplianceResult
+        providerComplianceResult: providerComplianceResult,
+        protectedManifestEvidence: protectedManifestEvidence
     };
 }
 
@@ -302,6 +321,25 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
             for (var ci = 1; ci < complianceLines.length; ci++) {
                 lines.push('  ' + complianceLines[ci]);
             }
+        }
+    }
+
+    // T-009: protected control-plane manifest early signal
+    if (snapshot.protectedManifestEvidence) {
+        var pmStatus = snapshot.protectedManifestEvidence.status;
+        var pmOk = pmStatus === 'MATCH' || pmStatus === 'MISSING';
+        lines.push('  '+badge(pmOk)+' Protected manifest ('+pmStatus+')');
+        if (pmStatus === 'DRIFT') {
+            var driftCount = snapshot.protectedManifestEvidence.changed_files.length;
+            lines.push('    Drift: '+driftCount+' file(s) changed since last trusted snapshot');
+            for (var di = 0; di < snapshot.protectedManifestEvidence.changed_files.length && di < 5; di++) {
+                lines.push('    - '+snapshot.protectedManifestEvidence.changed_files[di]);
+            }
+            if (driftCount > 5) {
+                lines.push('    ... and '+(driftCount - 5)+' more');
+            }
+        } else if (pmStatus === 'INVALID') {
+            lines.push('    Warning: trusted manifest is malformed; re-run setup/update/reinit');
         }
     }
 
