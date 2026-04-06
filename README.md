@@ -77,6 +77,7 @@ If you want persistent commands, install globally.
 | `octopus update` | Apply the update workflow directly (`--dry-run` for preview) |
 | `octopus update git` | Apply or preview an update from a git repo or local clone |
 | `octopus rollback` | Roll back to a specific version or restore from the latest rollback snapshot |
+| `octopus cleanup` | Remove retained runtime artifacts with retention limits (`--dry-run` for preview) |
 | `octopus uninstall` | Remove orchestrator with keep/delete choices |
 | `octopus skills` | List, suggest, add, remove, and validate optional built-in skill packs |
 

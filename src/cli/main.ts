@@ -68,6 +68,7 @@ import { formatManifestResult, validateManifest } from '../validators/validate-m
 import { formatVerifyResult, runVerify } from '../validators/verify';
 import { runCheckUpdate, type CheckUpdateRunnerOptions } from '../lifecycle/check-update';
 import { withLifecycleOperationLockAsync } from '../lifecycle/common';
+import { runCleanupWithLock } from '../lifecycle/cleanup';
 import { runContractMigrations } from '../lifecycle/contract-migrations';
 import { runRollback } from '../lifecycle/rollback';
 import { assertExplicitCliTrustOverride } from '../lifecycle/update-trust';
@@ -930,6 +931,113 @@ function handleUninstall(commandArgv: string[], packageJson: PackageJsonLike): v
         for (const warning of uninstallResult.warnings) {
             console.log(`  - ${warning}`);
         }
+    }
+}
+
+function handleCleanup(commandArgv: string[], packageJson: PackageJsonLike): void {
+    const cleanupDefinitions = {
+        '--target-root': { key: 'targetRoot', type: 'string' },
+        '--dry-run': { key: 'dryRun', type: 'boolean' },
+        '--max-age-days': { key: 'maxAgeDays', type: 'string' },
+        '--max-backups': { key: 'maxBackups', type: 'string' },
+        '--max-task-events': { key: 'maxTaskEvents', type: 'string' },
+        '--max-reviews': { key: 'maxReviews', type: 'string' },
+        '--max-update-reports': { key: 'maxUpdateReports', type: 'string' },
+        '--max-update-rollbacks': { key: 'maxUpdateRollbacks', type: 'string' },
+        '--max-bundle-backups': { key: 'maxBundleBackups', type: 'string' }
+    };
+    const { options: rawOptions } = parseOptions(commandArgv, cleanupDefinitions);
+    const options = rawOptions as ParsedOptionsRecord;
+
+    if (options.help) {
+        printHelp(packageJson);
+        return;
+    }
+    if (options.version) {
+        console.log(packageJson.version);
+        return;
+    }
+
+    const targetRoot = normalizePathValue(options.targetRoot || '.');
+    ensureDirectoryExists(targetRoot, 'Target root');
+    printBanner(packageJson, 'Runtime cleanup', targetRoot, {
+        versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
+    });
+    const bundlePath = ensureBundleExists(targetRoot, 'cleanup');
+    const dryRun = options.dryRun === true;
+
+    const retentionOverrides: Record<string, number> = {};
+    const intFields: Array<[string, string]> = [
+        ['maxAgeDays', 'maxAgeDays'],
+        ['maxBackups', 'maxBackups'],
+        ['maxTaskEvents', 'maxTaskEvents'],
+        ['maxReviews', 'maxReviews'],
+        ['maxUpdateReports', 'maxUpdateReports'],
+        ['maxUpdateRollbacks', 'maxUpdateRollbacks'],
+        ['maxBundleBackups', 'maxBundleBackups']
+    ];
+    for (const [optKey, policyKey] of intFields) {
+        const raw = options[optKey];
+        if (typeof raw === 'string') {
+            const parsed = parseInt(raw, 10);
+            if (Number.isNaN(parsed) || parsed < 0) {
+                throw new Error(`--${optKey.replace(/([A-Z])/g, '-$1').toLowerCase()} must be a non-negative integer, got: ${raw}`);
+            }
+            retentionOverrides[policyKey] = parsed;
+        }
+    }
+
+    const cleanupResult = runCleanupWithLock({
+        targetRoot,
+        bundleRoot: bundlePath,
+        dryRun,
+        retentionPolicy: retentionOverrides
+    });
+
+    if (dryRun) {
+        console.log(yellow('Dry run — no files were removed.'));
+    }
+
+    formatKeyValueOutput(cleanupResult as unknown as Record<string, unknown>, [
+        'targetRoot', 'dryRun', 'totalFreedBytes', 'result'
+    ]);
+
+    const removedOrSkipped = dryRun ? cleanupResult.skipped : cleanupResult.removed;
+    if (removedOrSkipped.length === 0) {
+        console.log(green('Nothing to clean up.'));
+        return;
+    }
+
+    // Group items by category for compact output
+    const byCategory = new Map<string, number>();
+    for (const item of removedOrSkipped) {
+        byCategory.set(item.category, (byCategory.get(item.category) || 0) + 1);
+    }
+    const action = dryRun ? 'Would remove' : 'Removed';
+    for (const [category, count] of byCategory) {
+        printHighlightedPair(`${action} (${category}):`, String(count), {
+            labelColor: cyan,
+            valueColor: green
+        });
+    }
+
+    const freedLabel = dryRun ? 'Would free' : 'Freed';
+    const freedMB = (cleanupResult.totalFreedBytes / (1024 * 1024)).toFixed(2);
+    printHighlightedPair(`${freedLabel}:`, `${freedMB} MB`, {
+        labelColor: cyan,
+        valueColor: green
+    });
+
+    if (cleanupResult.errors.length > 0) {
+        console.log(yellow(`Errors: ${cleanupResult.errors.length}`));
+        for (const err of cleanupResult.errors) {
+            console.log(`  ${err.path}: ${err.message}`);
+        }
+    }
+
+    console.log(`Result: ${cleanupResult.result}`);
+    if (!dryRun) {
+        console.log(green('Cleanup complete.'));
     }
 }
 
@@ -2160,6 +2268,9 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
             return;
         case 'uninstall':
             handleUninstall(commandArgv, packageJson);
+            return;
+        case 'cleanup':
+            handleCleanup(commandArgv, packageJson);
             return;
         case 'verify':
             handleVerify(commandArgv, packageJson);

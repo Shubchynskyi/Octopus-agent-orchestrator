@@ -1,4 +1,5 @@
 import * as checkUpdate from './check-update';
+import * as cleanup from './cleanup';
 import * as common from './common';
 import * as contractMigrations from './contract-migrations';
 import * as rollback from './rollback';
@@ -9,6 +10,7 @@ import * as updateTrust from './update-trust';
 
 export {
     checkUpdate,
+    cleanup,
     common,
     contractMigrations,
     rollback,

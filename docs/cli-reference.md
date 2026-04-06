@@ -208,6 +208,24 @@ Notes:
 - `--snapshot-path` applies to snapshot-mode rollback; with no `--snapshot-path`, `rollback` uses the latest saved rollback snapshot automatically.
 - Older updates created before rollback metadata persistence may require manual recovery.
 
+### `octopus cleanup`
+
+Remove retained runtime artifacts under `Octopus-agent-orchestrator/runtime/` using count- and age-based retention limits. Use `--dry-run` to preview removals without deleting anything.
+
+```text
+octopus cleanup --target-root "."
+octopus cleanup --target-root "." --dry-run
+octopus cleanup --target-root "." --max-age-days 14 --max-backups 5 --max-task-events 30
+octopus cleanup --target-root "." --max-reviews 20 --max-update-rollbacks 10 --max-update-reports 10 --max-bundle-backups 5
+```
+
+Notes:
+- `cleanup` only operates on supported runtime artifact categories: backups, bundle-backups, task-event logs, review artifacts, update-rollbacks, and update-reports.
+- `--dry-run` reports projected removals and bytes reclaimed without mutating the filesystem.
+- Retention accepts both a global age limit (`--max-age-days`) and per-category count limits (`--max-backups`, `--max-task-events`, `--max-reviews`, `--max-update-rollbacks`, `--max-update-reports`, `--max-bundle-backups`).
+- `runtime/task-events/all-tasks.jsonl` is always preserved and is never treated as a removable task-event artifact.
+- Cleanup runs under the lifecycle operation lock to avoid concurrent mutation of the same runtime state.
+
 ### `octopus uninstall`
 
 Remove the orchestrator from a project.

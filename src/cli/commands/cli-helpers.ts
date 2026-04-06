@@ -860,6 +860,7 @@ export function printHelp(packageJson: PackageJsonLike): void {
             '  update git    Apply update from a git repo or local git clone.',
             '  rollback      Rollback to a specific version or restore from the latest rollback snapshot.',
             '  uninstall     Remove the deployed orchestrator bundle and managed files.',
+            '  cleanup       Remove stale runtime artifacts using a configurable retention policy.',
             '  verify        Validate deployment consistency and rule contracts.',
             '  check-update  Compare current deployment with a newer npm package or local source.',
             '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
@@ -901,7 +902,8 @@ export function printHelp(packageJson: PackageJsonLike): void {
             '  - use `octopus update git` when you explicitly want git-based source acquisition.',
             '  - update/check-update run the full update lifecycle after bundle sync when an update is applied.',
             '  - rollback without --to-version restores the latest saved pre-update snapshot; with --to-version it acquires that version, syncs the bundle, and re-materializes the workspace.',
-            '  - older snapshots created before rollback metadata persistence cannot be restored automatically.'
+            '  - older snapshots created before rollback metadata persistence cannot be restored automatically.',
+            '  - cleanup uses retention defaults (30 days, 20 backups, 50 task events, 100 review sets, 10 update reports, 5 rollbacks, 5 bundle backups); override with --max-age-days and --max-backups.'
         ]
     ];
     console.log(sections.map(function (s) { return s.join('\n'); }).join('\n\n'));
@@ -931,6 +933,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  update git    Apply update from a git repo or local git clone.',
             '  rollback      Rollback to a specific version or restore from the latest rollback snapshot.',
             '  uninstall     Remove the deployed orchestrator bundle and managed files.',
+            '  cleanup       Remove stale runtime artifacts using a configurable retention policy.',
             '  verify        Validate deployment consistency and rule contracts.',
             '  check-update  Compare current deployment with a newer npm package or local source.',
             '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
@@ -972,7 +975,8 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  - use `octopus update git` when you explicitly want git-based source acquisition.',
             '  - update/check-update run the full update lifecycle after bundle sync when an update is applied.',
             '  - rollback without --to-version restores the latest saved pre-update snapshot; with --to-version it acquires that version, syncs the bundle, and re-materializes the workspace.',
-            '  - older snapshots created before rollback metadata persistence cannot be restored automatically.'
+            '  - older snapshots created before rollback metadata persistence cannot be restored automatically.',
+            '  - cleanup uses retention defaults (30 days, 20 backups, 50 task events, 100 review sets, 10 update reports, 5 rollbacks, 5 bundle backups); override with --max-age-days and --max-backups.'
         ]
     ];
     return sections.map(function (s) { return s.join('\n'); }).join('\n\n');
