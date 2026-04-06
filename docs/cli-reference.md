@@ -269,7 +269,7 @@ Canonical gate surface is `octopus gate <name>` or `node bin/octopus.js gate <na
 
 | Gate | Canonical invocation |
 |---|---|
-| Enter task mode | `octopus gate enter-task-mode --task-id "T-001" --task-summary "..."` |
+| Enter task mode | `octopus gate enter-task-mode --task-id "T-001" --task-summary "..."` (`--orchestrator-work` for tasks that modify protected control-plane paths — see [orchestrator-work-and-isolation](orchestrator-work-and-isolation.md)) |
 | Load rule pack | `octopus gate load-rule-pack --task-id "T-001" --stage "TASK_ENTRY" --loaded-rule-file "Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md"` |
 | Classify change | `octopus gate classify-change --use-staged --task-intent "..."` |
 | Compile gate | `octopus gate compile-gate --task-id "T-001"` |

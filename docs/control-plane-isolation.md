@@ -178,6 +178,10 @@ Tasks started with `--orchestrator-work` are exempt from isolation
 enforcement.  This allows legitimate orchestrator maintenance tasks to
 modify protected files and the live bundle without triggering violations.
 
+For the full list of protected paths, fail-closed error messages, and
+step-by-step remediation when gates block execution, see
+[Orchestrator Work, Protected Paths, and Isolation Remediation](orchestrator-work-and-isolation.md).
+
 ## CLI Gates
 
 ### Prepare Isolation Sandbox
