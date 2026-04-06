@@ -5,7 +5,7 @@ import * as path from 'node:path';
 
 const DEFAULT_LOCK_TIMEOUT_MS = 5000;
 const DEFAULT_LOCK_RETRY_MS = 25;
-const DEFAULT_LOCK_STALE_MS = 30000;
+const DEFAULT_LOCK_STALE_MS = 30 * 60 * 1000;
 const MAX_LOCK_RETRIES = 500;
 const LOCK_CONTENTION_WARN_THRESHOLD = 10;
 
@@ -248,6 +248,19 @@ function isProcessLikelyAlive(pid: number | null): boolean | null {
     }
 }
 
+function normalizeHostname(hostname: string | null): string | null {
+    const trimmed = typeof hostname === 'string' ? hostname.trim() : '';
+    return trimmed ? trimmed.toLowerCase() : null;
+}
+
+function isCurrentHostOwner(hostname: string | null): boolean | null {
+    const ownerHost = normalizeHostname(hostname);
+    if (!ownerHost) {
+        return null;
+    }
+    return ownerHost === normalizeHostname(os.hostname());
+}
+
 function removeLockPath(lockPath: string): void {
     fs.rmSync(lockPath, { recursive: true, force: true });
 }
@@ -268,7 +281,10 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
         };
     }
 
-    const ownerAlive = isProcessLikelyAlive(metadata.pid);
+    const ownerHostMatchesCurrent = isCurrentHostOwner(metadata.hostname);
+    const ownerAlive = ownerHostMatchesCurrent === false
+        ? null
+        : isProcessLikelyAlive(metadata.pid);
     if (ownerAlive === false) {
         return {
             exists: true,
@@ -286,6 +302,7 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
     // missing owner.json, invalid JSON, invalid shape, and partial-but-parseable
     // metadata that lacks the PID field.
     if (metadata.pid === null
+        && ownerHostMatchesCurrent !== false
         && ageMs !== null && ageMs >= LOCK_METADATA_GRACE_MS) {
         return {
             exists: true,
@@ -296,7 +313,10 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
         };
     }
 
-    if (staleMs > 0 && ageMs >= staleMs) {
+    if (staleMs > 0
+        && ageMs >= staleMs
+        && ownerAlive !== true
+        && ownerHostMatchesCurrent !== false) {
         return {
             exists: true,
             ageMs,

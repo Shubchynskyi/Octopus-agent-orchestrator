@@ -501,7 +501,7 @@ test('appendTaskEvent removes orphaned task lock when owner pid is no longer ali
         fs.mkdirSync(lockPath, { recursive: true });
         fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
             pid: 999999,
-            hostname: 'test-host',
+            hostname: os.hostname(),
             created_at_utc: '2026-03-30T10:00:00.000Z'
         }, null, 2) + '\n', 'utf8');
 
@@ -524,6 +524,45 @@ test('appendTaskEvent removes orphaned task lock when owner pid is no longer ali
         assert.equal(result!.warnings.length, 0);
         assert.ok(fs.existsSync(path.join(eventsRoot, 'T-TEST.jsonl')));
         assert.ok(!fs.existsSync(lockPath), 'orphaned lock should be removed and released');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent does not reclaim aged foreign-host lock by default', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-append-foreign-lock-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const lockPath = path.join(eventsRoot, '.T-TEST.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999,
+            hostname: 'remote-build-host',
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = appendTaskEvent(
+            tempDir,
+            'T-TEST',
+            'test',
+            'PASS',
+            'Should not reclaim foreign-host lock',
+            null,
+            {
+                passThru: true,
+                lockTimeoutMs: 50,
+                lockRetryMs: 5
+            }
+        );
+
+        assert.ok(result !== null);
+        assert.equal(result!.warnings.length, 1);
+        assert.match(result!.warnings[0], /Timed out acquiring file lock/);
+        assert.match(result!.warnings[0], /owner_hostname=remote-build-host/);
+        assert.match(result!.warnings[0], /owner_alive=unknown/);
+        assert.ok(fs.existsSync(lockPath), 'foreign-host lock should remain in place');
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -644,7 +683,7 @@ test('scanTaskEventLocks reports active and stale task-event locks only', () => 
         fs.mkdirSync(reviewsLockPath, { recursive: true });
         fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
             pid: 999999,
-            hostname: 'stale-host',
+            hostname: os.hostname(),
             created_at_utc: '2026-03-30T10:00:00.000Z'
         }, null, 2) + '\n', 'utf8');
         fs.writeFileSync(path.join(activeLockPath, 'owner.json'), JSON.stringify({
@@ -675,7 +714,7 @@ test('cleanupStaleTaskEventLocks removes only stale locks and supports dry-run',
         fs.mkdirSync(activeLockPath, { recursive: true });
         fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
             pid: 999999,
-            hostname: 'stale-host',
+            hostname: os.hostname(),
             created_at_utc: '2026-03-30T10:00:00.000Z'
         }, null, 2) + '\n', 'utf8');
         fs.writeFileSync(path.join(activeLockPath, 'owner.json'), JSON.stringify({

@@ -56,6 +56,73 @@ test('acquireFilesystemLock fails when lock already held by live process', () =>
     }
 });
 
+test('acquireFilesystemLock does not reclaim aged live lock on the current host', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-live-aged.lock');
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        assert.throws(
+            () => acquireFilesystemLock(lockPath),
+            /Timed out acquiring file lock/
+        );
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLock does not reclaim aged live lock when metadata has pid but no hostname', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-live-pid-only.lock');
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            created_at_utc: new Date().toISOString()
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        assert.throws(
+            () => acquireFilesystemLock(lockPath),
+            /Timed out acquiring file lock/
+        );
+        assert.ok(fs.existsSync(lockPath), 'pid-only live lock should not be reclaimed automatically');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLock does not reclaim aged foreign-host lock by default', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-foreign-aged.lock');
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        assert.throws(
+            () => acquireFilesystemLock(lockPath),
+            /Timed out acquiring file lock/
+        );
+        assert.ok(fs.existsSync(lockPath), 'foreign-host lock should not be reclaimed automatically');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('acquireFilesystemLock reclaims lock with missing owner metadata', () => {
     const tmp = mkTmpDir();
     const lockPath = path.join(tmp, '.test.lock');
@@ -330,6 +397,58 @@ test('scanTaskEventLocks classifies lock with dead PID as stale', () => {
     }
 });
 
+test('scanTaskEventLocks retains aged foreign-host locks as active', () => {
+    const tmp = mkTmpDir();
+    const orchRoot = path.join(tmp, 'orch');
+    const eventsRoot = path.join(orchRoot, 'runtime', 'task-events');
+    fs.mkdirSync(eventsRoot, { recursive: true });
+    const lockDir = path.join(eventsRoot, '.T-REMOTE.lock');
+    fs.mkdirSync(lockDir);
+    fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({
+        pid: 999999999,
+        hostname: 'remote-build-host',
+        created_at_utc: new Date().toISOString()
+    }));
+    const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+    fs.utimesSync(lockDir, oldTime, oldTime);
+    try {
+        const result = scanTaskEventLocks(orchRoot);
+        assert.equal(result.locks.length, 1);
+        assert.equal(result.active_count, 1);
+        assert.equal(result.stale_count, 0);
+        assert.equal(result.locks[0].status, 'ACTIVE');
+        assert.equal(result.locks[0].owner_alive, null);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('scanTaskEventLocks retains aged pid-only live locks as active', () => {
+    const tmp = mkTmpDir();
+    const orchRoot = path.join(tmp, 'orch');
+    const eventsRoot = path.join(orchRoot, 'runtime', 'task-events');
+    fs.mkdirSync(eventsRoot, { recursive: true });
+    const lockDir = path.join(eventsRoot, '.T-PID-ONLY.lock');
+    fs.mkdirSync(lockDir);
+    fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({
+        pid: process.pid,
+        created_at_utc: new Date().toISOString()
+    }));
+    const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+    fs.utimesSync(lockDir, oldTime, oldTime);
+    try {
+        const result = scanTaskEventLocks(orchRoot);
+        assert.equal(result.locks.length, 1);
+        assert.equal(result.active_count, 1);
+        assert.equal(result.stale_count, 0);
+        assert.equal(result.locks[0].status, 'ACTIVE');
+        assert.equal(result.locks[0].owner_alive, true);
+        assert.equal(result.locks[0].owner_hostname, null);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('scanTaskEventLocks classifies aggregate lock correctly', () => {
     const tmp = mkTmpDir();
     const orchRoot = path.join(tmp, 'orch');
@@ -408,6 +527,29 @@ test('cleanupStaleTaskEventLocks retains active locks', () => {
     try {
         const result = cleanupStaleTaskEventLocks(orchRoot, { dryRun: false });
         assert.ok(result.retained_live_locks.includes('.T-LIVE.lock'));
+        assert.ok(fs.existsSync(lockDir));
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('cleanupStaleTaskEventLocks retains aged foreign-host locks', () => {
+    const tmp = mkTmpDir();
+    const orchRoot = path.join(tmp, 'orch');
+    const eventsRoot = path.join(orchRoot, 'runtime', 'task-events');
+    fs.mkdirSync(eventsRoot, { recursive: true });
+    const lockDir = path.join(eventsRoot, '.T-REMOTE-LIVE.lock');
+    fs.mkdirSync(lockDir);
+    fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({
+        pid: 999999999,
+        hostname: 'remote-build-host',
+        created_at_utc: new Date().toISOString()
+    }));
+    const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+    fs.utimesSync(lockDir, oldTime, oldTime);
+    try {
+        const result = cleanupStaleTaskEventLocks(orchRoot, { dryRun: false });
+        assert.ok(result.retained_live_locks.includes('.T-REMOTE-LIVE.lock'));
         assert.ok(fs.existsSync(lockDir));
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
