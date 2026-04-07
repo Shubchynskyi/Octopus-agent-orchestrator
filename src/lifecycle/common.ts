@@ -498,7 +498,7 @@ export async function withLifecycleOperationLockAsync<T>(
 }
 
 // ---------------------------------------------------------------------------
-// Recursive file copy / directory helpers
+// Iterative file copy / directory helpers
 // ---------------------------------------------------------------------------
 
 export function copyPathRecursive(sourcePath: string, destinationPath: string): void {
@@ -506,14 +506,26 @@ export function copyPathRecursive(sourcePath: string, destinationPath: string): 
     const parentDir = path.dirname(destinationPath);
     if (parentDir) fs.mkdirSync(parentDir, { recursive: true });
 
-    if (stats.isDirectory()) {
-        fs.mkdirSync(destinationPath, { recursive: true });
-        for (const entry of fs.readdirSync(sourcePath)) {
-            copyPathRecursive(path.join(sourcePath, entry), path.join(destinationPath, entry));
-        }
+    if (!stats.isDirectory()) {
+        fs.copyFileSync(sourcePath, destinationPath);
         return;
     }
-    fs.copyFileSync(sourcePath, destinationPath);
+
+    // Iterative breadth-first copy using an explicit stack
+    const stack: Array<{ src: string; dst: string }> = [{ src: sourcePath, dst: destinationPath }];
+    while (stack.length > 0) {
+        const { src, dst } = stack.pop()!;
+        fs.mkdirSync(dst, { recursive: true });
+        for (const entry of fs.readdirSync(src)) {
+            const srcChild = path.join(src, entry);
+            const dstChild = path.join(dst, entry);
+            if (fs.lstatSync(srcChild).isDirectory()) {
+                stack.push({ src: srcChild, dst: dstChild });
+            } else {
+                fs.copyFileSync(srcChild, dstChild);
+            }
+        }
+    }
 }
 
 export function removePathRecursive(targetPath: string): void {
@@ -524,12 +536,16 @@ export function removePathRecursive(targetPath: string): void {
 export function readdirRecursiveFiles(dirPath: string): string[] {
     const results: string[] = [];
     if (!fs.existsSync(dirPath)) return results;
-    for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
-        const full = path.join(dirPath, entry.name);
-        if (entry.isDirectory()) {
-            results.push(...readdirRecursiveFiles(full));
-        } else {
-            results.push(full);
+    const stack: string[] = [dirPath];
+    while (stack.length > 0) {
+        const current = stack.pop()!;
+        for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+            const full = path.join(current, entry.name);
+            if (entry.isDirectory()) {
+                stack.push(full);
+            } else {
+                results.push(full);
+            }
         }
     }
     return results;
@@ -538,11 +554,15 @@ export function readdirRecursiveFiles(dirPath: string): string[] {
 export function readdirRecursiveDirs(dirPath: string): string[] {
     const results: string[] = [];
     if (!fs.existsSync(dirPath)) return results;
-    for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
-        const full = path.join(dirPath, entry.name);
-        if (entry.isDirectory()) {
-            results.push(full);
-            results.push(...readdirRecursiveDirs(full));
+    const stack: string[] = [dirPath];
+    while (stack.length > 0) {
+        const current = stack.pop()!;
+        for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+            const full = path.join(current, entry.name);
+            if (entry.isDirectory()) {
+                results.push(full);
+                stack.push(full);
+            }
         }
     }
     return results;

@@ -196,18 +196,22 @@ export function collectRuntimePathHints(relativeFiles: string[]): string[] {
 
 function collectFilesRecursive(rootPath: string, basePath: string): string[] {
     const results: string[] = [];
-    try {
-        const entries = fs.readdirSync(rootPath, { withFileTypes: true });
-        for (const entry of entries) {
-            const fullPath = path.join(rootPath, entry.name);
-            if (entry.isDirectory()) {
-                results.push(...collectFilesRecursive(fullPath, basePath));
-            } else if (entry.isFile()) {
-                results.push(path.relative(basePath, fullPath).replace(/\\/g, '/'));
+    const stack: string[] = [rootPath];
+    while (stack.length > 0) {
+        const current = stack.pop()!;
+        try {
+            const entries = fs.readdirSync(current, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(current, entry.name);
+                if (entry.isDirectory()) {
+                    stack.push(fullPath);
+                } else if (entry.isFile()) {
+                    results.push(path.relative(basePath, fullPath).replace(/\\/g, '/'));
+                }
             }
+        } catch {
+            // Ignore unreadable dirs
         }
-    } catch {
-        // Ignore unreadable dirs
     }
     return results;
 }
