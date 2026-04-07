@@ -390,3 +390,7 @@ export function formatStatusSnapshotCompact(snapshot: StatusSnapshot): string {
     }
     return `OCTOPUS_STATUS: ready | source=${snapshot.sourceOfTruth || 'n/a'}`;
 }
+
+export function formatStatusSnapshotJson(snapshot: StatusSnapshot): string {
+    return JSON.stringify(snapshot, null, 2);
+}

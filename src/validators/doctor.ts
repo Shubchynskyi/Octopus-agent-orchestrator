@@ -755,3 +755,7 @@ export function formatDoctorResultCompact(result: DoctorResult): string {
         : (result.manifestError ? 'ERROR' : 'SKIPPED');
     return `Doctor: PASS | verify=PASS | manifest=${manifestStatus}`;
 }
+
+export function formatDoctorResultJson(result: DoctorResult): string {
+    return JSON.stringify(result, null, 2);
+}
