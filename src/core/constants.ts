@@ -11,6 +11,7 @@ export const LIFECYCLE_COMMANDS: readonly string[] = Object.freeze([
     'agent-init',
     'status',
     'doctor',
+    'debug',
     'bootstrap',
     'install',
     'init',

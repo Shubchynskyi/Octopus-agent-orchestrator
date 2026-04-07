@@ -129,6 +129,7 @@ import {
     runShellSmokePreflightCommand
 } from './commands/gates';
 import { writeReviewArtifactJson } from '../gate-runtime/review-artifacts';
+import { collectDebugEnvSnapshot, formatDebugEnvText, formatDebugEnvJson } from './commands/debug-env';
 import { handleOverview } from './commands/overview';
 import { handleSetup } from './commands/setup';
 import { handleSkills } from './commands/skills';
@@ -604,6 +605,42 @@ function handleDoctorExplain(commandArgv: string[]): void {
 
     if (!result.found) {
         process.exitCode = EXIT_VALIDATION_FAILURE;
+    }
+}
+
+function handleDebug(commandArgv: string[], packageJson: PackageJsonLike): void {
+    const subcommand = commandArgv.length > 0 ? commandArgv[0].toLowerCase() : '';
+    if (subcommand !== 'env') {
+        console.log('Usage: octopus debug env [--target-root PATH] [--json]');
+        console.log('');
+        console.log('Subcommands:');
+        console.log('  env    Show environment and runtime triage snapshot');
+        return;
+    }
+
+    const debugDefinitions = {
+        '--target-root': { key: 'targetRoot', type: 'string' },
+        '--json': { key: 'json', type: 'boolean' }
+    };
+    const { options: rawOptions } = parseOptions(commandArgv.slice(1), debugDefinitions);
+    const options = rawOptions as ParsedOptionsRecord;
+
+    if (options.help) {
+        printHelp(packageJson);
+        return;
+    }
+    if (options.version) {
+        console.log(packageJson.version);
+        return;
+    }
+
+    const targetRoot = normalizePathValue(options.targetRoot || '.');
+    const snapshot = collectDebugEnvSnapshot(targetRoot, packageJson.version);
+
+    if (options.json === true) {
+        console.log(formatDebugEnvJson(snapshot));
+    } else {
+        console.log(formatDebugEnvText(snapshot));
     }
 }
 
@@ -2265,6 +2302,9 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
             return;
         case 'doctor':
             handleDoctor(commandArgv, packageJson);
+            return;
+        case 'debug':
+            handleDebug(commandArgv, packageJson);
             return;
         case 'bootstrap':
             await handleBootstrap(commandArgv, packageJson, packageRoot);
