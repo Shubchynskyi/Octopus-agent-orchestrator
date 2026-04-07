@@ -1,4 +1,5 @@
 import { normalizeLineEndings } from '../core/line-endings';
+import { DEFAULT_BUNDLE_NAME } from '../core/constants';
 import { getManagedGitignoreEntries, getManagedGitignoreCleanupEntries } from './common';
 import { NODE_BUNDLE_CLI_COMMAND, NODE_GATE_COMMAND_PREFIX, NODE_HUMAN_COMMIT_COMMAND } from './command-constants';
 
@@ -7,6 +8,9 @@ export const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
 export const COMMIT_GUARD_START = '# Octopus-agent-orchestrator:commit-guard-start';
 export const COMMIT_GUARD_END = '# Octopus-agent-orchestrator:commit-guard-end';
 export const GITIGNORE_MANAGED_COMMENT = '# Octopus-agent-orchestrator managed ignores';
+export const UNINSTALL_BACKUP_GITIGNORE_COMMENT = '# Backup artifacts created by Octopus Agent Orchestrator uninstall';
+export const UNINSTALL_BACKUP_GITIGNORE_ENTRY = `${DEFAULT_BUNDLE_NAME}-uninstall-backups/`;
+export const LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY = `${DEFAULT_BUNDLE_NAME}-uninstall-backups/**`;
 export const COMMIT_GUARD_ENV_NAME = 'OCTOPUS_ALLOW_COMMIT';
 export const COMMIT_GUARD_EXTRA_MARKERS_ENV = 'OCTOPUS_AGENT_ENV_MARKERS';
 export const COMMIT_GUARD_AGENT_MARKERS = Object.freeze([
@@ -695,6 +699,29 @@ export function buildManagedGitignoreBlock(entries: string[] | null | undefined,
     return [GITIGNORE_MANAGED_COMMENT, ...normalizedEntries].join(newline);
 }
 
+function normalizeUninstallBackupGitignoreLines(lines: string[]): string[] {
+    const normalizedLines: string[] = [];
+    let emittedBackupEntry = false;
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        const isBackupLine = trimmed === UNINSTALL_BACKUP_GITIGNORE_COMMENT ||
+            trimmed === UNINSTALL_BACKUP_GITIGNORE_ENTRY ||
+            trimmed === LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY;
+        if (!isBackupLine) {
+            normalizedLines.push(line);
+            continue;
+        }
+
+        if (!emittedBackupEntry) {
+            normalizedLines.push(UNINSTALL_BACKUP_GITIGNORE_COMMENT, UNINSTALL_BACKUP_GITIGNORE_ENTRY);
+            emittedBackupEntry = true;
+        }
+    }
+
+    return normalizedLines;
+}
+
 export function syncManagedGitignoreBlockInContent(
     content: string | null | undefined,
     entries: string[],
@@ -703,7 +730,8 @@ export function syncManagedGitignoreBlockInContent(
     const originalContent = content || '';
     const newline = originalContent.includes('\r\n') ? '\r\n' : '\n';
     const normalizedContent = normalizeLineEndings(originalContent, '\n');
-    const lines = normalizedContent.length > 0 ? normalizedContent.split('\n') : [];
+    const rawLines = normalizedContent.length > 0 ? normalizedContent.split('\n') : [];
+    const lines = normalizeUninstallBackupGitignoreLines(rawLines);
     const cleanupEntrySet = new Set(getManagedGitignoreCleanupEntries(enableClaudeOrchestratorFullAccess));
     const canonicalBlockLines = [GITIGNORE_MANAGED_COMMENT, ...[...new Set(entries)].sort()];
     const canonicalEntrySet = new Set(canonicalBlockLines.slice(1));

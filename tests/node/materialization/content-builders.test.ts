@@ -22,6 +22,9 @@ import {
     buildVscodeSettingsContent,
     stripJsoncComments,
     IDE_EXCLUDED_DIRECTORIES,
+    LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY,
+    UNINSTALL_BACKUP_GITIGNORE_COMMENT,
+    UNINSTALL_BACKUP_GITIGNORE_ENTRY,
     buildGitignoreEntries,
     buildManagedGitignoreBlock,
     syncManagedGitignoreBlockInContent,
@@ -353,6 +356,23 @@ describe('managed gitignore block sync', () => {
         assert.ok(result.changed);
         assert.equal((result.content.match(/# Octopus-agent-orchestrator managed ignores/g) || []).length, 1);
         assert.ok(result.content.includes('node_modules/'));
+    });
+
+    it('migrates legacy uninstall backup ignore entries outside managed block', () => {
+        const content = [
+            'node_modules/',
+            UNINSTALL_BACKUP_GITIGNORE_ENTRY,
+            LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY,
+            '# Octopus-agent-orchestrator managed ignores',
+            'TASK.md'
+        ].join('\n');
+        const result = syncManagedGitignoreBlockInContent(content, ['TASK.md', 'AGENTS.md'], false);
+        const lines = result.content.split(/\r?\n/);
+        assert.ok(result.changed);
+        assert.equal(lines.filter((line) => line === UNINSTALL_BACKUP_GITIGNORE_COMMENT).length, 1);
+        assert.equal(lines.filter((line) => line === UNINSTALL_BACKUP_GITIGNORE_ENTRY).length, 1);
+        assert.equal(lines.includes(LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY), false);
+        assert.ok(lines.indexOf(UNINSTALL_BACKUP_GITIGNORE_ENTRY) < lines.indexOf('# Octopus-agent-orchestrator managed ignores'));
     });
 });
 

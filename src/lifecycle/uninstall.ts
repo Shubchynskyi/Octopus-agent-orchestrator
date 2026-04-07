@@ -16,7 +16,10 @@ import {
     COMMIT_GUARD_START,
     COMMIT_GUARD_END,
     CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES,
-    GITIGNORE_MANAGED_COMMENT
+    GITIGNORE_MANAGED_COMMENT,
+    LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY,
+    UNINSTALL_BACKUP_GITIGNORE_COMMENT,
+    UNINSTALL_BACKUP_GITIGNORE_ENTRY
 } from '../materialization/content-builders';
 import {
     copyPathRecursive,
@@ -758,11 +761,10 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
     }
 
     function ensureUninstallBackupGitignoreEntries(): void {
-        const backupDirName = `${DEFAULT_BUNDLE_NAME}-uninstall-backups`;
         // A trailing-slash gitignore rule ignores the directory and everything inside it.
-        const ignoreEntry = `${backupDirName}/`;
-        const legacyWildcardEntry = `${backupDirName}/**`;
-        const commentLine = `# Backup artifacts created by Octopus Agent Orchestrator uninstall`;
+        const ignoreEntry = UNINSTALL_BACKUP_GITIGNORE_ENTRY;
+        const legacyWildcardEntry = LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY;
+        const commentLine = UNINSTALL_BACKUP_GITIGNORE_COMMENT;
 
         const filePath = path.join(normalizedTarget, '.gitignore');
         const existingContent = pathExists(filePath) ? readTextFile(filePath) : '';

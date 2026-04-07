@@ -6,6 +6,11 @@ import * as os from 'node:os';
 
 import { runInstall } from '../../../src/materialization/install';
 import { getLifecycleOperationLockPath } from '../../../src/lifecycle/common';
+import {
+    LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY,
+    UNINSTALL_BACKUP_GITIGNORE_COMMENT,
+    UNINSTALL_BACKUP_GITIGNORE_ENTRY
+} from '../../../src/materialization/content-builders';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -404,6 +409,53 @@ describe('runInstall', () => {
             assert.ok(gitignore.includes('node_modules/'));
             assert.ok(gitignore.includes('.antigravity/'));
             assert.ok(!gitignore.includes('.antigravity/rules.md'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('migrates legacy uninstall backup .gitignore entries during install', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            fs.writeFileSync(
+                path.join(projectRoot, '.gitignore'),
+                [
+                    'node_modules/',
+                    UNINSTALL_BACKUP_GITIGNORE_ENTRY,
+                    LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY,
+                    '# Octopus-agent-orchestrator managed ignores',
+                    'TASK.md'
+                ].join('\n'),
+                'utf8'
+            );
+
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            });
+
+            const gitignore = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+            const lines = gitignore.split(/\r?\n/);
+            assert.equal(lines.filter((line) => line === UNINSTALL_BACKUP_GITIGNORE_COMMENT).length, 1);
+            assert.equal(lines.filter((line) => line === UNINSTALL_BACKUP_GITIGNORE_ENTRY).length, 1);
+            assert.equal(lines.includes(LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY), false);
+            assert.equal((gitignore.match(/# Octopus-agent-orchestrator managed ignores/g) || []).length, 1);
+            assert.ok(lines.indexOf(UNINSTALL_BACKUP_GITIGNORE_ENTRY) < lines.indexOf('# Octopus-agent-orchestrator managed ignores'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }
