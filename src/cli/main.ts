@@ -65,6 +65,7 @@ import { explainFailure, formatExplainResult, listExplainIds } from '../validato
 import { getStatusSnapshot, formatStatusSnapshotCompact, formatStatusSnapshotJson } from '../validators/status';
 import { getWhyBlocked, formatWhyBlockedResult } from '../validators/why-blocked';
 import { formatManifestResult, formatManifestResultCompact, validateManifest } from '../validators/validate-manifest';
+import { validateAllConfigs, formatValidationReport, formatValidationReportCompact } from '../schemas/config-schemas';
 import { formatVerifyResult, formatVerifyResultCompact, runVerify } from '../validators/verify';
 import { runCheckUpdate, type CheckUpdateRunnerOptions } from '../lifecycle/check-update';
 import { withLifecycleOperationLockAsync } from '../lifecycle/common';
@@ -1318,6 +1319,25 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             console.log(options.compact === true ? formatManifestResultCompact(result) : formatManifestResult(result));
             if (!result.passed) {
                 throw new Error('Manifest validation failed.');
+            }
+            return;
+        }
+        case 'validate-config': {
+            const defs = {
+                '--bundle-root': { key: 'bundleRoot', type: 'string' },
+                '--compact': { key: 'compact', type: 'boolean' }
+            };
+            const { options: rawOptions } = parseOptions(gateArgv, defs);
+            const vcOptions = rawOptions as ParsedOptionsRecord;
+            const bundleRoot = typeof vcOptions.bundleRoot === 'string'
+                ? path.resolve(vcOptions.bundleRoot)
+                : path.resolve('Octopus-agent-orchestrator');
+            const vcReport = validateAllConfigs(bundleRoot);
+            console.log(vcOptions.compact === true
+                ? formatValidationReportCompact(vcReport)
+                : formatValidationReport(vcReport));
+            if (!vcReport.passed) {
+                throw new Error('Config validation failed.');
             }
             return;
         }

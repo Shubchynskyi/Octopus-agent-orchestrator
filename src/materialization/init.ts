@@ -252,8 +252,8 @@ export function runInit(options: RunInitOptions) {
         destination: path.relative(targetRoot, projectMemorySummaryDest).replace(/\\/g, '/')
     });
 
-    // Handle managed config merge (token-economy enabled flag)
-    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'isolation-mode'];
+    // Handle managed config materialization (token-economy enabled flag)
+    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'isolation-mode', 'octopus.config'];
     const configMergeStatuses: Record<string, string> = {};
 
     for (const configName of managedConfigNames) {
@@ -268,8 +268,9 @@ export function runInit(options: RunInitOptions) {
         try {
             const templateConfig = cloneJsonValue(readJsonFile(templateConfigPath) as Record<string, unknown>);
             let existingConfig: Record<string, unknown> | null = null;
+            const hadExistingConfig = pathExists(destConfigPath);
 
-            if (pathExists(destConfigPath)) {
+            if (hadExistingConfig) {
                 try {
                     const parsedExistingConfig = readJsonFile(destConfigPath);
                     existingConfig = isPlainObject(parsedExistingConfig)
@@ -280,23 +281,29 @@ export function runInit(options: RunInitOptions) {
                 }
             }
 
-            // Merge: use existing values where present, fill from template
-            const merged = mergeConfig(templateConfig, existingConfig);
+            const replaceWithCanonicalTemplate = configName === 'octopus.config';
+            const materializedConfig = replaceWithCanonicalTemplate
+                ? cloneJsonValue(templateConfig)
+                : mergeConfig(templateConfig, existingConfig);
 
             // Apply token economy enabled flag
             if (configName === 'token-economy') {
-                merged.enabled = tokenEconomyEnabled;
+                materializedConfig.enabled = tokenEconomyEnabled;
             }
 
             if (!dryRun) {
-                const json = JSON.stringify(merged, null, 2);
+                const json = JSON.stringify(materializedConfig, null, 2);
                 ensureDirectory(path.dirname(destConfigPath));
                 fs.writeFileSync(destConfigPath, json, 'utf8');
             }
 
-            configMergeStatuses[configName] = existingConfig
-                ? 'existing_values_preserved_and_missing_keys_filled'
-                : 'no_existing_live_config_template_applied';
+            configMergeStatuses[configName] = replaceWithCanonicalTemplate
+                ? (hadExistingConfig
+                    ? 'canonical_template_reapplied_existing_values_replaced'
+                    : 'canonical_template_applied')
+                : (existingConfig
+                    ? 'existing_values_preserved_and_missing_keys_filled'
+                    : 'no_existing_live_config_template_applied');
         } catch (err) {
             configMergeStatuses[configName] = 'merge_failed_template_applied';
         }
@@ -362,6 +369,7 @@ export function runInit(options: RunInitOptions) {
         outputFiltersConfigMergeStatus: configMergeStatuses['output-filters'] || 'n/a',
         skillPacksConfigMergeStatus: configMergeStatuses['skill-packs'] || 'n/a',
         isolationModeConfigMergeStatus: configMergeStatuses['isolation-mode'] || 'n/a',
+        octopusConfigMergeStatus: configMergeStatuses['octopus.config'] || 'n/a',
         reviewCapabilitiesSync,
         skillsIndexPath,
         ruleSourceMap,
@@ -547,6 +555,8 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         `- Skill packs config merge status: ${configMergeStatuses['skill-packs'] || 'n/a'}`,
         '- Isolation mode config sync policy: preserve existing live values, fill missing keys from template.',
         `- Isolation mode config merge status: ${configMergeStatuses['isolation-mode'] || 'n/a'}`,
+        '- Octopus config sync policy: rewrite the canonical root manifest from template on every init/update.',
+        `- Octopus config merge status: ${configMergeStatuses['octopus.config'] || 'n/a'}`,
         `- Assistant response language: ${lang}`,
         `- Assistant response brevity: ${brevity}`,
         `- Source of truth entrypoint: ${trimmedSoT}`,

@@ -83,5 +83,6 @@ export const MANAGED_CONFIG_NAMES: readonly string[] = Object.freeze([
     'paths',
     'token-economy',
     'output-filters',
-    'skill-packs'
+    'skill-packs',
+    'isolation-mode'
 ]);

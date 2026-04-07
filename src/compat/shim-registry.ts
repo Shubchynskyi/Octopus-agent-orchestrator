@@ -22,7 +22,8 @@ export const GATE_COMMANDS = Object.freeze([
     'shell-smoke-preflight',
     'command-timeout-diagnostics',
     'validate-isolation',
-    'prepare-isolation'
+    'prepare-isolation',
+    'validate-config'
 ]);
 
 export function getAllShimmedGateNames() {

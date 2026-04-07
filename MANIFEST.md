@@ -31,13 +31,18 @@ Managed in project root by `octopus install` (or `node Octopus-agent-orchestrato
 
 Unused entrypoints are not created by default. Extra redirect entrypoints appear only after the user explicitly confirms them during `agent-init`.
 
+Versioned bundle templates consumed during materialization:
+- template/config/octopus.config.json
+
 Materialized (regenerated on every init, reinit, and update) inside `Octopus-agent-orchestrator/live`:
 - live/config/review-capabilities.json
 - live/config/paths.json
 - live/config/token-economy.json
 - live/config/output-filters.json
 - live/config/skill-packs.json
+- live/config/isolation-mode.json
 - live/config/skills-index.json
+- live/config/octopus.config.json
 - live/docs/agent-rules/** (template-materialized rules; `15-project-memory.md` is regenerated from `docs/project-memory/` sources)
 - live/docs/changes/**
 - live/docs/reviews/**

@@ -28,7 +28,10 @@ export const BASE_REQUIRED_PATHS = Object.freeze([
     'Octopus-agent-orchestrator/live/config/token-economy.json',
     'Octopus-agent-orchestrator/live/config/output-filters.json',
     'Octopus-agent-orchestrator/live/config/skill-packs.json',
+    'Octopus-agent-orchestrator/live/config/isolation-mode.json',
     'Octopus-agent-orchestrator/live/config/skills-index.json',
+    'Octopus-agent-orchestrator/live/config/octopus.config.json',
+    'Octopus-agent-orchestrator/template/config/octopus.config.json',
     'Octopus-agent-orchestrator/live/skills/README.md',
     'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
     'Octopus-agent-orchestrator/live/skills/code-review/skill.json',
@@ -107,7 +110,8 @@ export const CRITICAL_BUNDLE_PATHS = Object.freeze([
     'dist/src/index.js',
     'package.json',
     'VERSION',
-    'template/AGENTS.md'
+    'template/AGENTS.md',
+    'template/config/octopus.config.json'
 ]);
 
 /**
@@ -120,7 +124,9 @@ export const BUNDLE_RUNTIME_INVENTORY_PATHS = Object.freeze([
     'live/config/token-economy.json',
     'live/config/output-filters.json',
     'live/config/skill-packs.json',
-    'live/config/skills-index.json'
+    'live/config/isolation-mode.json',
+    'live/config/skills-index.json',
+    'live/config/octopus.config.json'
 ]);
 
 interface BuildRequiredPathsOptions {

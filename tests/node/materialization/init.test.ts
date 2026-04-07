@@ -179,6 +179,51 @@ describe('runInit', () => {
         }
     });
 
+    it('rewrites octopus.config.json from the canonical template on reinit', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const octopusConfigPath = path.join(bundleRoot, 'live', 'config', 'octopus.config.json');
+            const templateConfigPath = path.join(bundleRoot, 'template', 'config', 'octopus.config.json');
+            const modifiedConfig = {
+                version: 99,
+                configs: {
+                    'review-capabilities': '../custom/review-capabilities.json',
+                    'token-economy': 'token-economy.json'
+                },
+                custom: true
+            };
+
+            fs.writeFileSync(octopusConfigPath, JSON.stringify(modifiedConfig, null, 2), 'utf8');
+
+            const result = runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const materializedConfig = JSON.parse(fs.readFileSync(octopusConfigPath, 'utf8'));
+            const templateConfig = JSON.parse(fs.readFileSync(templateConfigPath, 'utf8'));
+            assert.deepEqual(materializedConfig, templateConfig);
+            assert.equal(result.octopusConfigMergeStatus, 'canonical_template_reapplied_existing_values_replaced');
+
+            const report = fs.readFileSync(result.initReportPath, 'utf8');
+            assert.ok(report.includes('Octopus config sync policy: rewrite the canonical root manifest from template on every init/update.'));
+            assert.ok(report.includes('Octopus config merge status: canonical_template_reapplied_existing_values_replaced'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('fails when another live lifecycle operation lock exists', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

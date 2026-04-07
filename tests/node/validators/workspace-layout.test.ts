@@ -97,6 +97,7 @@ test('detectSourceBundleParity passes when matching', () => {
         fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'bin'), { recursive: true });
         fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'dist', 'src'), { recursive: true });
         fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'template'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'template', 'config'), { recursive: true });
         fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'runtime'), { recursive: true });
         fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config'), { recursive: true });
         fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
@@ -106,13 +107,16 @@ test('detectSourceBundleParity passes when matching', () => {
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'package.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'dist', 'src', 'index.js'), 'module.exports = {};', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'template', 'AGENTS.md'), '# template', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'template', 'config', 'octopus.config.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'runtime', 'init-answers.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'review-capabilities.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'paths.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'token-economy.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'output-filters.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'skill-packs.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'isolation-mode.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'skills-index.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'octopus.config.json'), '{}', 'utf8');
 
         const rootLauncher = path.join(tmpDir, 'bin', 'octopus.js');
         const bundleLauncher = path.join(tmpDir, 'Octopus-agent-orchestrator', 'bin', 'octopus.js');
@@ -154,12 +158,75 @@ test('validateBundleInvariants fails on partial runtime inventory', () => {
     }
 });
 
+test('validateBundleInvariants fails when isolation-mode inventory entry is missing', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-invariants-test-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    try {
+        for (const relPath of [...CRITICAL_BUNDLE_PATHS, ...BUNDLE_RUNTIME_INVENTORY_PATHS]) {
+            const fullPath = path.join(bundlePath, relPath);
+            fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+            fs.writeFileSync(fullPath, '{}', 'utf8');
+        }
+
+        fs.rmSync(path.join(bundlePath, 'live', 'config', 'isolation-mode.json'));
+
+        const result = validateBundleInvariants(bundlePath);
+        assert.equal(result.isValid, false);
+        assert.ok(result.violations.some(v => v.includes('live/config/isolation-mode.json')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('validateBundleInvariants fails when octopus.config runtime inventory entry is missing', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-invariants-test-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    try {
+        for (const relPath of [...CRITICAL_BUNDLE_PATHS, ...BUNDLE_RUNTIME_INVENTORY_PATHS]) {
+            const fullPath = path.join(bundlePath, relPath);
+            fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+            fs.writeFileSync(fullPath, '{}', 'utf8');
+        }
+
+        fs.rmSync(path.join(bundlePath, 'live', 'config', 'octopus.config.json'));
+
+        const result = validateBundleInvariants(bundlePath);
+        assert.equal(result.isValid, false);
+        assert.ok(result.violations.some(v => v.includes('live/config/octopus.config.json')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('validateBundleInvariants fails when template octopus.config bundle file is missing', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-invariants-test-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    try {
+        for (const relPath of [...CRITICAL_BUNDLE_PATHS, ...BUNDLE_RUNTIME_INVENTORY_PATHS]) {
+            const fullPath = path.join(bundlePath, relPath);
+            fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+            fs.writeFileSync(fullPath, '{}', 'utf8');
+        }
+
+        fs.rmSync(path.join(bundlePath, 'template', 'config', 'octopus.config.json'));
+
+        const result = validateBundleInvariants(bundlePath);
+        assert.equal(result.isValid, false);
+        assert.ok(result.violations.some(v => v.includes('template/config/octopus.config.json')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('BASE_REQUIRED_PATHS is a frozen non-empty array', () => {
     assert.ok(Array.isArray(BASE_REQUIRED_PATHS));
     assert.ok(BASE_REQUIRED_PATHS.length > 25);
     assert.ok(Object.isFrozen(BASE_REQUIRED_PATHS));
     assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/src'));
     assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/live/config/skills-index.json'));
+    assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/live/config/isolation-mode.json'));
+    assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/live/config/octopus.config.json'));
+    assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/template/config/octopus.config.json'));
     assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/live/skills/orchestration/skill.json'));
     assert.ok(BASE_REQUIRED_PATHS.includes('Octopus-agent-orchestrator/live/skills/dependency-review/skill.json'));
     assert.ok(!BASE_REQUIRED_PATHS.includes('.qwen/settings.json'));
@@ -212,6 +279,7 @@ test('buildRequiredPaths includes base paths plus rule files', () => {
     assert.ok(paths.length >= BASE_REQUIRED_PATHS.length);
     assert.ok(paths.includes('TASK.md'));
     assert.ok(paths.includes('Octopus-agent-orchestrator/VERSION'));
+    assert.ok(paths.includes('Octopus-agent-orchestrator/live/config/octopus.config.json'));
     assert.ok(paths.some(p => p.includes('00-core.md')));
     assert.ok(paths.some(p => p.includes('90-skill-catalog.md')));
     for (const rf of RULE_FILES) {

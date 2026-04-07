@@ -2,16 +2,53 @@
 
 All configuration files live in `Octopus-agent-orchestrator/live/config/`.
 
+The root manifest `octopus.config.json` references the six managed config files validated by the orchestrator and can be checked with:
+
+```bash
+node bin/octopus.js gate validate-config
+```
+
 ## Config Files Overview
 
 | File | Purpose | Editable? |
 |---|---|---|
+| `octopus.config.json` | Root config manifest referencing the six managed config files validated by `validate-config` | No, maintained by orchestrator |
 | `token-economy.json` | Reviewer-context compaction and token savings | Yes |
 | `output-filters.json` | Gate output compaction profiles (compile, test, lint, review) | Yes |
 | `review-capabilities.json` | Which specialist reviews are enabled | Yes |
 | `paths.json` | Preflight classification roots and trigger regexes | Yes |
 | `skill-packs.json` | Installed built-in domain packs | Yes, through `octopus skills add/remove` |
 | `skills-index.json` | Compact optional-skill discovery index | No, generated from pack manifests |
+| `isolation-mode.json` | Control-plane isolation and sandbox settings | Yes |
+
+`octopus.config.json` is rewritten from the bundled template during init/reinit/update, so stale local edits do not become the long-term source of truth.
+
+## Validation
+
+### CLI Gate
+
+```bash
+# Full output
+node bin/octopus.js gate validate-config --bundle-root Octopus-agent-orchestrator
+
+# Compact (CI-friendly)
+node bin/octopus.js gate validate-config --compact
+```
+
+Validates the six managed config files referenced by `octopus.config.json` against portable JSON Schemas and runtime validators.
+Exits non-zero on validation failure.
+
+### CI Script
+
+```bash
+node scripts/validate-config.cjs
+```
+
+### JSON Schemas
+
+Portable JSON Schema definitions (draft-07) are available for each managed config file
+in `src/schemas/config-schemas.ts`. Each schema can be serialized to a `.json`
+file for use with external validators, IDE autocomplete, or CI linters.
 
 ## Token Economy
 
@@ -87,18 +124,21 @@ Controls which specialist reviews are enabled for the project.
 
 ```json
 {
-  "mandatory": ["code", "db", "security", "refactor"],
-  "optional": {
-    "api": false,
-    "test": false,
-    "performance": false,
-    "infra": false,
-    "dependency": false
-  }
+  "code": true,
+  "db": true,
+  "security": true,
+  "refactor": true,
+  "api": true,
+  "test": true,
+  "performance": true,
+  "infra": true,
+  "dependency": true
 }
 ```
 
-Mandatory reviews are always required when preflight detects their triggers. Optional reviews can be enabled per-project.
+Each top-level key toggles whether that review type may be required by preflight in this workspace.
+
+`skills-index.json` is still a generated runtime index under `live/config/`, but it is **not** part of `octopus.config.json` and is **not** validated by `gate validate-config`.
 
 ## Skill Packs
 

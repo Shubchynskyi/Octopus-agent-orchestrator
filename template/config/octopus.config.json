@@ -1,0 +1,12 @@
+{
+  "$schema": "octopus-agent-orchestrator/octopus.config.schema.json",
+  "version": 1,
+  "configs": {
+    "review-capabilities": "review-capabilities.json",
+    "token-economy": "token-economy.json",
+    "paths": "paths.json",
+    "output-filters": "output-filters.json",
+    "skill-packs": "skill-packs.json",
+    "isolation-mode": "isolation-mode.json"
+  }
+}

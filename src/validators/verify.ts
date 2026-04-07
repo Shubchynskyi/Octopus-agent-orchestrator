@@ -377,6 +377,8 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
     var tev = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/token-economy.json');
     var ofv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/output-filters.json');
     var spv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/skill-packs.json');
+    var imv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/isolation-mode.json');
+    var ocv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/octopus.config.json');
     var six = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/skills-index.json');
     var rfr = detectRuleFileViolations(targetRoot);
     var tmv = detectTaskModeRuleContractViolations(targetRoot);
@@ -404,7 +406,7 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
         ruleFileViolations: rfr.ruleFileViolations.concat(tmv),
         templatePlaceholderViolations: rfr.templatePlaceholderViolations,
         commandsContractViolations: cv,
-        manifestContractViolations: mv,
+        manifestContractViolations: mv.concat(imv, ocv),
         coreRuleContractViolations: crv,
         entrypointContractViolations: ev,
         taskContractViolations: tv,

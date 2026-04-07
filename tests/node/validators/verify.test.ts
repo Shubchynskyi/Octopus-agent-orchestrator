@@ -19,6 +19,23 @@ import {
     detectManifestContractViolations
 } from '../../../src/validators/verify';
 
+function writeInitAnswersFixture(targetRoot: string) {
+    const answersDir = path.join(targetRoot, 'Octopus-agent-orchestrator', 'runtime');
+    fs.mkdirSync(answersDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(answersDir, 'init-answers.json'),
+        JSON.stringify({
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Claude',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true'
+        }),
+        'utf8'
+    );
+}
+
 test('parseBooleanLike handles true values', () => {
     assert.equal(parseBooleanLike(true, false), true);
     assert.equal(parseBooleanLike('true', false), true);
@@ -366,6 +383,51 @@ test('runVerify returns failed result for empty workspace', () => {
         assert.equal(result.canonicalEntrypoint, 'CLAUDE.md');
         assert.ok(result.violations.gitignoreMissing.includes('.qwen/'));
         assert.ok(result.violations.gitignoreMissing.includes('AGENTS.md'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('runVerify reports missing octopus.config.json in manifest contract violations', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    try {
+        writeInitAnswersFixture(tmpDir);
+
+        const result = runVerify({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude',
+            initAnswersPath: 'Octopus-agent-orchestrator/runtime/init-answers.json'
+        });
+
+        assert.ok(
+            result.violations.manifestContractViolations.some(
+                (violation) => violation.includes('live/config/octopus.config.json') && violation.includes('missing')
+            )
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('runVerify reports invalid octopus.config.json content in manifest contract violations', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    try {
+        writeInitAnswersFixture(tmpDir);
+        const configDir = path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(configDir, 'octopus.config.json'), '{', 'utf8');
+
+        const result = runVerify({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude',
+            initAnswersPath: 'Octopus-agent-orchestrator/runtime/init-answers.json'
+        });
+
+        assert.ok(
+            result.violations.manifestContractViolations.some(
+                (violation) => violation.includes('live/config/octopus.config.json') && violation.includes('valid JSON')
+            )
+        );
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

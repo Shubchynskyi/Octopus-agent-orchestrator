@@ -248,11 +248,63 @@ export function validateOutputFiltersConfig(input: unknown): Record<string, unkn
     return normalized;
 }
 
+export function validateSkillPacksConfig(input: unknown): Record<string, unknown> {
+    const raw = ensurePlainObject(input, 'skill-packs');
+    const knownKeys = new Set(['version', 'installed_packs']);
+    const normalized = cloneUnknownProperties(raw, knownKeys);
+
+    normalized.version = normalizeInteger(raw.version, 'skill-packs.version', { minimum: 1 });
+
+    const installedPacks = normalizeStringArray(raw.installed_packs, 'skill-packs.installed_packs', { allowScalar: true });
+    normalized.installed_packs = Array.from(new Set(installedPacks));
+
+    return normalized;
+}
+
+export function validateIsolationModeConfig(input: unknown): Record<string, unknown> {
+    const raw = ensurePlainObject(input, 'isolation-mode');
+    const knownKeys = new Set([
+        'enabled',
+        'enforcement',
+        'require_manifest_match_before_task',
+        'refuse_on_preflight_drift',
+        'use_sandbox',
+        'same_user_limitation_notice'
+    ]);
+    const normalized = cloneUnknownProperties(raw, knownKeys);
+
+    normalized.enabled = normalizeBooleanLike(raw.enabled, 'isolation-mode.enabled');
+    normalized.enforcement = normalizeNonEmptyString(raw.enforcement, 'isolation-mode.enforcement');
+    if (normalized.enforcement !== 'STRICT' && normalized.enforcement !== 'LOG_ONLY') {
+        throw new Error("isolation-mode.enforcement must be 'STRICT' or 'LOG_ONLY'.");
+    }
+    normalized.require_manifest_match_before_task = normalizeBooleanLike(
+        raw.require_manifest_match_before_task,
+        'isolation-mode.require_manifest_match_before_task'
+    );
+    normalized.refuse_on_preflight_drift = normalizeBooleanLike(
+        raw.refuse_on_preflight_drift,
+        'isolation-mode.refuse_on_preflight_drift'
+    );
+    normalized.use_sandbox = normalizeBooleanLike(raw.use_sandbox, 'isolation-mode.use_sandbox');
+
+    if (raw.same_user_limitation_notice !== undefined) {
+        normalized.same_user_limitation_notice = normalizeNonEmptyString(
+            raw.same_user_limitation_notice,
+            'isolation-mode.same_user_limitation_notice'
+        );
+    }
+
+    return normalized;
+}
+
 const MANAGED_CONFIG_VALIDATORS = Object.freeze({
     'review-capabilities': validateReviewCapabilitiesConfig,
     paths: validatePathsConfig,
     'token-economy': validateTokenEconomyConfig,
-    'output-filters': validateOutputFiltersConfig
+    'output-filters': validateOutputFiltersConfig,
+    'skill-packs': validateSkillPacksConfig,
+    'isolation-mode': validateIsolationModeConfig
 });
 
 function normalizeManagedConfigName(configName: unknown): string {
@@ -275,4 +327,3 @@ export function validateManagedConfigByName(configName: unknown, input: unknown)
 export function getManagedConfigValidators() {
     return MANAGED_CONFIG_VALIDATORS;
 }
-
