@@ -80,6 +80,63 @@ describe('spawnStreamed', () => {
             (err) => (err as Error).message.includes('not found in PATH')
         );
     });
+
+    it('sets stdoutTruncated and stderrTruncated to false under normal output', async () => {
+        const result = await spawnStreamed(process.execPath, ['-e', 'console.log("ok")'], {
+            timeoutMs: 5000
+        });
+        assert.equal(result.stdoutTruncated, false);
+        assert.equal(result.stderrTruncated, false);
+    });
+
+    it('sets stdoutTruncated when stdout exceeds maxBuffer', async () => {
+        // Emit ~200 bytes of stdout against a 64-byte maxBuffer
+        const script = 'for(let i=0;i<20;i++) process.stdout.write("0123456789")';
+        const result = await spawnStreamed(process.execPath, ['-e', script], {
+            timeoutMs: 5000,
+            maxBuffer: 64
+        });
+        assert.equal(result.stdoutTruncated, true);
+        assert.equal(result.stderrTruncated, false);
+        // Buffered portion must be <= maxBuffer bytes
+        assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
+    });
+
+    it('sets stderrTruncated when stderr exceeds maxBuffer', async () => {
+        const script = 'for(let i=0;i<20;i++) process.stderr.write("0123456789")';
+        const result = await spawnStreamed(process.execPath, ['-e', script], {
+            timeoutMs: 5000,
+            maxBuffer: 64
+        });
+        assert.equal(result.stderrTruncated, true);
+        assert.equal(result.stdoutTruncated, false);
+        assert.ok(Buffer.byteLength(result.stderr, 'utf8') <= 64);
+    });
+
+    it('delivers callbacks for all chunks even when buffer is truncated', async () => {
+        const allChunks: string[] = [];
+        const script = 'for(let i=0;i<20;i++) process.stdout.write("0123456789")';
+        const result = await spawnStreamed(process.execPath, ['-e', script], {
+            timeoutMs: 5000,
+            maxBuffer: 64,
+            onStdout(chunk) { allChunks.push(chunk); }
+        });
+        assert.equal(result.stdoutTruncated, true);
+        // Callbacks receive the full output regardless of maxBuffer
+        const callbackTotal = allChunks.join('').length;
+        assert.ok(callbackTotal >= 200, `Expected >=200 chars via callback, got ${callbackTotal}`);
+    });
+
+    it('reports truncated false for pre-aborted signal', async () => {
+        const ac = new AbortController();
+        ac.abort();
+        const result = await spawnStreamed(process.execPath, ['-e', 'console.log("nope")'], {
+            signal: ac.signal
+        });
+        assert.equal(result.cancelled, true);
+        assert.equal(result.stdoutTruncated, false);
+        assert.equal(result.stderrTruncated, false);
+    });
 });
 
 describe('spawnSyncWithTimeout', () => {
@@ -232,5 +289,35 @@ describe('shell-surface hardening', () => {
         setTimeout(() => ac.abort(), 300);
         const result = await promise;
         assert.equal(result.cancelled, true);
+    });
+
+    it('spawnShellCommand exposes truncation flags under normal output', async () => {
+        if (process.platform !== 'win32') return;
+        const result = await spawnShellCommand('echo shelltrunctest', { timeoutMs: 5000 });
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.stdoutTruncated, false);
+        assert.equal(result.stderrTruncated, false);
+    });
+
+    it('spawnShellCommand sets stdoutTruncated when stdout exceeds maxBuffer', async () => {
+        if (process.platform !== 'win32') return;
+        // Use single-quoted strings to avoid cmd.exe double-quote escaping issues
+        const script = "for(let i=0;i<20;i++) process.stdout.write('0123456789')";
+        const result = await spawnShellCommand(
+            `"${process.execPath}" -e "${script}"`,
+            { timeoutMs: 5000, maxBuffer: 64 }
+        );
+        assert.equal(result.stdoutTruncated, true);
+        assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
+    });
+
+    it('spawnShellCommand reports truncated false for pre-aborted signal', async () => {
+        if (process.platform !== 'win32') return;
+        const ac = new AbortController();
+        ac.abort();
+        const result = await spawnShellCommand('echo nope', { signal: ac.signal });
+        assert.equal(result.cancelled, true);
+        assert.equal(result.stdoutTruncated, false);
+        assert.equal(result.stderrTruncated, false);
     });
 });

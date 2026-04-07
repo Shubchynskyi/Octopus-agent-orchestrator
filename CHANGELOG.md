@@ -1,7 +1,8 @@
 # Changelog
 
 ## Unreleased
-- tightened `doc-impact-gate` semantics to fail closed: only `DOCS_UPDATED` and `NO_DOC_UPDATES` are accepted, and `NO_DOC_UPDATES` now rejects contradictory `docs_updated`, `behavior_changed=true`, and `changelog_updated=true` combinations
+- reworked `spawnStreamed()` and `spawnShellCommand()` buffering from string concatenation to chunk-array accumulation, reducing string churn on high-volume output; added `stdoutTruncated` and `stderrTruncated` boolean fields to `SpawnStreamedResult` so callers can detect when output exceeded `maxBuffer` instead of silently losing data; callbacks (`onStdout`/`onStderr`) continue to fire for all chunks regardless of buffer state
+- tightened `doc-impact-gate` semanticsto fail closed: only `DOCS_UPDATED` and `NO_DOC_UPDATES` are accepted, and `NO_DOC_UPDATES` now rejects contradictory `docs_updated`, `behavior_changed=true`, and `changelog_updated=true` combinations
 - hardened filesystem lock crash safety: `acquireFilesystemLock` and `acquireFilesystemLockAsync` now clean up the lock directory when the owner-metadata write fails between `mkdirSync` and `writeFileSync`, preventing orphaned locks without ownership information
 - hardened stale-lock detection: `inspectLock` now treats lock directories with missing or corrupt `owner.json` metadata as stale (`staleReason: 'owner_dead'`) instead of waiting for the age-based timeout, enabling immediate reclamation of crash-orphaned locks
 - fixed concurrent async lifecycle lock bypass: `withLifecycleOperationLockAsync` now serializes independent async callers targeting the same root via a per-target promise queue, preventing the synchronous re-entrancy shortcut from letting concurrent async operations skip the filesystem lock

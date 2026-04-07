@@ -31,6 +31,8 @@ export interface SpawnStreamedResult {
     stderr: string;
     timedOut: boolean;
     cancelled: boolean;
+    stdoutTruncated: boolean;
+    stderrTruncated: boolean;
 }
 
 export function spawnStreamed(command: string, args: string[], options?: SpawnStreamedOptions): Promise<SpawnStreamedResult> {
@@ -48,7 +50,9 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
                 stdout: '',
                 stderr: '',
                 timedOut: false,
-                cancelled: true
+                cancelled: true,
+                stdoutTruncated: false,
+                stderrTruncated: false
             });
         }
 
@@ -56,10 +60,12 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
         let timedOut = false;
         let cancelled = false;
         let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-        let stdoutBuf = '';
-        let stderrBuf = '';
+        const stdoutChunks: string[] = [];
+        const stderrChunks: string[] = [];
         let stdoutBytes = 0;
         let stderrBytes = 0;
+        let stdoutTruncated = false;
+        let stderrTruncated = false;
 
         const spawnOpts: {
             cwd: string;
@@ -152,8 +158,10 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
                 child.stdout.on('data', function (chunk: string) {
                     const len = Buffer.byteLength(chunk, 'utf8');
                     if (stdoutBytes + len <= maxBuffer) {
-                        stdoutBuf += chunk;
+                        stdoutChunks.push(chunk);
                         stdoutBytes += len;
+                    } else {
+                        stdoutTruncated = true;
                     }
                     if (opts.onStdout) {
                         opts.onStdout(chunk);
@@ -165,8 +173,10 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
                 child.stderr.on('data', function (chunk: string) {
                     const len = Buffer.byteLength(chunk, 'utf8');
                     if (stderrBytes + len <= maxBuffer) {
-                        stderrBuf += chunk;
+                        stderrChunks.push(chunk);
                         stderrBytes += len;
+                    } else {
+                        stderrTruncated = true;
                     }
                     if (opts.onStderr) {
                         opts.onStderr(chunk);
@@ -178,10 +188,12 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
         child.once('close', function (code: number | null) {
             settle({
                 exitCode: code == null ? 1 : code,
-                stdout: stdoutBuf,
-                stderr: stderrBuf,
+                stdout: stdoutChunks.join(''),
+                stderr: stderrChunks.join(''),
                 timedOut,
-                cancelled
+                cancelled,
+                stdoutTruncated,
+                stderrTruncated
             });
         });
     });
@@ -231,7 +243,9 @@ export function spawnShellCommand(
                 stdout: '',
                 stderr: '',
                 timedOut: false,
-                cancelled: true
+                cancelled: true,
+                stdoutTruncated: false,
+                stderrTruncated: false
             });
         }
 
@@ -239,10 +253,12 @@ export function spawnShellCommand(
         let timedOut = false;
         let cancelled = false;
         let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-        let stdoutBuf = '';
-        let stderrBuf = '';
+        const stdoutChunks: string[] = [];
+        const stderrChunks: string[] = [];
         let stdoutBytes = 0;
         let stderrBytes = 0;
+        let stdoutTruncated = false;
+        let stderrTruncated = false;
 
         const child: ChildProcess = childProcess.spawn(commandLine, [], {
             cwd,
@@ -314,8 +330,10 @@ export function spawnShellCommand(
             child.stdout.on('data', function (chunk: string) {
                 const len = Buffer.byteLength(chunk, 'utf8');
                 if (stdoutBytes + len <= maxBuffer) {
-                    stdoutBuf += chunk;
+                    stdoutChunks.push(chunk);
                     stdoutBytes += len;
+                } else {
+                    stdoutTruncated = true;
                 }
                 if (opts.onStdout) {
                     opts.onStdout(chunk);
@@ -327,8 +345,10 @@ export function spawnShellCommand(
             child.stderr.on('data', function (chunk: string) {
                 const len = Buffer.byteLength(chunk, 'utf8');
                 if (stderrBytes + len <= maxBuffer) {
-                    stderrBuf += chunk;
+                    stderrChunks.push(chunk);
                     stderrBytes += len;
+                } else {
+                    stderrTruncated = true;
                 }
                 if (opts.onStderr) {
                     opts.onStderr(chunk);
@@ -339,10 +359,12 @@ export function spawnShellCommand(
         child.once('close', function (code: number | null) {
             settle({
                 exitCode: code == null ? 1 : code,
-                stdout: stdoutBuf,
-                stderr: stderrBuf,
+                stdout: stdoutChunks.join(''),
+                stderr: stderrChunks.join(''),
                 timedOut,
-                cancelled
+                cancelled,
+                stdoutTruncated,
+                stderrTruncated
             });
         });
     });
