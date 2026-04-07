@@ -11,6 +11,7 @@ import {
     normalizeManifestEntry,
     checkEntryOutsideRoot,
     formatManifestResult,
+    formatManifestResultCompact,
     type ManifestEntryDiagnostic,
     type ManifestDiagnosticCode
 } from '../../../src/validators/validate-manifest';
@@ -541,4 +542,37 @@ test('validateManifest works against the real repo MANIFEST.md', () => {
     const result = validateManifest(manifestPath, repoRoot);
     assert.equal(result.passed, true, `Real MANIFEST.md failed validation: duplicates=[${result.duplicates.join(', ')}] diagnostics=[${result.diagnostics.map(d => d.code + ':' + d.entry).join(', ')}]`);
     assert.ok(result.entriesChecked > 0, 'Real MANIFEST.md should have entries');
+});
+
+/* ------------------------------------------------------------------ */
+/*  formatManifestResultCompact (T-019)                               */
+/* ------------------------------------------------------------------ */
+
+test('formatManifestResultCompact emits single line on success', () => {
+    const result = {
+        passed: true,
+        manifestPath: '/tmp/MANIFEST.md',
+        entriesChecked: 7,
+        duplicates: [] as string[],
+        diagnostics: [] as ManifestEntryDiagnostic[]
+    };
+    const output = formatManifestResultCompact(result);
+    assert.ok(!output.includes('\n'), 'Compact success output must be a single line');
+    assert.ok(output.includes('MANIFEST_VALIDATION_PASSED'));
+    assert.ok(output.includes('entries=7'));
+});
+
+test('formatManifestResultCompact emits full output on failure', () => {
+    const result = {
+        passed: false,
+        manifestPath: '/tmp/MANIFEST.md',
+        entriesChecked: 3,
+        duplicates: ['dup.txt'],
+        diagnostics: [
+            { code: 'DUPLICATE_RAW' as ManifestDiagnosticCode, entry: 'dup.txt', message: "Duplicate of 'dup.txt'" }
+        ]
+    };
+    const output = formatManifestResultCompact(result);
+    assert.ok(output.includes('MANIFEST_VALIDATION_FAILED'), 'Compact failure must include full failure output');
+    assert.ok(output.includes('Duplicate entries:'));
 });

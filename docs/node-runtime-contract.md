@@ -178,6 +178,13 @@ Zero-diff guard:
 - Verify success: `Verification: PASS`
 - Verify failure tail: `Verification failed. Resolve listed issues and rerun.`
 
+Compact validation success markers:
+
+- `octopus status --compact` (ready): `OCTOPUS_STATUS: ready | source=<provider>`
+- `octopus doctor --compact` (pass): `Doctor: PASS | verify=PASS | manifest=PASS`
+- `octopus verify --compact` (pass): `Verification: PASS | paths=<count> | violations=0`
+- `octopus gate validate-manifest --compact` (pass): `MANIFEST_VALIDATION_PASSED | entries=<count>`
+
 ## Validation
 
 Contract coverage lives in:

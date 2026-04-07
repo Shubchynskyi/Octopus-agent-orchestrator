@@ -468,3 +468,14 @@ export function formatVerifyResult(result: VerifyResult): string {
     else lines.push('Verification: PASS');
     return lines.join('\n');
 }
+
+/**
+ * Format verify result in compact mode.
+ * On success: single summary line. On failure: full output (delegates to formatVerifyResult).
+ */
+export function formatVerifyResultCompact(result: VerifyResult): string {
+    if (!result.passed) {
+        return formatVerifyResult(result);
+    }
+    return `Verification: PASS | paths=${result.requiredPathsChecked} | violations=0`;
+}

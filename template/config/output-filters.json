@@ -289,6 +289,18 @@
         "type": "review_gate_summary",
         "max_lines": 18
       }
+    },
+    "validation_success_console": {
+      "description": "Suppress verbose validation success output outside gate execution. Use --compact on status/doctor/verify/validate-manifest.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "drop_lines_matching",
+          "pattern": ".*"
+        }
+      ]
     }
   }
 }

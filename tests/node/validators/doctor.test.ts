@@ -7,6 +7,7 @@ import * as os from 'node:os';
 import {
     runDoctor,
     formatDoctorResult,
+    formatDoctorResultCompact,
     checkRuntimeMismatch,
     checkPermissions,
     checkPartialState,
@@ -1332,4 +1333,146 @@ test('formatDoctorResult shows partial-state section when sentinel detected', ()
     assert.ok(output.includes('DETECTED'));
     assert.ok(output.includes('Interrupted update'));
     assert.ok(output.includes('Doctor: FAIL'));
+});
+
+/* ------------------------------------------------------------------ */
+/*  formatDoctorResultCompact (T-019)                                 */
+/* ------------------------------------------------------------------ */
+
+test('formatDoctorResultCompact emits single line on success', () => {
+    const fakeResult = {
+        passed: true,
+        targetRoot: '/tmp/test',
+        verifyResult: {
+            passed: true,
+            targetRoot: '/tmp/test',
+            sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md',
+            bundleVersion: '1.0.0',
+            requiredPathsChecked: 10,
+            violations: {
+                missingPaths: [],
+                initAnswersContractViolations: [],
+                versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [],
+                pathsContractViolations: [],
+                tokenEconomyContractViolations: [],
+                outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [],
+                skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [],
+                templatePlaceholderViolations: [],
+                commandsContractViolations: [],
+                manifestContractViolations: [],
+                coreRuleContractViolations: [],
+                entrypointContractViolations: [],
+                taskContractViolations: [],
+                qwenSettingsViolations: [],
+                skillsIndexContractViolations: [],
+                skillPackContractViolations: [],
+                gitignoreMissing: []
+            },
+            totalViolationCount: 0
+        },
+        manifestResult: {
+            passed: true,
+            manifestPath: '/tmp/MANIFEST.md',
+            entriesChecked: 5,
+            duplicates: [],
+            diagnostics: []
+        },
+        manifestError: null,
+        timelineEvidence: [],
+        timelineWarnings: [],
+        lockHealth: {
+            lock_root: '/tmp/test/runtime/task-events',
+            subsystem_scope_note: 'Only runtime/task-events/*.lock participates in the task-event lock subsystem. runtime/reviews/ is never cleaned by these diagnostics.',
+            locks: [],
+            active_count: 0,
+            stale_count: 0
+        },
+        lockCleanup: null,
+        parityResult: {
+            isSourceCheckout: false,
+            isStale: false,
+            violations: [],
+            rootVersion: null,
+            bundleVersion: null,
+            remediation: null
+        },
+        providerComplianceResult: null,
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
+        protectedManifestEvidence: null,
+        ...DEFAULT_NEW_EVIDENCE
+    };
+    const output = formatDoctorResultCompact(fakeResult);
+    assert.ok(!output.includes('\n'), 'Compact success output must be a single line');
+    assert.ok(output.includes('Doctor: PASS'));
+    assert.ok(output.includes('verify=PASS'));
+    assert.ok(output.includes('manifest=PASS'));
+});
+
+test('formatDoctorResultCompact emits full output on failure', () => {
+    const fakeResult = {
+        passed: false,
+        targetRoot: '/tmp/test',
+        verifyResult: {
+            passed: false,
+            targetRoot: '/tmp/test',
+            sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md',
+            bundleVersion: '1.0.0',
+            requiredPathsChecked: 10,
+            violations: {
+                missingPaths: ['some/path'],
+                initAnswersContractViolations: [],
+                versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [],
+                pathsContractViolations: [],
+                tokenEconomyContractViolations: [],
+                outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [],
+                skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [],
+                templatePlaceholderViolations: [],
+                commandsContractViolations: [],
+                manifestContractViolations: [],
+                coreRuleContractViolations: [],
+                entrypointContractViolations: [],
+                taskContractViolations: [],
+                qwenSettingsViolations: [],
+                skillsIndexContractViolations: [],
+                skillPackContractViolations: [],
+                gitignoreMissing: []
+            },
+            totalViolationCount: 1
+        },
+        manifestResult: null,
+        manifestError: null,
+        timelineEvidence: [],
+        timelineWarnings: [],
+        lockHealth: {
+            lock_root: '/tmp/test/runtime/task-events',
+            subsystem_scope_note: 'Only runtime/task-events/*.lock participates in the task-event lock subsystem.',
+            locks: [],
+            active_count: 0,
+            stale_count: 0
+        },
+        lockCleanup: null,
+        parityResult: {
+            isSourceCheckout: false,
+            isStale: false,
+            violations: [],
+            rootVersion: null,
+            bundleVersion: null,
+            remediation: null
+        },
+        providerComplianceResult: null,
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
+        protectedManifestEvidence: null,
+        ...DEFAULT_NEW_EVIDENCE
+    };
+    const output = formatDoctorResultCompact(fakeResult);
+    assert.ok(output.includes('Doctor: FAIL'), 'Compact failure must include full failure output');
+    assert.ok(output.includes('MissingPathCount: 1'));
 });

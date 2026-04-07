@@ -7,6 +7,7 @@ import * as os from 'node:os';
 import {
     getStatusSnapshot,
     formatStatusSnapshot,
+    formatStatusSnapshotCompact,
     resolveInitAnswersPath
 } from '../../../src/validators/status';
 import {
@@ -551,4 +552,98 @@ test('getStatusSnapshot surfaces protected-manifest INVALID and blocks readyForT
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+});
+
+/* ------------------------------------------------------------------ */
+/*  formatStatusSnapshotCompact (T-019)                               */
+/* ------------------------------------------------------------------ */
+
+test('formatStatusSnapshotCompact emits single line when ready', () => {
+    const snapshot = {
+        targetRoot: '/tmp/test',
+        bundlePath: '/tmp/test/Octopus-agent-orchestrator',
+        initAnswersResolvedPath: '/tmp/test/init-answers.json',
+        collectedVia: 'setup',
+        activeAgentFiles: 'AGENTS.md',
+        sourceOfTruth: 'Claude',
+        canonicalEntrypoint: 'CLAUDE.md',
+        bundlePresent: true,
+        primaryInitializationComplete: true,
+        agentInitializationComplete: true,
+        readyForTasks: true,
+        agentInitializationPendingReason: null as null,
+        missingProjectCommands: [] as string[],
+        initAnswersError: null as null,
+        liveVersionError: null as null,
+        agentInitStateError: null as null,
+        commandsRulePath: '/tmp/test/commands.md',
+        recommendedNextCommand: 'Execute task T-001 depth=2',
+        parityResult: {
+            isSourceCheckout: false,
+            isStale: false,
+            violations: [] as string[],
+            remediation: null as null
+        },
+        timelineTaskCount: 0,
+        timelineHealthy: 0,
+        timelineWarnings: [] as string[],
+        providerComplianceResult: null as null,
+        protectedManifestEvidence: null as null,
+        initAnswersPathForDisplay: '/tmp/test/init-answers.json',
+        initAnswersPresent: true,
+        taskPresent: true,
+        livePresent: true,
+        usagePresent: true,
+        agentInitStatePath: '/tmp/test/state.json',
+        agentInitState: null as null
+    };
+    const output = formatStatusSnapshotCompact(snapshot as any);
+    assert.ok(!output.includes('\n'), 'Compact ready output must be a single line');
+    assert.ok(output.includes('OCTOPUS_STATUS'));
+    assert.ok(output.includes('ready'));
+    assert.ok(output.includes('source=Claude'));
+});
+
+test('formatStatusSnapshotCompact emits full output when not ready', () => {
+    const snapshot = {
+        targetRoot: '/tmp/test',
+        bundlePath: '/tmp/test/Octopus-agent-orchestrator',
+        initAnswersResolvedPath: '/tmp/test/init-answers.json',
+        collectedVia: null as null,
+        activeAgentFiles: null as null,
+        sourceOfTruth: null as null,
+        canonicalEntrypoint: null as null,
+        bundlePresent: false,
+        primaryInitializationComplete: false,
+        agentInitializationComplete: false,
+        readyForTasks: false,
+        agentInitializationPendingReason: null as null,
+        missingProjectCommands: [] as string[],
+        initAnswersError: null as null,
+        liveVersionError: null as null,
+        agentInitStateError: null as null,
+        commandsRulePath: '/tmp/test/commands.md',
+        recommendedNextCommand: 'octopus setup',
+        parityResult: {
+            isSourceCheckout: false,
+            isStale: false,
+            violations: [] as string[],
+            remediation: null as null
+        },
+        timelineTaskCount: 0,
+        timelineHealthy: 0,
+        timelineWarnings: [] as string[],
+        providerComplianceResult: null as null,
+        protectedManifestEvidence: null as null,
+        initAnswersPathForDisplay: '/tmp/test/init-answers.json',
+        initAnswersPresent: false,
+        taskPresent: false,
+        livePresent: false,
+        usagePresent: false,
+        agentInitStatePath: '/tmp/test/state.json',
+        agentInitState: null as null
+    };
+    const output = formatStatusSnapshotCompact(snapshot as any);
+    assert.ok(output.includes('OCTOPUS_STATUS'), 'Not-ready compact must include full output');
+    assert.ok(output.includes('RecommendedNextCommand'));
 });

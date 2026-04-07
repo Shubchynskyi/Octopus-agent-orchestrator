@@ -9,6 +9,7 @@ import {
     readVerifyInitAnswers,
     runVerify,
     formatVerifyResult,
+    formatVerifyResultCompact,
     detectCommandsViolations,
     detectTaskModeRuleContractViolations,
     detectCoreRuleViolations,
@@ -424,4 +425,84 @@ test('formatVerifyResult shows PASS when all checks pass', () => {
     const output = formatVerifyResult(fakeResult);
     assert.ok(output.includes('Verification: PASS'));
     assert.ok(!output.includes('Verification failed'));
+});
+
+/* ------------------------------------------------------------------ */
+/*  formatVerifyResultCompact (T-019)                                 */
+/* ------------------------------------------------------------------ */
+
+test('formatVerifyResultCompact emits single line on success', () => {
+    const fakeResult = {
+        passed: true,
+        targetRoot: '/tmp/test',
+        sourceOfTruth: 'Claude',
+        canonicalEntrypoint: 'CLAUDE.md',
+        bundleVersion: '1.0.0',
+        requiredPathsChecked: 10,
+        violations: {
+            missingPaths: [],
+            initAnswersContractViolations: [],
+            versionContractViolations: [],
+            reviewCapabilitiesContractViolations: [],
+            pathsContractViolations: [],
+            tokenEconomyContractViolations: [],
+            outputFiltersContractViolations: [],
+            skillPacksConfigContractViolations: [],
+            skillsIndexConfigContractViolations: [],
+            ruleFileViolations: [],
+            templatePlaceholderViolations: [],
+            commandsContractViolations: [],
+            manifestContractViolations: [],
+            coreRuleContractViolations: [],
+            entrypointContractViolations: [],
+            taskContractViolations: [],
+            qwenSettingsViolations: [],
+            skillsIndexContractViolations: [],
+            skillPackContractViolations: [],
+            gitignoreMissing: []
+        },
+        totalViolationCount: 0
+    };
+    const output = formatVerifyResultCompact(fakeResult);
+    assert.ok(!output.includes('\n'), 'Compact success output must be a single line');
+    assert.ok(output.includes('Verification: PASS'));
+    assert.ok(output.includes('paths=10'));
+    assert.ok(output.includes('violations=0'));
+});
+
+test('formatVerifyResultCompact emits full output on failure', () => {
+    const fakeResult = {
+        passed: false,
+        targetRoot: '/tmp/test',
+        sourceOfTruth: 'Claude',
+        canonicalEntrypoint: 'CLAUDE.md',
+        bundleVersion: '1.0.0',
+        requiredPathsChecked: 10,
+        violations: {
+            missingPaths: ['some/path'],
+            initAnswersContractViolations: [],
+            versionContractViolations: [],
+            reviewCapabilitiesContractViolations: [],
+            pathsContractViolations: [],
+            tokenEconomyContractViolations: [],
+            outputFiltersContractViolations: [],
+            skillPacksConfigContractViolations: [],
+            skillsIndexConfigContractViolations: [],
+            ruleFileViolations: [],
+            templatePlaceholderViolations: [],
+            commandsContractViolations: [],
+            manifestContractViolations: [],
+            coreRuleContractViolations: [],
+            entrypointContractViolations: [],
+            taskContractViolations: [],
+            qwenSettingsViolations: [],
+            skillsIndexContractViolations: [],
+            skillPackContractViolations: [],
+            gitignoreMissing: []
+        },
+        totalViolationCount: 1
+    };
+    const output = formatVerifyResultCompact(fakeResult);
+    assert.ok(output.includes('Verification failed'), 'Compact failure must include full failure output');
+    assert.ok(output.includes('MissingPathCount: 1'));
 });

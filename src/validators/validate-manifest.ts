@@ -246,3 +246,14 @@ export function formatManifestResult(result: ManifestValidationResult): string {
 
     return lines.join('\n');
 }
+
+/**
+ * Format manifest validation result in compact mode.
+ * On success: single summary line. On failure: full output (delegates to formatManifestResult).
+ */
+export function formatManifestResultCompact(result: ManifestValidationResult): string {
+    if (!result.passed) {
+        return formatManifestResult(result);
+    }
+    return `MANIFEST_VALIDATION_PASSED | entries=${result.entriesChecked}`;
+}

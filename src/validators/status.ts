@@ -379,3 +379,14 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
     lines.push('RecommendedNextCommand: '+snapshot.recommendedNextCommand);
     return lines.join('\n');
 }
+
+/**
+ * Format status snapshot in compact mode.
+ * On ready: single summary line. On not-ready: full output (delegates to formatStatusSnapshot).
+ */
+export function formatStatusSnapshotCompact(snapshot: StatusSnapshot): string {
+    if (!snapshot.readyForTasks) {
+        return formatStatusSnapshot(snapshot);
+    }
+    return `OCTOPUS_STATUS: ready | source=${snapshot.sourceOfTruth || 'n/a'}`;
+}

@@ -741,3 +741,17 @@ export function formatDoctorResult(result: DoctorResult): string {
     else { lines.push('Doctor: FAIL'); lines.push('Resolve listed issues and rerun doctor.'); }
     return lines.join('\n');
 }
+
+/**
+ * Format doctor result in compact mode.
+ * On success: single summary line. On failure: full output (delegates to formatDoctorResult).
+ */
+export function formatDoctorResultCompact(result: DoctorResult): string {
+    if (!result.passed) {
+        return formatDoctorResult(result);
+    }
+    const manifestStatus = result.manifestResult
+        ? (result.manifestResult.passed ? 'PASS' : 'FAIL')
+        : (result.manifestError ? 'ERROR' : 'SKIPPED');
+    return `Doctor: PASS | verify=PASS | manifest=${manifestStatus}`;
+}

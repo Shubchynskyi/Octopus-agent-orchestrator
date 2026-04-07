@@ -56,11 +56,13 @@ octopus agent-init --target-root "." --init-answers-path "Octopus-agent-orchestr
 
 ```text
 octopus status --target-root "."
+octopus status --target-root "." --compact
 octopus status why-blocked --target-root "."
 ```
 
 Notes:
 - `status` prints the normal workspace readiness snapshot.
+- `status --compact` preserves the not-ready output but reduces the green path to a single summary line: `OCTOPUS_STATUS: ready | source=<provider>`.
 - `status why-blocked` inspects `TASK.md`, task timelines, and failed gate markers to explain why `BLOCKED`, `IN_PROGRESS`, or `IN_REVIEW` tasks are stalled.
 - `status why-blocked` also surfaces task-event locks that can block timeline writes and reminds the operator that `runtime/reviews/` is not part of the lock subsystem.
 
@@ -70,6 +72,7 @@ Runs `octopus verify` plus `octopus gate validate-manifest`.
 
 ```text
 octopus doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+octopus doctor --target-root "." --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --compact
 octopus doctor --target-root "." --cleanup-stale-locks --dry-run
 octopus doctor --target-root "." --cleanup-stale-locks
 octopus doctor explain COMPILE_GATE_FAILED
@@ -78,6 +81,7 @@ octopus doctor explain --list
 
 Notes:
 - `doctor` remains the aggregate verify + manifest + timeline health command.
+- `doctor --compact` preserves failure diagnostics but reduces the green path to a single line: `Doctor: PASS | verify=PASS | manifest=PASS`.
 - `doctor` reports task-event lock health under `Octopus-agent-orchestrator/runtime/task-events/*.lock`, including owner metadata, stale-vs-live assessment, and remediation guidance.
 - `doctor --cleanup-stale-locks --dry-run` previews stale task-event locks that are safe to remove; rerun without `--dry-run` to delete only those proven-stale lock directories.
 - `runtime/reviews/` is not part of the task-event lock subsystem and is never cleaned by `doctor --cleanup-stale-locks`.
@@ -128,9 +132,13 @@ Validate deployment consistency and rule contracts.
 
 ```text
 octopus verify --target-root "." --source-of-truth "Codex" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json"
+octopus verify --target-root "." --source-of-truth "Codex" --init-answers-path "Octopus-agent-orchestrator/runtime/init-answers.json" --compact
 ```
 
 Provider values: `Claude`, `Codex`, `Gemini`, `Qwen`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
+
+Notes:
+- `verify --compact` preserves failure output but reduces the green path to `Verification: PASS | paths=<count> | violations=0`.
 
 ### `octopus check-update`
 
@@ -287,6 +295,8 @@ Canonical gate surface is `octopus gate <name>` or `node bin/octopus.js gate <na
 Full gate examples live in `template/docs/agent-rules/40-commands.md`.
 
 `doc-impact-gate` accepts only `DOCS_UPDATED` and `NO_DOC_UPDATES` for `--decision`. `NO_DOC_UPDATES` is fail-closed and cannot be combined with `docs_updated`, `behavior_changed=true`, or `changelog_updated=true`.
+
+`validate-manifest --compact` preserves failure diagnostics but reduces the green path to `MANIFEST_VALIDATION_PASSED | entries=<count>`.
 
 Zero-diff task contract:
 - A clean-tree `classify-change` result is baseline-only evidence, not proof that the task is complete.

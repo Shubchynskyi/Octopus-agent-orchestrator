@@ -59,13 +59,13 @@ import {
     emitSkillReferenceLoadedEventAsync,
     emitSkillSelectedEventAsync
 } from '../runtime/skill-telemetry';
-import { runDoctor, formatDoctorResult } from '../validators/doctor';
+import { runDoctor, formatDoctorResult, formatDoctorResultCompact } from '../validators/doctor';
 import { detectSourceBundleParity, getCanonicalEntrypoint } from '../validators/workspace-layout';
 import { explainFailure, formatExplainResult, listExplainIds } from '../validators/explain';
-import { getStatusSnapshot } from '../validators/status';
+import { getStatusSnapshot, formatStatusSnapshotCompact } from '../validators/status';
 import { getWhyBlocked, formatWhyBlockedResult } from '../validators/why-blocked';
-import { formatManifestResult, validateManifest } from '../validators/validate-manifest';
-import { formatVerifyResult, runVerify } from '../validators/verify';
+import { formatManifestResult, formatManifestResultCompact, validateManifest } from '../validators/validate-manifest';
+import { formatVerifyResult, formatVerifyResultCompact, runVerify } from '../validators/verify';
 import { runCheckUpdate, type CheckUpdateRunnerOptions } from '../lifecycle/check-update';
 import { withLifecycleOperationLockAsync } from '../lifecycle/common';
 import { runCleanupWithLock } from '../lifecycle/cleanup';
@@ -456,7 +456,8 @@ function handleStatus(commandArgv: string[], packageJson: PackageJsonLike): void
 
     const statusDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
-        '--init-answers-path': { key: 'initAnswersPath', type: 'string' }
+        '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
+        '--compact': { key: 'compact', type: 'boolean' }
     };
     const { options: rawOptions } = parseOptions(commandArgv, statusDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
@@ -472,13 +473,18 @@ function handleStatus(commandArgv: string[], packageJson: PackageJsonLike): void
 
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
-    printBanner(packageJson, 'Workspace status', targetRoot, {
-        versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
-    });
-    printStatus(getStatusSnapshot(
+    const snapshot = getStatusSnapshot(
         targetRoot,
         typeof options.initAnswersPath === 'string' ? options.initAnswersPath : DEFAULT_INIT_ANSWERS_RELATIVE_PATH
-    ));
+    );
+    if (options.compact === true) {
+        console.log(formatStatusSnapshotCompact(snapshot));
+    } else {
+        printBanner(packageJson, 'Workspace status', targetRoot, {
+            versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
+        });
+        printStatus(snapshot);
+    }
 }
 
 function handleStatusWhyBlocked(commandArgv: string[]): void {
@@ -510,7 +516,8 @@ function handleDoctor(commandArgv: string[], packageJson: PackageJsonLike): void
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
         '--cleanup-stale-locks': { key: 'cleanupStaleLocks', type: 'boolean' },
-        '--dry-run': { key: 'dryRun', type: 'boolean' }
+        '--dry-run': { key: 'dryRun', type: 'boolean' },
+        '--compact': { key: 'compact', type: 'boolean' }
     };
     const { options: rawOptions } = parseOptions(commandArgv, doctorDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
@@ -526,9 +533,11 @@ function handleDoctor(commandArgv: string[], packageJson: PackageJsonLike): void
 
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
-    printBanner(packageJson, 'Workspace doctor', targetRoot, {
-        versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
-    });
+    if (options.compact !== true) {
+        printBanner(packageJson, 'Workspace doctor', targetRoot, {
+            versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
+        });
+    }
     const bundlePath = ensureBundleExists(targetRoot, 'doctor');
     const initAnswersPath = typeof options.initAnswersPath === 'string'
         ? options.initAnswersPath
@@ -549,7 +558,7 @@ function handleDoctor(commandArgv: string[], packageJson: PackageJsonLike): void
         dryRun: options.dryRun === true,
         activeAgentFiles: activeAgentFilesList
     });
-    console.log(formatDoctorResult(result));
+    console.log(options.compact === true ? formatDoctorResultCompact(result) : formatDoctorResult(result));
     if (!result.passed) {
         throw new Error('Workspace doctor detected validation failures.');
     }
@@ -1050,7 +1059,8 @@ function handleVerify(commandArgv: string[], packageJson: PackageJsonLike): void
     const verifyDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
-        '--source-of-truth': { key: 'sourceOfTruth', type: 'string' }
+        '--source-of-truth': { key: 'sourceOfTruth', type: 'string' },
+        '--compact': { key: 'compact', type: 'boolean' }
     };
     const { options: rawOptions } = parseOptions(commandArgv, verifyDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
@@ -1080,7 +1090,7 @@ function handleVerify(commandArgv: string[], packageJson: PackageJsonLike): void
         sourceOfTruth,
         initAnswersPath: answers.resolvedPath
     });
-    console.log(formatVerifyResult(result));
+    console.log(options.compact === true ? formatVerifyResultCompact(result) : formatVerifyResult(result));
     if (result.totalViolationCount > 0) {
         throw new Error(`Workspace verification failed with ${result.totalViolationCount} violation(s).`);
     }
@@ -1220,14 +1230,17 @@ async function handleGate(commandArgv: string[]): Promise<void> {
 
     switch (gateName) {
         case 'validate-manifest': {
-            const defs = { '--manifest-path': { key: 'manifestPath', type: 'string' } };
+            const defs = {
+                '--manifest-path': { key: 'manifestPath', type: 'string' },
+                '--compact': { key: 'compact', type: 'boolean' }
+            };
             const { options: rawOptions } = parseOptions(gateArgv, defs);
             const options = rawOptions as ParsedOptionsRecord;
             const manifestPath = typeof options.manifestPath === 'string'
                 ? options.manifestPath
                 : path.join('Octopus-agent-orchestrator', 'MANIFEST.md');
             const result = validateManifest(manifestPath);
-            console.log(formatManifestResult(result));
+            console.log(options.compact === true ? formatManifestResultCompact(result) : formatManifestResult(result));
             if (!result.passed) {
                 throw new Error('Manifest validation failed.');
             }
