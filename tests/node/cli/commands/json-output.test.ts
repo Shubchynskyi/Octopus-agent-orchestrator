@@ -245,10 +245,22 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+function isWorkspaceRoot(candidate: string): boolean {
+    return fs.existsSync(path.join(candidate, 'package.json')) &&
+        fs.existsSync(path.join(candidate, 'VERSION')) &&
+        fs.existsSync(path.join(candidate, 'bin', 'octopus.js')) &&
+        fs.existsSync(path.join(candidate, 'src', 'index.ts'));
+}
+
 function findRepoRoot(): string {
+    const cwd = path.resolve(process.cwd());
+    if (isWorkspaceRoot(cwd)) {
+        return cwd;
+    }
+
     let current = __dirname;
     while (current !== path.dirname(current)) {
-        if (fs.existsSync(path.join(current, 'package.json')) && fs.existsSync(path.join(current, 'VERSION'))) {
+        if (isWorkspaceRoot(current)) {
             return current;
         }
         current = path.dirname(current);
@@ -258,11 +270,25 @@ function findRepoRoot(): string {
 
 const REPO_ROOT = findRepoRoot();
 const CLI_ENTRY = path.join(REPO_ROOT, 'bin', 'octopus.js');
+const NEUTRAL_CWD = path.join(REPO_ROOT, 'tests');
+
+function runCliJson(args: string[]) {
+    return spawnSync(process.execPath, [CLI_ENTRY, ...args], {
+        cwd: NEUTRAL_CWD,
+        encoding: 'utf8',
+        timeout: 30_000
+    });
+}
+
+function parseJsonStdout(result: ReturnType<typeof runCliJson>, message: string) {
+    assert.ok(result.status !== 1 && result.status !== 2, `${message}: ${result.stderr}`);
+    const trimmed = result.stdout.trim();
+    assert.ok(trimmed.startsWith('{'), 'stdout must start with JSON object');
+    return JSON.parse(trimmed);
+}
 
 test('status --json emits valid JSON to stdout', () => {
-    const result = spawnSync(process.execPath, [
-        CLI_ENTRY, 'status', '--target-root', REPO_ROOT, '--json'
-    ], { encoding: 'utf8', timeout: 30_000 });
+    const result = runCliJson(['status', '--target-root', REPO_ROOT, '--json']);
     assert.equal(result.status, 0, `status --json exited non-zero: ${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
     assert.equal(typeof parsed.readyForTasks, 'boolean');
@@ -271,9 +297,7 @@ test('status --json emits valid JSON to stdout', () => {
 });
 
 test('status --json output does not include banner text', () => {
-    const result = spawnSync(process.execPath, [
-        CLI_ENTRY, 'status', '--target-root', REPO_ROOT, '--json'
-    ], { encoding: 'utf8', timeout: 30_000 });
+    const result = runCliJson(['status', '--target-root', REPO_ROOT, '--json']);
     assert.equal(result.status, 0);
     assert.ok(!result.stdout.includes('Workspace status'), 'JSON mode must suppress banner');
     const trimmed = result.stdout.trim();
@@ -281,9 +305,7 @@ test('status --json output does not include banner text', () => {
 });
 
 test('doctor --json emits valid JSON to stdout', () => {
-    const result = spawnSync(process.execPath, [
-        CLI_ENTRY, 'doctor', '--target-root', REPO_ROOT, '--json'
-    ], { encoding: 'utf8', timeout: 30_000 });
+    const result = runCliJson(['doctor', '--target-root', REPO_ROOT, '--json']);
     // doctor exits 4 (EXIT_VALIDATION_FAILURE) when issues are found, which is expected on a live repo
     assert.ok(result.status !== 1 && result.status !== 2, `doctor --json crashed: ${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
@@ -293,12 +315,70 @@ test('doctor --json emits valid JSON to stdout', () => {
 });
 
 test('doctor --json output does not include banner text', () => {
-    const result = spawnSync(process.execPath, [
-        CLI_ENTRY, 'doctor', '--target-root', REPO_ROOT, '--json'
-    ], { encoding: 'utf8', timeout: 30_000 });
+    const result = runCliJson(['doctor', '--target-root', REPO_ROOT, '--json']);
     // doctor exits 4 (EXIT_VALIDATION_FAILURE) when issues are found, which is expected on a live repo
     assert.ok(result.status !== 1 && result.status !== 2, `doctor --json crashed: ${result.stderr}`);
     assert.ok(!result.stdout.includes('Workspace doctor'), 'JSON mode must suppress banner');
     const trimmed = result.stdout.trim();
     assert.ok(trimmed.startsWith('{'), 'stdout must start with JSON object');
+});
+
+test('check-update --json emits valid JSON to stdout in dry-run mode', () => {
+    const parsed = parseJsonStdout(
+        runCliJson([
+            'check-update',
+            '--target-root', REPO_ROOT,
+            '--source-path', REPO_ROOT,
+            '--dry-run',
+            '--trust-override',
+            '--no-prompt',
+            '--json'
+        ]),
+        'check-update --json crashed'
+    );
+    assert.equal(parsed.targetRoot, REPO_ROOT);
+    assert.equal(parsed.dryRun, true);
+    assert.equal(typeof parsed.updateAvailable, 'boolean');
+    assert.ok('checkUpdateResult' in parsed);
+});
+
+test('update --json emits valid JSON to stdout in dry-run mode', () => {
+    const parsed = parseJsonStdout(
+        runCliJson([
+            'update',
+            '--target-root', REPO_ROOT,
+            '--source-path', REPO_ROOT,
+            '--dry-run',
+            '--trust-override',
+            '--no-prompt',
+            '--json'
+        ]),
+        'update --json crashed'
+    );
+    assert.equal(parsed.targetRoot, REPO_ROOT);
+    assert.equal(parsed.dryRun, true);
+    assert.equal(parsed.applyRequested, true);
+    assert.ok('checkUpdateResult' in parsed);
+});
+
+test('rollback --json emits valid JSON to stdout in dry-run mode', () => {
+    const parsed = parseJsonStdout(
+        runCliJson(['rollback', '--target-root', REPO_ROOT, '--dry-run', '--json']),
+        'rollback --json crashed'
+    );
+    assert.equal(parsed.targetRoot, REPO_ROOT);
+    assert.equal(parsed.dryRun, true);
+    assert.ok('rollbackMode' in parsed);
+    assert.ok('previewAffectedItems' in parsed);
+});
+
+test('uninstall --json emits valid JSON to stdout in dry-run mode', () => {
+    const parsed = parseJsonStdout(
+        runCliJson(['uninstall', '--target-root', REPO_ROOT, '--dry-run', '--json']),
+        'uninstall --json crashed'
+    );
+    assert.equal(parsed.targetRoot, REPO_ROOT);
+    assert.equal(parsed.dryRun, true);
+    assert.equal(parsed.result, 'DRY_RUN');
+    assert.ok(Array.isArray(parsed.previewAffectedFiles));
 });

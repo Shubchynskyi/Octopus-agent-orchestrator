@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.4.3
 - added `octopus.config.json` root config manifest and portable JSON Schema definitions (draft-07) for all managed config files (`review-capabilities`, `token-economy`, `paths`, `output-filters`, `skill-packs`, `isolation-mode`); added `validate-config` gate for schema + runtime validation with `--compact` CI mode; added `scripts/validate-config.cjs` CI script; `octopus.config.json` is now materialized to `live/config/` on init/reinit/update and checked in workspace layout validation
 - added `--json` flag to `status`, `doctor`, `update`, `update git`, `check-update`, `rollback`, and `uninstall` commands for machine-readable JSON output; when `--json` is passed, the full result object is emitted as pretty-printed JSON to stdout instead of human-readable text, enabling CI pipelines and local automation to parse command results programmatically
 - added `octopus debug env` subcommand for fast operator triage: collects Node version, platform, architecture, OS release, hostname (redacted), CPU/memory info, shell, bundle presence, live version, and triage-relevant environment variables; supports `--json` for machine-readable output and `--target-root` for non-cwd workspaces

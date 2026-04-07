@@ -23,6 +23,20 @@ function mkTmpDir() {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'oao-lifecycle-boundary-'));
 }
 
+function swapCase(value: string): string {
+    return value.split('').map((char) => {
+        const lower = char.toLowerCase();
+        const upper = char.toUpperCase();
+        if (char === lower && char !== upper) {
+            return upper;
+        }
+        if (char === upper && char !== lower) {
+            return lower;
+        }
+        return char;
+    }).join('');
+}
+
 describe('boundary validation', () => {
     it('createRollbackSnapshot rejects traversal and absolute paths', () => {
         const dir = mkTmpDir();
@@ -103,6 +117,44 @@ describe('boundary validation', () => {
         assert.equal(isSubpath(parent, path.join(parent, 'child')), true);
         assert.equal(isSubpath(parent, path.resolve('/a/c')), false);
         assert.equal(isSubpath(parent, path.resolve('/a')), false);
+    });
+
+    it('isSubpath treats case-only differences as distinct lexical paths', () => {
+        const root = path.resolve('/case-sensitive-root');
+        const differentlyCasedChild = path.join(path.resolve('/'), 'CASE-SENSITIVE-ROOT', 'child.txt');
+        assert.equal(isSubpath(root, differentlyCasedChild), false);
+    });
+
+    it('ensureWithinRoot follows actual filesystem case behavior for existing and missing paths', () => {
+        const dir = mkTmpDir();
+        try {
+            const root = path.join(dir, 'CaseRoot');
+            const child = path.join(root, 'child.txt');
+            const aliasRoot = path.join(path.dirname(root), swapCase(path.basename(root)));
+            const aliasExistingChild = path.join(aliasRoot, 'child.txt');
+            const aliasMissingChild = path.join(aliasRoot, 'missing', 'child.txt');
+
+            fs.mkdirSync(root, { recursive: true });
+            fs.writeFileSync(child, 'ok', 'utf8');
+
+            const realRoot = fs.realpathSync.native(root);
+            let aliasMatchesRoot = false;
+            try {
+                aliasMatchesRoot = fs.realpathSync.native(aliasRoot) === realRoot;
+            } catch {
+                aliasMatchesRoot = false;
+            }
+
+            if (aliasMatchesRoot) {
+                assert.doesNotThrow(() => ensureWithinRoot(root, aliasExistingChild, 'Test'));
+                assert.doesNotThrow(() => ensureWithinRoot(root, aliasMissingChild, 'Test'));
+            } else {
+                assert.throws(() => ensureWithinRoot(root, aliasExistingChild, 'Test'), /outside permitted root|escapes permitted root/);
+                assert.throws(() => ensureWithinRoot(root, aliasMissingChild, 'Test'), /outside permitted root|escapes permitted root/);
+            }
+        } finally {
+            removePathRecursive(dir);
+        }
     });
 
     // -----------------------------------------------------------------------
@@ -266,6 +318,28 @@ describe('symlink/junction escape detection', { skip: !symlinkSupported && 'Syml
         }
     });
 
+    it('ensureWithinRoot rejects external junction alias into root', () => {
+        const dir = mkTmpDir();
+        try {
+            const root = path.join(dir, 'root');
+            const outside = path.join(dir, 'outside');
+            fs.mkdirSync(root, { recursive: true });
+            fs.mkdirSync(outside, { recursive: true });
+            fs.writeFileSync(path.join(root, 'ok.txt'), 'safe');
+
+            const externalAlias = path.join(outside, 'into-root');
+            fs.symlinkSync(root, externalAlias, 'junction');
+
+            const candidate = path.join(externalAlias, 'ok.txt');
+            assert.throws(
+                () => ensureWithinRoot(root, candidate, 'External alias test'),
+                /outside permitted root/
+            );
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
     it('createRollbackSnapshot rejects junction escape in target root', () => {
         const dir = mkTmpDir();
         try {
@@ -355,6 +429,53 @@ describe('symlink/junction escape detection', { skip: !symlinkSupported && 'Syml
             assert.throws(
                 () => restoreSyncedItemsFromBackup(bundleRoot, backupRoot, preexistingMap, null),
                 /symlink or junction/
+            );
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
+    it('ensureWithinRoot rejects case-variant external symlink alias (case-sensitive FS only)', () => {
+        // This test targets the scenario where a symlink /tmp/cASErOOT -> /tmp/CaseRoot
+        // exists on a case-sensitive filesystem.  On a case-insensitive filesystem the
+        // two names refer to the same directory entry so symlink creation will fail with
+        // EEXIST - in that case the test is skipped, because the path IS a genuine FS
+        // alias and must be allowed.
+        const dir = mkTmpDir();
+        try {
+            const root = path.join(dir, 'CaseRoot');
+            const aliasDir = path.join(dir, swapCase('CaseRoot')); // e.g. cASErOOT
+
+            fs.mkdirSync(root, { recursive: true });
+            fs.writeFileSync(path.join(root, 'ok.txt'), 'safe');
+
+            // Attempt to create a case-variant symlink alias outside the root.
+            // On case-insensitive filesystems this will fail because cASErOOT == CaseRoot.
+            let aliasCreated = false;
+            try {
+                fs.symlinkSync(root, aliasDir, 'junction');
+                aliasCreated = true;
+            } catch {
+                aliasCreated = false;
+            }
+
+            if (!aliasCreated) {
+                // Case-insensitive FS: the two names are the same directory - skip.
+                return;
+            }
+
+            // The candidate path lexically starts with aliasDir, not root, yet
+            // realpath resolves inside root. The fix must reject both existing
+            // and missing tails when the case-variant prefix is a symlink alias.
+            const candidate = path.join(aliasDir, 'ok.txt');
+            const missingCandidate = path.join(aliasDir, 'missing', 'ok.txt');
+            assert.throws(
+                () => ensureWithinRoot(root, candidate, 'Case-variant external alias test'),
+                /resolves outside permitted root/
+            );
+            assert.throws(
+                () => ensureWithinRoot(root, missingCandidate, 'Case-variant external missing alias test'),
+                /resolves outside permitted root/
             );
         } finally {
             removePathRecursive(dir);

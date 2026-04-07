@@ -14,8 +14,9 @@
 const { execSync } = require('node:child_process');
 const path = require('node:path');
 
+const repoRoot = path.resolve(__dirname, '..');
 const args = process.argv.slice(2);
-let bundleRoot = path.resolve('Octopus-agent-orchestrator');
+let bundleRoot = path.resolve(repoRoot, 'Octopus-agent-orchestrator');
 
 for (let i = 0; i < args.length; i++) {
     if (args[i] === '--bundle-root' && args[i + 1]) {
@@ -24,12 +25,12 @@ for (let i = 0; i < args.length; i++) {
     }
 }
 
-const cliPath = path.resolve('bin', 'octopus.js');
+const cliPath = path.join(repoRoot, 'bin', 'octopus.js');
 
 try {
     const output = execSync(
         `node ${JSON.stringify(cliPath)} gate validate-config --bundle-root ${JSON.stringify(bundleRoot)} --compact`,
-        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+        { cwd: repoRoot, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
     );
     process.stdout.write(output);
     process.exit(0);

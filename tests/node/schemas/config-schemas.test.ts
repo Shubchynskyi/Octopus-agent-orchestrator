@@ -21,9 +21,37 @@ import {
     octopusConfigSchema
 } from '../../../src/schemas/config-schemas';
 
+function isWorkspaceRoot(candidate: string): boolean {
+    return fs.existsSync(path.join(candidate, 'package.json')) &&
+        fs.existsSync(path.join(candidate, 'VERSION')) &&
+        fs.existsSync(path.join(candidate, 'bin', 'octopus.js')) &&
+        fs.existsSync(path.join(candidate, 'src', 'index.ts'));
+}
+
+function findRepoRoot(): string {
+    const cwd = path.resolve(process.cwd());
+    if (isWorkspaceRoot(cwd)) {
+        return cwd;
+    }
+
+    let current = __dirname;
+    while (current !== path.dirname(current)) {
+        if (isWorkspaceRoot(current)) {
+            return current;
+        }
+        current = path.dirname(current);
+    }
+    throw new Error('Cannot resolve repo root from ' + __dirname);
+}
+
+const REPO_ROOT = findRepoRoot();
+const CLI_ENTRY = path.join(REPO_ROOT, 'bin', 'octopus.js');
+const VALIDATE_CONFIG_SCRIPT = path.join(REPO_ROOT, 'scripts', 'validate-config.cjs');
+const NEUTRAL_CWD = path.join(REPO_ROOT, 'tests');
+
 function readTemplateConfig(fileName: string): unknown {
     return JSON.parse(
-        fs.readFileSync(path.join(process.cwd(), 'template', 'config', fileName), 'utf8')
+        fs.readFileSync(path.join(REPO_ROOT, 'template', 'config', fileName), 'utf8')
     );
 }
 
@@ -43,7 +71,7 @@ function makeTempBundleRoot(): { tmpDir: string; bundleRoot: string; configDir: 
         'octopus.config.json'
     ]) {
         fs.copyFileSync(
-            path.join(process.cwd(), 'template', 'config', fileName),
+            path.join(REPO_ROOT, 'template', 'config', fileName),
             path.join(configDir, fileName)
         );
     }
@@ -54,21 +82,6 @@ function makeTempBundleRoot(): { tmpDir: string; bundleRoot: string; configDir: 
 function cleanupTempBundleRoot(tmpDir: string): void {
     fs.rmSync(tmpDir, { recursive: true, force: true });
 }
-
-function findRepoRoot(): string {
-    let current = __dirname;
-    while (current !== path.dirname(current)) {
-        if (fs.existsSync(path.join(current, 'package.json')) && fs.existsSync(path.join(current, 'VERSION'))) {
-            return current;
-        }
-        current = path.dirname(current);
-    }
-    throw new Error('Cannot resolve repo root from ' + __dirname);
-}
-
-const REPO_ROOT = findRepoRoot();
-const CLI_ENTRY = path.join(REPO_ROOT, 'bin', 'octopus.js');
-const VALIDATE_CONFIG_SCRIPT = path.join(REPO_ROOT, 'scripts', 'validate-config.cjs');
 
 // ---------------------------------------------------------------------------
 // Schema registry
@@ -443,7 +456,7 @@ test('gate validate-config succeeds against a valid bundle root', () => {
     try {
         const result = spawnSync(process.execPath, [
             CLI_ENTRY, 'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'
-        ], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 30_000 });
+        ], { cwd: NEUTRAL_CWD, encoding: 'utf8', timeout: 30_000 });
         assert.equal(result.status, 0, result.stderr);
         assert.ok(result.stdout.includes('CONFIG_VALIDATION_PASSED'));
     } finally {
@@ -457,7 +470,7 @@ test('gate validate-config fails against an invalid bundle root', () => {
         fs.rmSync(path.join(configDir, 'octopus.config.json'));
         const result = spawnSync(process.execPath, [
             CLI_ENTRY, 'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'
-        ], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 30_000 });
+        ], { cwd: NEUTRAL_CWD, encoding: 'utf8', timeout: 30_000 });
         assert.notEqual(result.status, 0);
         assert.ok((result.stdout + result.stderr).includes('CONFIG_VALIDATION_FAILED'));
     } finally {
@@ -470,7 +483,7 @@ test('validate-config script exits 0 on valid bundle root', () => {
     try {
         const result = spawnSync(process.execPath, [
             VALIDATE_CONFIG_SCRIPT, '--bundle-root', bundleRoot
-        ], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 30_000 });
+        ], { cwd: NEUTRAL_CWD, encoding: 'utf8', timeout: 30_000 });
         assert.equal(result.status, 0, result.stderr);
         assert.ok(result.stdout.includes('CONFIG_VALIDATION_PASSED'));
     } finally {
@@ -484,7 +497,7 @@ test('validate-config script exits 1 on invalid bundle root', () => {
         fs.writeFileSync(path.join(configDir, 'review-capabilities.json'), '{', 'utf8');
         const result = spawnSync(process.execPath, [
             VALIDATE_CONFIG_SCRIPT, '--bundle-root', bundleRoot
-        ], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 30_000 });
+        ], { cwd: NEUTRAL_CWD, encoding: 'utf8', timeout: 30_000 });
         assert.equal(result.status, 1);
         assert.ok((result.stdout + result.stderr).includes('CONFIG_VALIDATION_FAILED'));
     } finally {

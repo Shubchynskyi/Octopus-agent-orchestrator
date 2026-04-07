@@ -102,6 +102,29 @@ describe('spawnStreamed', () => {
         assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
     });
 
+    it('retains the buffered prefix of an overflowing stdout chunk', async () => {
+        const payload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.repeat(8);
+        const result = await spawnStreamed(process.execPath, ['-e', `process.stdout.write(${JSON.stringify(payload)})`], {
+            timeoutMs: 5000,
+            maxBuffer: 64
+        });
+        assert.equal(result.stdoutTruncated, true);
+        assert.ok(result.stdout.length > 0, 'expected buffered prefix to be retained');
+        assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
+        assert.equal(payload.startsWith(result.stdout), true);
+    });
+
+    it('retains a valid UTF-8 stdout prefix at multibyte boundaries', async () => {
+        const payload = '😀AB'.repeat(20);
+        const result = await spawnStreamed(process.execPath, ['-e', `process.stdout.write(${JSON.stringify(payload)})`], {
+            timeoutMs: 5000,
+            maxBuffer: 5
+        });
+        assert.equal(result.stdoutTruncated, true);
+        assert.equal(result.stdout, '😀A');
+        assert.equal(Buffer.byteLength(result.stdout, 'utf8'), 5);
+    });
+
     it('sets stderrTruncated when stderr exceeds maxBuffer', async () => {
         const script = 'for(let i=0;i<20;i++) process.stderr.write("0123456789")';
         const result = await spawnStreamed(process.execPath, ['-e', script], {
@@ -111,6 +134,17 @@ describe('spawnStreamed', () => {
         assert.equal(result.stderrTruncated, true);
         assert.equal(result.stdoutTruncated, false);
         assert.ok(Buffer.byteLength(result.stderr, 'utf8') <= 64);
+    });
+
+    it('retains a valid UTF-8 stderr prefix at multibyte boundaries', async () => {
+        const payload = '😀AB'.repeat(20);
+        const result = await spawnStreamed(process.execPath, ['-e', `process.stderr.write(${JSON.stringify(payload)})`], {
+            timeoutMs: 5000,
+            maxBuffer: 5
+        });
+        assert.equal(result.stderrTruncated, true);
+        assert.equal(result.stderr, '😀A');
+        assert.equal(Buffer.byteLength(result.stderr, 'utf8'), 5);
     });
 
     it('delivers callbacks for all chunks even when buffer is truncated', async () => {
@@ -125,6 +159,19 @@ describe('spawnStreamed', () => {
         // Callbacks receive the full output regardless of maxBuffer
         const callbackTotal = allChunks.join('').length;
         assert.ok(callbackTotal >= 200, `Expected >=200 chars via callback, got ${callbackTotal}`);
+    });
+
+    it('delivers stderr callbacks for all chunks even when buffer is truncated', async () => {
+        const allChunks: string[] = [];
+        const script = 'for(let i=0;i<20;i++) process.stderr.write("0123456789")';
+        const result = await spawnStreamed(process.execPath, ['-e', script], {
+            timeoutMs: 5000,
+            maxBuffer: 64,
+            onStderr(chunk) { allChunks.push(chunk); }
+        });
+        assert.equal(result.stderrTruncated, true);
+        const callbackTotal = allChunks.join('').length;
+        assert.ok(callbackTotal >= 200, `Expected >=200 chars via stderr callback, got ${callbackTotal}`);
     });
 
     it('reports truncated false for pre-aborted signal', async () => {
@@ -309,6 +356,88 @@ describe('shell-surface hardening', () => {
         );
         assert.equal(result.stdoutTruncated, true);
         assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
+    });
+
+    it('spawnShellCommand retains the buffered prefix of an overflowing stdout chunk', async () => {
+        if (process.platform !== 'win32') return;
+        const payload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.repeat(8);
+        const result = await spawnShellCommand(
+            `"${process.execPath}" -e "process.stdout.write(${JSON.stringify(payload).replace(/"/g, '\\"')})"`,
+            { timeoutMs: 5000, maxBuffer: 64 }
+        );
+        assert.equal(result.stdoutTruncated, true);
+        assert.ok(result.stdout.length > 0, 'expected buffered prefix to be retained');
+        assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
+        assert.equal(payload.startsWith(result.stdout), true);
+    });
+
+    it('spawnShellCommand retains a valid UTF-8 stdout prefix at multibyte boundaries', async () => {
+        if (process.platform !== 'win32') return;
+        const payload = '😀AB'.repeat(20);
+        const result = await spawnShellCommand(
+            `"${process.execPath}" -e "process.stdout.write(${JSON.stringify(payload).replace(/"/g, '\\"')})"`,
+            { timeoutMs: 5000, maxBuffer: 5 }
+        );
+        assert.equal(result.stdoutTruncated, true);
+        assert.equal(result.stdout, '😀A');
+        assert.equal(Buffer.byteLength(result.stdout, 'utf8'), 5);
+    });
+
+    it('spawnShellCommand sets stderrTruncated when stderr exceeds maxBuffer', async () => {
+        if (process.platform !== 'win32') return;
+        const script = "for(let i=0;i<20;i++) process.stderr.write('0123456789')";
+        const result = await spawnShellCommand(
+            `"${process.execPath}" -e "${script}"`,
+            { timeoutMs: 5000, maxBuffer: 64 }
+        );
+        assert.equal(result.stderrTruncated, true);
+        assert.ok(Buffer.byteLength(result.stderr, 'utf8') <= 64);
+    });
+
+    it('spawnShellCommand retains a valid UTF-8 stderr prefix at multibyte boundaries', async () => {
+        if (process.platform !== 'win32') return;
+        const payload = '😀AB'.repeat(20);
+        const result = await spawnShellCommand(
+            `"${process.execPath}" -e "process.stderr.write(${JSON.stringify(payload).replace(/"/g, '\\"')})"`,
+            { timeoutMs: 5000, maxBuffer: 5 }
+        );
+        assert.equal(result.stderrTruncated, true);
+        assert.equal(result.stderr, '😀A');
+        assert.equal(Buffer.byteLength(result.stderr, 'utf8'), 5);
+    });
+
+    it('spawnShellCommand delivers stdout callbacks for all chunks even when buffer is truncated', async () => {
+        if (process.platform !== 'win32') return;
+        const allChunks: string[] = [];
+        const script = "for(let i=0;i<20;i++) process.stdout.write('0123456789')";
+        const result = await spawnShellCommand(
+            `"${process.execPath}" -e "${script}"`,
+            {
+                timeoutMs: 5000,
+                maxBuffer: 64,
+                onStdout(chunk) { allChunks.push(chunk); }
+            }
+        );
+        assert.equal(result.stdoutTruncated, true);
+        const callbackTotal = allChunks.join('').length;
+        assert.ok(callbackTotal >= 200, `Expected >=200 chars via shell stdout callback, got ${callbackTotal}`);
+    });
+
+    it('spawnShellCommand delivers stderr callbacks for all chunks even when buffer is truncated', async () => {
+        if (process.platform !== 'win32') return;
+        const allChunks: string[] = [];
+        const script = "for(let i=0;i<20;i++) process.stderr.write('0123456789')";
+        const result = await spawnShellCommand(
+            `"${process.execPath}" -e "${script}"`,
+            {
+                timeoutMs: 5000,
+                maxBuffer: 64,
+                onStderr(chunk) { allChunks.push(chunk); }
+            }
+        );
+        assert.equal(result.stderrTruncated, true);
+        const callbackTotal = allChunks.join('').length;
+        assert.ok(callbackTotal >= 200, `Expected >=200 chars via shell stderr callback, got ${callbackTotal}`);
     });
 
     it('spawnShellCommand reports truncated false for pre-aborted signal', async () => {

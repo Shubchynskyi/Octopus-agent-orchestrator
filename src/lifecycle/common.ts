@@ -21,7 +21,7 @@ function normalizePath(p: string): string {
 export function resolveRealPath(p: string): string {
     const resolved = path.resolve(p);
     try {
-        return fs.realpathSync(resolved);
+        return fs.realpathSync.native(resolved);
     } catch {
         // Path does not exist – walk up to the deepest existing ancestor.
         const tail: string[] = [];
@@ -35,7 +35,7 @@ export function resolveRealPath(p: string): string {
             tail.unshift(path.basename(current));
             current = parent;
             try {
-                const realParent = fs.realpathSync(current);
+                const realParent = fs.realpathSync.native(current);
                 return path.join(realParent, ...tail);
             } catch {
                 // Keep walking up.
@@ -45,24 +45,84 @@ export function resolveRealPath(p: string): string {
 }
 
 export function isSubpath(parent: string, child: string): boolean {
-    const p = normalizePath(parent).toLowerCase();
-    const c = normalizePath(child).toLowerCase();
+    const p = normalizePath(parent);
+    const c = normalizePath(child);
     if (p === c) return true; // allow exact equality
     return c.startsWith(p + path.sep);
+}
+
+function isSubpathCaseInsensitive(parent: string, child: string): boolean {
+    const p = normalizePath(parent).toLowerCase();
+    const c = normalizePath(child).toLowerCase();
+    if (p === c) return true;
+    return c.startsWith(p + path.sep);
+}
+
+function hasCaseVariantSymlinkPrefix(parent: string, child: string): boolean {
+    const normalizedParent = normalizePath(parent);
+    const normalizedChild = normalizePath(child);
+    const parsedParent = path.parse(normalizedParent);
+    const parsedChild = path.parse(normalizedChild);
+
+    if (parsedParent.root.toLowerCase() !== parsedChild.root.toLowerCase()) {
+        return false;
+    }
+
+    const parentSegments = normalizedParent.slice(parsedParent.root.length).split(path.sep).filter(Boolean);
+    const childSegments = normalizedChild.slice(parsedChild.root.length).split(path.sep).filter(Boolean);
+    const sharedSegments = Math.min(parentSegments.length, childSegments.length);
+
+    for (let index = 0; index < sharedSegments; index += 1) {
+        const parentSegment = parentSegments[index];
+        const childSegment = childSegments[index];
+        if (parentSegment === childSegment) {
+            continue;
+        }
+        if (parentSegment.toLowerCase() !== childSegment.toLowerCase()) {
+            return false;
+        }
+
+        const candidatePrefix = path.join(parsedChild.root, ...childSegments.slice(0, index + 1));
+        try {
+            return fs.lstatSync(candidatePrefix).isSymbolicLink();
+        } catch {
+            return false;
+        }
+    }
+
+    return false;
 }
 
 export function ensureWithinRoot(root: string, candidate: string, description = 'Path'): string {
     const resolved = normalizePath(candidate);
     const resolvedRoot = normalizePath(root);
-    if (!isSubpath(resolvedRoot, resolved)) {
-        throw new Error(`${description} '${candidate}' resolves outside permitted root '${root}'`);
-    }
     // Symlink / junction-aware check: resolve the real filesystem paths so
     // that a junction pointing outside the root is caught even when the
     // lexical path appears to be inside the root.
     const realCandidate = resolveRealPath(resolved);
     const realRoot = resolveRealPath(resolvedRoot);
-    if (!isSubpath(realRoot, realCandidate)) {
+    const lexicalInsideRoot = isSubpath(resolvedRoot, resolved);
+    const caseInsensitiveInsideRoot = isSubpathCaseInsensitive(resolvedRoot, resolved);
+    const realInsideRoot = isSubpath(realRoot, realCandidate);
+
+    if (!lexicalInsideRoot && !(caseInsensitiveInsideRoot && realInsideRoot)) {
+        throw new Error(`${description} '${candidate}' resolves outside permitted root '${root}'`);
+    }
+
+    // Guard the case-insensitive fallback: allow it only when the case-variant
+    // prefix is a genuine filesystem case alias (e.g. Windows/macOS APFS), NOT
+    // when it is an external symlink/junction alias whose prefix merely differs
+    // by case on a case-sensitive filesystem (e.g. /tmp/cASErOOT -> /tmp/CaseRoot).
+    // On a genuine case-insensitive FS no symlinks appear in the prefix path;
+    // on a case-sensitive FS with an external symlink alias, lstat will detect
+    // the symlink at the case-variant component.
+    if (!lexicalInsideRoot && caseInsensitiveInsideRoot && realInsideRoot) {
+        if (hasCaseVariantSymlinkPrefix(resolvedRoot, resolved)) {
+            throw new Error(`${description} '${candidate}' resolves outside permitted root '${root}'`);
+        }
+    }
+
+    if (!realInsideRoot) {
         throw new Error(
             `${description} '${candidate}' escapes permitted root '${root}' via symlink or junction`
         );

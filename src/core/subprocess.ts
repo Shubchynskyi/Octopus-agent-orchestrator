@@ -35,6 +35,60 @@ export interface SpawnStreamedResult {
     stderrTruncated: boolean;
 }
 
+function sliceChunkToFit(chunk: string, maxBytes: number): string {
+    if (maxBytes <= 0 || chunk.length === 0) {
+        return '';
+    }
+
+    let usedBytes = 0;
+    let prefix = '';
+    for (const symbol of chunk) {
+        const symbolBytes = Buffer.byteLength(symbol, 'utf8');
+        if (usedBytes + symbolBytes > maxBytes) {
+            break;
+        }
+        prefix += symbol;
+        usedBytes += symbolBytes;
+    }
+    return prefix;
+}
+
+function appendChunkWithinLimit(chunks: string[], chunk: string, currentBytes: number, maxBuffer: number): {
+    nextBytes: number;
+    truncated: boolean;
+} {
+    const remainingBytes = maxBuffer - currentBytes;
+    if (remainingBytes <= 0) {
+        return {
+            nextBytes: currentBytes,
+            truncated: true
+        };
+    }
+
+    const fullBytes = Buffer.byteLength(chunk, 'utf8');
+    if (fullBytes <= remainingBytes) {
+        chunks.push(chunk);
+        return {
+            nextBytes: currentBytes + fullBytes,
+            truncated: false
+        };
+    }
+
+    const partial = sliceChunkToFit(chunk, remainingBytes);
+    if (partial.length > 0) {
+        chunks.push(partial);
+        return {
+            nextBytes: currentBytes + Buffer.byteLength(partial, 'utf8'),
+            truncated: true
+        };
+    }
+
+    return {
+        nextBytes: currentBytes,
+        truncated: true
+    };
+}
+
 export function spawnStreamed(command: string, args: string[], options?: SpawnStreamedOptions): Promise<SpawnStreamedResult> {
     const opts = options || {};
     const cwd = opts.cwd || process.cwd();
@@ -156,13 +210,9 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
             if (child.stdout) {
                 child.stdout.setEncoding('utf8');
                 child.stdout.on('data', function (chunk: string) {
-                    const len = Buffer.byteLength(chunk, 'utf8');
-                    if (stdoutBytes + len <= maxBuffer) {
-                        stdoutChunks.push(chunk);
-                        stdoutBytes += len;
-                    } else {
-                        stdoutTruncated = true;
-                    }
+                    const appendResult = appendChunkWithinLimit(stdoutChunks, chunk, stdoutBytes, maxBuffer);
+                    stdoutBytes = appendResult.nextBytes;
+                    stdoutTruncated = stdoutTruncated || appendResult.truncated;
                     if (opts.onStdout) {
                         opts.onStdout(chunk);
                     }
@@ -171,13 +221,9 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
             if (child.stderr) {
                 child.stderr.setEncoding('utf8');
                 child.stderr.on('data', function (chunk: string) {
-                    const len = Buffer.byteLength(chunk, 'utf8');
-                    if (stderrBytes + len <= maxBuffer) {
-                        stderrChunks.push(chunk);
-                        stderrBytes += len;
-                    } else {
-                        stderrTruncated = true;
-                    }
+                    const appendResult = appendChunkWithinLimit(stderrChunks, chunk, stderrBytes, maxBuffer);
+                    stderrBytes = appendResult.nextBytes;
+                    stderrTruncated = stderrTruncated || appendResult.truncated;
                     if (opts.onStderr) {
                         opts.onStderr(chunk);
                     }
@@ -328,13 +374,9 @@ export function spawnShellCommand(
         if (child.stdout) {
             child.stdout.setEncoding('utf8');
             child.stdout.on('data', function (chunk: string) {
-                const len = Buffer.byteLength(chunk, 'utf8');
-                if (stdoutBytes + len <= maxBuffer) {
-                    stdoutChunks.push(chunk);
-                    stdoutBytes += len;
-                } else {
-                    stdoutTruncated = true;
-                }
+                const appendResult = appendChunkWithinLimit(stdoutChunks, chunk, stdoutBytes, maxBuffer);
+                stdoutBytes = appendResult.nextBytes;
+                stdoutTruncated = stdoutTruncated || appendResult.truncated;
                 if (opts.onStdout) {
                     opts.onStdout(chunk);
                 }
@@ -343,13 +385,9 @@ export function spawnShellCommand(
         if (child.stderr) {
             child.stderr.setEncoding('utf8');
             child.stderr.on('data', function (chunk: string) {
-                const len = Buffer.byteLength(chunk, 'utf8');
-                if (stderrBytes + len <= maxBuffer) {
-                    stderrChunks.push(chunk);
-                    stderrBytes += len;
-                } else {
-                    stderrTruncated = true;
-                }
+                const appendResult = appendChunkWithinLimit(stderrChunks, chunk, stderrBytes, maxBuffer);
+                stderrBytes = appendResult.nextBytes;
+                stderrTruncated = stderrTruncated || appendResult.truncated;
                 if (opts.onStderr) {
                     opts.onStderr(chunk);
                 }
@@ -408,4 +446,3 @@ export function spawnSyncWithTimeout(command: string, args: string[], options?: 
 
     return result;
 }
-

@@ -8,12 +8,22 @@ import {
     EXIT_USAGE_ERROR
 } from '../../../src/cli/exit-codes';
 
+function isWorkspaceRoot(candidate: string): boolean {
+    return fs.existsSync(path.join(candidate, 'package.json')) &&
+        fs.existsSync(path.join(candidate, 'VERSION')) &&
+        fs.existsSync(path.join(candidate, 'bin', 'octopus.js')) &&
+        fs.existsSync(path.join(candidate, 'src', 'index.ts'));
+}
+
 function findRepoRoot(startDir: string): string {
+    const cwd = path.resolve(process.cwd());
+    if (isWorkspaceRoot(cwd)) {
+        return cwd;
+    }
+
     let current = path.resolve(startDir);
     while (true) {
-        const packageJsonPath = path.join(current, 'package.json');
-        const cliPath = path.join(current, 'bin', 'octopus.js');
-        if (fs.existsSync(packageJsonPath) && fs.existsSync(cliPath)) {
+        if (isWorkspaceRoot(current)) {
             return current;
         }
         const parent = path.dirname(current);
@@ -24,13 +34,15 @@ function findRepoRoot(startDir: string): string {
     }
 }
 
-const CLI_PATH = path.join(findRepoRoot(__dirname), 'bin', 'octopus.js');
+const REPO_ROOT = findRepoRoot(__dirname);
+const CLI_PATH = path.join(REPO_ROOT, 'bin', 'octopus.js');
+const NEUTRAL_CWD = path.join(REPO_ROOT, 'tests');
 
 function runCli(args: string[]) {
     const result = childProcess.spawnSync(
         process.execPath,
         [CLI_PATH, ...args],
-        { windowsHide: true, encoding: 'utf8', timeout: 30000 }
+        { cwd: NEUTRAL_CWD, windowsHide: true, encoding: 'utf8', timeout: 30000 }
     );
     const combined = (result.stdout || '') + (result.stderr || '');
     return { exitCode: result.status, output: combined, stderr: result.stderr || '' };
