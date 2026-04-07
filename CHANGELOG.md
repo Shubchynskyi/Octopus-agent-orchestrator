@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- replaced regex-based `[\s\S]*?` span matching in `upsertManagedBlock()` and `removeManagedBlock()` with `indexOf`/`slice` marker search via `findManagedSpan()`, eliminating per-call regex compilation and backtracking cost on large files; removed the local `escapeRegex()` helper that was only needed for the regex approach; added edge-case tests for empty/whitespace input, CRLF handling, block-at-boundary positions, and markers containing regex-special characters
 - replaced recursive `readdirRecursiveFiles()`, `readdirRecursiveDirs()`, `copyPathRecursive()` in lifecycle helpers and `collectFilesRecursive()` in project-discovery with iterative stack-based traversals, eliminating `push(...recursiveCall)` spread allocations and call-stack depth risk on deep directory trees
 - reworked `spawnStreamed()` and `spawnShellCommand()` buffering from string concatenation to chunk-array accumulation, reducing string churn on high-volume output; added `stdoutTruncated` and `stderrTruncated` boolean fields to `SpawnStreamedResult` so callers can detect when output exceeded `maxBuffer` instead of silently losing data; callbacks (`onStdout`/`onStderr`) continue to fire for all chunks regardless of buffer state
 - tightened `doc-impact-gate` semanticsto fail closed: only `DOCS_UPDATED` and `NO_DOC_UPDATES` are accepted, and `NO_DOC_UPDATES` now rejects contradictory `docs_updated`, `behavior_changed=true`, and `changelog_updated=true` combinations
