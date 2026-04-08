@@ -1,6 +1,10 @@
 # Changelog
 
 ## 2.4.3
+- enforced compact-command protocol in gate execution helpers: `executeCommandAsync` and `executeCommand` now produce a `command_policy_audit` on every invocation using `auditGateCommand`; compile-gate evidence includes `command_policy_audits` and `command_policy_warning_count` for measurable compactness telemetry
+- expanded noisy-command audit patterns from 3 to 16 covering git (diff/log/status/show/stash), containers (docker logs/kubectl logs), testing (pytest/jest/vitest/go test), search (rg/grep/cat), and package managers (npm install/npm ls); each pattern now records a `matched_categories` array for downstream grouping
+- added `auditGateCommand` helper for lifecycle-required gate commands with automatic justification that suppresses warnings for gate-driven executions
+- exported `CommandCompactnessAudit` and `AuditCommandOptions` interfaces for typed consumption by gate and CLI modules
 - added token-budget-based adaptive filtering profiles: output-filters now support a `budget_profiles` section with ordered tiers (`tight`, `moderate`, `generous`); when `budgetTokens` is passed to `applyOutputFilterProfile`, the matching tier auto-overrides `passthrough_ceiling_max_lines`, `fail_tail_lines`, `max_matches`, `max_parser_lines`, and `truncate_line_max_chars` so gate output scales with actual token budget
 - added `resolveBudgetTier` export for standalone tier resolution from config and token count
 - updated `outputFiltersSchema` to validate the new `budget_profiles` object with tier items

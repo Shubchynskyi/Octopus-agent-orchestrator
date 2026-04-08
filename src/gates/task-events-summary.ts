@@ -53,43 +53,135 @@ export function formatTimestamp(value: unknown): string | null {
     }
 }
 
-interface AuditCommandOptions {
+export interface AuditCommandOptions {
     mode?: string;
     justification?: string;
 }
 
+export interface CommandCompactnessAudit {
+    command: string;
+    mode: string;
+    justification: string;
+    warnings: string[];
+    warning_count: number;
+    /** Category tag for the matched noisy pattern, if any. */
+    matched_categories: string[];
+}
+
+interface NoisyPattern {
+    pattern: RegExp;
+    warning: string;
+    category: string;
+}
+
 /**
- * Audit command compactness (simple policy check).
- * Matches Python audit_command_compactness shape.
+ * Noisy-command patterns derived from the Compact Command Policy in 40-commands.md.
+ * Each entry matches a command that should use a compact equivalent first.
  */
-export function auditCommandCompactness(commandText: string, options: AuditCommandOptions = {}) {
+const NOISY_COMMAND_PATTERNS: ReadonlyArray<NoisyPattern> = [
+    // Version control — git
+    {
+        pattern: /\bgit\s+diff\b(?!.*--stat)(?!.*--name-only)(?!.*--numstat)(?!.*--\s+\S)/i,
+        warning: 'Use `git diff --stat` or a path-scoped `git diff -- <path>` before full `git diff`.',
+        category: 'git'
+    },
+    {
+        pattern: /\bgit\s+log\b(?!.*--oneline)(?!.*-n[\s=]?\d)(?!.*-\d)/i,
+        warning: 'Use `git log --oneline -n 20` before unbounded `git log`.',
+        category: 'git'
+    },
+    {
+        pattern: /\bgit\s+log\b(?=.*\s--all\b)(?!.*--oneline)(?!.*-n[\s=]?\d)(?!.*-\d)/i,
+        warning: 'Use `git log --oneline --graph -n 30` before `git log --all`.',
+        category: 'git'
+    },
+    {
+        pattern: /\bgit\s+status\b(?!.*--short)(?!.*-s\b)/i,
+        warning: 'Use `git status --short --branch` for quick state.',
+        category: 'git'
+    },
+    {
+        pattern: /\bgit\s+show\b(?!.*--stat)(?!.*--\s+\S)/i,
+        warning: 'Use `git show --stat <sha>` for commit overview before full `git show`.',
+        category: 'git'
+    },
+    {
+        pattern: /\bgit\s+stash\s+list\b(?!.*--oneline)/i,
+        warning: 'Use `git stash list --oneline` for stash summary.',
+        category: 'git'
+    },
+    // Containers / infrastructure
+    {
+        pattern: /\bdocker\s+logs\b(?!.*--tail)(?!.*--since)/i,
+        warning: 'Use `docker logs --tail 50` before full container logs.',
+        category: 'container'
+    },
+    {
+        pattern: /\bkubectl\s+logs\b(?!.*--tail)/i,
+        warning: 'Use `kubectl logs --tail=50` before full pod logs.',
+        category: 'container'
+    },
+    // Testing
+    {
+        pattern: /\bpytest\b(?!.*-q)(?!.*--tb=short)(?!.*--tb=line)(?!.*--tb=no)/i,
+        warning: 'Use `pytest -q --tb=short` first; reserve verbose traceback for localized failures.',
+        category: 'test'
+    },
+    {
+        pattern: /\b(jest|vitest)\b(?!.*--silent)(?!.*--verbose=false)/i,
+        warning: 'Use `--silent` or `--verbose=false` for jest/vitest; default reporters are noisy.',
+        category: 'test'
+    },
+    {
+        pattern: /\bgo\s+test\b.*\s-v\b/i,
+        warning: 'Use `go test -count=1 -short` first; add `-v` only for specific test debug.',
+        category: 'test'
+    },
+    // Search / file inspection
+    {
+        pattern: /\b(rg|grep)\b(?!.*-l\b)(?!.*--files-with-matches)(?!.*--max-count)(?!.*-c\b)(?!.*--count)/i,
+        warning: 'Use `rg -l --max-count=5` or `grep -rl --max-count=5` with path scope before unbounded search.',
+        category: 'search'
+    },
+    {
+        pattern: /\bcat\s+\S+/i,
+        warning: 'Use `head -n 60` or `tail -n 60` instead of `cat` for large files.',
+        category: 'search'
+    },
+    // Package managers
+    {
+        pattern: /\bnpm\s+install\b(?!.*--prefer-offline)(?!.*--no-fund)(?!.*--no-audit)/i,
+        warning: 'Use `npm install --prefer-offline --no-fund --no-audit` to suppress advisory noise.',
+        category: 'package_manager'
+    },
+    {
+        pattern: /\bnpm\s+ls\b(?!.*--depth)(?!.*--json)/i,
+        warning: 'Use `npm ls --depth=0` or `npm ls --json --depth=0` for top-level deps only.',
+        category: 'package_manager'
+    }
+];
+
+/**
+ * Audit command compactness against the compact-command protocol from 40-commands.md.
+ * Returns structured audit with matched categories for enforcement telemetry.
+ */
+export function auditCommandCompactness(commandText: string, options: AuditCommandOptions = {}): CommandCompactnessAudit {
     const mode = options.mode || 'scan';
     const justification = options.justification || '';
     const warnings: string[] = [];
+    const matchedCategories: string[] = [];
 
     if (!commandText || !commandText.trim()) {
-        return { command: commandText, mode, justification, warnings, warning_count: 0 };
+        return { command: commandText, mode, justification, warnings, warning_count: 0, matched_categories: [] };
     }
 
-    const unboundedPatterns = [
-        {
-            pattern: /\bgit\s+diff\b(?!.*--stat)(?!.*--name-only)(?!.*--numstat)/i,
-            warning: 'Use `git diff --stat` or a path-scoped `git diff` before full `git diff`.'
-        },
-        {
-            pattern: /\bdocker\s+logs\b(?!.*--tail)(?!.*--since)/i,
-            warning: 'Use `docker logs --tail 50` before full container logs.'
-        },
-        {
-            pattern: /\bpytest\b(?!.*-q)(?!.*--tb=short)(?!.*--tb=line)(?!.*--tb=no)/i,
-            warning: 'Use `pytest -q --tb=short` first; reserve verbose traceback for localized failures.'
-        }
-    ];
-
-    for (const { pattern, warning } of unboundedPatterns) {
+    for (const { pattern, warning, category } of NOISY_COMMAND_PATTERNS) {
         if (pattern.test(commandText)) {
             if (justification && justification.trim().length >= 10) continue;
             warnings.push(warning);
+            if (!matchedCategories.includes(category)) {
+                matchedCategories.push(category);
+            }
         }
     }
 
@@ -98,8 +190,22 @@ export function auditCommandCompactness(commandText: string, options: AuditComma
         mode,
         justification: justification || '',
         warnings,
-        warning_count: warnings.length
+        warning_count: warnings.length,
+        matched_categories: matchedCategories
     };
+}
+
+/**
+ * Audit a compile/build command for compact-protocol compliance.
+ * Gate-executed commands are lifecycle-required, so this applies
+ * informational auditing only (warnings, not blocking).
+ */
+export function auditGateCommand(commandText: string, gateLabel: string): CommandCompactnessAudit {
+    const result = auditCommandCompactness(commandText, {
+        mode: 'gate',
+        justification: `Lifecycle-required gate command (${gateLabel})`
+    });
+    return result;
 }
 
 /**

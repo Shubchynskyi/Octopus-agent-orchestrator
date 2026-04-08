@@ -45,7 +45,8 @@ import {
     writeReviewArtifactJson,
     writeReviewArtifactText
 } from '../../gate-runtime/review-artifacts';
-import { auditCommandCompactness } from '../../gates/task-events-summary';
+import { auditCommandCompactness, auditGateCommand } from '../../gates/task-events-summary';
+import type { CommandCompactnessAudit } from '../../gates/task-events-summary';
 import { buildBudgetForecast, resolveDepthEscalation, resolveRiskAwareDepth } from '../../gate-runtime/budget-preflight';
 import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../gates/classify-change';
 import {
@@ -113,7 +114,7 @@ type WorkspaceSnapshot = ReturnType<typeof getWorkspaceSnapshot>;
 type PreflightContext = ReturnType<typeof getPreflightContext>;
 type OutputTelemetry = ReturnType<typeof buildOutputTelemetry>;
 type ReviewCompactionAudit = ReturnType<typeof auditReviewArtifactCompaction>;
-type CommandPolicyAudit = ReturnType<typeof auditCommandCompactness>;
+type CommandPolicyAudit = CommandCompactnessAudit;
 type AppendedTaskEventResult = NonNullable<ReturnType<typeof appendTaskEvent>>;
 
 interface ExpandValueListOptions {
@@ -132,12 +133,14 @@ interface AsyncCommandExecutionResult {
     outputLines: string[];
     timedOut: boolean;
     cancelled: boolean;
+    command_policy_audit: CommandPolicyAudit | null;
 }
 
 interface SyncCommandExecutionResult {
     exitCode: number;
     outputLines: string[];
     timedOut: boolean;
+    command_policy_audit: CommandPolicyAudit | null;
 }
 
 interface ClassifyChangeCommandOptions {
@@ -1406,6 +1409,8 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
         throw new Error('Command must not be empty.');
     }
 
+    const audit = auditGateCommand(commandText, 'compile-gate');
+
     const executablePath = resolveExecutablePath(tokens[0], cwd, options.envPath);
     const args = tokens.slice(1);
     const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_COMPILE_TIMEOUT_MS;
@@ -1437,7 +1442,8 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
                 `Process timed out after ${timeoutMs} ms.`
             ],
             timedOut: true,
-            cancelled: false
+            cancelled: false,
+            command_policy_audit: audit
         };
     }
 
@@ -1450,7 +1456,8 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
                 'Process was cancelled.'
             ],
             timedOut: false,
-            cancelled: true
+            cancelled: true,
+            command_policy_audit: audit
         };
     }
 
@@ -1461,7 +1468,8 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
             ...splitOutputLines(result.stderr)
         ],
         timedOut: false,
-        cancelled: false
+        cancelled: false,
+        command_policy_audit: audit
     };
 }
 
@@ -1471,6 +1479,8 @@ export function executeCommand(commandText: string, options: ExecuteCommandOptio
     if (tokens.length === 0) {
         throw new Error('Command must not be empty.');
     }
+
+    const audit = auditGateCommand(commandText, 'compile-gate');
 
     const executablePath = resolveExecutablePath(tokens[0], cwd, options.envPath);
     const args = tokens.slice(1);
@@ -1506,7 +1516,8 @@ export function executeCommand(commandText: string, options: ExecuteCommandOptio
         return {
             exitCode: EXIT_GENERAL_FAILURE,
             outputLines: [...outputLines, `Process timed out after ${timeoutMs} ms.`],
-            timedOut: true
+            timedOut: true,
+            command_policy_audit: audit
         };
     }
 
@@ -1521,7 +1532,8 @@ export function executeCommand(commandText: string, options: ExecuteCommandOptio
     return {
         exitCode: result.status == null ? EXIT_GENERAL_FAILURE : result.status,
         outputLines,
-        timedOut: false
+        timedOut: false,
+        command_policy_audit: audit
     };
 }
 
@@ -1911,6 +1923,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     let selectedCommandIndex = 0;
     const compileOutputLines: string[] = [];
     const compileOutputChunks: string[] = [];
+    const compileCommandAudits: CommandPolicyAudit[] = [];
     const startedAt = Date.now();
     let compileOutputInitialized = false;
 
@@ -1991,6 +2004,10 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                 const commandProfile = getCompileCommandProfile(compileCommand);
                 const execution = await executeCommandAsync(compileCommand, { cwd: repoRoot });
                 const stats = getOutputStats(execution.outputLines);
+
+                if (execution.command_policy_audit) {
+                    compileCommandAudits.push(execution.command_policy_audit);
+                }
 
                 compileOutputLines.push(...execution.outputLines);
                 warningCount += stats.warningLines;
@@ -2086,6 +2103,8 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         compile_output_error_lines: errorCount,
         duration_ms: durationMs,
         exit_code: exceptionMessage ? exitCode : 0,
+        command_policy_audits: compileCommandAudits,
+        command_policy_warning_count: compileCommandAudits.reduce((sum, a) => sum + a.warning_count, 0),
         ...outputTelemetry
     };
 
