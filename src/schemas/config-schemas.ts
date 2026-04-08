@@ -10,6 +10,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ensurePlainObject } from './shared';
 import { getManagedConfigValidators } from './config-artifacts';
+import {
+    SOURCE_OF_TRUTH_VALUES,
+    BREVITY_VALUES,
+    COLLECTED_VIA_VALUES
+} from '../core/constants';
 
 // ---------------------------------------------------------------------------
 // Individual config schemas
@@ -166,6 +171,40 @@ export const isolationModeSchema: Record<string, unknown> = Object.freeze({
         same_user_limitation_notice:         { type: 'string' }
     },
     required: ['enabled', 'enforcement', 'require_manifest_match_before_task', 'refuse_on_preflight_drift', 'use_sandbox'],
+    additionalProperties: false
+});
+
+// ---------------------------------------------------------------------------
+// init-answers.json schema
+// ---------------------------------------------------------------------------
+
+const INIT_ANSWERS_BOOLEAN_LIKE = {
+    type: 'string',
+    description: 'Boolean-like value serialized as a string ("true" or "false").',
+    enum: ['true', 'false']
+} as const;
+
+export const initAnswersSchema: Record<string, unknown> = Object.freeze({
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    $id: 'octopus-agent-orchestrator/init-answers.schema.json',
+    title: 'Init Answers',
+    description: 'Portable schema for the init-answers.json configuration collected during workspace initialization.',
+    type: 'object',
+    properties: {
+        AssistantLanguage: { type: 'string', minLength: 1, description: 'Natural language for assistant responses (e.g. "English").' },
+        AssistantBrevity:  { type: 'string', enum: [...BREVITY_VALUES], description: 'Response brevity preference.' },
+        SourceOfTruth:     { type: 'string', enum: [...SOURCE_OF_TRUTH_VALUES], description: 'Selected agent provider whose entrypoint file is the canonical source of truth.' },
+        EnforceNoAutoCommit:        { ...INIT_ANSWERS_BOOLEAN_LIKE },
+        ClaudeOrchestratorFullAccess: { ...INIT_ANSWERS_BOOLEAN_LIKE },
+        TokenEconomyEnabled:        { ...INIT_ANSWERS_BOOLEAN_LIKE },
+        CollectedVia:      { type: 'string', enum: [...COLLECTED_VIA_VALUES], description: 'How the answers were collected.' },
+        ActiveAgentFiles:  { type: 'string', minLength: 1, description: 'Comma-separated list of active canonical agent entrypoint files.' }
+    },
+    required: [
+        'AssistantLanguage', 'AssistantBrevity', 'SourceOfTruth',
+        'EnforceNoAutoCommit', 'ClaudeOrchestratorFullAccess', 'TokenEconomyEnabled',
+        'CollectedVia'
+    ],
     additionalProperties: false
 });
 
