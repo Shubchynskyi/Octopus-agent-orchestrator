@@ -19,12 +19,25 @@ interface CompileStrategyConfig {
     degraded_patterns: string[];
 }
 
+interface ErrorGroup {
+    signature: string;
+    representative: string;
+    count: number;
+}
+
+interface GroupingResult {
+    groups: ErrorGroup[];
+    total_matches: number;
+    unique_groups: number;
+}
+
 interface ParserResult {
     lines: string[];
     parser_mode: string;
     parser_name: string | null;
     parser_strategy: string | null;
     fallback_mode: string;
+    grouping?: GroupingResult | null;
 }
 
 interface FilterProfileResult {
@@ -35,6 +48,7 @@ interface FilterProfileResult {
     parser_name: string | null;
     parser_strategy: string | null;
     budget_tier?: string | null;
+    grouping?: GroupingResult | null;
 }
 
 interface ApplyOutputFilterProfileOptions {
@@ -220,6 +234,76 @@ export function selectMatchingLines(
     return matches;
 }
 
+// ---------------------------------------------------------------------------
+// Error grouping and deduplication
+// ---------------------------------------------------------------------------
+
+// Strip file paths, line/column numbers, and leading whitespace to extract
+// the core error signature from a diagnostic line.
+// Requires at least one directory separator to avoid matching bare words.
+const PATH_PREFIX_RE = /^(?:[A-Za-z]:)?[/\\]?(?:[\w.@-]+[/\\])+[\w.@-]+(?::\d+(?::\d+)?)?[:\s]+/;
+const LINE_COL_RE = /\(\d+,\d+\)/g;
+const ANON_PATH_RE = /(?:[A-Za-z]:)?(?:[/\\][\w.@-]+){2,}/g;
+
+export function normalizeErrorSignature(line: string): string {
+    let sig = line.trim();
+    sig = sig.replace(PATH_PREFIX_RE, '');
+    sig = sig.replace(LINE_COL_RE, '');
+    sig = sig.replace(ANON_PATH_RE, '<path>');
+    sig = sig.replace(/\s{2,}/g, ' ').trim();
+    return sig || line.trim();
+}
+
+export function groupMatchingLines(
+    lines: string[],
+    patterns: string[],
+    maxGroups: number
+): GroupingResult {
+    const compiledPatterns = patterns.map((p) => new RegExp(p));
+    const groupMap = new Map<string, ErrorGroup>();
+    const groupOrder: string[] = [];
+    let totalMatches = 0;
+
+    for (const line of lines) {
+        if (!compiledPatterns.some((p) => p.test(line))) {
+            continue;
+        }
+        totalMatches++;
+        const sig = normalizeErrorSignature(line);
+        const existing = groupMap.get(sig);
+        if (existing) {
+            existing.count++;
+        } else {
+            const group: ErrorGroup = { signature: sig, representative: line, count: 1 };
+            groupMap.set(sig, group);
+            groupOrder.push(sig);
+        }
+    }
+
+    const limitedKeys = maxGroups > 0 ? groupOrder.slice(0, maxGroups) : groupOrder;
+    const groups: ErrorGroup[] = limitedKeys.map((k) => groupMap.get(k)!);
+    return { groups, total_matches: totalMatches, unique_groups: groupOrder.length };
+}
+
+export function formatGroupedLines(result: GroupingResult): string[] {
+    const output: string[] = [];
+    for (const group of result.groups) {
+        if (group.count > 1) {
+            output.push(`[${group.count}×] ${group.representative}`);
+        } else {
+            output.push(group.representative);
+        }
+    }
+    if (result.unique_groups > result.groups.length) {
+        const omitted = result.unique_groups - result.groups.length;
+        output.push(`... and ${omitted} more distinct error(s) (${result.total_matches} total matches)`);
+    } else if (result.total_matches > result.groups.reduce((s, g) => s + g.count, 0)) {
+        // Should not normally happen, but guard for clarity
+        output.push(`(${result.total_matches} total matches)`);
+    }
+    return output;
+}
+
 // --- Compile failure strategy configs ---
 
 const COMPILE_STRATEGY_CONFIGS = {
@@ -326,12 +410,14 @@ function invokeCompileFailureParser(
     const maxMatches = resolveFilterInt(parserConfig.max_matches, context, 'parser.max_matches', 1);
     const tailCount = resolveFilterInt(parserConfig.tail_count, context, 'parser.tail_count', 0);
 
-    const fullMatches = selectMatchingLines(lines, config.full_patterns, { limit: maxMatches });
-    if (fullMatches.length > 0) {
+    const fullGrouping = groupMatchingLines(lines, config.full_patterns, maxMatches);
+    if (fullGrouping.total_matches > 0) {
         const summaryLines: string[] = [];
         const seen = new Set<string>();
-        addUniqueLines(summaryLines, seen, [`CompactSummary: FULL | strategy=${config.display_name}`]);
-        addUniqueLines(summaryLines, seen, fullMatches, { limit: maxMatches + 1 });
+        addUniqueLines(summaryLines, seen, [
+            `CompactSummary: FULL | strategy=${config.display_name} | ${fullGrouping.unique_groups} group(s), ${fullGrouping.total_matches} match(es)`
+        ]);
+        addUniqueLines(summaryLines, seen, formatGroupedLines(fullGrouping), { limit: maxMatches + 1 });
         if (tailCount > 0) {
             addUniqueLines(summaryLines, seen, selectTailLines(lines, tailCount));
         }
@@ -340,16 +426,19 @@ function invokeCompileFailureParser(
             parser_mode: 'FULL',
             parser_name: 'compile_failure_summary',
             parser_strategy: config.display_name,
-            fallback_mode: 'none'
+            fallback_mode: 'none',
+            grouping: fullGrouping
         };
     }
 
-    const degradedMatches = selectMatchingLines(lines, config.degraded_patterns, { limit: Math.max(maxMatches, 8) });
-    if (degradedMatches.length > 0) {
+    const degradedGrouping = groupMatchingLines(lines, config.degraded_patterns, Math.max(maxMatches, 8));
+    if (degradedGrouping.total_matches > 0) {
         const summaryLines: string[] = [];
         const seen = new Set<string>();
-        addUniqueLines(summaryLines, seen, [`CompactSummary: DEGRADED | strategy=${config.display_name}`]);
-        addUniqueLines(summaryLines, seen, degradedMatches, { limit: Math.max(maxMatches, 8) + 1 });
+        addUniqueLines(summaryLines, seen, [
+            `CompactSummary: DEGRADED | strategy=${config.display_name} | ${degradedGrouping.unique_groups} group(s), ${degradedGrouping.total_matches} match(es)`
+        ]);
+        addUniqueLines(summaryLines, seen, formatGroupedLines(degradedGrouping), { limit: Math.max(maxMatches, 8) + 1 });
         if (tailCount > 0) {
             addUniqueLines(summaryLines, seen, selectTailLines(lines, tailCount));
         }
@@ -358,7 +447,8 @@ function invokeCompileFailureParser(
             parser_mode: 'DEGRADED',
             parser_name: 'compile_failure_summary',
             parser_strategy: config.display_name,
-            fallback_mode: 'none'
+            fallback_mode: 'none',
+            grouping: degradedGrouping
         };
     }
 
@@ -367,7 +457,8 @@ function invokeCompileFailureParser(
         parser_mode: 'PASSTHROUGH',
         parser_name: 'compile_failure_summary',
         parser_strategy: config.display_name,
-        fallback_mode: 'parser_passthrough'
+        fallback_mode: 'parser_passthrough',
+        grouping: null
     };
 }
 
@@ -390,12 +481,14 @@ function invokeTestFailureParser(
         'Test Run Failed',
         '[✕×]'
     ];
-    const matches = selectMatchingLines(lines, patterns, { limit: maxMatches });
-    if (matches.length > 0) {
+    const grouping = groupMatchingLines(lines, patterns, maxMatches);
+    if (grouping.total_matches > 0) {
         const summaryLines: string[] = [];
         const seen = new Set<string>();
-        addUniqueLines(summaryLines, seen, ['CompactSummary: FULL | strategy=test']);
-        addUniqueLines(summaryLines, seen, matches, { limit: maxMatches + 1 });
+        addUniqueLines(summaryLines, seen, [
+            `CompactSummary: FULL | strategy=test | ${grouping.unique_groups} group(s), ${grouping.total_matches} match(es)`
+        ]);
+        addUniqueLines(summaryLines, seen, formatGroupedLines(grouping), { limit: maxMatches + 1 });
         if (tailCount > 0) {
             addUniqueLines(summaryLines, seen, selectTailLines(lines, tailCount));
         }
@@ -404,7 +497,8 @@ function invokeTestFailureParser(
             parser_mode: 'FULL',
             parser_name: 'test_failure_summary',
             parser_strategy: 'test',
-            fallback_mode: 'none'
+            fallback_mode: 'none',
+            grouping
         };
     }
     return {
@@ -412,7 +506,8 @@ function invokeTestFailureParser(
         parser_mode: 'PASSTHROUGH',
         parser_name: 'test_failure_summary',
         parser_strategy: 'test',
-        fallback_mode: 'parser_passthrough'
+        fallback_mode: 'parser_passthrough',
+        grouping: null
     };
 }
 
@@ -431,12 +526,14 @@ function invokeLintFailureParser(
         '[✖×]',
         'problems?'
     ];
-    const matches = selectMatchingLines(lines, patterns, { limit: maxMatches });
-    if (matches.length > 0) {
+    const grouping = groupMatchingLines(lines, patterns, maxMatches);
+    if (grouping.total_matches > 0) {
         const summaryLines: string[] = [];
         const seen = new Set<string>();
-        addUniqueLines(summaryLines, seen, ['CompactSummary: FULL | strategy=lint']);
-        addUniqueLines(summaryLines, seen, matches, { limit: maxMatches + 1 });
+        addUniqueLines(summaryLines, seen, [
+            `CompactSummary: FULL | strategy=lint | ${grouping.unique_groups} group(s), ${grouping.total_matches} match(es)`
+        ]);
+        addUniqueLines(summaryLines, seen, formatGroupedLines(grouping), { limit: maxMatches + 1 });
         if (tailCount > 0) {
             addUniqueLines(summaryLines, seen, selectTailLines(lines, tailCount));
         }
@@ -445,7 +542,8 @@ function invokeLintFailureParser(
             parser_mode: 'FULL',
             parser_name: 'lint_failure_summary',
             parser_strategy: 'lint',
-            fallback_mode: 'none'
+            fallback_mode: 'none',
+            grouping
         };
     }
     return {
@@ -453,7 +551,8 @@ function invokeLintFailureParser(
         parser_mode: 'PASSTHROUGH',
         parser_name: 'lint_failure_summary',
         parser_strategy: 'lint',
-        fallback_mode: 'parser_passthrough'
+        fallback_mode: 'parser_passthrough',
+        grouping: null
     };
 }
 
@@ -470,7 +569,8 @@ function invokeReviewSummaryParser(
             parser_mode: 'PASSTHROUGH',
             parser_name: 'review_gate_summary',
             parser_strategy: 'review',
-            fallback_mode: 'parser_passthrough'
+            fallback_mode: 'parser_passthrough',
+            grouping: null
         };
     }
     return {
@@ -478,7 +578,8 @@ function invokeReviewSummaryParser(
         parser_mode: 'FULL',
         parser_name: 'review_gate_summary',
         parser_strategy: 'review',
-        fallback_mode: 'none'
+        fallback_mode: 'none',
+        grouping: null
     };
 }
 
@@ -493,7 +594,8 @@ export function applyOutputParser(
             parser_mode: 'NONE',
             parser_name: null,
             parser_strategy: null,
-            fallback_mode: 'none'
+            fallback_mode: 'none',
+            grouping: null
         };
     }
     if (typeof parserConfig !== 'object') {
@@ -647,7 +749,8 @@ export function applyOutputFilterProfile(
         parser_mode: 'NONE',
         parser_name: null,
         parser_strategy: null,
-        budget_tier: null
+        budget_tier: null,
+        grouping: null
     };
 
     if (!String(profileName || '').trim()) {
@@ -738,7 +841,8 @@ export function applyOutputFilterProfile(
             parser_mode: parserResult.parser_mode,
             parser_name: parserResult.parser_name,
             parser_strategy: parserResult.parser_strategy,
-            budget_tier: budgetResolution.matched ? budgetResolution.tier_label : null
+            budget_tier: budgetResolution.matched ? budgetResolution.tier_label : null,
+            grouping: parserResult.grouping ?? null
         };
     } catch (err) {
         process.stderr.write(`WARNING: output filter profile '${profileName}' is invalid: ${err}\n`);

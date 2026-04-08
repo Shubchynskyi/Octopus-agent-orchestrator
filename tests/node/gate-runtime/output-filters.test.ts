@@ -14,7 +14,10 @@ import {
     selectTailLines,
     selectMatchingLines,
     getCompileFailureStrategyConfig,
-    resolveBudgetTier
+    resolveBudgetTier,
+    normalizeErrorSignature,
+    groupMatchingLines,
+    formatGroupedLines
 } from '../../../src/gate-runtime/output-filters';
 
 // --- resolveFilterInt ---
@@ -585,4 +588,344 @@ test('applyOutputFilterProfile budget overrides passthrough ceiling', () => {
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
+});
+
+// --- normalizeErrorSignature ---
+
+test('normalizeErrorSignature strips file path prefix', () => {
+    assert.equal(
+        normalizeErrorSignature('src/foo/bar.ts:10:5: error TS2345: something wrong'),
+        'error TS2345: something wrong'
+    );
+});
+
+test('normalizeErrorSignature strips Windows-style path prefix', () => {
+    assert.equal(
+        normalizeErrorSignature('C:\\Users\\dev\\project\\src\\bar.ts:42:1: error TS1234: bad import'),
+        'error TS1234: bad import'
+    );
+});
+
+test('normalizeErrorSignature strips inline parenthesized line/col', () => {
+    assert.equal(
+        normalizeErrorSignature('error TS2345(10,5): Argument not assignable'),
+        'error TS2345: Argument not assignable'
+    );
+});
+
+test('normalizeErrorSignature anonymizes embedded paths', () => {
+    const result = normalizeErrorSignature('Cannot find module /home/user/project/node_modules/foo');
+    assert.ok(result.includes('<path>'), `expected anonymized path, got: ${result}`);
+});
+
+test('normalizeErrorSignature returns trimmed input for non-path lines', () => {
+    assert.equal(normalizeErrorSignature('  BUILD FAILURE  '), 'BUILD FAILURE');
+});
+
+// --- groupMatchingLines ---
+
+test('groupMatchingLines groups duplicate errors', () => {
+    const lines = [
+        'src/a.ts:1:1: error TS2345: Argument not assignable',
+        'src/b.ts:5:2: error TS2345: Argument not assignable',
+        'src/c.ts:10:3: error TS2345: Argument not assignable',
+        'src/d.ts:2:1: error TS1234: Something else'
+    ];
+    const result = groupMatchingLines(lines, ['error'], 10);
+    assert.equal(result.total_matches, 4);
+    assert.equal(result.unique_groups, 2, `expected 2 unique groups, got ${result.unique_groups}`);
+    const tsGroup = result.groups.find(g => g.signature.includes('TS2345'));
+    assert.ok(tsGroup, 'expected group for TS2345');
+    assert.equal(tsGroup!.count, 3);
+});
+
+test('groupMatchingLines respects maxGroups limit', () => {
+    const lines = [
+        'error: alpha',
+        'error: beta',
+        'error: gamma',
+        'error: delta'
+    ];
+    const result = groupMatchingLines(lines, ['^error'], 2);
+    assert.equal(result.groups.length, 2);
+    assert.equal(result.unique_groups, 4);
+    assert.equal(result.total_matches, 4);
+});
+
+test('groupMatchingLines returns zero matches for no-match input', () => {
+    const result = groupMatchingLines(['info: ok', 'debug: fine'], ['^error'], 10);
+    assert.equal(result.total_matches, 0);
+    assert.equal(result.groups.length, 0);
+});
+
+test('groupMatchingLines preserves first representative per group', () => {
+    const lines = [
+        'src/a.ts:1:1: error TS9999: duplicate thing',
+        'src/z.ts:99:1: error TS9999: duplicate thing'
+    ];
+    const result = groupMatchingLines(lines, ['error'], 10);
+    assert.equal(result.groups.length, 1);
+    assert.ok(result.groups[0].representative.includes('src/a.ts'), 'expected first occurrence as representative');
+    assert.equal(result.groups[0].count, 2);
+});
+
+// --- formatGroupedLines ---
+
+test('formatGroupedLines emits count prefix for duplicated groups', () => {
+    const result = formatGroupedLines({
+        groups: [
+            { signature: 'error TS2345: Argument not assignable', representative: 'src/a.ts:1:1: error TS2345: Argument not assignable', count: 3 },
+            { signature: 'error TS1234: Something else', representative: 'src/d.ts:2:1: error TS1234: Something else', count: 1 }
+        ],
+        total_matches: 4,
+        unique_groups: 2
+    });
+    assert.equal(result.length, 2);
+    assert.match(result[0], /^\[3×\]/);
+    assert.ok(!result[1].startsWith('['), 'single-count lines should not have a count prefix');
+});
+
+test('formatGroupedLines adds omission footer when groups are truncated', () => {
+    const result = formatGroupedLines({
+        groups: [
+            { signature: 'error A', representative: 'error A', count: 1 },
+            { signature: 'error B', representative: 'error B', count: 1 }
+        ],
+        total_matches: 10,
+        unique_groups: 5
+    });
+    assert.equal(result.length, 3);
+    assert.match(result[2], /3 more distinct error/);
+    assert.match(result[2], /10 total matches/);
+});
+
+test('formatGroupedLines omits footer when all groups shown', () => {
+    const result = formatGroupedLines({
+        groups: [
+            { signature: 'error X', representative: 'error X', count: 2 }
+        ],
+        total_matches: 2,
+        unique_groups: 1
+    });
+    assert.equal(result.length, 1);
+    assert.match(result[0], /^\[2×\]/);
+});
+
+// --- Grouped parser integration ---
+
+test('compile failure parser groups duplicate node errors', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-group-'));
+    try {
+        const configPath = path.join(tempDir, 'output-filters.json');
+        fs.writeFileSync(configPath, JSON.stringify({
+            version: 2,
+            profiles: {
+                test_compile: {
+                    description: 'Test compile',
+                    operations: [{ type: 'strip_ansi' }],
+                    parser: {
+                        type: 'compile_failure_summary',
+                        strategy: 'node',
+                        max_matches: 12,
+                        tail_count: 0
+                    }
+                }
+            }
+        }), 'utf8');
+
+        const lines = [
+            'npm ERR! missing script: build',
+            'npm ERR! missing script: build',
+            'npm ERR! missing script: build',
+            'npm ERR! code ELIFECYCLE',
+            'info: other stuff'
+        ];
+        const result = applyOutputFilterProfile(lines, configPath, 'test_compile');
+        assert.equal(result.parser_mode, 'FULL');
+        assert.ok(result.lines[0].includes('group(s)'), 'summary header should include group count');
+        assert.ok(result.grouping, 'grouping metadata should be present');
+        assert.equal(result.grouping!.unique_groups, 2, 'expected 2 distinct groups');
+        assert.equal(result.grouping!.total_matches, 4);
+        // The duplicate npm ERR! lines should be grouped with count prefix
+        assert.ok(result.lines.some(l => l.startsWith('[3×]')), 'expected grouped count prefix');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('test failure parser groups duplicate test failures', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-group-'));
+    try {
+        const configPath = path.join(tempDir, 'output-filters.json');
+        fs.writeFileSync(configPath, JSON.stringify({
+            version: 2,
+            profiles: {
+                test_fail: {
+                    description: 'Test failure',
+                    operations: [{ type: 'strip_ansi' }],
+                    parser: {
+                        type: 'test_failure_summary',
+                        max_matches: 16,
+                        tail_count: 0
+                    }
+                }
+            }
+        }), 'utf8');
+
+        const lines = [
+            'FAILED tests/unit/auth.test.ts > login flow',
+            'FAILED tests/unit/auth.test.ts > logout flow',
+            'FAILED tests/unit/auth.test.ts > refresh token',
+            'FAILED tests/integration/api.test.ts > health check',
+            'ok some other output'
+        ];
+        const result = applyOutputFilterProfile(lines, configPath, 'test_fail');
+        assert.equal(result.parser_mode, 'FULL');
+        assert.ok(result.grouping, 'grouping metadata should be present');
+        assert.equal(result.grouping!.total_matches, 4);
+        assert.equal(result.grouping!.unique_groups, 4, 'different test names produce distinct groups');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('lint failure parser groups duplicate lint errors', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-group-'));
+    try {
+        const configPath = path.join(tempDir, 'output-filters.json');
+        fs.writeFileSync(configPath, JSON.stringify({
+            version: 2,
+            profiles: {
+                lint_fail: {
+                    description: 'Lint failure',
+                    operations: [{ type: 'strip_ansi' }],
+                    parser: {
+                        type: 'lint_failure_summary',
+                        max_matches: 16,
+                        tail_count: 0
+                    }
+                }
+            }
+        }), 'utf8');
+
+        const lines = [
+            'src/a.ts:10:5 error no-unused-vars',
+            'src/b.ts:20:3 error no-unused-vars',
+            'src/c.ts:30:1 error no-unused-vars',
+            'src/d.ts:40:2 error prefer-const',
+            'info: done'
+        ];
+        const result = applyOutputFilterProfile(lines, configPath, 'lint_fail');
+        assert.equal(result.parser_mode, 'FULL');
+        assert.ok(result.grouping, 'grouping metadata should be present');
+        assert.equal(result.grouping!.unique_groups, 2, 'expected 2 lint groups');
+        assert.equal(result.grouping!.total_matches, 4);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('applyOutputFilterProfile grouping is null for passthrough parser', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-group-'));
+    try {
+        const configPath = path.join(tempDir, 'output-filters.json');
+        fs.writeFileSync(configPath, JSON.stringify({
+            version: 2,
+            profiles: {
+                no_match: {
+                    description: 'No match',
+                    operations: [{ type: 'strip_ansi' }],
+                    parser: {
+                        type: 'compile_failure_summary',
+                        strategy: 'maven',
+                        max_matches: 12,
+                        tail_count: 0
+                    }
+                }
+            }
+        }), 'utf8');
+
+        const lines = ['info: clean build', 'all good'];
+        const result = applyOutputFilterProfile(lines, configPath, 'no_match');
+        assert.equal(result.parser_mode, 'PASSTHROUGH');
+        assert.equal(result.grouping, null);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('applyOutputFilterProfile grouping is null for profile without parser', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-group-'));
+    try {
+        const configPath = path.join(tempDir, 'output-filters.json');
+        fs.writeFileSync(configPath, JSON.stringify({
+            version: 2,
+            profiles: {
+                no_parser: {
+                    description: 'No parser',
+                    operations: [{ type: 'strip_ansi' }]
+                }
+            }
+        }), 'utf8');
+
+        const result = applyOutputFilterProfile(['hello'], configPath, 'no_parser');
+        assert.equal(result.grouping, null);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+// --- Edge cases from review findings ---
+
+test('groupMatchingLines with maxGroups=0 returns all groups', () => {
+    const lines = ['error: A', 'error: B', 'error: C'];
+    const result = groupMatchingLines(lines, ['^error'], 0);
+    assert.equal(result.groups.length, 3, 'maxGroups=0 should return all groups');
+    assert.equal(result.total_matches, 3);
+    assert.equal(result.unique_groups, 3);
+});
+
+test('compile failure parser DEGRADED path uses grouping', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-group-'));
+    try {
+        const configPath = path.join(tempDir, 'output-filters.json');
+        fs.writeFileSync(configPath, JSON.stringify({
+            version: 2,
+            profiles: {
+                degraded_test: {
+                    description: 'Degraded compile test',
+                    operations: [{ type: 'strip_ansi' }],
+                    parser: {
+                        type: 'compile_failure_summary',
+                        strategy: 'maven',
+                        max_matches: 12,
+                        tail_count: 0
+                    }
+                }
+            }
+        }), 'utf8');
+
+        // Lines that match degraded_patterns (lowercase 'error') but NOT full_patterns.
+        // File-path prefixes normalize away, grouping identical core messages.
+        const lines = [
+            'src/a.java:10: error: variable not used',
+            'src/b.java:20: error: variable not used',
+            'src/c.java:30: error: variable not used',
+            'info: compiling',
+            'src/d.java:40: error: method not found'
+        ];
+        const result = applyOutputFilterProfile(lines, configPath, 'degraded_test');
+        assert.equal(result.parser_mode, 'DEGRADED');
+        assert.ok(result.grouping, 'grouping metadata should be present for DEGRADED');
+        assert.equal(result.grouping!.total_matches, 4);
+        assert.equal(result.grouping!.unique_groups, 2, 'path-normalized errors form 2 groups');
+        assert.ok(result.lines.some(l => l.startsWith('[3×]')), 'duplicate errors should be grouped');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('normalizeErrorSignature preserves bare filename without directory separator', () => {
+    const result = normalizeErrorSignature('foo.ts:10:5: error TS1234: bad');
+    assert.equal(result, 'foo.ts:10:5: error TS1234: bad', 'bare filename without dir separator stays intact');
 });
