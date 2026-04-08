@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { buildScopedDiffMetadata, convertToGitPathspecs } from '../gate-runtime/scoped-diff';
+import { buildScopedDiffMetadata, convertToGitPathspecs, filterDiffByHunks } from '../gate-runtime/scoped-diff';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
 import { matchAnyRegex } from '../gate-runtime/text-utils';
 import { normalizePath, resolveGitRoot, resolvePathInsideRepo, toStringArray, toPosix } from './helpers';
@@ -69,11 +69,13 @@ export interface BuildScopedDiffOptions {
     fullDiffPath?: string | null;
     repoRoot: string;
     useStaged?: boolean;
+    hunkLevel?: boolean;
 }
 
 /**
  * Build a scoped diff for a specific review type.
  * Orchestrates git operations and writes artifacts.
+ * Supports hunk-level filtering when `hunkLevel` is true.
  * Returns the metadata object.
  */
 export function buildScopedDiff(options: BuildScopedDiffOptions) {
@@ -85,6 +87,7 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
     const fullDiffPath = options.fullDiffPath || null;
     const repoRoot = options.repoRoot;
     const useStaged = options.useStaged || false;
+    const hunkLevel = options.hunkLevel || false;
 
     const gitRepoRoot = resolveGitRoot(repoRoot);
 
@@ -135,6 +138,25 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
         }
     }
 
+    // Apply hunk-level filtering when enabled
+    let hunkFilterResult = null;
+    if (hunkLevel && outputDiffText && outputDiffText.trim()) {
+        const filterResult = filterDiffByHunks(outputDiffText, triggerRegexes, {
+            reviewType
+        });
+        // Always apply hunk filtering result, even if it produces empty output
+        if (filterResult.hunkLevelFiltered) {
+            outputDiffText = filterResult.filteredDiffText;
+        }
+        hunkFilterResult = {
+            total_file_blocks: filterResult.totalFileBlocks,
+            included_file_blocks: filterResult.includedFileBlocks,
+            total_hunks: filterResult.totalHunks,
+            included_hunks: filterResult.includedHunks,
+            hunk_level_filtered: filterResult.hunkLevelFiltered
+        };
+    }
+
     let outputPayload = outputDiffText || '';
     if (outputPayload && !outputPayload.endsWith('\n')) outputPayload += '\n';
 
@@ -143,7 +165,7 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
         return text.split('\n').length;
     }
 
-    const result = {
+    const result: Record<string, unknown> = {
         review_type: reviewType,
         preflight_path: normalizePath(preflightPath),
         paths_config_path: normalizePath(pathsConfigPath),
@@ -157,8 +179,13 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
         matched_files: matchedFiles,
         fallback_to_full_diff: !!fallbackToFullDiff,
         scoped_diff_line_count: lineCount(scopedDiffText),
-        output_diff_line_count: lineCount(outputPayload)
+        output_diff_line_count: lineCount(outputPayload),
+        hunk_level: !!hunkLevel
     };
+
+    if (hunkFilterResult) {
+        result.hunk_filter = hunkFilterResult;
+    }
 
     withReviewArtifactLock(metadataPath, () => {
         writeArtifactFileAtomically(outputPath, outputPayload);

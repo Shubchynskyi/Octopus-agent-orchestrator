@@ -1566,7 +1566,8 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 '--metadata-path': { key: 'metadataPath', type: 'string' },
                 '--full-diff-path': { key: 'fullDiffPath', type: 'string' },
                 '--use-staged': { key: 'useStaged', type: 'boolean' },
-                '--repo-root': { key: 'repoRoot', type: 'string' }
+                '--repo-root': { key: 'repoRoot', type: 'string' },
+                '--hunk-level': { key: 'hunkLevel', type: 'boolean' }
             };
             const { options: rawOptions } = parseOptions(gateArgv, defs);
             const options = rawOptions as ParsedOptionsRecord;
@@ -1593,14 +1594,25 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 metadataPath,
                 fullDiffPath,
                 repoRoot,
-                useStaged: options.useStaged === true
+                useStaged: options.useStaged === true,
+                hunkLevel: options.hunkLevel === true
             });
-            formatKeyValueOutput({
+            const outputKV: Record<string, unknown> = {
                 outputPath: result.output_path,
                 metadataPath: result.metadata_path,
                 matchedFilesCount: result.matched_files_count,
-                fallbackToFullDiff: result.fallback_to_full_diff
-            }, ['outputPath', 'metadataPath', 'matchedFilesCount', 'fallbackToFullDiff']);
+                fallbackToFullDiff: result.fallback_to_full_diff,
+                hunkLevel: result.hunk_level
+            };
+            const orderedKeys = ['outputPath', 'metadataPath', 'matchedFilesCount', 'fallbackToFullDiff', 'hunkLevel'];
+            if (result.hunk_filter) {
+                const hf = result.hunk_filter as Record<string, unknown>;
+                outputKV.hunkFiltered = hf.hunk_level_filtered;
+                outputKV.totalHunks = hf.total_hunks;
+                outputKV.includedHunks = hf.included_hunks;
+                orderedKeys.push('hunkFiltered', 'totalHunks', 'includedHunks');
+            }
+            formatKeyValueOutput(outputKV, orderedKeys);
             return;
         }
         case 'build-review-context': {
