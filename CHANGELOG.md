@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2.4.3
+- propagated compact-command protocol reference into redirect entrypoints (`buildRedirectManagedBlock`), provider orchestrator bridges (`buildProviderOrchestratorAgentContent` for full and Antigravity compact), shared start-task router (`buildSharedStartTaskWorkflowContent`), and GitHub skill bridge agents (`buildGitHubSkillBridgeAgentContent`); every agent surface now references `40-commands.md` compact protocol (`scan -> inspect -> debug`) so providers entering through any bridge path inherit the compact-command contract
 - enforced compact-command protocol in gate execution helpers: `executeCommandAsync` and `executeCommand` now produce a `command_policy_audit` on every invocation using `auditGateCommand`; compile-gate evidence includes `command_policy_audits` and `command_policy_warning_count` for measurable compactness telemetry
 - expanded noisy-command audit patterns from 3 to 16 covering git (diff/log/status/show/stash), containers (docker logs/kubectl logs), testing (pytest/jest/vitest/go test), search (rg/grep/cat), and package managers (npm install/npm ls); each pattern now records a `matched_categories` array for downstream grouping
 - added `auditGateCommand` helper for lifecycle-required gate commands with automatic justification that suppresses warnings for gate-driven executions

@@ -9,6 +9,7 @@ This checklist routes to the canonical Octopus workflow. It does not replace `80
 Before any code changes:
 - Open `AGENTS.md`, `TASK.md`, and `.antigravity/agents/orchestrator.md`.
 - Execute every code task only as `Execute task <task-id> depth=<1|2|3>`.
+- Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.
 
 Mandatory gate order:
 1. `gate enter-task-mode`

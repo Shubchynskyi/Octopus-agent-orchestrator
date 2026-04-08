@@ -324,6 +324,7 @@ export function buildRedirectManagedBlock(
         `Hard stop: read \`${canonicalFile}\` first and follow its routing links before responding to anything.`,
         `Hard stop: before any task execution, open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.`,
         'Do not implement tasks directly without orchestration preflight and required review gates.',
+        'Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.',
         'Treat `.agents/workflows/start-task.md` as the shared start-task router for root entrypoints and provider bridges; it routes to the canonical workflow and does not replace `80-task-workflow.md`.',
         'After opening downstream workflow files, record them via `node bin/octopus.js gate load-rule-pack ...` in a self-hosted source checkout, or `node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack ...` inside a materialized/deployed workspace.',
         'Before each required reviewer invocation, run `node bin/octopus.js gate build-review-context ...` in a self-hosted source checkout, or `node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context ...` inside a materialized/deployed workspace; completion for code-changing tasks expects review-skill telemetry from that step.',
@@ -394,8 +395,9 @@ Required:
 1. Open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
 2. Execute every code task only as \`Execute task <task-id> depth=<1|2|3>\`.
 3. Follow the shared checklist in \`.agents/workflows/start-task.md\` exactly.
-4. Do not bypass gates, fake review artifacts, or use provider-default review flow outside Octopus.
-5. If any mandatory gate command fails, stop, keep the task blocked, and report the exact command, cwd, CLI path, and stderr.
+4. Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
+5. Do not bypass gates, fake review artifacts, or use provider-default review flow outside Octopus.
+6. If any mandatory gate command fails, stop, keep the task blocked, and report the exact command, cwd, CLI path, and stderr.
 
 Canonical workflow skill: \`Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md\`
 Skill catalog: \`Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md\`
@@ -413,6 +415,7 @@ Do not implement tasks directly without orchestration preflight and required rev
 Ignored orchestration control-plane files (for example \`TASK.md\`, \`Octopus-agent-orchestrator/runtime/**\`, and \`Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
 This provider profile is a strict bridge to Octopus skills and the Node gate router.
 Treat \`.agents/workflows/start-task.md\` as the shared router for every provider surface; it routes to canonical orchestration and does not replace \`80-task-workflow.md\`.
+Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 Do not execute task or review workflow with provider-default reviewer agents that bypass this bridge.
 
 ## Required Execution Contract
@@ -477,6 +480,7 @@ Before any code changes:
 - If an active provider bridge exists, open it too before implementation.
 - Move the task to \`IN_PROGRESS\`.
 - Enter orchestrator mode: \`Execute task <task-id> depth=<1|2|3>\`.
+- Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 
 Mandatory gate order:
 1. \`gate enter-task-mode\`
@@ -516,6 +520,7 @@ Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
 Hard stop: first open \`.github/agents/orchestrator.md\`, \`${canonicalFile}\`, and \`TASK.md\`.
 Do not implement tasks directly without orchestration preflight and required review gates.
 Ignored orchestration control-plane files (for example \`TASK.md\`, \`Octopus-agent-orchestrator/runtime/**\`, and \`Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
+Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 
 ## Skill Bridge Contract
 - Use this profile only as a bridge to skill: \`${skillPath}\`

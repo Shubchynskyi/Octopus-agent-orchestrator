@@ -153,6 +153,17 @@ describe('buildRedirectManagedBlock', () => {
         const result = buildRedirectManagedBlock('GEMINI.md', 'CLAUDE.md', []);
         assert.ok(result!.includes('No provider-specific bridge files'));
     });
+
+    it('includes compact-command protocol reference', () => {
+        const result = buildRedirectManagedBlock(
+            'AGENTS.md', 'CLAUDE.md',
+            ['.github/agents/orchestrator.md']
+        );
+        assert.ok(result!.includes('compact command protocol'));
+        assert.ok(result!.includes('scan'));
+        assert.ok(result!.includes('inspect'));
+        assert.ok(result!.includes('debug'));
+    });
 });
 
 describe('buildCommitGuardManagedBlock', () => {
@@ -178,11 +189,23 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result!.includes('.agents/workflows/start-task.md'));
     });
 
+    it('includes compact-command protocol in full provider bridge', () => {
+        const result = buildProviderOrchestratorAgentContent('GitHub Copilot', 'CLAUDE.md', '.github/agents/orchestrator.md');
+        assert.ok(result!.includes('compact command protocol'));
+        assert.ok(result!.includes('40-commands.md'));
+    });
+
     it('builds a compact Antigravity router instead of a full duplicate workflow', () => {
         const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
         assert.ok(result.includes('Antigravity Agent: Orchestrator'));
         assert.ok(result.includes('.agents/workflows/start-task.md'));
         assert.ok(!result.includes('## Required Execution Contract'));
+    });
+
+    it('includes compact-command protocol in Antigravity bridge', () => {
+        const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
+        assert.ok(result!.includes('compact command protocol'));
+        assert.ok(result!.includes('40-commands.md'));
     });
 });
 
@@ -194,6 +217,12 @@ describe('buildSharedStartTaskWorkflowContent', () => {
         assert.ok(result.includes('gate completion-gate'));
         assert.ok(result.includes('shared start-task router'));
         assert.ok(result.includes('If an active provider bridge exists'));
+    });
+
+    it('includes compact-command protocol reference', () => {
+        const result = buildSharedStartTaskWorkflowContent('AGENTS.md');
+        assert.ok(result.includes('compact command protocol'));
+        assert.ok(result.includes('40-commands.md'));
     });
 });
 
@@ -208,6 +237,16 @@ describe('buildGitHubSkillBridgeAgentContent', () => {
         assert.ok(result!.includes('Code Review Bridge'));
         assert.ok(result!.includes('Skill Bridge Contract'));
         assert.ok(result!.includes('required_reviews.code=true'));
+    });
+
+    it('includes compact-command protocol reference', () => {
+        const result = buildGitHubSkillBridgeAgentContent(
+            'Code Review Bridge', 'CLAUDE.md',
+            'Octopus-agent-orchestrator/live/skills/code-review/SKILL.md',
+            'required_reviews.code=true', 'always-on'
+        );
+        assert.ok(result!.includes('compact command protocol'));
+        assert.ok(result!.includes('40-commands.md'));
     });
 });
 
