@@ -158,6 +158,119 @@ const NOISY_COMMAND_PATTERNS: ReadonlyArray<NoisyPattern> = [
         pattern: /\bnpm\s+ls\b(?!.*--depth)(?!.*--json)/i,
         warning: 'Use `npm ls --depth=0` or `npm ls --json --depth=0` for top-level deps only.',
         category: 'package_manager'
+    },
+    {
+        pattern: /\bpip\s+install\b(?!.*-q\b)(?!.*--quiet)/i,
+        warning: 'Use `pip install -q` to suppress progress and advisory noise.',
+        category: 'package_manager'
+    },
+    {
+        pattern: /\byarn\s+install\b(?!.*--silent)(?!.*--json)/i,
+        warning: 'Use `yarn install --silent` to suppress noisy fetch output.',
+        category: 'package_manager'
+    },
+    {
+        pattern: /\bpnpm\s+install\b(?!.*--silent)(?!.*--reporter[\s=]+silent)/i,
+        warning: 'Use `pnpm install --silent` or `pnpm install --reporter silent` to reduce output.',
+        category: 'package_manager'
+    },
+    // Build tools — verbose modes
+    {
+        pattern: /\b(\.\/)?mvn(w)?(\.cmd)?\b(?=.*\s-X\b)/i,
+        warning: 'Avoid `mvn -X` (debug); use `mvn -q` or default verbosity first.',
+        category: 'build'
+    },
+    {
+        pattern: /\b(\.\/)?gradlew?(\.bat)?\s.*--info\b/i,
+        warning: 'Avoid `gradle --info`; use `gradle -q` or default verbosity first.',
+        category: 'build'
+    },
+    {
+        pattern: /\b(\.\/)?gradlew?(\.bat)?\s.*--debug\b/i,
+        warning: 'Avoid `gradle --debug`; use `gradle -q` or default verbosity first.',
+        category: 'build'
+    },
+    {
+        pattern: /\bcargo\s+build\b(?=.*\s-v\b)/i,
+        warning: 'Use `cargo build` without `-v`; add verbose only for specific build issues.',
+        category: 'build'
+    },
+    {
+        pattern: /\bcargo\s+test\b(?=.*\s-v\b)/i,
+        warning: 'Use `cargo test` without `-v`; add verbose only for specific test debug.',
+        category: 'build'
+    },
+    {
+        pattern: /\bdotnet\s+(build|test)\b(?=.*\s-v\s+(d|detailed|diag|diagnostic)\b)/i,
+        warning: 'Use `dotnet build` without detailed/diagnostic verbosity; add `-v d` only for specific issues.',
+        category: 'build'
+    },
+    // Network — verbose fetches
+    {
+        pattern: /\bcurl\b(?!.*-\w*s)(?!.*--silent)(?!.*-\w*o\b)(?!.*--output)(?!.*-\w*f)(?!.*--fail)/i,
+        warning: 'Use `curl -sf` or `curl --silent --fail` to suppress progress and noise.',
+        category: 'network'
+    },
+    {
+        pattern: /\bwget\b(?!.*-\w*q)(?!.*--quiet)/i,
+        warning: 'Use `wget -q` or `wget --quiet` to suppress progress output.',
+        category: 'network'
+    },
+    // File listing / tree
+    {
+        pattern: /\bfind\s+\S+(?!.*-maxdepth)(?!.*-name\b.*-quit\b)/i,
+        warning: 'Use `find <path> -maxdepth 3` to bound directory traversal depth.',
+        category: 'file_listing'
+    },
+    {
+        pattern: /\btree\b(?!.*-L\s*\d)(?!.*--filelimit)/i,
+        warning: 'Use `tree -L 3` to limit directory listing depth.',
+        category: 'file_listing'
+    },
+    {
+        pattern: /\bls\s+-\w*R/i,
+        warning: 'Avoid `ls -R`; use `find -maxdepth 2` or `tree -L 2` for bounded listings.',
+        category: 'file_listing'
+    },
+    // System environment dumps
+    {
+        pattern: /\b(printenv|env)\s*$/im,
+        warning: 'Filter environment output: `env | grep PATTERN` or `printenv VAR_NAME`.',
+        category: 'system'
+    },
+    // Interactive pagers
+    {
+        pattern: /\b(less|more)\s+\S+/i,
+        warning: 'Use `head -n 60` or `tail -n 60` instead of interactive pagers.',
+        category: 'pager'
+    },
+    // Docker — verbose listings
+    {
+        pattern: /\bdocker\s+ps\b(?!.*--format)(?!.*-q\b)(?!.*--quiet)/i,
+        warning: 'Use `docker ps --format "table {{.ID}}\\t{{.Names}}\\t{{.Status}}"` for compact output.',
+        category: 'container'
+    },
+    {
+        pattern: /\bdocker\s+images\b(?!.*--format)(?!.*-q\b)(?!.*--quiet)/i,
+        warning: 'Use `docker images --format "table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}"` for compact output.',
+        category: 'container'
+    },
+    // Kubernetes — verbose describe and get
+    {
+        pattern: /\bkubectl\s+describe\b(?!.*-l\b)(?!.*--selector)/i,
+        warning: 'Prefer `kubectl get -o yaml <resource>` for structured output; `describe` is very verbose.',
+        category: 'container'
+    },
+    {
+        pattern: /\bkubectl\s+get\b(?!.*-o\b)(?!.*--output)/i,
+        warning: 'Use `kubectl get -o wide` or `-o json` for structured, parseable output.',
+        category: 'container'
+    },
+    // Terraform / IaC
+    {
+        pattern: /\bterraform\s+plan\b(?!.*-compact-warnings)(?!.*-json)/i,
+        warning: 'Use `terraform plan -compact-warnings` or `terraform plan -json` for compact output.',
+        category: 'infra'
     }
 ];
 
