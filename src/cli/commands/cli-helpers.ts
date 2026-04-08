@@ -139,6 +139,34 @@ export const COMMAND_SUMMARY = Object.freeze([
 ]);
 
 // ---------------------------------------------------------------------------
+// Global flag extraction
+// ---------------------------------------------------------------------------
+
+export interface GlobalFlags {
+    noColor: boolean;
+    rest: string[];
+}
+
+export function extractGlobalFlags(argv: string[]): GlobalFlags {
+    let noColor = false;
+    const rest: string[] = [];
+    for (const arg of argv) {
+        if (arg === '--no-color') {
+            noColor = true;
+        } else {
+            rest.push(arg);
+        }
+    }
+    return { noColor, rest };
+}
+
+export function applyNoColorFlag(noColor: boolean): void {
+    if (noColor) {
+        process.env.NO_COLOR = '1';
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Terminal color helpers
 // ---------------------------------------------------------------------------
 
@@ -885,7 +913,8 @@ export function printHelp(packageJson: PackageJsonLike): void {
         [
             'Global options:',
             '  -h, --help                 Show this help message.',
-            '  -v, --version              Show the package version.'
+            '  -v, --version              Show the package version.',
+            '      --no-color             Disable colored output (honors NO_COLOR env var).'
         ],
         [
             'Shared lifecycle options:',
@@ -960,7 +989,8 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
         [
             'Global options:',
             '  -h, --help                 Show this help message.',
-            '  -v, --version              Show the package version.'
+            '  -v, --version              Show the package version.',
+            '      --no-color             Disable colored output (honors NO_COLOR env var).'
         ],
         [
             'Shared lifecycle options:',

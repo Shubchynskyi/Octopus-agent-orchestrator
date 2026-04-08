@@ -83,10 +83,12 @@ import { handleAgentInit } from './commands/agent-init';
 import { handleBootstrap } from './commands/bootstrap';
 import {
     acquireSourceRoot,
+    applyNoColorFlag,
     bold,
     cyan,
     dim,
     ensureDirectoryExists,
+    extractGlobalFlags,
     getBundlePath,
     getInitAnswerValue,
     green,
@@ -2371,14 +2373,19 @@ function getFailureMarker(command: string | null): string {
 
 export async function runCliMain(argv: string[] = process.argv.slice(2), packageRoot = getPackageRoot()): Promise<void> {
     installSignalHandlers();
+
+    const globalFlags = extractGlobalFlags(argv);
+    applyNoColorFlag(globalFlags.noColor);
+    const effectiveArgv = globalFlags.rest;
+
     const packageJson = readPackageJson(packageRoot);
 
-    if (argv.length === 0) {
+    if (effectiveArgv.length === 0) {
         handleOverview(packageJson, normalizePathValue('.'));
         return;
     }
 
-    const commandName = getCommandName(argv);
+    const commandName = getCommandName(effectiveArgv);
     resolvedCommand = commandName;
 
     if (commandName === 'help') {
@@ -2386,9 +2393,9 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
         return;
     }
 
-    const commandArgv = commandName === 'bootstrap' && argv[0] !== 'bootstrap'
-        ? argv
-        : argv.slice(1);
+    const commandArgv = commandName === 'bootstrap' && effectiveArgv[0] !== 'bootstrap'
+        ? effectiveArgv
+        : effectiveArgv.slice(1);
 
     // T-034: Fail fast if the deployed bundle is stale vs source checkout
     if (['gate', 'agent-init', 'skills'].includes(commandName)) {

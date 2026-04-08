@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import {
+    applyNoColorFlag,
     buildBannerText,
     buildHelpText,
     COMMAND_SUMMARY,
@@ -14,6 +15,7 @@ import {
     deployFreshBundle,
     ensureDirectoryExists,
     ensureSourceItemExists,
+    extractGlobalFlags,
     getAgentInitPromptPath,
     getBundlePath,
     getInitAnswerValue,
@@ -35,6 +37,7 @@ import {
     resolvePathInsideRoot,
     resolveWorkspaceDisplayVersion,
     shouldSkipPath,
+    supportsColor,
     syncBundleItems,
     toPosixPath,
     tryNormalizeAssistantBrevity,
@@ -873,4 +876,151 @@ test('COMMAND_SUMMARY has expected commands', () => {
     assert.ok(names.includes('skills'));
     assert.ok(names.includes('gate'));
     assert.equal(COMMAND_SUMMARY.find(function (c) { return c[0] === 'skills'; })![1], 'List, suggest, and manage optional skill packs');
+});
+
+// ---------------------------------------------------------------------------
+// extractGlobalFlags
+// ---------------------------------------------------------------------------
+
+test('extractGlobalFlags extracts --no-color and returns rest', () => {
+    const result = extractGlobalFlags(['--no-color', 'status', '--json']);
+    assert.equal(result.noColor, true);
+    assert.deepEqual(result.rest, ['status', '--json']);
+});
+
+test('extractGlobalFlags returns noColor=false when flag absent', () => {
+    const result = extractGlobalFlags(['doctor', '--compact']);
+    assert.equal(result.noColor, false);
+    assert.deepEqual(result.rest, ['doctor', '--compact']);
+});
+
+test('extractGlobalFlags handles --no-color at end of argv', () => {
+    const result = extractGlobalFlags(['status', '--json', '--no-color']);
+    assert.equal(result.noColor, true);
+    assert.deepEqual(result.rest, ['status', '--json']);
+});
+
+test('extractGlobalFlags handles empty argv', () => {
+    const result = extractGlobalFlags([]);
+    assert.equal(result.noColor, false);
+    assert.deepEqual(result.rest, []);
+});
+
+test('extractGlobalFlags handles --no-color only', () => {
+    const result = extractGlobalFlags(['--no-color']);
+    assert.equal(result.noColor, true);
+    assert.deepEqual(result.rest, []);
+});
+
+// ---------------------------------------------------------------------------
+// applyNoColorFlag
+// ---------------------------------------------------------------------------
+
+test('applyNoColorFlag sets NO_COLOR when true', () => {
+    const saved = process.env.NO_COLOR;
+    try {
+        delete process.env.NO_COLOR;
+        applyNoColorFlag(true);
+        assert.equal(process.env.NO_COLOR, '1');
+    } finally {
+        if (saved === undefined) { delete process.env.NO_COLOR; } else { process.env.NO_COLOR = saved; }
+    }
+});
+
+test('applyNoColorFlag does not set NO_COLOR when false', () => {
+    const saved = process.env.NO_COLOR;
+    try {
+        delete process.env.NO_COLOR;
+        applyNoColorFlag(false);
+        assert.equal(process.env.NO_COLOR, undefined);
+    } finally {
+        if (saved === undefined) { delete process.env.NO_COLOR; } else { process.env.NO_COLOR = saved; }
+    }
+});
+
+// ---------------------------------------------------------------------------
+// supportsColor respects NO_COLOR and FORCE_COLOR
+// ---------------------------------------------------------------------------
+
+test('supportsColor returns false when NO_COLOR is set', () => {
+    const savedNoColor = process.env.NO_COLOR;
+    const savedForceColor = process.env.FORCE_COLOR;
+    try {
+        process.env.NO_COLOR = '1';
+        delete process.env.FORCE_COLOR;
+        assert.equal(supportsColor(), false);
+    } finally {
+        if (savedNoColor === undefined) { delete process.env.NO_COLOR; } else { process.env.NO_COLOR = savedNoColor; }
+        if (savedForceColor === undefined) { delete process.env.FORCE_COLOR; } else { process.env.FORCE_COLOR = savedForceColor; }
+    }
+});
+
+test('supportsColor returns false when NO_COLOR is empty string', () => {
+    const savedNoColor = process.env.NO_COLOR;
+    const savedForceColor = process.env.FORCE_COLOR;
+    try {
+        process.env.NO_COLOR = '';
+        delete process.env.FORCE_COLOR;
+        assert.equal(supportsColor(), false);
+    } finally {
+        if (savedNoColor === undefined) { delete process.env.NO_COLOR; } else { process.env.NO_COLOR = savedNoColor; }
+        if (savedForceColor === undefined) { delete process.env.FORCE_COLOR; } else { process.env.FORCE_COLOR = savedForceColor; }
+    }
+});
+
+test('supportsColor returns true when FORCE_COLOR is set', () => {
+    const savedNoColor = process.env.NO_COLOR;
+    const savedForceColor = process.env.FORCE_COLOR;
+    try {
+        delete process.env.NO_COLOR;
+        process.env.FORCE_COLOR = '1';
+        assert.equal(supportsColor(), true);
+    } finally {
+        if (savedNoColor === undefined) { delete process.env.NO_COLOR; } else { process.env.NO_COLOR = savedNoColor; }
+        if (savedForceColor === undefined) { delete process.env.FORCE_COLOR; } else { process.env.FORCE_COLOR = savedForceColor; }
+    }
+});
+
+test('supportsColor: NO_COLOR takes precedence over FORCE_COLOR', () => {
+    const savedNoColor = process.env.NO_COLOR;
+    const savedForceColor = process.env.FORCE_COLOR;
+    try {
+        process.env.NO_COLOR = '1';
+        process.env.FORCE_COLOR = '1';
+        assert.equal(supportsColor(), false);
+    } finally {
+        if (savedNoColor === undefined) { delete process.env.NO_COLOR; } else { process.env.NO_COLOR = savedNoColor; }
+        if (savedForceColor === undefined) { delete process.env.FORCE_COLOR; } else { process.env.FORCE_COLOR = savedForceColor; }
+    }
+});
+
+// ---------------------------------------------------------------------------
+// buildHelpText includes --no-color
+// ---------------------------------------------------------------------------
+
+test('buildHelpText includes --no-color in global options', () => {
+    const text = buildHelpText({ name: 'test', version: '1.0.0' });
+    assert.ok(text.includes('--no-color'));
+    assert.ok(text.includes('NO_COLOR'));
+});
+
+// ---------------------------------------------------------------------------
+// Integration: --no-color flag → NO_COLOR env → supportsColor() chain
+// ---------------------------------------------------------------------------
+
+test('runCliMain with --no-color sets NO_COLOR and disables supportsColor', async () => {
+    const { runCliMain } = await import('../../../../src/cli/main');
+    const savedNoColor = process.env.NO_COLOR;
+    const savedForceColor = process.env.FORCE_COLOR;
+    try {
+        delete process.env.NO_COLOR;
+        delete process.env.FORCE_COLOR;
+        // 'help' is a safe command that won't fail in test environments
+        await runCliMain(['--no-color', 'help']);
+        assert.equal(process.env.NO_COLOR, '1', '--no-color flag should set NO_COLOR=1');
+        assert.equal(supportsColor(), false, 'supportsColor should return false after --no-color');
+    } finally {
+        if (savedNoColor === undefined) { delete process.env.NO_COLOR; } else { process.env.NO_COLOR = savedNoColor; }
+        if (savedForceColor === undefined) { delete process.env.FORCE_COLOR; } else { process.env.FORCE_COLOR = savedForceColor; }
+    }
 });
