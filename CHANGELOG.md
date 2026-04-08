@@ -1,6 +1,9 @@
 # Changelog
 
 ## 2.4.3
+- added token-budget-based adaptive filtering profiles: output-filters now support a `budget_profiles` section with ordered tiers (`tight`, `moderate`, `generous`); when `budgetTokens` is passed to `applyOutputFilterProfile`, the matching tier auto-overrides `passthrough_ceiling_max_lines`, `fail_tail_lines`, `max_matches`, `max_parser_lines`, and `truncate_line_max_chars` so gate output scales with actual token budget
+- added `resolveBudgetTier` export for standalone tier resolution from config and token count
+- updated `outputFiltersSchema` to validate the new `budget_profiles` object with tier items
 - added risk-aware depth auto-promotion: `classify-change` now computes the effective depth from risk triggers (`computeEffectiveDepth`) instead of relying on manual caller-supplied values; FULL_PATH forces minimum depth 2, db/security/refactor triggers force minimum depth 2, and security/infra triggers prefer depth 3
 - added compression profile auto-resolution: `resolveCompressionProfile` adapts token-economy compression settings per risk level — high-risk (security/infra) disables all stripping and compaction, medium-risk (db/refactor/api/performance) preserves examples but disables code-block stripping, low-risk uses base config as-is
 - added `resolveRiskAwareDepth` combining depth promotion and compression resolution into a single call, emitted as `risk_aware_depth` in the preflight artifact

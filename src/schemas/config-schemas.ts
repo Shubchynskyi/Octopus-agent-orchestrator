@@ -89,7 +89,7 @@ export const outputFiltersSchema: Record<string, unknown> = Object.freeze({
     $schema: 'http://json-schema.org/draft-07/schema#',
     $id: 'octopus-agent-orchestrator/output-filters.schema.json',
     title: 'Output Filters',
-    description: 'Gate output compression profiles and passthrough ceiling.',
+    description: 'Gate output compression profiles, passthrough ceiling, and budget-adaptive tiers.',
     type: 'object',
     properties: {
         version: { type: 'integer', minimum: 1 },
@@ -100,6 +100,32 @@ export const outputFiltersSchema: Record<string, unknown> = Object.freeze({
                 strategy:  { type: 'string', minLength: 1 }
             },
             required: ['max_lines', 'strategy']
+        },
+        budget_profiles: {
+            type: 'object',
+            description: 'Token-budget-based adaptive filtering tiers.',
+            properties: {
+                enabled: { type: 'boolean', description: 'Enable budget-adaptive filtering.' },
+                tiers: {
+                    type: 'array',
+                    description: 'Ordered tiers; first tier whose max_tokens >= budget wins.',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            label:                          { type: 'string', minLength: 1, description: 'Tier name (e.g. tight, moderate, generous).' },
+                            max_tokens:                     { description: 'Upper token bound (positive integer); null = catch-all.' },
+                            passthrough_ceiling_max_lines:  { type: 'integer', minimum: 1, description: 'Passthrough ceiling override.' },
+                            fail_tail_lines:                { type: 'integer', minimum: 1, description: 'Failure tail lines override.' },
+                            max_matches:                    { type: 'integer', minimum: 1, description: 'Parser max_matches override.' },
+                            max_parser_lines:               { type: 'integer', minimum: 1, description: 'Parser max_lines override.' },
+                            truncate_line_max_chars:         { type: 'integer', minimum: 1, description: 'Line truncation max_chars override.' }
+                        },
+                        required: ['label', 'max_tokens']
+                    },
+                    minItems: 1
+                }
+            },
+            required: ['enabled', 'tiers']
         },
         profiles: {
             type: 'object',
