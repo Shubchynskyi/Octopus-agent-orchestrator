@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId, forEachJsonlLine } from '../../gate-runtime/task-events';
 import { coerceIntLike } from '../../gate-runtime/token-telemetry';
+import { buildBudgetComparison, type BudgetForecast, type BudgetComparisonResult } from '../../gate-runtime/budget-preflight';
 import { joinOrchestratorPath, resolvePathInsideRepo, toPosix } from '../../gates/helpers';
 import { parseTimestamp, getOutputTelemetryFromPayload } from '../../gates/task-events-summary';
 
@@ -27,6 +28,11 @@ export interface TaskStatsResult {
     required_reviews: string[];
     changed_files_count: number;
     changed_lines_total: number;
+    requested_depth: number | null;
+    effective_depth: number | null;
+    depth_escalated: boolean;
+    budget_forecast: BudgetForecast | null;
+    budget_comparison: BudgetComparisonResult | null;
     token_economy: TokenEconomySummary;
 }
 
@@ -236,8 +242,59 @@ export function buildTaskStats(
         }
     }
 
+    // Depth and budget forecast from preflight
+    let requestedDepth: number | null = null;
+    let effectiveDepth: number | null = null;
+    let depthEscalated = false;
+    let budgetForecast: BudgetForecast | null = null;
+
+    if (preflight) {
+        const bf = preflight.budget_forecast as Record<string, unknown> | null | undefined;
+        if (bf && typeof bf === 'object') {
+            budgetForecast = bf as unknown as BudgetForecast;
+            requestedDepth = typeof bf.requested_depth === 'number' ? bf.requested_depth : null;
+            effectiveDepth = typeof bf.effective_depth === 'number' ? bf.effective_depth : null;
+            depthEscalated = bf.depth_escalated === true;
+        }
+        const de = preflight.depth_escalation as Record<string, unknown> | null | undefined;
+        if (de && typeof de === 'object') {
+            if (requestedDepth == null && typeof de.requested_depth === 'number') {
+                requestedDepth = de.requested_depth;
+            }
+            if (effectiveDepth == null && typeof de.effective_depth === 'number') {
+                effectiveDepth = de.effective_depth;
+            }
+            if (!depthEscalated && de.escalated === true) {
+                depthEscalated = true;
+            }
+        }
+    }
+
+    // Also check task-mode artifact for depth
+    const taskModePath = path.join(resolvedReviewsRoot, `${safeTaskId}-task-mode.json`);
+    const taskMode = safeReadJson(taskModePath);
+    if (taskMode) {
+        if (requestedDepth == null && typeof taskMode.requested_depth === 'number') {
+            requestedDepth = taskMode.requested_depth;
+        }
+        if (effectiveDepth == null && typeof taskMode.effective_depth === 'number') {
+            effectiveDepth = taskMode.effective_depth;
+        }
+        if (requestedDepth != null && effectiveDepth != null && effectiveDepth > requestedDepth) {
+            depthEscalated = true;
+        }
+    }
+
     // Token economy
     const tokenEconomy = buildTokenEconomy(events, resolvedRepoRoot, resolvedReviewsRoot, safeTaskId);
+
+    // Budget comparison
+    const budgetComparison = buildBudgetComparison(
+        safeTaskId,
+        budgetForecast,
+        tokenEconomy.total_estimated_saved_tokens,
+        tokenEconomy.total_raw_token_count_estimate
+    );
 
     return {
         task_id: safeTaskId,
@@ -251,6 +308,11 @@ export function buildTaskStats(
         required_reviews: requiredReviews,
         changed_files_count: changedFilesCount,
         changed_lines_total: changedLinesTotal,
+        requested_depth: requestedDepth,
+        effective_depth: effectiveDepth,
+        depth_escalated: depthEscalated,
+        budget_forecast: budgetForecast,
+        budget_comparison: budgetComparison,
         token_economy: tokenEconomy
     };
 }
@@ -455,8 +517,28 @@ export function formatTaskStatsText(stats: TaskStatsResult): string {
     lines.push(`Duration: ${formatWallClock(stats.wall_clock_seconds)}`);
     lines.push(`Gates: ${stats.gate_pass_count} passed, ${stats.gate_fail_count} failed`);
     if (stats.path_mode) lines.push(`PathMode: ${stats.path_mode}`);
+    if (stats.requested_depth != null && stats.effective_depth != null) {
+        if (stats.depth_escalated) {
+            lines.push(`Depth: ${stats.requested_depth} -> ${stats.effective_depth} (escalated)`);
+        } else {
+            lines.push(`Depth: ${stats.effective_depth}`);
+        }
+    }
     if (stats.required_reviews.length > 0) lines.push(`Reviews: ${stats.required_reviews.join(', ')}`);
     lines.push(`ChangedFiles: ${stats.changed_files_count} (${stats.changed_lines_total} lines)`);
+
+    if (stats.budget_forecast) {
+        lines.push('');
+        lines.push('Budget Forecast:');
+        lines.push(`  Total forecast: ~${stats.budget_forecast.total_forecast_tokens} tokens`);
+        if (stats.budget_forecast.token_economy_active_for_depth) {
+            lines.push(`  Effective forecast: ~${stats.budget_forecast.effective_forecast_tokens} tokens`);
+        }
+    }
+
+    if (stats.budget_comparison && stats.budget_comparison.forecast_total_tokens > 0) {
+        lines.push(`  ${stats.budget_comparison.summary_line}`);
+    }
 
     if (stats.token_economy.total_estimated_saved_tokens > 0) {
         lines.push('');

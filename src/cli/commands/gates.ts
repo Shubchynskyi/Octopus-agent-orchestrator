@@ -46,6 +46,7 @@ import {
     writeReviewArtifactText
 } from '../../gate-runtime/review-artifacts';
 import { auditCommandCompactness } from '../../gates/task-events-summary';
+import { buildBudgetForecast, resolveDepthEscalation } from '../../gate-runtime/budget-preflight';
 import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../gates/classify-change';
 import {
     getCompileCommandProfile,
@@ -1733,6 +1734,49 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         throw new Error(`Control-plane isolation (STRICT) blocked preflight: ${isolationViolationMessage}`);
     }
 
+    // T-029: Budget forecast and depth escalation logging
+    if (resolvedTaskId) {
+        const taskModeForBudget = getTaskModeEvidence(repoRoot, resolvedTaskId, '');
+        const requestedDepth = taskModeForBudget.requested_depth || 2;
+        const effectiveDepth = taskModeForBudget.effective_depth || requestedDepth;
+
+        let tokenEconomyEnabled = true;
+        let enabledDepths = [1, 2];
+        const tokenEconomyPath = resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
+        try {
+            if (fs.existsSync(tokenEconomyPath)) {
+                const teConfig = JSON.parse(fs.readFileSync(tokenEconomyPath, 'utf8')) as Record<string, unknown>;
+                if (typeof teConfig.enabled === 'boolean') tokenEconomyEnabled = teConfig.enabled;
+                if (Array.isArray(teConfig.enabled_depths)) enabledDepths = teConfig.enabled_depths as number[];
+            }
+        } catch { /* use defaults */ }
+
+        const depthEscalation = resolveDepthEscalation({
+            taskId: resolvedTaskId,
+            requestedDepth,
+            effectiveDepth,
+            pathMode: result.mode,
+            changedFilesCount: result.metrics.changed_files_count,
+            changedLinesTotal: result.metrics.changed_lines_total,
+            requiredReviews: result.required_reviews as Record<string, boolean>
+        });
+
+        const budgetForecast = buildBudgetForecast({
+            taskId: resolvedTaskId,
+            requestedDepth,
+            effectiveDepth,
+            pathMode: result.mode,
+            changedFilesCount: result.metrics.changed_files_count,
+            changedLinesTotal: result.metrics.changed_lines_total,
+            requiredReviews: result.required_reviews as Record<string, boolean>,
+            tokenEconomyEnabled,
+            tokenEconomyEnabledDepths: enabledDepths
+        });
+
+        (result as any).budget_forecast = budgetForecast;
+        (result as any).depth_escalation = depthEscalation;
+    }
+
     const outputPath = options.outputPath ? resolvePathForWrite(options.outputPath, repoRoot) : null;
     if (outputPath) {
         writeJsonArtifact(outputPath, result);
@@ -1766,7 +1810,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     changed_files_count: result.metrics.changed_files_count,
                     changed_lines_total: result.metrics.changed_lines_total,
                     required_reviews: result.required_reviews,
-                    zero_diff_guard: result.zero_diff_guard
+                    zero_diff_guard: result.zero_diff_guard,
+                    budget_forecast: (result as any).budget_forecast || null,
+                    depth_escalation: (result as any).depth_escalation || null
                 }
             );
         } catch (error: unknown) {
