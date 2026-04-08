@@ -15,14 +15,44 @@ interface CompactMarkdownResult {
     original_char_count: number;
     output_char_count: number;
     removed_code_blocks: number;
+    retained_structural_code_blocks: number;
     removed_example_sections: number;
     removed_example_labels: number;
     removed_example_content_lines: number;
 }
 
 /**
+ * Classify whether the preceding context of a code block indicates
+ * it is illustrative (example/demo) rather than structural (config/commands/API).
+ * Returns true when the code block should be stripped.
+ */
+function isIllustrativeCodeBlock(outputLines: readonly string[], currentHeadingText: string | null): boolean {
+    const illustrativeHeadingPattern = /\bexamples?\b/i;
+    if (currentHeadingText && illustrativeHeadingPattern.test(currentHeadingText)) {
+        return true;
+    }
+
+    // Scan backward through already-emitted output lines for the nearest non-blank line.
+    for (let i = outputLines.length - 1; i >= 0; i--) {
+        const trimmed = outputLines[i].trim();
+        if (!trimmed) continue;
+
+        // Example label right before the fence (e.g. "Bad example:", "Examples:")
+        if (/^\s*(?:bad|good)?\s*examples?\s*:/i.test(trimmed)) return true;
+
+        // Inline illustrative phrases immediately preceding the fence
+        if (/\b(?:for\s+example\b|e\.g\.|such\s+as\b|like\s+so\b|for\s+instance\b)/i.test(trimmed)) return true;
+
+        // Only inspect the nearest non-blank line
+        break;
+    }
+    return false;
+}
+
+/**
  * Compact markdown content by stripping examples and/or code blocks.
- * Matches Python compact_markdown_content exactly.
+ * When stripCodeBlocks is enabled, classification is context-aware:
+ * only illustrative code blocks are removed; structural ones are retained.
  */
 export function compactMarkdownContent(content: unknown, options: CompactMarkdownOptions = {}): CompactMarkdownResult {
     const stripExamples = options.stripExamples || false;
@@ -33,9 +63,11 @@ export function compactMarkdownContent(content: unknown, options: CompactMarkdow
     const lines = sourceText.split('\n');
     const outputLines: string[] = [];
     let exampleHeadingLevel = null;
+    let currentHeadingText: string | null = null;
     let insideRemovedCodeBlock = false;
     let pendingExampleLabel = false;
     let removedCodeBlocks = 0;
+    let retainedStructuralCodeBlocks = 0;
     let removedExampleSections = 0;
     let removedExampleLabels = 0;
     let removedExampleContentLines = 0;
@@ -91,6 +123,11 @@ export function compactMarkdownContent(content: unknown, options: CompactMarkdow
             continue;
         }
 
+        // Track the current heading text for context-aware classification
+        if (headingMatch) {
+            currentHeadingText = headingMatch[2];
+        }
+
         if (stripExamples && headingMatch && headingMatch[2].toLowerCase().includes('example')) {
             ensureBlankLine();
             outputLines.push(line);
@@ -133,10 +170,25 @@ export function compactMarkdownContent(content: unknown, options: CompactMarkdow
         }
 
         if (stripCodeBlocks && codeFencePattern.test(line)) {
-            addCodeBlockPlaceholder();
-            removedCodeBlocks++;
-            insideRemovedCodeBlock = true;
+            if (isIllustrativeCodeBlock(outputLines, currentHeadingText)) {
+                addCodeBlockPlaceholder();
+                removedCodeBlocks++;
+                insideRemovedCodeBlock = true;
+                index++;
+                continue;
+            }
+            // Structural code block: retain it and skip through to closing fence
+            retainedStructuralCodeBlocks++;
+            outputLines.push(line);
             index++;
+            while (index < lines.length) {
+                outputLines.push(lines[index]);
+                if (codeFencePattern.test(lines[index])) {
+                    index++;
+                    break;
+                }
+                index++;
+            }
             continue;
         }
 
@@ -156,6 +208,7 @@ export function compactMarkdownContent(content: unknown, options: CompactMarkdow
         original_char_count: sourceText.length,
         output_char_count: sanitizedText.length,
         removed_code_blocks: removedCodeBlocks,
+        retained_structural_code_blocks: retainedStructuralCodeBlocks,
         removed_example_sections: removedExampleSections,
         removed_example_labels: removedExampleLabels,
         removed_example_content_lines: removedExampleContentLines
@@ -279,6 +332,7 @@ export interface ReviewContextSourceFile {
     original_char_count: number;
     output_char_count: number;
     removed_code_blocks: number;
+    retained_structural_code_blocks: number;
     removed_example_sections: number;
     removed_example_labels: number;
     removed_example_content_lines: number;
@@ -452,6 +506,7 @@ export function buildReviewContextSections(selectedRulePaths: string[], readFile
             original_char_count: compacted.original_char_count,
             output_char_count: compacted.output_char_count,
             removed_code_blocks: compacted.removed_code_blocks,
+            retained_structural_code_blocks: compacted.retained_structural_code_blocks,
             removed_example_sections: compacted.removed_example_sections,
             removed_example_labels: compacted.removed_example_labels,
             removed_example_content_lines: compacted.removed_example_content_lines,

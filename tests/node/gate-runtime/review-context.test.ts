@@ -42,13 +42,32 @@ test('compactMarkdownContent strips example sections', () => {
     assert.equal(result.removed_example_sections, 1);
 });
 
-test('compactMarkdownContent strips code blocks', () => {
-    const input = 'Some text.\n\n```python\nprint("hello")\n```\n\nMore text.\n';
+test('compactMarkdownContent retains structural code blocks under stripCodeBlocks', () => {
+    const input = '### Setup\n\n```bash\nnpm install\n```\n\nMore text.\n';
+    const result = compactMarkdownContent(input, { stripCodeBlocks: true });
+    assert.ok(result.content.includes('npm install'), 'structural code block should be retained');
+    assert.ok(result.content.includes('More text.'));
+    assert.equal(result.removed_code_blocks, 0);
+    assert.equal(result.retained_structural_code_blocks, 1);
+});
+
+test('compactMarkdownContent strips illustrative code blocks preceded by example label', () => {
+    const input = 'Some rule.\n\nFor example:\n\n```python\nprint("hello")\n```\n\nMore text.\n';
     const result = compactMarkdownContent(input, { stripCodeBlocks: true });
     assert.ok(result.content.includes('> Code block omitted due to token economy.'));
     assert.ok(!result.content.includes('print("hello")'));
     assert.ok(result.content.includes('More text.'));
     assert.equal(result.removed_code_blocks, 1);
+    assert.equal(result.retained_structural_code_blocks, 0);
+});
+
+test('compactMarkdownContent strips code blocks under example heading with stripCodeBlocks only', () => {
+    const input = '## Example Usage\n\n```js\nconsole.log("demo")\n```\n\n## Config\n\n```bash\nnpm start\n```\n';
+    const result = compactMarkdownContent(input, { stripCodeBlocks: true });
+    assert.ok(!result.content.includes('console.log("demo")'), 'illustrative block should be stripped');
+    assert.ok(result.content.includes('npm start'), 'structural block should be retained');
+    assert.equal(result.removed_code_blocks, 1);
+    assert.equal(result.retained_structural_code_blocks, 1);
 });
 
 test('compactMarkdownContent strips both examples and code blocks', () => {
@@ -85,6 +104,83 @@ test('compactMarkdownContent counts correctly', () => {
     const result = compactMarkdownContent(input);
     assert.equal(result.original_line_count, 4); // split "Line 1\nLine 2\nLine 3\n" → 4 elements
     assert.equal(result.original_char_count, input.replace(/\r\n/g, '\n').length);
+});
+
+// --- context-aware stripCodeBlocks ---
+
+test('compactMarkdownContent strips code block preceded by "e.g." phrase', () => {
+    const input = 'Use a short name, e.g.\n\n```bash\nfoo --bar\n```\n\nNext section.\n';
+    const result = compactMarkdownContent(input, { stripCodeBlocks: true });
+    assert.ok(!result.content.includes('foo --bar'));
+    assert.ok(result.content.includes('> Code block omitted'));
+    assert.equal(result.removed_code_blocks, 1);
+    assert.equal(result.retained_structural_code_blocks, 0);
+});
+
+test('compactMarkdownContent strips code block preceded by "such as"', () => {
+    const input = 'Patterns such as\n\n```js\nconsole.log("x")\n```\n\nDone.\n';
+    const result = compactMarkdownContent(input, { stripCodeBlocks: true });
+    assert.ok(!result.content.includes('console.log'));
+    assert.equal(result.removed_code_blocks, 1);
+});
+
+test('compactMarkdownContent strips code block preceded by "for instance"', () => {
+    const input = 'For instance:\n\n```py\nprint(1)\n```\n';
+    const result = compactMarkdownContent(input, { stripCodeBlocks: true });
+    assert.ok(!result.content.includes('print(1)'));
+    assert.equal(result.removed_code_blocks, 1);
+});
+
+test('compactMarkdownContent retains structural code block with no illustrative context', () => {
+    const input = '## Commands\n\nRun the build:\n\n```bash\nnpm run build\n```\n\nDone.\n';
+    const result = compactMarkdownContent(input, { stripCodeBlocks: true });
+    assert.ok(result.content.includes('npm run build'));
+    assert.equal(result.removed_code_blocks, 0);
+    assert.equal(result.retained_structural_code_blocks, 1);
+});
+
+test('compactMarkdownContent handles mixed structural and illustrative blocks', () => {
+    const input = [
+        '## Setup',
+        '',
+        '```bash',
+        'npm install',
+        '```',
+        '',
+        'For example:',
+        '',
+        '```js',
+        'doSomething()',
+        '```',
+        '',
+        '## API',
+        '',
+        '```json',
+        '{ "key": "value" }',
+        '```',
+        ''
+    ].join('\n');
+    const result = compactMarkdownContent(input, { stripCodeBlocks: true });
+    assert.ok(result.content.includes('npm install'), 'setup block retained');
+    assert.ok(!result.content.includes('doSomething()'), 'example block stripped');
+    assert.ok(result.content.includes('"key": "value"'), 'API block retained');
+    assert.equal(result.removed_code_blocks, 1);
+    assert.equal(result.retained_structural_code_blocks, 2);
+});
+
+test('compactMarkdownContent retains code blocks when stripCodeBlocks is false', () => {
+    const input = 'For example:\n\n```js\nfoo()\n```\n';
+    const result = compactMarkdownContent(input, { stripCodeBlocks: false });
+    assert.ok(result.content.includes('foo()'));
+    assert.equal(result.removed_code_blocks, 0);
+    assert.equal(result.retained_structural_code_blocks, 0);
+});
+
+test('compactMarkdownContent strips code block preceded by "like so"', () => {
+    const input = 'Configure it like so\n\n```yaml\nkey: val\n```\n';
+    const result = compactMarkdownContent(input, { stripCodeBlocks: true });
+    assert.ok(!result.content.includes('key: val'));
+    assert.equal(result.removed_code_blocks, 1);
 });
 
 // --- getCompactReviewBudget ---
