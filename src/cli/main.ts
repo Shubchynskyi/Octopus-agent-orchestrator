@@ -131,6 +131,14 @@ import {
 } from './commands/gates';
 import { writeReviewArtifactJson } from '../gate-runtime/review-artifacts';
 import { collectDebugEnvSnapshot, formatDebugEnvText, formatDebugEnvJson } from './commands/debug-env';
+import {
+    buildTaskStats,
+    buildAggregateStats,
+    formatTaskStatsText,
+    formatTaskStatsJson,
+    formatAggregateStatsText,
+    formatAggregateStatsJson
+} from './commands/stats';
 import { handleOverview } from './commands/overview';
 import { handleSetup } from './commands/setup';
 import { handleSkills } from './commands/skills';
@@ -650,6 +658,44 @@ function handleDebug(commandArgv: string[], packageJson: PackageJsonLike): void 
         console.log(formatDebugEnvJson(snapshot));
     } else {
         console.log(formatDebugEnvText(snapshot));
+    }
+}
+
+function handleStats(commandArgv: string[], _packageJson: PackageJsonLike): void {
+    const statsDefinitions = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--target-root': { key: 'targetRoot', type: 'string' },
+        '--events-root': { key: 'eventsRoot', type: 'string' },
+        '--reviews-root': { key: 'reviewsRoot', type: 'string' },
+        '--json': { key: 'json', type: 'boolean' }
+    };
+    const { options: rawOptions } = parseOptions(commandArgv, statsDefinitions);
+    const options = rawOptions as ParsedOptionsRecord;
+
+    const targetRoot = normalizePathValue(options.targetRoot || '.');
+    ensureDirectoryExists(targetRoot, 'Target root');
+    const eventsRoot = options.eventsRoot ? String(options.eventsRoot) : null;
+    const reviewsRoot = options.reviewsRoot ? String(options.reviewsRoot) : null;
+
+    if (options.taskId) {
+        const stats = buildTaskStats(
+            String(options.taskId),
+            targetRoot,
+            eventsRoot,
+            reviewsRoot
+        );
+        if (options.json === true) {
+            console.log(formatTaskStatsJson(stats));
+        } else {
+            console.log(formatTaskStatsText(stats));
+        }
+    } else {
+        const stats = buildAggregateStats(targetRoot, eventsRoot, reviewsRoot);
+        if (options.json === true) {
+            console.log(formatAggregateStatsJson(stats));
+        } else {
+            console.log(formatAggregateStatsText(stats));
+        }
     }
 }
 
@@ -2363,6 +2409,9 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
             return;
         case 'debug':
             handleDebug(commandArgv, packageJson);
+            return;
+        case 'stats':
+            handleStats(commandArgv, packageJson);
             return;
         case 'bootstrap':
             await handleBootstrap(commandArgv, packageJson, packageRoot);
