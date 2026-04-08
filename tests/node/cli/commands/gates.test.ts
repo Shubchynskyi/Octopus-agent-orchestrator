@@ -335,6 +335,49 @@ describe('cli/commands/gates', () => {
         );
     });
 
+    it('classifies security file and emits risk_aware_depth with promoted effective depth', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const securityFilePath = path.join(repoRoot, 'src', 'auth', 'jwt-guard.ts');
+        fs.mkdirSync(path.dirname(securityFilePath), { recursive: true });
+        fs.writeFileSync(securityFilePath, 'export function verify() { return true; }\n', 'utf8');
+        const outputPath = path.join(repoRoot, 'preflight-sec.json');
+        seedTaskQueue(repoRoot, 'T-930');
+        seedInitAnswers(repoRoot);
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId: 'T-930',
+            requestedDepth: 1,
+            effectiveDepth: 1,
+            taskSummary: 'Add JWT guard feature'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, 'T-930');
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, 'T-930');
+        runShellSmokeForTask(repoRoot, 'T-930');
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/auth/jwt-guard.ts'],
+            taskId: 'T-930',
+            taskIntent: 'Add JWT guard feature',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.triggers.security, true);
+        assert.ok(payload.risk_aware_depth, 'risk_aware_depth should be present');
+        assert.equal(payload.risk_aware_depth.effective_depth, 3, 'security trigger should promote to depth 3');
+        assert.equal(payload.risk_aware_depth.escalated, true);
+        assert.equal(payload.risk_aware_depth.compression.risk_level, 'high');
+        assert.equal(payload.risk_aware_depth.compression.strip_examples, false);
+        assert.equal(payload.risk_aware_depth.compression.strip_code_blocks, false);
+        // Budget forecast should use the promoted depth
+        assert.equal(payload.budget_forecast.effective_depth, 3);
+        assert.equal(payload.budget_forecast.depth_escalated, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('classifies explicit changed files and writes preflight artifact', () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight.json');

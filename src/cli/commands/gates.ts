@@ -46,7 +46,7 @@ import {
     writeReviewArtifactText
 } from '../../gate-runtime/review-artifacts';
 import { auditCommandCompactness } from '../../gates/task-events-summary';
-import { buildBudgetForecast, resolveDepthEscalation } from '../../gate-runtime/budget-preflight';
+import { buildBudgetForecast, resolveDepthEscalation, resolveRiskAwareDepth } from '../../gate-runtime/budget-preflight';
 import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../gates/classify-change';
 import {
     getCompileCommandProfile,
@@ -1735,21 +1735,54 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     }
 
     // T-029: Budget forecast and depth escalation logging
+    // T-030: Risk-aware depth auto-promotion and compression profile
     if (resolvedTaskId) {
         const taskModeForBudget = getTaskModeEvidence(repoRoot, resolvedTaskId, '');
         const requestedDepth = taskModeForBudget.requested_depth || 2;
-        const effectiveDepth = taskModeForBudget.effective_depth || requestedDepth;
 
         let tokenEconomyEnabled = true;
         let enabledDepths = [1, 2];
+        let baseStripExamples = true;
+        let baseStripCodeBlocks = true;
+        let baseScopedDiffs = true;
+        let baseCompactReviewerOutput = true;
         const tokenEconomyPath = resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
         try {
             if (fs.existsSync(tokenEconomyPath)) {
                 const teConfig = JSON.parse(fs.readFileSync(tokenEconomyPath, 'utf8')) as Record<string, unknown>;
                 if (typeof teConfig.enabled === 'boolean') tokenEconomyEnabled = teConfig.enabled;
                 if (Array.isArray(teConfig.enabled_depths)) enabledDepths = teConfig.enabled_depths as number[];
+                if (typeof teConfig.strip_examples === 'boolean') baseStripExamples = teConfig.strip_examples;
+                if (typeof teConfig.strip_code_blocks === 'boolean') baseStripCodeBlocks = teConfig.strip_code_blocks;
+                if (typeof teConfig.scoped_diffs === 'boolean') baseScopedDiffs = teConfig.scoped_diffs;
+                if (typeof teConfig.compact_reviewer_output === 'boolean') baseCompactReviewerOutput = teConfig.compact_reviewer_output;
             }
         } catch { /* use defaults */ }
+
+        const riskTriggers = {
+            db: !!result.triggers.db,
+            security: !!result.triggers.security,
+            refactor: !!result.triggers.refactor,
+            api: !!result.triggers.api,
+            test: !!result.triggers.test,
+            performance: !!result.triggers.performance,
+            infra: !!result.triggers.infra,
+            dependency: !!result.triggers.dependency
+        };
+
+        const riskAwareDepth = resolveRiskAwareDepth(
+            requestedDepth,
+            result.mode,
+            riskTriggers,
+            {
+                strip_examples: baseStripExamples,
+                strip_code_blocks: baseStripCodeBlocks,
+                scoped_diffs: baseScopedDiffs,
+                compact_reviewer_output: baseCompactReviewerOutput
+            }
+        );
+
+        const effectiveDepth = riskAwareDepth.effective_depth;
 
         const depthEscalation = resolveDepthEscalation({
             taskId: resolvedTaskId,
@@ -1775,6 +1808,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
 
         (result as any).budget_forecast = budgetForecast;
         (result as any).depth_escalation = depthEscalation;
+        (result as any).risk_aware_depth = riskAwareDepth;
     }
 
     const outputPath = options.outputPath ? resolvePathForWrite(options.outputPath, repoRoot) : null;

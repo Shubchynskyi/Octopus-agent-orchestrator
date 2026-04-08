@@ -257,6 +257,13 @@ export function buildRulePackArtifact(options: BuildRulePackArtifactOptions): Ru
         } else {
             effectiveDepth = taskModeEvidence.effective_depth;
         }
+
+        // T-030: Prefer risk-aware promoted depth from preflight when available
+        const preflightRiskAwareDepth = validatedPreflight.preflight?.risk_aware_depth;
+        if (preflightRiskAwareDepth && typeof preflightRiskAwareDepth.effective_depth === 'number') {
+            effectiveDepth = preflightRiskAwareDepth.effective_depth;
+        }
+
         requiredRuleFiles = getRulePackRequiredFilesFromPreflight(
             repoRoot,
             requiredReviews,
@@ -428,10 +435,16 @@ export function getRulePackEvidence(
             result.evidence_status = 'EVIDENCE_TASK_MODE_INVALID';
             return result;
         }
+        // T-030: Prefer risk-aware promoted depth from preflight when available
+        let evidenceEffectiveDepth = taskModeEvidence.effective_depth || 2;
+        const evidenceRiskAwareDepth = validatedPreflight.preflight?.risk_aware_depth;
+        if (evidenceRiskAwareDepth && typeof evidenceRiskAwareDepth.effective_depth === 'number') {
+            evidenceEffectiveDepth = evidenceRiskAwareDepth.effective_depth;
+        }
         expectedRuleFiles = getRulePackRequiredFilesFromPreflight(
             repoRoot,
             validatedPreflight.required_reviews,
-            taskModeEvidence.effective_depth || 2
+            evidenceEffectiveDepth
         );
 
         const normalizedPreflightPath = normalizePath(validatedPreflight.preflight_path);

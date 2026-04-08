@@ -50,6 +50,34 @@ export interface DepthEscalationRecord {
     escalation_triggers: string[];
 }
 
+export interface RiskTriggers {
+    db: boolean;
+    security: boolean;
+    refactor: boolean;
+    api: boolean;
+    test: boolean;
+    performance: boolean;
+    infra: boolean;
+    dependency: boolean;
+}
+
+export interface CompressionProfile {
+    strip_examples: boolean;
+    strip_code_blocks: boolean;
+    scoped_diffs: boolean;
+    compact_reviewer_output: boolean;
+    risk_level: 'low' | 'medium' | 'high';
+    promotion_triggers: string[];
+}
+
+export interface RiskAwareDepthResult {
+    requested_depth: number;
+    effective_depth: number;
+    escalated: boolean;
+    escalation_triggers: string[];
+    compression: CompressionProfile;
+}
+
 // ---------------------------------------------------------------------------
 // Constants — heuristic token-cost baselines per review type
 // ---------------------------------------------------------------------------
@@ -112,6 +140,146 @@ export function resolveDepthEscalation(input: BudgetForecastInput): DepthEscalat
         escalation_reason: reason,
         path_mode: input.pathMode,
         escalation_triggers: triggers
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Risk-aware depth auto-promotion
+// ---------------------------------------------------------------------------
+
+const HIGH_RISK_TRIGGERS: ReadonlySet<string> = new Set(['security', 'infra']);
+const MEDIUM_RISK_TRIGGERS: ReadonlySet<string> = new Set(['db', 'refactor', 'api', 'performance']);
+
+function classifyRiskLevel(triggers: RiskTriggers): 'low' | 'medium' | 'high' {
+    if (triggers.security || triggers.infra) return 'high';
+    if (triggers.db || triggers.refactor || triggers.api || triggers.performance) return 'medium';
+    return 'low';
+}
+
+/**
+ * Compute effective depth from requested depth, path mode, and risk triggers.
+ *
+ * Rules (from SKILL.md Execution Depth):
+ *   - FULL_PATH => minimum depth 2
+ *   - required db/security/refactor review => minimum depth 2
+ *   - high-risk auth/payment/data/infra changes => prefer depth 3
+ */
+export function computeEffectiveDepth(
+    requestedDepth: number,
+    pathMode: string,
+    triggers: RiskTriggers
+): number {
+    let effective = requestedDepth;
+
+    // FULL_PATH forces minimum depth 2
+    if (pathMode === 'FULL_PATH' && effective < 2) {
+        effective = 2;
+    }
+
+    // Specialist reviews that mandate minimum depth 2
+    if (triggers.db || triggers.security || triggers.refactor) {
+        effective = Math.max(effective, 2);
+    }
+
+    // High-risk triggers prefer depth 3
+    if (triggers.security || triggers.infra) {
+        effective = Math.max(effective, 3);
+    }
+
+    return Math.min(effective, 3);
+}
+
+/**
+ * Resolve a compression profile based on risk triggers and the effective depth.
+ *
+ * High-risk: conservative (no stripping, full context).
+ * Medium-risk: moderate (strip examples only, keep code blocks).
+ * Low-risk: full compression allowed.
+ */
+export function resolveCompressionProfile(
+    triggers: RiskTriggers,
+    effectiveDepth: number,
+    baseConfig?: { strip_examples?: boolean; strip_code_blocks?: boolean; scoped_diffs?: boolean; compact_reviewer_output?: boolean }
+): CompressionProfile {
+    const riskLevel = classifyRiskLevel(triggers);
+    const promotionTriggers: string[] = [];
+
+    const base = {
+        strip_examples: baseConfig?.strip_examples !== false,
+        strip_code_blocks: baseConfig?.strip_code_blocks !== false,
+        scoped_diffs: baseConfig?.scoped_diffs !== false,
+        compact_reviewer_output: baseConfig?.compact_reviewer_output !== false
+    };
+
+    if (riskLevel === 'high') {
+        if (base.strip_examples) promotionTriggers.push('strip_examples_disabled_by_high_risk');
+        if (base.strip_code_blocks) promotionTriggers.push('strip_code_blocks_disabled_by_high_risk');
+        if (base.compact_reviewer_output) promotionTriggers.push('compact_reviewer_output_disabled_by_high_risk');
+        return {
+            strip_examples: false,
+            strip_code_blocks: false,
+            scoped_diffs: base.scoped_diffs,
+            compact_reviewer_output: false,
+            risk_level: 'high',
+            promotion_triggers: promotionTriggers
+        };
+    }
+
+    if (riskLevel === 'medium') {
+        if (base.strip_code_blocks) promotionTriggers.push('strip_code_blocks_disabled_by_medium_risk');
+        // At depth 3 with medium risk, also disable compact output
+        const compactOutput = effectiveDepth >= 3 ? false : base.compact_reviewer_output;
+        if (base.compact_reviewer_output && !compactOutput) {
+            promotionTriggers.push('compact_reviewer_output_disabled_by_depth3_medium_risk');
+        }
+        return {
+            strip_examples: base.strip_examples,
+            strip_code_blocks: false,
+            scoped_diffs: base.scoped_diffs,
+            compact_reviewer_output: compactOutput,
+            risk_level: 'medium',
+            promotion_triggers: promotionTriggers
+        };
+    }
+
+    // Low risk: use base config as-is
+    return {
+        ...base,
+        risk_level: 'low',
+        promotion_triggers: []
+    };
+}
+
+/**
+ * Full risk-aware depth resolution: computes effective depth from triggers,
+ * then resolves the compression profile.
+ */
+export function resolveRiskAwareDepth(
+    requestedDepth: number,
+    pathMode: string,
+    triggers: RiskTriggers,
+    baseCompressionConfig?: { strip_examples?: boolean; strip_code_blocks?: boolean; scoped_diffs?: boolean; compact_reviewer_output?: boolean }
+): RiskAwareDepthResult {
+    const effectiveDepth = computeEffectiveDepth(requestedDepth, pathMode, triggers);
+    const escalated = effectiveDepth > requestedDepth;
+    const escalationTriggers: string[] = [];
+
+    if (pathMode === 'FULL_PATH' && requestedDepth < 2 && effectiveDepth >= 2) {
+        escalationTriggers.push('full_path_minimum_depth_2');
+    }
+    if (triggers.db) escalationTriggers.push('db_review_required');
+    if (triggers.security) escalationTriggers.push('security_review_required');
+    if (triggers.refactor) escalationTriggers.push('refactor_review_required');
+    if (triggers.infra) escalationTriggers.push('infra_review_required');
+
+    const compression = resolveCompressionProfile(triggers, effectiveDepth, baseCompressionConfig);
+
+    return {
+        requested_depth: requestedDepth,
+        effective_depth: effectiveDepth,
+        escalated,
+        escalation_triggers: escalationTriggers,
+        compression
     };
 }
 

@@ -1,6 +1,9 @@
 # Changelog
 
 ## 2.4.3
+- added risk-aware depth auto-promotion: `classify-change` now computes the effective depth from risk triggers (`computeEffectiveDepth`) instead of relying on manual caller-supplied values; FULL_PATH forces minimum depth 2, db/security/refactor triggers force minimum depth 2, and security/infra triggers prefer depth 3
+- added compression profile auto-resolution: `resolveCompressionProfile` adapts token-economy compression settings per risk level — high-risk (security/infra) disables all stripping and compaction, medium-risk (db/refactor/api/performance) preserves examples but disables code-block stripping, low-risk uses base config as-is
+- added `resolveRiskAwareDepth` combining depth promotion and compression resolution into a single call, emitted as `risk_aware_depth` in the preflight artifact
 - added preflight token-budget forecasting: `classify-change` now emits a `budget_forecast` object in the preflight artifact that estimates per-review and compile-gate token costs using scope-aware heuristics, and a `depth_escalation` record that captures requested-vs-effective depth with trigger reasons
 - added requested-vs-effective depth and budget comparison to `octopus stats`: per-task output now shows depth escalation state, budget forecast totals, and a forecast-vs-actual accuracy ratio when both forecast and actual token data are available
 - added `octopus stats` command for token-overhead and runtime analytics per task (`--task-id T-XXX`) or across all tasks; displays event counts, wall-clock duration, gate pass/fail tallies, path mode, required reviews, changed files summary, and token-economy savings with per-source breakdown; supports `--json` for machine-readable output
