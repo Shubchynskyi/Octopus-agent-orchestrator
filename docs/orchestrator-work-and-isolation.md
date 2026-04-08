@@ -193,6 +193,8 @@ octopus gate task-events-summary --task-id "T-xxx"
 
 ## Related Docs
 
+- [Branch Protection and CODEOWNERS](branch-protection.md) — PR-time
+  governance complement to local protected-path enforcement
 - [Control-Plane Isolation Mode](control-plane-isolation.md) — sandbox
   lifecycle, manifest validation, and configuration reference
 - [CLI Reference](cli-reference.md) — full gate command surface
