@@ -2,10 +2,15 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { DEFAULT_BUNDLE_NAME } from '../core/constants';
 import {
+    LIFECYCLE_OPERATION_LOCK_DIR_NAME,
     removePathRecursive,
     validateTargetRoot,
     withLifecycleOperationLock
 } from './common';
+import {
+    cleanupStaleTaskEventLocks,
+    scanTaskEventLocks
+} from '../gate-runtime/task-events';
 
 // ---------------------------------------------------------------------------
 // Retention policy defaults
@@ -18,6 +23,22 @@ const DEFAULT_MAX_REVIEWS = 100;
 const DEFAULT_MAX_UPDATE_REPORTS = 10;
 const DEFAULT_MAX_UPDATE_ROLLBACKS = 5;
 const DEFAULT_MAX_BUNDLE_BACKUPS = 5;
+
+// ---------------------------------------------------------------------------
+// GC allowlist — only these runtime subdirectories are eligible for cleanup.
+// Anything not on this list is never touched by gc/clean.
+// ---------------------------------------------------------------------------
+
+export const GC_ALLOWLIST: readonly string[] = Object.freeze([
+    'backups',
+    'bundle-backups',
+    'task-events',
+    'reviews',
+    'update-rollbacks',
+    'update-reports',
+    'isolation-sandbox',
+    'stale-locks'
+]);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,6 +74,19 @@ export interface CleanupResult {
     errors: Array<{ path: string; message: string }>;
     totalFreedBytes: number;
     result: string;
+}
+
+export interface GcResult extends CleanupResult {
+    staleLocksCleaned: number;
+    isolationSandboxCleaned: boolean;
+    categories: Record<string, { count: number; bytes: number }>;
+}
+
+interface ProcessCleanupCandidatesResult {
+    removed: CleanupItem[];
+    skipped: CleanupItem[];
+    errors: Array<{ path: string; message: string }>;
+    totalFreedBytes: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +147,58 @@ function maxGroupMtime(dir: string, files: string[]): number {
         if (mtime > max) max = mtime;
     }
     return max;
+}
+
+function isNotFoundError(error: unknown): boolean {
+    return typeof error === 'object'
+        && error !== null
+        && 'code' in error
+        && (error as { code?: unknown }).code === 'ENOENT';
+}
+
+function processCleanupCandidates(candidates: CleanupItem[], dryRun: boolean): ProcessCleanupCandidatesResult {
+    const removed: CleanupItem[] = [];
+    const skipped: CleanupItem[] = [];
+    const errors: Array<{ path: string; message: string }> = [];
+    let totalFreedBytes = 0;
+
+    for (const item of candidates) {
+        if (dryRun) {
+            skipped.push(item);
+            totalFreedBytes += item.sizeBytes;
+            continue;
+        }
+
+        if (!fs.existsSync(item.path)) {
+            continue;
+        }
+
+        try {
+            const stat = fs.statSync(item.path);
+            if (stat.isDirectory()) {
+                removePathRecursive(item.path);
+            } else {
+                fs.unlinkSync(item.path);
+            }
+            removed.push(item);
+            totalFreedBytes += item.sizeBytes;
+        } catch (error: unknown) {
+            if (isNotFoundError(error)) {
+                continue;
+            }
+            errors.push({
+                path: item.path,
+                message: error instanceof Error ? error.message : String(error)
+            });
+        }
+    }
+
+    return {
+        removed,
+        skipped,
+        errors,
+        totalFreedBytes
+    };
 }
 
 /**
@@ -406,55 +492,14 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
     };
 
     const runtimeDir = path.join(bundleRoot, 'runtime');
-    const backupsDir = path.join(runtimeDir, 'backups');
-    const taskEventsDir = path.join(runtimeDir, 'task-events');
-    const reviewsDir = path.join(runtimeDir, 'reviews');
-    const updateReportsDir = path.join(runtimeDir, 'update-reports');
-    const updateRollbacksDir = path.join(runtimeDir, 'update-rollbacks');
-    const bundleBackupsDir = path.join(runtimeDir, 'bundle-backups');
-
     const now = new Date();
-
-    // Collect all candidates
-    const candidates: CleanupItem[] = [
-        ...collectTimestampedDirs(backupsDir, 'backups', policy.maxBackups, policy.maxAgeDays, now),
-        ...collectTimestampedDirs(bundleBackupsDir, 'bundle-backups', policy.maxBundleBackups, policy.maxAgeDays, now),
-        ...collectTaskEventFiles(taskEventsDir, policy.maxTaskEvents, policy.maxAgeDays, now),
-        ...collectReviewArtifacts(reviewsDir, policy.maxReviews, policy.maxAgeDays, now),
-        ...collectUpdateNamedDirs(updateRollbacksDir, 'update-rollbacks', policy.maxUpdateRollbacks, policy.maxAgeDays, now),
-        ...collectUpdateNamedDirs(updateReportsDir, 'update-reports', policy.maxUpdateReports, policy.maxAgeDays, now)
-    ];
-
-    const removed: CleanupItem[] = [];
-    const skipped: CleanupItem[] = [];
-    const errors: Array<{ path: string; message: string }> = [];
-    let totalFreedBytes = 0;
-
-    for (const item of candidates) {
-        if (dryRun) {
-            skipped.push(item);
-            totalFreedBytes += item.sizeBytes;
-            continue;
-        }
-
-        try {
-            if (fs.existsSync(item.path)) {
-                const stat = fs.statSync(item.path);
-                if (stat.isDirectory()) {
-                    removePathRecursive(item.path);
-                } else {
-                    fs.unlinkSync(item.path);
-                }
-            }
-            removed.push(item);
-            totalFreedBytes += item.sizeBytes;
-        } catch (error: unknown) {
-            errors.push({
-                path: item.path,
-                message: error instanceof Error ? error.message : String(error)
-            });
-        }
-    }
+    const candidates = collectStandardCandidates(runtimeDir, policy, now);
+    const {
+        removed,
+        skipped,
+        errors,
+        totalFreedBytes
+    } = processCleanupCandidates(candidates, dryRun);
 
     return {
         targetRoot,
@@ -473,4 +518,302 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
  */
 export function runCleanupWithLock(options: CleanupOptions): CleanupResult {
     return withLifecycleOperationLock(options.targetRoot, 'cleanup', () => runCleanup(options));
+}
+
+// ---------------------------------------------------------------------------
+// Isolation sandbox collector
+// ---------------------------------------------------------------------------
+
+function collectIsolationSandbox(
+    runtimeDir: string,
+    maxAgeDays: number,
+    now: Date
+): CleanupItem[] {
+    const sandboxDir = path.join(runtimeDir, '.isolation-sandbox');
+    if (!fs.existsSync(sandboxDir)) return [];
+
+    const items: CleanupItem[] = [];
+    const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
+
+    let entries: string[];
+    try {
+        entries = fs.readdirSync(sandboxDir);
+    } catch {
+        return [];
+    }
+
+    for (const entry of entries) {
+        const entryPath = path.join(sandboxDir, entry);
+        try {
+            const stat = fs.statSync(entryPath);
+            if (stat.mtime < cutoff) {
+                const sizeBytes = stat.isDirectory()
+                    ? dirSizeBytes(entryPath)
+                    : stat.size;
+                items.push({
+                    path: entryPath,
+                    category: 'isolation-sandbox',
+                    reason: 'age',
+                    sizeBytes
+                });
+            }
+        } catch {
+            // Skip unreadable entries
+        }
+    }
+
+    return items;
+}
+
+// ---------------------------------------------------------------------------
+// Stale lifecycle lock collector
+// ---------------------------------------------------------------------------
+
+function collectStaleLifecycleLock(
+    runtimeDir: string
+): CleanupItem[] {
+    const items: CleanupItem[] = [];
+    if (!fs.existsSync(runtimeDir)) return items;
+
+    // Only collect .stale-* remnants left by crash recovery.
+    // Live lock dirs are never collected — the lifecycle lock subsystem
+    // handles them. We only clean orphaned rename targets.
+    let siblings: string[];
+    try {
+        siblings = fs.readdirSync(runtimeDir);
+    } catch {
+        return items;
+    }
+
+    const staleLockPattern = new RegExp(
+        '^' + LIFECYCLE_OPERATION_LOCK_DIR_NAME.replace(/\./g, '\\.') + '\\.stale-'
+    );
+
+    for (const sibling of siblings) {
+        if (!staleLockPattern.test(sibling)) continue;
+        const stalePath = path.join(runtimeDir, sibling);
+        try {
+            const stat = fs.statSync(stalePath);
+            const sizeBytes = stat.isDirectory()
+                ? dirSizeBytes(stalePath)
+                : stat.size;
+            items.push({
+                path: stalePath,
+                category: 'stale-locks',
+                reason: 'orphaned',
+                sizeBytes
+            });
+        } catch {
+            // Skip unreadable
+        }
+    }
+
+    return items;
+}
+
+function collectStaleTaskEventLockCandidates(bundleRoot: string): CleanupItem[] {
+    const taskEventsDir = path.join(bundleRoot, 'runtime', 'task-events');
+    const inspection = scanTaskEventLocks(bundleRoot);
+
+    return inspection.locks
+        .filter((lock) => lock.status === 'STALE')
+        .map((lock) => {
+            const lockPath = path.join(taskEventsDir, lock.lock_name);
+            let sizeBytes = 0;
+            try {
+                const stat = fs.statSync(lockPath);
+                sizeBytes = stat.isDirectory() ? dirSizeBytes(lockPath) : stat.size;
+            } catch {
+                // Leave at zero when the candidate disappears or cannot be read.
+            }
+            return {
+                path: lockPath,
+                category: 'task-events',
+                reason: 'stale-lock',
+                sizeBytes
+            };
+        });
+}
+
+// ---------------------------------------------------------------------------
+// GC options and entry point — dry-run by default, allowlist-safe
+// ---------------------------------------------------------------------------
+
+export interface GcOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    /** When true, actually delete files. Default false (dry-run). */
+    confirm?: boolean;
+    retentionPolicy?: Partial<RetentionPolicy>;
+    /** Restrict gc to specific categories from GC_ALLOWLIST. */
+    categories?: string[];
+}
+
+/**
+ * Build per-category summary from a list of cleanup items.
+ */
+function buildCategorySummary(items: CleanupItem[]): Record<string, { count: number; bytes: number }> {
+    const summary: Record<string, { count: number; bytes: number }> = {};
+    for (const item of items) {
+        const entry = summary[item.category] || { count: 0, bytes: 0 };
+        entry.count += 1;
+        entry.bytes += item.sizeBytes;
+        summary[item.category] = entry;
+    }
+    return summary;
+}
+
+/**
+ * Validate requested gc categories against the allowlist.
+ * Throws if any category is not in GC_ALLOWLIST.
+ */
+export function validateGcCategories(categories: string[]): void {
+    for (const cat of categories) {
+        if (!GC_ALLOWLIST.includes(cat)) {
+            throw new Error(
+                `Unknown gc category '${cat}'. Allowed: ${GC_ALLOWLIST.join(', ')}`
+            );
+        }
+    }
+}
+
+/**
+ * Run gc with dry-run by default. This extends `runCleanup` with:
+ * - dry-run default (pass `confirm: true` to delete)
+ * - isolation-sandbox cleanup (age-based)
+ * - stale lifecycle lock cleanup (orphaned .stale-* remnants)
+ * - stale task-event lock cleanup (delegated to task-events subsystem)
+ * - per-category summary
+ * - allowlist enforcement
+ */
+export function runGc(options: GcOptions): GcResult {
+    const { targetRoot, bundleRoot, confirm = false } = options;
+    validateTargetRoot(targetRoot, bundleRoot);
+
+    if (options.categories && options.categories.length > 0) {
+        validateGcCategories(options.categories);
+    }
+
+    const policy: RetentionPolicy = {
+        ...buildDefaultRetentionPolicy(),
+        ...options.retentionPolicy
+    };
+
+    const dryRun = !confirm;
+    const filterCategories = options.categories && options.categories.length > 0
+        ? new Set(options.categories)
+        : null;
+
+    const runtimeDir = path.join(bundleRoot, 'runtime');
+    const now = new Date();
+
+    // Standard cleanup candidates
+    const standardCandidates = collectStandardCandidates(runtimeDir, policy, now);
+
+    // New gc-extended categories
+    const isolationItems = collectIsolationSandbox(runtimeDir, policy.maxAgeDays, now);
+    const staleLockItems = collectStaleLifecycleLock(runtimeDir);
+    const shouldCleanTaskEventLocks = !filterCategories || filterCategories.has('task-events');
+    const taskEventLockCandidates = shouldCleanTaskEventLocks
+        ? collectStaleTaskEventLockCandidates(bundleRoot)
+        : [];
+
+    let allCandidates = [
+        ...standardCandidates,
+        ...isolationItems,
+        ...staleLockItems
+    ];
+
+    // Apply category filter
+    if (filterCategories) {
+        allCandidates = allCandidates.filter(item => filterCategories.has(item.category));
+    }
+
+    const {
+        removed,
+        skipped,
+        errors,
+        totalFreedBytes: standardFreedBytes
+    } = processCleanupCandidates(allCandidates, dryRun);
+    let totalFreedBytes = standardFreedBytes;
+
+    // Task-event stale lock cleanup (delegated to subsystem)
+    let staleLocksCleaned = 0;
+    if (shouldCleanTaskEventLocks) {
+        try {
+            const lockResult = cleanupStaleTaskEventLocks(bundleRoot, { dryRun });
+            const taskEventLockItems = new Map(
+                taskEventLockCandidates.map((item) => [path.basename(item.path), item])
+            );
+            const effectiveTaskEventLocks = (dryRun
+                ? lockResult.removable_stale_locks
+                : lockResult.removed_locks)
+                .map((lockName) => taskEventLockItems.get(lockName))
+                .filter((item): item is CleanupItem => item != null);
+
+            staleLocksCleaned = dryRun
+                ? lockResult.removable_stale_locks.length
+                : lockResult.removed_locks.length;
+            totalFreedBytes += effectiveTaskEventLocks.reduce((sum, item) => sum + item.sizeBytes, 0);
+            if (dryRun) {
+                skipped.push(...effectiveTaskEventLocks);
+            } else {
+                removed.push(...effectiveTaskEventLocks);
+            }
+        } catch {
+            // Best-effort; task-event lock subsystem errors are non-fatal for gc
+        }
+    }
+
+    const actionItems = dryRun ? skipped : removed;
+    const isolationSandboxCleaned = actionItems.some(
+        item => item.category === 'isolation-sandbox'
+    );
+
+    return {
+        targetRoot,
+        dryRun,
+        retentionPolicy: policy,
+        removed,
+        skipped,
+        errors,
+        totalFreedBytes,
+        result: errors.length > 0 ? 'PARTIAL' : 'SUCCESS',
+        staleLocksCleaned,
+        isolationSandboxCleaned,
+        categories: buildCategorySummary(actionItems)
+    };
+}
+
+/**
+ * Run gc under a lifecycle operation lock.
+ */
+export function runGcWithLock(options: GcOptions): GcResult {
+    return withLifecycleOperationLock(options.targetRoot, 'gc', () => runGc(options));
+}
+
+// ---------------------------------------------------------------------------
+// Internal: shared candidate collection for standard retention categories
+// ---------------------------------------------------------------------------
+
+function collectStandardCandidates(
+    runtimeDir: string,
+    policy: RetentionPolicy,
+    now: Date
+): CleanupItem[] {
+    const backupsDir = path.join(runtimeDir, 'backups');
+    const taskEventsDir = path.join(runtimeDir, 'task-events');
+    const reviewsDir = path.join(runtimeDir, 'reviews');
+    const updateReportsDir = path.join(runtimeDir, 'update-reports');
+    const updateRollbacksDir = path.join(runtimeDir, 'update-rollbacks');
+    const bundleBackupsDir = path.join(runtimeDir, 'bundle-backups');
+
+    return [
+        ...collectTimestampedDirs(backupsDir, 'backups', policy.maxBackups, policy.maxAgeDays, now),
+        ...collectTimestampedDirs(bundleBackupsDir, 'bundle-backups', policy.maxBundleBackups, policy.maxAgeDays, now),
+        ...collectTaskEventFiles(taskEventsDir, policy.maxTaskEvents, policy.maxAgeDays, now),
+        ...collectReviewArtifacts(reviewsDir, policy.maxReviews, policy.maxAgeDays, now),
+        ...collectUpdateNamedDirs(updateRollbacksDir, 'update-rollbacks', policy.maxUpdateRollbacks, policy.maxAgeDays, now),
+        ...collectUpdateNamedDirs(updateReportsDir, 'update-reports', policy.maxUpdateReports, policy.maxAgeDays, now)
+    ];
 }

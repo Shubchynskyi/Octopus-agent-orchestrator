@@ -70,7 +70,7 @@ import { validateAllConfigs, formatValidationReport, formatValidationReportCompa
 import { formatVerifyResult, formatVerifyResultCompact, runVerify } from '../validators/verify';
 import { runCheckUpdate, type CheckUpdateRunnerOptions } from '../lifecycle/check-update';
 import { withLifecycleOperationLockAsync } from '../lifecycle/common';
-import { runCleanupWithLock } from '../lifecycle/cleanup';
+import { runCleanupWithLock, runGcWithLock, validateGcCategories } from '../lifecycle/cleanup';
 import { runContractMigrations } from '../lifecycle/contract-migrations';
 import { runRollback } from '../lifecycle/rollback';
 import { assertExplicitCliTrustOverride } from '../lifecycle/update-trust';
@@ -1166,6 +1166,139 @@ function handleCleanup(commandArgv: string[], packageJson: PackageJsonLike): voi
     console.log(`Result: ${cleanupResult.result}`);
     if (!dryRun) {
         console.log(green('Cleanup complete.'));
+    }
+}
+
+function handleGc(commandArgv: string[], packageJson: PackageJsonLike): void {
+    const gcDefinitions = {
+        '--target-root': { key: 'targetRoot', type: 'string' },
+        '--confirm': { key: 'confirm', type: 'boolean' },
+        '--dry-run': { key: 'dryRun', type: 'boolean' },
+        '--category': { key: 'category', type: 'string[]' },
+        '--max-age-days': { key: 'maxAgeDays', type: 'string' },
+        '--max-backups': { key: 'maxBackups', type: 'string' },
+        '--max-task-events': { key: 'maxTaskEvents', type: 'string' },
+        '--max-reviews': { key: 'maxReviews', type: 'string' },
+        '--max-update-reports': { key: 'maxUpdateReports', type: 'string' },
+        '--max-update-rollbacks': { key: 'maxUpdateRollbacks', type: 'string' },
+        '--max-bundle-backups': { key: 'maxBundleBackups', type: 'string' }
+    };
+    const { options: rawOptions } = parseOptions(commandArgv, gcDefinitions);
+    const options = rawOptions as ParsedOptionsRecord;
+
+    if (options.help) {
+        printHelp(packageJson);
+        return;
+    }
+    if (options.version) {
+        console.log(packageJson.version);
+        return;
+    }
+
+    const targetRoot = normalizePathValue(options.targetRoot || '.');
+    ensureDirectoryExists(targetRoot, 'Target root');
+    printBanner(packageJson, 'Runtime gc', targetRoot, {
+        versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
+    });
+    const bundlePath = ensureBundleExists(targetRoot, 'gc');
+
+    // Dry-run by default; --confirm to actually delete. --dry-run explicitly
+    // forces dry-run even if --confirm is also passed.
+    const explicitDryRun = options.dryRun === true;
+    const confirm = options.confirm === true && !explicitDryRun;
+
+    const retentionOverrides: Record<string, number> = {};
+    const intFields: Array<[string, string]> = [
+        ['maxAgeDays', 'maxAgeDays'],
+        ['maxBackups', 'maxBackups'],
+        ['maxTaskEvents', 'maxTaskEvents'],
+        ['maxReviews', 'maxReviews'],
+        ['maxUpdateReports', 'maxUpdateReports'],
+        ['maxUpdateRollbacks', 'maxUpdateRollbacks'],
+        ['maxBundleBackups', 'maxBundleBackups']
+    ];
+    for (const [optKey, policyKey] of intFields) {
+        const raw = options[optKey];
+        if (typeof raw === 'string') {
+            const parsed = parseInt(raw, 10);
+            if (Number.isNaN(parsed) || parsed < 0) {
+                throw new Error(`--${optKey.replace(/([A-Z])/g, '-$1').toLowerCase()} must be a non-negative integer, got: ${raw}`);
+            }
+            retentionOverrides[policyKey] = parsed;
+        }
+    }
+
+    // Category filter
+    const categories: string[] = [];
+    if (Array.isArray(options.category)) {
+        for (const cat of options.category) {
+            if (typeof cat === 'string') categories.push(cat);
+        }
+    } else if (typeof options.category === 'string') {
+        categories.push(options.category);
+    }
+
+    if (categories.length > 0) {
+        validateGcCategories(categories);
+    }
+
+    const gcResult = runGcWithLock({
+        targetRoot,
+        bundleRoot: bundlePath,
+        confirm,
+        retentionPolicy: retentionOverrides,
+        categories: categories.length > 0 ? categories : undefined
+    });
+
+    if (!confirm) {
+        console.log(yellow('Dry run (default) — no files were removed. Pass --confirm to delete.'));
+    }
+
+    formatKeyValueOutput(gcResult as unknown as Record<string, unknown>, [
+        'targetRoot', 'dryRun', 'totalFreedBytes', 'staleLocksCleaned', 'result'
+    ]);
+
+    const actionItems = gcResult.dryRun ? gcResult.skipped : gcResult.removed;
+    if (actionItems.length === 0 && gcResult.staleLocksCleaned === 0) {
+        console.log(green('Nothing to clean up.'));
+        return;
+    }
+
+    // Per-category summary
+    for (const [category, summary] of Object.entries(gcResult.categories)) {
+        const catMB = (summary.bytes / (1024 * 1024)).toFixed(2);
+        const action = gcResult.dryRun ? 'Would remove' : 'Removed';
+        printHighlightedPair(`${action} (${category}):`, `${summary.count} items (${catMB} MB)`, {
+            labelColor: cyan,
+            valueColor: green
+        });
+    }
+
+    if (gcResult.staleLocksCleaned > 0) {
+        const lockAction = gcResult.dryRun ? 'Would clean' : 'Cleaned';
+        printHighlightedPair(`${lockAction} stale locks:`, String(gcResult.staleLocksCleaned), {
+            labelColor: cyan,
+            valueColor: green
+        });
+    }
+
+    const freedLabel = gcResult.dryRun ? 'Would free' : 'Freed';
+    const freedMB = (gcResult.totalFreedBytes / (1024 * 1024)).toFixed(2);
+    printHighlightedPair(`${freedLabel}:`, `${freedMB} MB`, {
+        labelColor: cyan,
+        valueColor: green
+    });
+
+    if (gcResult.errors.length > 0) {
+        console.log(yellow(`Errors: ${gcResult.errors.length}`));
+        for (const err of gcResult.errors) {
+            console.log(`  ${err.path}: ${err.message}`);
+        }
+    }
+
+    console.log(`Result: ${gcResult.result}`);
+    if (confirm) {
+        console.log(green('GC complete.'));
     }
 }
 
@@ -2463,6 +2596,10 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
             return;
         case 'cleanup':
             handleCleanup(commandArgv, packageJson);
+            return;
+        case 'gc':
+        case 'clean':
+            handleGc(commandArgv, packageJson);
             return;
         case 'verify':
             handleVerify(commandArgv, packageJson);

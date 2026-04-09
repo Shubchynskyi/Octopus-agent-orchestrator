@@ -27,6 +27,8 @@ test('describeFoundation exposes the staged Node-only runtime', () => {
         'update',
         'rollback',
         'cleanup',
+        'gc',
+        'clean',
         'skills',
         'profile'
     ]);
