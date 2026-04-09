@@ -567,6 +567,62 @@ describe('runInstall', () => {
         }
     });
 
+    it('migrates legacy TASK.md Depth column during install sync (T-065)', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            fs.writeFileSync(
+                path.join(projectRoot, 'TASK.md'),
+                [
+                    '<!-- Octopus-agent-orchestrator:managed-start -->',
+                    '# TASK.md',
+                    '',
+                    'Canonical instructions entrypoint for orchestration: `CLAUDE.md`.',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Depth | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-777 | 🟨 IN_PROGRESS | P1 | legacy | Keep migrated row | me | 2026-01-01 | 2 | preserved-note |',
+                    '<!-- Octopus-agent-orchestrator:managed-end -->',
+                    '',
+                    '## User Notes',
+                    'keep-this-section'
+                ].join('\n'),
+                'utf8'
+            );
+
+            const result = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            });
+
+            const taskContent = fs.readFileSync(path.join(projectRoot, 'TASK.md'), 'utf8');
+            assert.ok(result.filesAligned > 0, 'TASK.md should be synced in place');
+            assert.ok(taskContent.includes('| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |'));
+            assert.ok(!taskContent.includes('| ID | Status | Priority | Area | Title | Owner | Updated | Depth | Notes |'));
+            assert.ok(taskContent.includes('| T-777 | 🟨 IN_PROGRESS | P1 | legacy | Keep migrated row | me | 2026-01-01 | default |'));
+            assert.ok(taskContent.includes('requested_depth=2; preserved-note'));
+            assert.ok(!taskContent.includes('| T-777 | 🟨 IN_PROGRESS | P1 | legacy | Keep migrated row | me | 2026-01-01 | 2 | preserved-note |'));
+            assert.ok(taskContent.includes('## User Notes'));
+            assert.ok(taskContent.includes('keep-this-section'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('creates commit guard hook when enforceNoAutoCommit is true', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
