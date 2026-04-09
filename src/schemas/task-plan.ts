@@ -1,0 +1,308 @@
+/**
+ * Optional task-plan artifact schema, validator, and helpers.
+ *
+ * A task-plan is a planner-generated execution brief that an executor agent
+ * can follow.  The planner/executor split is fully opt-in:
+ *   - If a validated plan artifact exists, the executor should follow it.
+ *   - If no plan exists, task execution continues exactly as today.
+ *
+ * Artifact path convention:
+ *   `<bundle>/runtime/reviews/<task-id>-task-plan.json`
+ */
+
+import { createHash } from 'node:crypto';
+import {
+    ensurePlainObject,
+    normalizeNonEmptyString,
+    normalizeOptionalString,
+    normalizeStringArray,
+    normalizeEnum,
+    normalizeInteger
+} from './shared';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+export const TASK_PLAN_SCHEMA_VERSION = 1;
+
+const PLAN_STATUS_VALUES = ['draft', 'approved', 'superseded'] as const;
+export type TaskPlanStatus = (typeof PLAN_STATUS_VALUES)[number];
+
+const RISK_LEVEL_VALUES = ['low', 'medium', 'high'] as const;
+export type TaskPlanRiskLevel = (typeof RISK_LEVEL_VALUES)[number];
+
+// ---------------------------------------------------------------------------
+// Interfaces
+// ---------------------------------------------------------------------------
+
+export interface TaskPlanStep {
+    id: string;
+    title: string;
+    description?: string;
+    files?: string[];
+    depends_on?: string[];
+}
+
+export interface TaskPlanValidationStrategy {
+    approach: string;
+    commands?: string[];
+}
+
+export interface TaskPlan {
+    schema_version: number;
+    task_id: string;
+    status: TaskPlanStatus;
+    goal: string;
+    scope_files: string[];
+    risk_level: TaskPlanRiskLevel;
+    steps: TaskPlanStep[];
+    validation_strategy?: TaskPlanValidationStrategy;
+    notes?: string;
+    created_by?: string;
+    created_at?: string;
+    plan_sha256?: string;
+}
+
+// ---------------------------------------------------------------------------
+// JSON Schema (draft-07)
+// ---------------------------------------------------------------------------
+
+export const taskPlanSchema: Record<string, unknown> = Object.freeze({
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    $id: 'octopus-agent-orchestrator/task-plan.schema.json',
+    title: 'Task Plan',
+    description: 'Optional planner-generated execution brief for the planner/executor split workflow.',
+    type: 'object',
+    properties: {
+        schema_version: { type: 'integer', minimum: 1, description: 'Schema version of this plan artifact.' },
+        task_id: { type: 'string', minLength: 1, description: 'Task identifier (e.g. T-048).' },
+        status: {
+            type: 'string',
+            enum: [...PLAN_STATUS_VALUES],
+            description: 'Plan lifecycle status: draft, approved, or superseded.'
+        },
+        goal: { type: 'string', minLength: 1, description: 'High-level goal the plan addresses.' },
+        scope_files: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+            description: 'Files the plan expects to create or modify.',
+            minItems: 1
+        },
+        risk_level: {
+            type: 'string',
+            enum: [...RISK_LEVEL_VALUES],
+            description: 'Overall risk assessment for the planned change.'
+        },
+        steps: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    id: { type: 'string', minLength: 1, description: 'Step identifier (unique within the plan).' },
+                    title: { type: 'string', minLength: 1, description: 'Short step title.' },
+                    description: { type: 'string', description: 'Detailed step description.' },
+                    files: {
+                        type: 'array',
+                        items: { type: 'string', minLength: 1 },
+                        description: 'Files affected by this step.'
+                    },
+                    depends_on: {
+                        type: 'array',
+                        items: { type: 'string', minLength: 1 },
+                        description: 'Step ids this step depends on.'
+                    }
+                },
+                required: ['id', 'title']
+            },
+            description: 'Ordered execution steps.',
+            minItems: 1
+        },
+        validation_strategy: {
+            type: 'object',
+            properties: {
+                approach: { type: 'string', minLength: 1, description: 'Description of the validation approach.' },
+                commands: {
+                    type: 'array',
+                    items: { type: 'string', minLength: 1 },
+                    description: 'Optional validation commands.'
+                }
+            },
+            required: ['approach'],
+            description: 'How the executor should validate the implementation.'
+        },
+        notes: { type: 'string', description: 'Free-form planner notes.' },
+        created_by: { type: 'string', description: 'Identity of the planner agent or user.' },
+        created_at: { type: 'string', description: 'ISO 8601 timestamp of plan creation.' },
+        plan_sha256: { type: 'string', description: 'SHA-256 digest of the canonical plan content for drift detection.' }
+    },
+    required: ['schema_version', 'task_id', 'status', 'goal', 'scope_files', 'risk_level', 'steps'],
+    additionalProperties: true
+});
+
+// ---------------------------------------------------------------------------
+// Validator
+// ---------------------------------------------------------------------------
+
+function validateStep(input: unknown, index: number): TaskPlanStep {
+    const raw = ensurePlainObject(input, `steps[${index}]`);
+    const step: TaskPlanStep = {
+        id: normalizeNonEmptyString(raw.id, `steps[${index}].id`),
+        title: normalizeNonEmptyString(raw.title, `steps[${index}].title`)
+    };
+
+    const description = normalizeOptionalString(raw.description);
+    if (description) {
+        step.description = description;
+    }
+
+    if (raw.files !== undefined) {
+        step.files = normalizeStringArray(raw.files, `steps[${index}].files`, { allowScalar: true });
+    }
+
+    if (raw.depends_on !== undefined) {
+        step.depends_on = normalizeStringArray(raw.depends_on, `steps[${index}].depends_on`, { allowScalar: true });
+    }
+
+    return step;
+}
+
+function validateValidationStrategy(input: unknown): TaskPlanValidationStrategy {
+    const raw = ensurePlainObject(input, 'validation_strategy');
+    const strategy: TaskPlanValidationStrategy = {
+        approach: normalizeNonEmptyString(raw.approach, 'validation_strategy.approach')
+    };
+
+    if (raw.commands !== undefined) {
+        strategy.commands = normalizeStringArray(raw.commands, 'validation_strategy.commands', { allowScalar: true });
+    }
+
+    return strategy;
+}
+
+export function validateTaskPlan(input: unknown): TaskPlan {
+    const raw = ensurePlainObject(input, 'task-plan');
+
+    const schemaVersion = normalizeInteger(raw.schema_version, 'schema_version', { minimum: 1 });
+    if (schemaVersion > TASK_PLAN_SCHEMA_VERSION) {
+        throw new Error(`Unsupported task-plan schema_version ${schemaVersion}; max supported is ${TASK_PLAN_SCHEMA_VERSION}.`);
+    }
+
+    const taskId = normalizeNonEmptyString(raw.task_id, 'task_id');
+    const status = normalizeEnum(raw.status, [...PLAN_STATUS_VALUES], 'status') as TaskPlanStatus;
+    const goal = normalizeNonEmptyString(raw.goal, 'goal');
+    const scopeFiles = normalizeStringArray(raw.scope_files, 'scope_files');
+    if (scopeFiles.length === 0) {
+        throw new Error('scope_files must contain at least one entry.');
+    }
+
+    const riskLevel = normalizeEnum(raw.risk_level, [...RISK_LEVEL_VALUES], 'risk_level') as TaskPlanRiskLevel;
+
+    if (!Array.isArray(raw.steps) || raw.steps.length === 0) {
+        throw new Error('steps must be a non-empty array.');
+    }
+
+    const steps = raw.steps.map((step: unknown, index: number) => validateStep(step, index));
+
+    // Validate step id uniqueness.
+    const stepIds = new Set<string>();
+    for (const step of steps) {
+        if (stepIds.has(step.id)) {
+            throw new Error(`Duplicate step id '${step.id}'.`);
+        }
+        stepIds.add(step.id);
+    }
+
+    // Validate depends_on references.
+    for (const step of steps) {
+        if (step.depends_on) {
+            for (const dep of step.depends_on) {
+                if (!stepIds.has(dep)) {
+                    throw new Error(`Step '${step.id}' depends on unknown step '${dep}'.`);
+                }
+            }
+        }
+    }
+
+    const plan: TaskPlan = {
+        schema_version: schemaVersion,
+        task_id: taskId,
+        status,
+        goal,
+        scope_files: scopeFiles,
+        risk_level: riskLevel,
+        steps
+    };
+
+    if (raw.validation_strategy !== undefined) {
+        plan.validation_strategy = validateValidationStrategy(raw.validation_strategy);
+    }
+
+    const notes = normalizeOptionalString(raw.notes);
+    if (notes) {
+        plan.notes = notes;
+    }
+
+    const createdBy = normalizeOptionalString(raw.created_by);
+    if (createdBy) {
+        plan.created_by = createdBy;
+    }
+
+    const createdAt = normalizeOptionalString(raw.created_at);
+    if (createdAt) {
+        plan.created_at = createdAt;
+    }
+
+    const planSha256 = normalizeOptionalString(raw.plan_sha256);
+    if (planSha256) {
+        plan.plan_sha256 = planSha256;
+    }
+
+    return plan;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Replacer that sorts object keys at every nesting level for deterministic
+ * serialization.  Array order is preserved.
+ */
+function deterministicReplacer(_key: string, value: unknown): unknown {
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        const sorted: Record<string, unknown> = {};
+        for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+            sorted[k] = (value as Record<string, unknown>)[k];
+        }
+        return sorted;
+    }
+    return value;
+}
+
+/**
+ * Compute a SHA-256 digest of the canonical plan content (excluding the
+ * `plan_sha256` field itself) for downstream drift detection.
+ */
+export function computeTaskPlanDigest(plan: TaskPlan): string {
+    const { plan_sha256: _excluded, ...canonical } = plan;
+    const json = JSON.stringify(canonical, deterministicReplacer);
+    return createHash('sha256').update(json, 'utf8').digest('hex');
+}
+
+/**
+ * Serialize a validated plan to a JSON string (pretty-printed).
+ * Automatically computes and embeds `plan_sha256`.
+ */
+export function serializeTaskPlan(plan: TaskPlan): string {
+    const digest = computeTaskPlanDigest(plan);
+    const serialized: TaskPlan = { ...plan, plan_sha256: digest };
+    return `${JSON.stringify(serialized, null, 2)}\n`;
+}
+
+/**
+ * Returns true when the executor has a validated approved plan to follow.
+ */
+export function isApprovedPlan(plan: TaskPlan): boolean {
+    return plan.status === 'approved';
+}
