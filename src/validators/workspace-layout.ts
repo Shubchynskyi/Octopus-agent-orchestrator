@@ -29,6 +29,7 @@ export function getBaseRequiredPaths(bundleName: string): readonly string[] {
         `${bundleName}/live/config/output-filters.json`,
         `${bundleName}/live/config/skill-packs.json`,
         `${bundleName}/live/config/isolation-mode.json`,
+        `${bundleName}/live/config/profiles.json`,
         `${bundleName}/live/config/skills-index.json`,
         `${bundleName}/live/config/octopus.config.json`,
         `${bundleName}/template/config/octopus.config.json`,
@@ -133,6 +134,7 @@ export const BUNDLE_RUNTIME_INVENTORY_PATHS = Object.freeze([
     'live/config/output-filters.json',
     'live/config/skill-packs.json',
     'live/config/isolation-mode.json',
+    'live/config/profiles.json',
     'live/config/skills-index.json',
     'live/config/octopus.config.json'
 ]);

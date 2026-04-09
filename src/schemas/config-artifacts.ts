@@ -298,13 +298,102 @@ export function validateIsolationModeConfig(input: unknown): Record<string, unkn
     return normalized;
 }
 
+const VALID_REVIEW_POLICY_VALUES = new Set<unknown>([true, false, 'auto']);
+const BUILT_IN_PROFILE_NAMES = ['balanced', 'fast', 'strict', 'docs-only'] as const;
+
+function normalizeReviewPolicyValue(value: unknown, fieldName: string): boolean | 'auto' {
+    if (value === 'auto') {
+        return 'auto';
+    }
+    return normalizeBooleanLike(value, fieldName);
+}
+
+function validateProfileEntry(input: unknown, profilePath: string): Record<string, unknown> {
+    const raw = ensurePlainObject(input, profilePath);
+    const knownKeys = new Set(['description', 'depth', 'review_policy', 'token_economy', 'skills']);
+    const normalized = cloneUnknownProperties(raw, knownKeys);
+
+    normalized.description = normalizeNonEmptyString(raw.description, `${profilePath}.description`);
+    normalized.depth = normalizeInteger(raw.depth, `${profilePath}.depth`, { minimum: 1, maximum: 3 });
+
+    const reviewPolicyRaw = ensurePlainObject(raw.review_policy, `${profilePath}.review_policy`);
+    const reviewPolicy: Record<string, boolean | 'auto'> = {};
+    for (const [key, value] of Object.entries(reviewPolicyRaw)) {
+        reviewPolicy[key] = normalizeReviewPolicyValue(value, `${profilePath}.review_policy.${key}`);
+    }
+    normalized.review_policy = reviewPolicy;
+
+    const ALLOWED_TOKEN_ECONOMY_KEYS = new Set(['enabled', 'strip_examples', 'strip_code_blocks', 'scoped_diffs', 'compact_reviewer_output']);
+    const tokenEconomyRaw = ensurePlainObject(raw.token_economy, `${profilePath}.token_economy`);
+    const tokenEconomy: Record<string, boolean> = {};
+    for (const [key, value] of Object.entries(tokenEconomyRaw)) {
+        if (!ALLOWED_TOKEN_ECONOMY_KEYS.has(key)) {
+            throw new Error(`${profilePath}.token_economy.${key} is not a recognized token_economy key.`);
+        }
+        tokenEconomy[key] = normalizeBooleanLike(value, `${profilePath}.token_economy.${key}`);
+    }
+    normalized.token_economy = tokenEconomy;
+
+    const ALLOWED_SKILLS_KEYS = new Set(['auto_suggest']);
+    const skillsRaw = ensurePlainObject(raw.skills, `${profilePath}.skills`);
+    const skills: Record<string, boolean> = {};
+    for (const [key, value] of Object.entries(skillsRaw)) {
+        if (!ALLOWED_SKILLS_KEYS.has(key)) {
+            throw new Error(`${profilePath}.skills.${key} is not a recognized skills key.`);
+        }
+        skills[key] = normalizeBooleanLike(value, `${profilePath}.skills.${key}`);
+    }
+    normalized.skills = skills;
+
+    return normalized;
+}
+
+export function validateProfilesConfig(input: unknown): Record<string, unknown> {
+    const raw = ensurePlainObject(input, 'profiles');
+    const knownKeys = new Set(['version', 'active_profile', 'built_in_profiles', 'user_profiles']);
+    const normalized = cloneUnknownProperties(raw, knownKeys);
+
+    normalized.version = normalizeInteger(raw.version, 'profiles.version', { minimum: 1 });
+    normalized.active_profile = normalizeNonEmptyString(raw.active_profile, 'profiles.active_profile');
+
+    const builtInRaw = ensurePlainObject(raw.built_in_profiles, 'profiles.built_in_profiles');
+    const builtIn: Record<string, Record<string, unknown>> = {};
+    for (const [name, entry] of Object.entries(builtInRaw)) {
+        builtIn[name] = validateProfileEntry(entry, `profiles.built_in_profiles.${name}`);
+    }
+    if (Object.keys(builtIn).length === 0) {
+        throw new Error('profiles.built_in_profiles must contain at least one profile.');
+    }
+    normalized.built_in_profiles = builtIn;
+
+    const userRaw = ensurePlainObject(raw.user_profiles, 'profiles.user_profiles');
+    const user: Record<string, Record<string, unknown>> = {};
+    for (const [name, entry] of Object.entries(userRaw)) {
+        if (name in builtIn) {
+            throw new Error(`profiles.user_profiles.${name} conflicts with a built-in profile name.`);
+        }
+        user[name] = validateProfileEntry(entry, `profiles.user_profiles.${name}`);
+    }
+    normalized.user_profiles = user;
+
+    const allProfileNames = new Set([...Object.keys(builtIn), ...Object.keys(user)]);
+    if (!allProfileNames.has(normalized.active_profile as string)) {
+        throw new Error(
+            `profiles.active_profile '${normalized.active_profile}' does not match any built-in or user profile.`
+        );
+    }
+
+    return normalized;
+}
+
 const MANAGED_CONFIG_VALIDATORS = Object.freeze({
     'review-capabilities': validateReviewCapabilitiesConfig,
     paths: validatePathsConfig,
     'token-economy': validateTokenEconomyConfig,
     'output-filters': validateOutputFiltersConfig,
     'skill-packs': validateSkillPacksConfig,
-    'isolation-mode': validateIsolationModeConfig
+    'isolation-mode': validateIsolationModeConfig,
+    profiles: validateProfilesConfig
 });
 
 function normalizeManagedConfigName(configName: unknown): string {

@@ -115,6 +115,7 @@ test('detectSourceBundleParity passes when matching', () => {
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'output-filters.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'skill-packs.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'isolation-mode.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'profiles.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'skills-index.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'Octopus-agent-orchestrator', 'live', 'config', 'octopus.config.json'), '{}', 'utf8');
 

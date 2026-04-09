@@ -41,6 +41,7 @@ Materialized (regenerated on every init, reinit, and update) inside `Octopus-age
 - live/config/output-filters.json
 - live/config/skill-packs.json
 - live/config/isolation-mode.json
+- live/config/profiles.json
 - live/config/skills-index.json
 - live/config/octopus.config.json
 - live/docs/agent-rules/** (template-materialized rules; `15-project-memory.md` is regenerated from `docs/project-memory/` sources)

@@ -200,6 +200,81 @@ export const isolationModeSchema: Record<string, unknown> = Object.freeze({
     additionalProperties: false
 });
 
+const REVIEW_POLICY_VALUE = {
+    description: 'Review toggle: true = always, false = never, "auto" = trigger-based.',
+    oneOf: [
+        { type: 'boolean' },
+        { type: 'string', enum: ['auto'] }
+    ]
+} as const;
+
+const PROFILE_ENTRY_SCHEMA: Record<string, unknown> = Object.freeze({
+    type: 'object',
+    description: 'A single workspace profile defining policy overlays.',
+    properties: {
+        description: { type: 'string', minLength: 1, description: 'Human-readable profile description.' },
+        depth: { type: 'integer', minimum: 1, maximum: 3, description: 'Default task depth (1–3).' },
+        review_policy: {
+            type: 'object',
+            description: 'Review type overrides.',
+            properties: {
+                code:     REVIEW_POLICY_VALUE,
+                db:       REVIEW_POLICY_VALUE,
+                security: REVIEW_POLICY_VALUE,
+                refactor: REVIEW_POLICY_VALUE
+            },
+            additionalProperties: REVIEW_POLICY_VALUE
+        },
+        token_economy: {
+            type: 'object',
+            description: 'Token economy overrides.',
+            properties: {
+                enabled:                 { type: 'boolean' },
+                strip_examples:          { type: 'boolean' },
+                strip_code_blocks:       { type: 'boolean' },
+                scoped_diffs:            { type: 'boolean' },
+                compact_reviewer_output: { type: 'boolean' }
+            },
+            additionalProperties: false
+        },
+        skills: {
+            type: 'object',
+            description: 'Skill behaviour overrides.',
+            properties: {
+                auto_suggest: { type: 'boolean', description: 'Whether to auto-suggest skill packs for this profile.' }
+            },
+            additionalProperties: false
+        }
+    },
+    required: ['description', 'depth', 'review_policy', 'token_economy', 'skills'],
+    additionalProperties: false
+});
+
+export const profilesSchema: Record<string, unknown> = Object.freeze({
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    $id: 'octopus-agent-orchestrator/profiles.schema.json',
+    title: 'Workspace Profiles',
+    description: 'Built-in and user-defined workspace profiles with an active-profile pointer.',
+    type: 'object',
+    properties: {
+        version:          { type: 'integer', minimum: 1, description: 'Schema version.' },
+        active_profile:   { type: 'string', minLength: 1, description: 'Name of the currently active profile.' },
+        built_in_profiles: {
+            type: 'object',
+            description: 'Default built-in profiles shipped with the orchestrator. Protected from deletion by CLI commands.',
+            additionalProperties: PROFILE_ENTRY_SCHEMA,
+            minProperties: 1
+        },
+        user_profiles: {
+            type: 'object',
+            description: 'User-defined custom profiles.',
+            additionalProperties: PROFILE_ENTRY_SCHEMA
+        }
+    },
+    required: ['version', 'active_profile', 'built_in_profiles', 'user_profiles'],
+    additionalProperties: false
+});
+
 // ---------------------------------------------------------------------------
 // init-answers.json schema
 // ---------------------------------------------------------------------------
@@ -256,11 +331,12 @@ export const octopusConfigSchema: Record<string, unknown> = Object.freeze({
                 paths:                 { type: 'string', minLength: 1 },
                 'output-filters':      { type: 'string', minLength: 1 },
                 'skill-packs':         { type: 'string', minLength: 1 },
-                'isolation-mode':      { type: 'string', minLength: 1 }
+                'isolation-mode':      { type: 'string', minLength: 1 },
+                profiles:              { type: 'string', minLength: 1 }
             },
             required: [
                 'review-capabilities', 'token-economy', 'paths',
-                'output-filters', 'skill-packs', 'isolation-mode'
+                'output-filters', 'skill-packs', 'isolation-mode', 'profiles'
             ],
             additionalProperties: false
         }
@@ -285,7 +361,8 @@ const CONFIG_SCHEMAS: readonly ConfigSchemaEntry[] = Object.freeze([
     { name: 'paths',               schema: pathsSchema,              fileName: 'paths.json' },
     { name: 'output-filters',      schema: outputFiltersSchema,      fileName: 'output-filters.json' },
     { name: 'skill-packs',         schema: skillPacksSchema,         fileName: 'skill-packs.json' },
-    { name: 'isolation-mode',      schema: isolationModeSchema,      fileName: 'isolation-mode.json' }
+    { name: 'isolation-mode',      schema: isolationModeSchema,      fileName: 'isolation-mode.json' },
+    { name: 'profiles',            schema: profilesSchema,           fileName: 'profiles.json' }
 ]);
 
 export function getConfigSchemas(): readonly ConfigSchemaEntry[] {

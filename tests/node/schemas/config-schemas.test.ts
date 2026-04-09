@@ -18,6 +18,7 @@ import {
     outputFiltersSchema,
     skillPacksSchema,
     isolationModeSchema,
+    profilesSchema,
     octopusConfigSchema
 } from '../../../src/schemas/config-schemas';
 
@@ -68,6 +69,7 @@ function makeTempBundleRoot(): { tmpDir: string; bundleRoot: string; configDir: 
         'output-filters.json',
         'skill-packs.json',
         'isolation-mode.json',
+        'profiles.json',
         'octopus.config.json'
     ]) {
         fs.copyFileSync(
@@ -87,9 +89,9 @@ function cleanupTempBundleRoot(tmpDir: string): void {
 // Schema registry
 // ---------------------------------------------------------------------------
 
-test('getConfigSchemas returns entries for all six managed configs', () => {
+test('getConfigSchemas returns entries for all seven managed configs', () => {
     const schemas = getConfigSchemas();
-    assert.equal(schemas.length, 6);
+    assert.equal(schemas.length, 7);
     const names = schemas.map((s) => s.name);
     assert.ok(names.includes('review-capabilities'));
     assert.ok(names.includes('token-economy'));
@@ -97,6 +99,7 @@ test('getConfigSchemas returns entries for all six managed configs', () => {
     assert.ok(names.includes('output-filters'));
     assert.ok(names.includes('skill-packs'));
     assert.ok(names.includes('isolation-mode'));
+    assert.ok(names.includes('profiles'));
 });
 
 test('getConfigSchemaByName returns correct schema entry', () => {
@@ -122,6 +125,7 @@ test('all schema objects have $schema, $id, title, and type', () => {
         outputFiltersSchema,
         skillPacksSchema,
         isolationModeSchema,
+        profilesSchema,
         octopusConfigSchema
     ]) {
         assert.equal(typeof (schema as Record<string, unknown>).$schema, 'string');
@@ -168,6 +172,12 @@ test('template skill-packs.json validates against schema', () => {
 test('template isolation-mode.json validates against schema', () => {
     const data = readTemplateConfig('isolation-mode.json');
     const result = validateAgainstSchema(data, isolationModeSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('template profiles.json validates against schema', () => {
+    const data = readTemplateConfig('profiles.json');
+    const result = validateAgainstSchema(data, profilesSchema);
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
@@ -264,7 +274,7 @@ test('validateAllConfigs validates the live config directory when present', () =
     }
 
     const report = validateAllConfigs(bundleRoot);
-    assert.equal(report.configs.length, 6);
+    assert.equal(report.configs.length, 7);
     for (const cfg of report.configs) {
         assert.equal(cfg.exists, true, `${cfg.name} should exist`);
         assert.equal(cfg.parseable, true, `${cfg.name} should be parseable`);
