@@ -25,6 +25,7 @@ interface VerifyInitAnswersResult {
     enforceNoAutoCommit: boolean;
     claudeOrchestratorFullAccess: boolean;
     tokenEconomyEnabled: boolean;
+    providerMinimalism: boolean;
     activeAgentFiles: string[];
 }
 
@@ -94,6 +95,7 @@ export function readVerifyInitAnswers(targetRoot: string, initAnswersPath: strin
         enforceNoAutoCommit: false,
         claudeOrchestratorFullAccess: false,
         tokenEconomyEnabled: true,
+        providerMinimalism: true,
         activeAgentFiles: []
     };
 
@@ -169,6 +171,7 @@ export function readVerifyInitAnswers(targetRoot: string, initAnswersPath: strin
     var enforceNoAutoCommit = parseBooleanLike(getField(parsed, 'EnforceNoAutoCommit'), false);
     var claudeOrchestratorFullAccess = parseBooleanLike(getField(parsed, 'ClaudeOrchestratorFullAccess'), false);
     var tokenEconomyEnabled = parseBooleanLike(getField(parsed, 'TokenEconomyEnabled'), true);
+    var providerMinimalism = parseBooleanLike(getField(parsed, 'ProviderMinimalism'), true);
 
     var aafRaw = getField(parsed, 'ActiveAgentFiles');
     var activeAgentFiles: string[] = [];
@@ -188,6 +191,7 @@ export function readVerifyInitAnswers(targetRoot: string, initAnswersPath: strin
         enforceNoAutoCommit: enforceNoAutoCommit,
         claudeOrchestratorFullAccess: claudeOrchestratorFullAccess,
         tokenEconomyEnabled: tokenEconomyEnabled,
+        providerMinimalism: providerMinimalism,
         activeAgentFiles: activeAgentFiles
     };
 }
@@ -392,7 +396,10 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
     var qv = detectQwenSettingsViolations(targetRoot, canonicalEntrypoint);
     var skillPackValidation = validateSkillPacks(path.join(targetRoot, resolveBundleName()));
     var skillsIndexValidation = validateSkillsIndex(path.join(targetRoot, resolveBundleName()));
-    var ge: string[] = getManagedGitignoreEntries(iar.claudeOrchestratorFullAccess);
+    var ge: string[] = getManagedGitignoreEntries(
+        iar.claudeOrchestratorFullAccess,
+        iar.providerMinimalism && iar.activeAgentFiles.length > 0 ? iar.activeAgentFiles : undefined
+    );
     var gm = detectGitignoreViolations(targetRoot, ge);
     var mv = detectManifestContractViolations(targetRoot);
 

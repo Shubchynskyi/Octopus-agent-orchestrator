@@ -717,7 +717,8 @@ async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike)
         '--enforce-no-auto-commit': { key: 'enforceNoAutoCommit', type: 'string' },
         '--claude-orchestrator-full-access': { key: 'claudeOrchestratorFullAccess', type: 'string' },
         '--claude-full-access': { key: 'claudeOrchestratorFullAccess', type: 'string' },
-        '--token-economy-enabled': { key: 'tokenEconomyEnabled', type: 'string' }
+        '--token-economy-enabled': { key: 'tokenEconomyEnabled', type: 'string' },
+        '--provider-minimalism': { key: 'providerMinimalism', type: 'string' }
     };
     const { options: rawOptions } = parseOptions(commandArgv, reinitDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
@@ -751,6 +752,7 @@ async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike)
     let enforceNoAutoCommit = tryParseBooleanText(options.enforceNoAutoCommit ?? getInitAnswerValue(existingAnswers, 'EnforceNoAutoCommit'), true);
     let claudeOrchestratorFullAccess = tryParseBooleanText(options.claudeOrchestratorFullAccess ?? getInitAnswerValue(existingAnswers, 'ClaudeOrchestratorFullAccess'), false);
     let tokenEconomyEnabled = tryParseBooleanText(options.tokenEconomyEnabled ?? getInitAnswerValue(existingAnswers, 'TokenEconomyEnabled'), true);
+    let providerMinimalism = tryParseBooleanText(options.providerMinimalism ?? getInitAnswerValue(existingAnswers, 'ProviderMinimalism'), true);
 
     if (canUseInteractivePrompts) {
         assistantLanguage = await promptTextInput('Set communication language', String(assistantLanguage));
@@ -796,6 +798,15 @@ async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike)
                 { label: 'Yes', value: 'true' }
             ]
         }) === 'true';
+        providerMinimalism = await promptSingleSelect({
+            title: 'Set provider entrypoint minimalism mode',
+            defaultLabel: providerMinimalism ? 'Yes' : 'No',
+            defaultValue: providerMinimalism ? 'true' : 'false',
+            options: [
+                { label: 'Yes', value: 'true' },
+                { label: 'No', value: 'false' }
+            ]
+        }) === 'true';
     }
 
     const overrides: Record<string, string> = {
@@ -805,7 +816,8 @@ async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike)
         ActiveAgentFiles: normalizeActiveAgentFiles(activeAgentFiles, sourceOfTruth) || '',
         EnforceNoAutoCommit: String(enforceNoAutoCommit),
         ClaudeOrchestratorFullAccess: String(claudeOrchestratorFullAccess),
-        TokenEconomyEnabled: String(tokenEconomyEnabled)
+        TokenEconomyEnabled: String(tokenEconomyEnabled),
+        ProviderMinimalism: String(providerMinimalism)
     };
 
     const reinitResult = runReinit({
@@ -826,6 +838,7 @@ async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike)
         'enforceNoAutoCommit',
         'claudeOrchestratorFullAccess',
         'tokenEconomyEnabled',
+        'providerMinimalism',
         'coreRuleUpdated',
         'tokenEconomyConfigUpdated',
         'verifyStatus',

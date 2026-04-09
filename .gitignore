@@ -33,18 +33,11 @@ docs_local
 
 # Octopus-agent-orchestrator managed ignores
 .agents/workflows/start-task.md
-.antigravity/
 .claude/
 .github/agents/
 .github/copilot-instructions.md
-.junie/
 .qwen/
-.windsurf/
-AGENTS.md
-CLAUDE.md
-GEMINI.md
 Octopus-agent-orchestrator/
-QWEN.md
 TASK.md
 plans/*
 AGENTS.md

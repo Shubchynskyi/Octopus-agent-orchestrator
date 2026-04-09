@@ -339,6 +339,7 @@ describe('runInstall', () => {
                 EnforceNoAutoCommit: 'false',
                 ClaudeOrchestratorFullAccess: 'false',
                 TokenEconomyEnabled: 'true',
+                ProviderMinimalism: 'false',
                 CollectedVia: 'CLI_NONINTERACTIVE'
             });
 
@@ -379,6 +380,7 @@ describe('runInstall', () => {
                 EnforceNoAutoCommit: 'false',
                 ClaudeOrchestratorFullAccess: 'false',
                 TokenEconomyEnabled: 'true',
+                ProviderMinimalism: 'false',
                 CollectedVia: 'CLI_NONINTERACTIVE'
             });
 
@@ -970,6 +972,7 @@ describe('runInstall', () => {
                 EnforceNoAutoCommit: 'false',
                 ClaudeOrchestratorFullAccess: 'false',
                 TokenEconomyEnabled: 'true',
+                ProviderMinimalism: 'false',
                 CollectedVia: 'CLI_NONINTERACTIVE',
                 ActiveAgentFiles: 'CLAUDE.md, AGENTS.md'
             });
@@ -1035,6 +1038,7 @@ describe('runInstall', () => {
                 EnforceNoAutoCommit: 'false',
                 ClaudeOrchestratorFullAccess: 'false',
                 TokenEconomyEnabled: 'true',
+                ProviderMinimalism: 'false',
                 CollectedVia: 'CLI_NONINTERACTIVE',
                 ActiveAgentFiles: 'CLAUDE.md, AGENTS.md'
             });
@@ -1072,6 +1076,69 @@ describe('runInstall', () => {
                 'Preserved code-review bridge should retain skill content');
             assert.ok(codeReviewContent.includes('CLAUDE.md'),
                 'Preserved code-review bridge should reference new canonical CLAUDE.md');
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('removes inactive managed provider files when ProviderMinimalism is enabled (T-061)', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'GitHubCopilot',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE',
+                ActiveAgentFiles: '.github/copilot-instructions.md, CLAUDE.md'
+            });
+
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'GitHubCopilot',
+                initAnswersPath: answersPath
+            });
+
+            assert.ok(fs.existsSync(path.join(projectRoot, '.github', 'copilot-instructions.md')));
+            assert.ok(fs.existsSync(path.join(projectRoot, '.github', 'agents', 'orchestrator.md')));
+            assert.ok(fs.existsSync(path.join(projectRoot, '.github', 'agents', 'code-review.md')));
+
+            const answersPath2 = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE',
+                ActiveAgentFiles: 'CLAUDE.md'
+            });
+
+            const result = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                preserveExisting: true,
+                alignExisting: true,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath2
+            });
+
+            assert.equal(result.filesPreserved, 0, 'provider minimalism should not preserve inactive providers');
+            assert.ok(!fs.existsSync(path.join(projectRoot, '.github', 'copilot-instructions.md')));
+            assert.ok(!fs.existsSync(path.join(projectRoot, '.github', 'agents', 'orchestrator.md')));
+            assert.ok(!fs.existsSync(path.join(projectRoot, '.github', 'agents', 'code-review.md')));
+            const gitignore = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+            assert.ok(!gitignore.includes('.github/copilot-instructions.md'));
+            assert.ok(!gitignore.includes('.github/agents/'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }
@@ -1149,6 +1216,7 @@ describe('runInstall', () => {
                 EnforceNoAutoCommit: 'false',
                 ClaudeOrchestratorFullAccess: 'false',
                 TokenEconomyEnabled: 'true',
+                ProviderMinimalism: 'false',
                 CollectedVia: 'CLI_NONINTERACTIVE',
                 ActiveAgentFiles: 'CLAUDE.md'
             });

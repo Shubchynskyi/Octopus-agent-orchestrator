@@ -44,6 +44,7 @@ interface NormalizedInitAnswers {
     EnforceNoAutoCommit: boolean;
     ClaudeOrchestratorFullAccess: boolean;
     TokenEconomyEnabled: boolean;
+    ProviderMinimalism: boolean;
     CollectedVia: string;
     ActiveAgentFiles?: string[];
 }
@@ -57,6 +58,7 @@ export function validateInitAnswers(input: unknown): NormalizedInitAnswers {
         EnforceNoAutoCommit: normalizeBooleanLike(raw.EnforceNoAutoCommit, 'EnforceNoAutoCommit'),
         ClaudeOrchestratorFullAccess: normalizeBooleanLike(raw.ClaudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess'),
         TokenEconomyEnabled: normalizeBooleanLike(raw.TokenEconomyEnabled, 'TokenEconomyEnabled'),
+        ProviderMinimalism: raw.ProviderMinimalism === undefined ? true : normalizeBooleanLike(raw.ProviderMinimalism, 'ProviderMinimalism'),
         CollectedVia: raw.CollectedVia === undefined
             ? 'AGENT_INIT_PROMPT.md'
             : normalizeEnum(raw.CollectedVia, COLLECTED_VIA_VALUES, 'CollectedVia')
@@ -77,6 +79,7 @@ interface SerializedInitAnswers {
     EnforceNoAutoCommit: string;
     ClaudeOrchestratorFullAccess: string;
     TokenEconomyEnabled: string;
+    ProviderMinimalism: string;
     CollectedVia: string;
     ActiveAgentFiles?: string;
 }
@@ -90,6 +93,7 @@ export function serializeInitAnswers(input: unknown): SerializedInitAnswers {
         EnforceNoAutoCommit: normalized.EnforceNoAutoCommit ? 'true' : 'false',
         ClaudeOrchestratorFullAccess: normalized.ClaudeOrchestratorFullAccess ? 'true' : 'false',
         TokenEconomyEnabled: normalized.TokenEconomyEnabled ? 'true' : 'false',
+        ProviderMinimalism: normalized.ProviderMinimalism ? 'true' : 'false',
         CollectedVia: normalized.CollectedVia
     };
 

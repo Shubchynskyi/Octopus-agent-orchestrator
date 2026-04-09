@@ -681,14 +681,19 @@ export function buildClaudeLocalSettingsContent(
 
 /**
  * Computes the set of .gitignore entries needed for a given configuration.
+ *
+ * When `providerMinimalism` is true, the base set is scoped to active providers only
+ * instead of the full superset of all known providers.
  */
 export function buildGitignoreEntries(
     activeEntryFiles: string[],
     providerOrchestratorProfiles: ProviderOrchestratorProfileLike[],
     enableClaudeOrchestratorFullAccess: boolean,
-    includeQwenDirectory = false
+    includeQwenDirectory = false,
+    providerMinimalism = false
 ): string[] {
-    const entries = new Set<string>(getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess));
+    const scopedActiveFiles = providerMinimalism ? activeEntryFiles : undefined;
+    const entries = new Set<string>(getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess, scopedActiveFiles));
 
     if (includeQwenDirectory) {
         entries.add('.qwen/');

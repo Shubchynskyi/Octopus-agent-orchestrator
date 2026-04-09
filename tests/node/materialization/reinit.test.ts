@@ -107,6 +107,7 @@ describe('recollectInitAnswers', () => {
                 EnforceNoAutoCommit: 'true',
                 ClaudeOrchestratorFullAccess: 'false',
                 TokenEconomyEnabled: 'true',
+                ProviderMinimalism: 'false',
                 CollectedVia: 'AGENT_INIT_PROMPT.md'
             },
             changes
@@ -116,6 +117,7 @@ describe('recollectInitAnswers', () => {
         assert.equal(result.AssistantBrevity, 'detailed');
         assert.equal(result.SourceOfTruth, 'Codex');
         assert.equal(result.ActiveAgentFiles, 'CLAUDE.md, AGENTS.md');
+        assert.equal(result.ProviderMinimalism, 'false');
         const preservedCount = changes.filter((c) => c.action === 'preserved').length;
         assert.ok(preservedCount >= 7);
     });
@@ -174,6 +176,16 @@ describe('recollectInitAnswers', () => {
 
         assert.equal(result.TokenEconomyEnabled, 'false');
     });
+
+    it('infers ProviderMinimalism from live version.json', () => {
+        const changes: ReinitChange[] = [];
+        const result = recollectInitAnswers({
+            liveVersion: { ProviderMinimalism: false },
+            changes
+        });
+
+        assert.equal(result.ProviderMinimalism, 'false');
+    });
 });
 
 describe('runReinit', () => {
@@ -190,6 +202,7 @@ describe('runReinit', () => {
                 EnforceNoAutoCommit: 'false',
                 ClaudeOrchestratorFullAccess: 'false',
                 TokenEconomyEnabled: 'true',
+                ProviderMinimalism: 'false',
                 CollectedVia: 'CLI_NONINTERACTIVE'
             }));
 
@@ -222,6 +235,7 @@ describe('runReinit', () => {
                 EnforceNoAutoCommit: 'false',
                 ClaudeOrchestratorFullAccess: 'false',
                 TokenEconomyEnabled: 'true',
+                ProviderMinimalism: 'false',
                 CollectedVia: 'CLI_NONINTERACTIVE'
             }));
 
@@ -241,6 +255,7 @@ describe('runReinit', () => {
             const persistedAnswers = JSON.parse(fs.readFileSync(answersPath, 'utf8'));
             assert.equal(persistedAnswers.AssistantLanguage, 'German');
             assert.equal(persistedAnswers.AssistantBrevity, 'detailed');
+            assert.equal(persistedAnswers.ProviderMinimalism, 'false');
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

@@ -176,26 +176,52 @@ export function getLegacyManagedGitignoreEntries(): string[] {
 /**
  * Returns the managed .gitignore superset that should exist immediately after setup/install,
  * even before agent-init expands ActiveAgentFiles.
+ *
+ * When `activeEntryFiles` is provided (provider minimalism mode), only the active provider
+ * entrypoints and their associated bridge directories are included instead of all providers.
  */
-export function getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess = false): string[] {
+export function getManagedGitignoreEntries(
+    enableClaudeOrchestratorFullAccess = false,
+    activeEntryFiles?: readonly string[]
+): string[] {
     const selected = new Set<string>([
         resolveBundleName() + '/',
         'TASK.md',
         '.qwen/',
         SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
     ]);
-    const directoryScopedProviderEntrypoints = new Set<string>(getLegacyManagedGitignoreEntries());
 
-    for (const entrypointFile of ALL_AGENT_ENTRYPOINT_FILES) {
-        if (directoryScopedProviderEntrypoints.has(entrypointFile)) {
-            continue;
+    if (activeEntryFiles) {
+        const activeSet = new Set(activeEntryFiles);
+        const directoryScopedProviderEntrypoints = new Set<string>(getLegacyManagedGitignoreEntries());
+
+        for (const entrypointFile of activeEntryFiles) {
+            if (directoryScopedProviderEntrypoints.has(entrypointFile)) {
+                continue;
+            }
+            selected.add(entrypointFile);
         }
-        selected.add(entrypointFile);
-    }
 
-    for (const profile of getProviderOrchestratorProfileDefinitions()) {
-        for (const gitignoreEntry of profile.gitignoreEntries) {
-            selected.add(gitignoreEntry);
+        for (const profile of getProviderOrchestratorProfileDefinitions()) {
+            if (!activeSet.has(profile.entrypointFile)) continue;
+            for (const gitignoreEntry of profile.gitignoreEntries) {
+                selected.add(gitignoreEntry);
+            }
+        }
+    } else {
+        const directoryScopedProviderEntrypoints = new Set<string>(getLegacyManagedGitignoreEntries());
+
+        for (const entrypointFile of ALL_AGENT_ENTRYPOINT_FILES) {
+            if (directoryScopedProviderEntrypoints.has(entrypointFile)) {
+                continue;
+            }
+            selected.add(entrypointFile);
+        }
+
+        for (const profile of getProviderOrchestratorProfileDefinitions()) {
+            for (const gitignoreEntry of profile.gitignoreEntries) {
+                selected.add(gitignoreEntry);
+            }
         }
     }
 
@@ -206,8 +232,11 @@ export function getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess = 
     return [...selected].sort();
 }
 
-export function getManagedGitignoreCleanupEntries(enableClaudeOrchestratorFullAccess = false): string[] {
-    const selected = new Set<string>(getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess));
+export function getManagedGitignoreCleanupEntries(
+    enableClaudeOrchestratorFullAccess = false,
+    activeEntryFiles?: readonly string[]
+): string[] {
+    const selected = new Set<string>(getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess, activeEntryFiles));
     for (const legacyEntry of getLegacyManagedGitignoreEntries()) {
         selected.add(legacyEntry);
     }

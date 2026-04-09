@@ -167,6 +167,7 @@ export function runReinit(options: ReinitOptions) {
     const resolvedEnforceNoAutoCommit = validated.EnforceNoAutoCommit;
     const resolvedClaudeOrchestratorFullAccess = validated.ClaudeOrchestratorFullAccess;
     const resolvedTokenEconomyEnabled = validated.TokenEconomyEnabled;
+    const resolvedProviderMinimalism = validated.ProviderMinimalism;
     const resolvedActiveFiles = validated.ActiveAgentFiles || [];
     const resolvedActiveAgentFilesStr = convertActiveAgentEntrypointFilesToString(resolvedActiveFiles);
 
@@ -256,6 +257,7 @@ export function runReinit(options: ReinitOptions) {
         enforceNoAutoCommit: resolvedEnforceNoAutoCommit,
         claudeOrchestratorFullAccess: resolvedClaudeOrchestratorFullAccess,
         tokenEconomyEnabled: resolvedTokenEconomyEnabled,
+        providerMinimalism: resolvedProviderMinimalism,
         coreRuleUpdated,
         tokenEconomyConfigUpdated: tokenEconomyUpdated.updated,
         tokenEconomyConfigPath: tokenEconomyUpdated.path,
@@ -356,6 +358,11 @@ function getInitAnswerSchema(): InitAnswerSchemaEntry[] {
                 { source: 'version.json', property: 'TokenEconomyEnabled' },
                 { source: 'token-economy.json', property: 'enabled' }
             ]
+        },
+        {
+            key: 'ProviderMinimalism',
+            defaultValue: 'true',
+            inferFrom: [{ source: 'version.json', property: 'ProviderMinimalism' }]
         },
         {
             key: 'ActiveAgentFiles',

@@ -322,6 +322,7 @@ export const initAnswersSchema: Record<string, unknown> = Object.freeze({
         EnforceNoAutoCommit:        { ...INIT_ANSWERS_BOOLEAN_LIKE },
         ClaudeOrchestratorFullAccess: { ...INIT_ANSWERS_BOOLEAN_LIKE },
         TokenEconomyEnabled:        { ...INIT_ANSWERS_BOOLEAN_LIKE },
+        ProviderMinimalism:         { ...INIT_ANSWERS_BOOLEAN_LIKE, description: 'When true (default), materialize only the canonical active provider entrypoint; additional providers require explicit ActiveAgentFiles.' },
         CollectedVia:      { type: 'string', enum: [...COLLECTED_VIA_VALUES], description: 'How the answers were collected.' },
         ActiveAgentFiles:  { type: 'string', minLength: 1, description: 'Comma-separated list of active canonical agent entrypoint files.' }
     },

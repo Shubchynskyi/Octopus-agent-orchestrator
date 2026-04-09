@@ -57,6 +57,7 @@ test('SETUP_DEFINITIONS includes all expected flags', () => {
     assert.ok(SETUP_DEFINITIONS['--claude-full-access']);
     assert.equal(SETUP_DEFINITIONS['--claude-full-access'].key, 'claudeOrchestratorFullAccess');
     assert.ok(SETUP_DEFINITIONS['--token-economy-enabled']);
+    assert.ok(SETUP_DEFINITIONS['--provider-minimalism']);
 });
 
 test('parseOptions works with SETUP_DEFINITIONS', () => {
@@ -68,7 +69,8 @@ test('parseOptions works with SETUP_DEFINITIONS', () => {
         '--assistant-language', 'English',
         '--assistant-brevity', 'concise',
         '--enforce-no-auto-commit', 'true',
-        '--token-economy-enabled', 'false'
+        '--token-economy-enabled', 'false',
+        '--provider-minimalism', 'false'
     ], SETUP_DEFINITIONS);
 
     assert.equal(options.targetRoot, '/workspace');
@@ -79,6 +81,7 @@ test('parseOptions works with SETUP_DEFINITIONS', () => {
     assert.equal(options.assistantBrevity, 'concise');
     assert.equal(options.enforceNoAutoCommit, 'true');
     assert.equal(options.tokenEconomyEnabled, 'false');
+    assert.equal(options.providerMinimalism, 'false');
 });
 
 test('--claude-full-access aliases to claudeOrchestratorFullAccess', () => {
@@ -100,6 +103,7 @@ test('getSetupAnswerDefaults returns sensible defaults for empty workspace', () 
         assert.equal(defaults.enforceNoAutoCommit, true);
         assert.equal(defaults.claudeOrchestratorFullAccess, false);
         assert.equal(defaults.tokenEconomyEnabled, true);
+        assert.equal(defaults.providerMinimalism, true);
         assert.equal(defaults.activeAgentFiles, 'CLAUDE.md');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -115,7 +119,8 @@ test('getSetupAnswerDefaults respects CLI options over defaults', () => {
             sourceOfTruth: 'Codex',
             enforceNoAutoCommit: 'false',
             claudeOrchestratorFullAccess: 'true',
-            tokenEconomyEnabled: 'false'
+            tokenEconomyEnabled: 'false',
+            providerMinimalism: 'false'
         });
         assert.equal(defaults.assistantLanguage, 'Russian');
         assert.equal(defaults.assistantBrevity, 'detailed');
@@ -123,6 +128,7 @@ test('getSetupAnswerDefaults respects CLI options over defaults', () => {
         assert.equal(defaults.enforceNoAutoCommit, false);
         assert.equal(defaults.claudeOrchestratorFullAccess, true);
         assert.equal(defaults.tokenEconomyEnabled, false);
+        assert.equal(defaults.providerMinimalism, false);
         assert.equal(defaults.activeAgentFiles, 'AGENTS.md');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -141,7 +147,8 @@ test('getSetupAnswerDefaults reads existing init answers file', () => {
             SourceOfTruth: 'Gemini',
             EnforceNoAutoCommit: 'true',
             ClaudeOrchestratorFullAccess: 'true',
-            TokenEconomyEnabled: 'false'
+            TokenEconomyEnabled: 'false',
+            ProviderMinimalism: 'false'
         }),
         'utf8'
     );
@@ -154,6 +161,7 @@ test('getSetupAnswerDefaults reads existing init answers file', () => {
         assert.equal(defaults.enforceNoAutoCommit, true);
         assert.equal(defaults.claudeOrchestratorFullAccess, true);
         assert.equal(defaults.tokenEconomyEnabled, false);
+        assert.equal(defaults.providerMinimalism, false);
         assert.equal(defaults.activeAgentFiles, 'GEMINI.md');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -273,6 +281,7 @@ test('handleSetup --no-prompt preserves existing active agent files and remateri
             EnforceNoAutoCommit: 'false',
             ClaudeOrchestratorFullAccess: 'false',
             TokenEconomyEnabled: 'true',
+            ProviderMinimalism: 'false',
             CollectedVia: 'CLI_NONINTERACTIVE',
             ActiveAgentFiles: 'CLAUDE.md, AGENTS.md, .antigravity/rules.md'
         }),
@@ -290,6 +299,7 @@ test('handleSetup --no-prompt preserves existing active agent files and remateri
             fs.readFileSync(path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json'), 'utf8')
         );
         assert.equal(persistedAnswers.ActiveAgentFiles, 'CLAUDE.md, AGENTS.md, .antigravity/rules.md');
+        assert.equal(persistedAnswers.ProviderMinimalism, 'false');
         assert.ok(fs.existsSync(path.join(workspaceRoot, 'CLAUDE.md')));
         assert.ok(fs.existsSync(path.join(workspaceRoot, 'AGENTS.md')));
         assert.ok(fs.existsSync(path.join(workspaceRoot, '.antigravity', 'rules.md')));

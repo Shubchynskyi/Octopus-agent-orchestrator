@@ -70,7 +70,8 @@ export const SETUP_DEFINITIONS = {
     '--enforce-no-auto-commit': { key: 'enforceNoAutoCommit', type: 'string' },
     '--claude-orchestrator-full-access': { key: 'claudeOrchestratorFullAccess', type: 'string' },
     '--claude-full-access': { key: 'claudeOrchestratorFullAccess', type: 'string' },
-    '--token-economy-enabled': { key: 'tokenEconomyEnabled', type: 'string' }
+    '--token-economy-enabled': { key: 'tokenEconomyEnabled', type: 'string' },
+    '--provider-minimalism': { key: 'providerMinimalism', type: 'string' }
 };
 
 interface SetupOptions {
@@ -93,6 +94,7 @@ interface SetupOptions {
     enforceNoAutoCommit?: string;
     claudeOrchestratorFullAccess?: string;
     tokenEconomyEnabled?: string;
+    providerMinimalism?: string;
 }
 
 interface SetupAnswers {
@@ -102,6 +104,7 @@ interface SetupAnswers {
     enforceNoAutoCommit: boolean | string;
     claudeOrchestratorFullAccess: boolean | string;
     tokenEconomyEnabled: boolean | string;
+    providerMinimalism: boolean | string;
     activeAgentFiles: string | null;
 }
 
@@ -153,6 +156,10 @@ export function getSetupAnswerDefaults(targetRoot: string, initAnswersPath: stri
         ),
         tokenEconomyEnabled: tryParseBooleanText(
             options.tokenEconomyEnabled ?? getInitAnswerValue(existingAnswers, 'TokenEconomyEnabled'),
+            true
+        ),
+        providerMinimalism: tryParseBooleanText(
+            options.providerMinimalism ?? getInitAnswerValue(existingAnswers, 'ProviderMinimalism'),
             true
         ),
         activeAgentFiles
@@ -219,6 +226,7 @@ export async function collectSetupAnswersInteractively(
         enforceNoAutoCommit,
         claudeOrchestratorFullAccess,
         tokenEconomyEnabled,
+        providerMinimalism: defaults.providerMinimalism,
         activeAgentFiles
     };
 }
@@ -372,6 +380,7 @@ export async function handleSetup(
         const enforceNoAutoCommit = String(resolvedAnswers.enforceNoAutoCommit) === 'true';
         const claudeOrchestratorFullAccess = String(resolvedAnswers.claudeOrchestratorFullAccess) === 'true';
         const tokenEconomyEnabled = String(resolvedAnswers.tokenEconomyEnabled) === 'true';
+        const providerMinimalism = String(resolvedAnswers.providerMinimalism) === 'true';
         const activeAgentFiles = resolveSetupActiveAgentFiles(
             sourceOfTruth,
             resolvedAnswers.activeAgentFiles
@@ -399,6 +408,7 @@ export async function handleSetup(
                 EnforceNoAutoCommit: enforceNoAutoCommit,
                 ClaudeOrchestratorFullAccess: claudeOrchestratorFullAccess,
                 TokenEconomyEnabled: tokenEconomyEnabled,
+                ProviderMinimalism: providerMinimalism,
                 CollectedVia: collectedVia,
                 ActiveAgentFiles: activeAgentFiles
             });

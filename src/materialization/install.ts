@@ -188,6 +188,7 @@ export function runInstall(options: RunInstallOptions) {
     const enforceNoAutoCommit = initAnswers.EnforceNoAutoCommit;
     const enableClaudeOrchestratorFullAccess = initAnswers.ClaudeOrchestratorFullAccess;
     const tokenEconomyEnabled = initAnswers.TokenEconomyEnabled;
+    const providerMinimalism = initAnswers.ProviderMinimalism;
 
     const canonicalEntryFile = getCanonicalEntrypointFile(initAnswers.SourceOfTruth);
     const activeEntryFilesSeed = initAnswers.ActiveAgentFiles
@@ -271,6 +272,42 @@ export function runInstall(options: RunInstallOptions) {
         backupFile(destPath, relativePath);
         if (!dryRun) {
             fs.writeFileSync(destPath, result.content, 'utf8');
+        }
+        return true;
+    }
+
+    function removeEmptyParentDirectories(startDir: string): void {
+        let current = path.resolve(startDir);
+        const root = path.resolve(targetRoot);
+        while (current !== root) {
+            const relative = path.relative(root, current);
+            if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+                return;
+            }
+            if (!pathExists(current) || !fs.statSync(current).isDirectory() || fs.readdirSync(current).length > 0) {
+                return;
+            }
+            fs.rmdirSync(current);
+            current = path.dirname(current);
+        }
+    }
+
+    function removeManagedBlockOrFileOnDisk(destPath: string, relativePath: string): boolean {
+        if (!pathExists(destPath) || !fs.statSync(destPath).isFile()) return false;
+        const content = readTextFile(destPath);
+        const pattern = new RegExp(
+            `${escapeRegex(MANAGED_START)}[\\s\\S]*?${escapeRegex(MANAGED_END)}`, 'm'
+        );
+        if (!pattern.test(content)) return false;
+        const nextContent = content.replace(pattern, '').trim();
+        backupFile(destPath, relativePath);
+        if (!dryRun) {
+            if (nextContent) {
+                fs.writeFileSync(destPath, `${nextContent}${content.includes('\r\n') ? '\r\n' : '\n'}`, 'utf8');
+            } else {
+                fs.rmSync(destPath, { force: true });
+                removeEmptyParentDirectories(path.dirname(destPath));
+            }
         }
         return true;
     }
@@ -495,6 +532,9 @@ export function runInstall(options: RunInstallOptions) {
     // Now we detect pre-existing managed files on disk and preserve them
     // as redirect entrypoints / provider bridges instead of deleting them.
     // Two-pass approach: discover all preserved files first, then sync content.
+    //
+    // When ProviderMinimalism=true, remove stale managed provider files instead
+    // of preserving them as redirects / bridges.
     const desiredManagedFileSet = new Set([
         canonicalEntryFile,
         ...redirectEntryFiles,
@@ -527,43 +567,55 @@ export function runInstall(options: RunInstallOptions) {
     const preservedBridgePaths: string[] = [];
     let preserved = 0;
 
-    for (const relativePath of allManagedFileCandidates) {
-        if (desiredManagedFileSet.has(relativePath)) {
-            continue;
-        }
-        const destPath = path.join(targetRoot, relativePath);
-        if (!pathExists(destPath) || !fileHasManagedMarkers(destPath)) {
-            continue;
-        }
+    if (!providerMinimalism) {
+        for (const relativePath of allManagedFileCandidates) {
+            if (desiredManagedFileSet.has(relativePath)) {
+                continue;
+            }
+            const destPath = path.join(targetRoot, relativePath);
+            if (!pathExists(destPath) || !fileHasManagedMarkers(destPath)) {
+                continue;
+            }
 
-        preservedSet.add(relativePath);
-        desiredManagedFileSet.add(relativePath);
+            preservedSet.add(relativePath);
+            desiredManagedFileSet.add(relativePath);
 
-        if (allEntrypointFileSet.has(relativePath) && relativePath !== canonicalEntryFile) {
-            // Cascade: discover associated provider bridge
-            const providerProfile = allProviderProfiles.find((p) => p.entrypointFile === relativePath);
-            if (providerProfile && !desiredManagedFileSet.has(providerProfile.orchestratorRelativePath)) {
-                const bridgePath = path.join(targetRoot, providerProfile.orchestratorRelativePath);
-                if (fileHasManagedMarkers(bridgePath)) {
-                    preservedSet.add(providerProfile.orchestratorRelativePath);
-                    desiredManagedFileSet.add(providerProfile.orchestratorRelativePath);
-                    preservedBridgePaths.push(providerProfile.orchestratorRelativePath);
-                }
-                // Cascade: discover associated skill bridges for GitHub Copilot
-                if (relativePath === '.github/copilot-instructions.md') {
-                    for (const skillProfile of allSkillBridgeProfiles) {
-                        if (!desiredManagedFileSet.has(skillProfile.relativePath)) {
-                            const skillBridgePath = path.join(targetRoot, skillProfile.relativePath);
-                            if (fileHasManagedMarkers(skillBridgePath)) {
-                                preservedSet.add(skillProfile.relativePath);
-                                desiredManagedFileSet.add(skillProfile.relativePath);
+            if (allEntrypointFileSet.has(relativePath) && relativePath !== canonicalEntryFile) {
+                // Cascade: discover associated provider bridge
+                const providerProfile = allProviderProfiles.find((p) => p.entrypointFile === relativePath);
+                if (providerProfile && !desiredManagedFileSet.has(providerProfile.orchestratorRelativePath)) {
+                    const bridgePath = path.join(targetRoot, providerProfile.orchestratorRelativePath);
+                    if (fileHasManagedMarkers(bridgePath)) {
+                        preservedSet.add(providerProfile.orchestratorRelativePath);
+                        desiredManagedFileSet.add(providerProfile.orchestratorRelativePath);
+                        preservedBridgePaths.push(providerProfile.orchestratorRelativePath);
+                    }
+                    // Cascade: discover associated skill bridges for GitHub Copilot
+                    if (relativePath === '.github/copilot-instructions.md') {
+                        for (const skillProfile of allSkillBridgeProfiles) {
+                            if (!desiredManagedFileSet.has(skillProfile.relativePath)) {
+                                const skillBridgePath = path.join(targetRoot, skillProfile.relativePath);
+                                if (fileHasManagedMarkers(skillBridgePath)) {
+                                    preservedSet.add(skillProfile.relativePath);
+                                    desiredManagedFileSet.add(skillProfile.relativePath);
+                                }
                             }
                         }
                     }
                 }
+            } else if (allProviderBridgeMap.has(relativePath)) {
+                preservedBridgePaths.push(relativePath);
             }
-        } else if (allProviderBridgeMap.has(relativePath)) {
-            preservedBridgePaths.push(relativePath);
+        }
+    } else {
+        for (const relativePath of allManagedFileCandidates) {
+            if (desiredManagedFileSet.has(relativePath)) {
+                continue;
+            }
+            const destPath = path.join(targetRoot, relativePath);
+            if (removeManagedBlockOrFileOnDisk(destPath, relativePath)) {
+                aligned++;
+            }
         }
     }
 
@@ -605,7 +657,8 @@ export function runInstall(options: RunInstallOptions) {
 
     // Gitignore
     const gitignoreEntryList = buildGitignoreEntries(
-        activeEntryFiles, providerOrchestratorProfiles, enableClaudeOrchestratorFullAccess, qwenExists
+        activeEntryFiles, providerOrchestratorProfiles, enableClaudeOrchestratorFullAccess, qwenExists,
+        providerMinimalism
     );
     let gitignoreAdded = 0;
     const gitignorePath = path.join(targetRoot, '.gitignore');
@@ -665,6 +718,7 @@ export function runInstall(options: RunInstallOptions) {
             EnforceNoAutoCommit: enforceNoAutoCommit,
             ClaudeOrchestratorFullAccess: enableClaudeOrchestratorFullAccess,
             TokenEconomyEnabled: tokenEconomyEnabled,
+            ProviderMinimalism: providerMinimalism,
             InitAnswersPath: resolvedInitPath
         });
         liveVersionWritten = true;
@@ -689,6 +743,7 @@ export function runInstall(options: RunInstallOptions) {
         enforceNoAutoCommit,
         claudeOrchestratorFullAccess: enableClaudeOrchestratorFullAccess,
         tokenEconomyEnabled,
+        providerMinimalism,
         canonicalEntrypoint: canonicalEntryFile,
         activeAgentFiles: convertActiveAgentEntrypointFilesToString(activeEntryFiles),
         filesDeployed: deployed,
