@@ -7,8 +7,10 @@ import {
     validateTaskPlan,
     computeTaskPlanDigest,
     serializeTaskPlan,
-    isApprovedPlan
+    isApprovedPlan,
+    detectPlanDrift
 } from '../../../src/schemas/task-plan';
+import type { TaskPlan, PlanDriftResult } from '../../../src/schemas/task-plan';
 
 import { validateAgainstSchema } from '../../../src/schemas/config-schemas';
 
@@ -320,4 +322,175 @@ test('isApprovedPlan returns false for superseded status', () => {
 
 test('TASK_PLAN_SCHEMA_VERSION is 1', () => {
     assert.equal(TASK_PLAN_SCHEMA_VERSION, 1);
+});
+
+// ---------------------------------------------------------------------------
+// detectPlanDrift
+// ---------------------------------------------------------------------------
+
+function approvedPlan(scopeFiles: string[]): TaskPlan {
+    return validateTaskPlan({
+        schema_version: 1,
+        task_id: 'T-099',
+        status: 'approved',
+        goal: 'Test plan drift detection',
+        scope_files: scopeFiles,
+        risk_level: 'low',
+        steps: [{ id: 'step-1', title: 'Implement' }]
+    });
+}
+
+test('detectPlanDrift returns NO_PLAN when plan is null', () => {
+    const result = detectPlanDrift({ plan: null, actualFiles: ['src/foo.ts'] });
+    assert.equal(result.status, 'NO_PLAN');
+    assert.equal(result.plan_guided, false);
+    assert.equal(result.plan_sha256, null);
+    assert.deepEqual(result.extra_files, []);
+    assert.deepEqual(result.violations, []);
+});
+
+test('detectPlanDrift returns NO_DRIFT when actual files are subset of plan scope', () => {
+    const plan = approvedPlan(['src/a.ts', 'src/b.ts', 'src/c.ts']);
+    const result = detectPlanDrift({ plan, actualFiles: ['src/a.ts', 'src/b.ts'] });
+    assert.equal(result.status, 'NO_DRIFT');
+    assert.equal(result.plan_guided, true);
+    assert.ok(result.plan_sha256);
+    assert.deepEqual(result.extra_files, []);
+    assert.deepEqual(result.matched_files, ['src/a.ts', 'src/b.ts']);
+    assert.deepEqual(result.missing_files, ['src/c.ts']);
+    assert.deepEqual(result.violations, []);
+});
+
+test('detectPlanDrift returns NO_DRIFT when actual files match plan scope exactly', () => {
+    const plan = approvedPlan(['src/a.ts', 'src/b.ts']);
+    const result = detectPlanDrift({ plan, actualFiles: ['src/a.ts', 'src/b.ts'] });
+    assert.equal(result.status, 'NO_DRIFT');
+    assert.deepEqual(result.extra_files, []);
+    assert.deepEqual(result.missing_files, []);
+    assert.deepEqual(result.matched_files, ['src/a.ts', 'src/b.ts']);
+});
+
+test('detectPlanDrift returns REPLAN_REQUIRED when extra files without override', () => {
+    const plan = approvedPlan(['src/a.ts']);
+    const result = detectPlanDrift({ plan, actualFiles: ['src/a.ts', 'src/extra.ts'] });
+    assert.equal(result.status, 'REPLAN_REQUIRED');
+    assert.equal(result.plan_guided, true);
+    assert.deepEqual(result.extra_files, ['src/extra.ts']);
+    assert.deepEqual(result.matched_files, ['src/a.ts']);
+    assert.ok(result.violations.length > 0);
+    assert.ok(result.violations[0].includes('Plan drift detected'));
+    assert.ok(result.violations[0].includes('src/extra.ts'));
+});
+
+test('detectPlanDrift returns PLAN_DRIFT when extra files with valid override', () => {
+    const plan = approvedPlan(['src/a.ts']);
+    const result = detectPlanDrift({
+        plan,
+        actualFiles: ['src/a.ts', 'src/extra.ts'],
+        allowPlanDrift: true,
+        allowPlanDriftReason: 'Required for dependency update cascade'
+    });
+    assert.equal(result.status, 'PLAN_DRIFT');
+    assert.equal(result.plan_guided, true);
+    assert.deepEqual(result.extra_files, ['src/extra.ts']);
+    assert.ok(result.violations.length > 0);
+    assert.ok(result.violations[0].includes('Plan drift overridden'));
+});
+
+test('detectPlanDrift returns REPLAN_REQUIRED when override reason is too short', () => {
+    const plan = approvedPlan(['src/a.ts']);
+    const result = detectPlanDrift({
+        plan,
+        actualFiles: ['src/a.ts', 'src/extra.ts'],
+        allowPlanDrift: true,
+        allowPlanDriftReason: 'short'
+    });
+    assert.equal(result.status, 'REPLAN_REQUIRED');
+    assert.ok(result.violations[0].includes('>= 12 chars'));
+});
+
+test('detectPlanDrift returns REPLAN_REQUIRED when override reason is missing', () => {
+    const plan = approvedPlan(['src/a.ts']);
+    const result = detectPlanDrift({
+        plan,
+        actualFiles: ['src/a.ts', 'src/extra.ts'],
+        allowPlanDrift: true
+    });
+    assert.equal(result.status, 'REPLAN_REQUIRED');
+    assert.ok(result.violations[0].includes('>= 12 chars'));
+});
+
+test('detectPlanDrift normalizes backslashes in paths', () => {
+    const plan = approvedPlan(['src/a.ts']);
+    const result = detectPlanDrift({ plan, actualFiles: ['src\\a.ts'] });
+    assert.equal(result.status, 'NO_DRIFT');
+    assert.deepEqual(result.matched_files, ['src/a.ts']);
+});
+
+test('detectPlanDrift deduplicates actual files', () => {
+    const plan = approvedPlan(['src/a.ts']);
+    const result = detectPlanDrift({ plan, actualFiles: ['src/a.ts', 'src/a.ts'] });
+    assert.equal(result.status, 'NO_DRIFT');
+    assert.deepEqual(result.matched_files, ['src/a.ts']);
+});
+
+test('detectPlanDrift handles empty actual files', () => {
+    const plan = approvedPlan(['src/a.ts']);
+    const result = detectPlanDrift({ plan, actualFiles: [] });
+    assert.equal(result.status, 'NO_DRIFT');
+    assert.deepEqual(result.matched_files, []);
+    assert.deepEqual(result.missing_files, ['src/a.ts']);
+    assert.deepEqual(result.extra_files, []);
+});
+
+test('detectPlanDrift reports multiple extra files sorted', () => {
+    const plan = approvedPlan(['src/a.ts']);
+    const result = detectPlanDrift({ plan, actualFiles: ['src/z.ts', 'src/a.ts', 'src/m.ts'] });
+    assert.equal(result.status, 'REPLAN_REQUIRED');
+    assert.deepEqual(result.extra_files, ['src/m.ts', 'src/z.ts']);
+});
+
+test('detectPlanDrift uses embedded plan_sha256 when available', () => {
+    const plan = approvedPlan(['src/a.ts']);
+    const digest = computeTaskPlanDigest(plan);
+    plan.plan_sha256 = digest;
+    const result = detectPlanDrift({ plan, actualFiles: ['src/a.ts'] });
+    assert.equal(result.plan_sha256, digest);
+});
+
+test('detectPlanDrift computes digest when plan_sha256 is missing', () => {
+    const plan = approvedPlan(['src/a.ts']);
+    const planAny = plan as unknown as Record<string, unknown>;
+    delete planAny.plan_sha256;
+    const result = detectPlanDrift({ plan, actualFiles: ['src/a.ts'] });
+    assert.ok(result.plan_sha256);
+    assert.equal(result.plan_sha256!.length, 64);
+});
+
+test('detectPlanDrift filters empty paths from actual files', () => {
+    const plan = approvedPlan(['src/a.ts']);
+    const result = detectPlanDrift({ plan, actualFiles: ['', '  ', 'src/a.ts'] });
+    assert.equal(result.status, 'NO_DRIFT');
+    assert.deepEqual(result.matched_files, ['src/a.ts']);
+});
+
+test('detectPlanDrift normalizes leading ./ in plan scope_files', () => {
+    const plan = approvedPlan(['./src/a.ts']);
+    const result = detectPlanDrift({ plan, actualFiles: ['src/a.ts'] });
+    assert.equal(result.status, 'NO_DRIFT');
+    assert.deepEqual(result.matched_files, ['src/a.ts']);
+});
+
+test('detectPlanDrift normalizes leading ./ in actual files', () => {
+    const plan = approvedPlan(['src/a.ts']);
+    const result = detectPlanDrift({ plan, actualFiles: ['./src/a.ts'] });
+    assert.equal(result.status, 'NO_DRIFT');
+    assert.deepEqual(result.matched_files, ['src/a.ts']);
+});
+
+test('detectPlanDrift collapses duplicate slashes', () => {
+    const plan = approvedPlan(['src//a.ts']);
+    const result = detectPlanDrift({ plan, actualFiles: ['src/a.ts'] });
+    assert.equal(result.status, 'NO_DRIFT');
+    assert.deepEqual(result.matched_files, ['src/a.ts']);
 });

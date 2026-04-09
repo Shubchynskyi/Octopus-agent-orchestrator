@@ -306,3 +306,151 @@ export function serializeTaskPlan(plan: TaskPlan): string {
 export function isApprovedPlan(plan: TaskPlan): boolean {
     return plan.status === 'approved';
 }
+
+// ---------------------------------------------------------------------------
+// Plan drift detection
+// ---------------------------------------------------------------------------
+
+export type PlanDriftStatus = 'NO_DRIFT' | 'PLAN_DRIFT' | 'REPLAN_REQUIRED' | 'NO_PLAN';
+
+export interface PlanDriftFile {
+    path: string;
+    in_plan: boolean;
+}
+
+export interface PlanDriftResult {
+    status: PlanDriftStatus;
+    plan_guided: boolean;
+    plan_sha256: string | null;
+    extra_files: string[];
+    missing_files: string[];
+    matched_files: string[];
+    violations: string[];
+}
+
+export interface DetectPlanDriftOptions {
+    plan: TaskPlan | null;
+    actualFiles: string[];
+    allowPlanDrift?: boolean;
+    allowPlanDriftReason?: string;
+}
+
+function normalizeFilePath(filePath: string): string {
+    let text = filePath.trim().replace(/\\/g, '/');
+    text = text.replace(/^\.\//, '');
+    text = text.replace(/\/+/g, '/');
+    return text;
+}
+
+/**
+ * Compare actual changed files against the plan's `scope_files`.
+ *
+ * When no plan is attached (`plan` is null) the result is `NO_PLAN` and
+ * today's freeform behavior is fully preserved.
+ *
+ * When a plan is attached:
+ * - Files in `actualFiles` not in plan `scope_files` → drift.
+ * - `PLAN_DRIFT` when `allowPlanDrift` is true (override accepted).
+ * - `REPLAN_REQUIRED` when drift is detected without override.
+ * - `NO_DRIFT` when actual scope is a subset of plan scope.
+ */
+export function detectPlanDrift(options: DetectPlanDriftOptions): PlanDriftResult {
+    const { plan, actualFiles, allowPlanDrift = false, allowPlanDriftReason } = options;
+
+    if (!plan) {
+        return {
+            status: 'NO_PLAN',
+            plan_guided: false,
+            plan_sha256: null,
+            extra_files: [],
+            missing_files: [],
+            matched_files: [],
+            violations: []
+        };
+    }
+
+    const planScope = new Set(plan.scope_files.map(normalizeFilePath));
+    const actualNormalized = [...new Set(actualFiles.map(normalizeFilePath).filter(Boolean))];
+
+    const extra: string[] = [];
+    const matched: string[] = [];
+    for (const file of actualNormalized) {
+        if (planScope.has(file)) {
+            matched.push(file);
+        } else {
+            extra.push(file);
+        }
+    }
+
+    const actualSet = new Set(actualNormalized);
+    const missing: string[] = [];
+    for (const planned of planScope) {
+        if (!actualSet.has(planned)) {
+            missing.push(planned);
+        }
+    }
+
+    extra.sort();
+    missing.sort();
+    matched.sort();
+
+    const digest = plan.plan_sha256 || computeTaskPlanDigest(plan);
+    const violations: string[] = [];
+
+    if (extra.length === 0) {
+        return {
+            status: 'NO_DRIFT',
+            plan_guided: true,
+            plan_sha256: digest,
+            extra_files: [],
+            missing_files: missing,
+            matched_files: matched,
+            violations: []
+        };
+    }
+
+    if (allowPlanDrift) {
+        const reason = (allowPlanDriftReason || '').trim();
+        if (!reason || reason.length < 12) {
+            violations.push(
+                'Plan drift override requires --allow-plan-drift-reason with a concrete justification (>= 12 chars).'
+            );
+            return {
+                status: 'REPLAN_REQUIRED',
+                plan_guided: true,
+                plan_sha256: digest,
+                extra_files: extra,
+                missing_files: missing,
+                matched_files: matched,
+                violations
+            };
+        }
+        violations.push(
+            `Plan drift overridden: ${extra.length} file(s) outside plan scope. Reason: ${reason}`
+        );
+        return {
+            status: 'PLAN_DRIFT',
+            plan_guided: true,
+            plan_sha256: digest,
+            extra_files: extra,
+            missing_files: missing,
+            matched_files: matched,
+            violations
+        };
+    }
+
+    violations.push(
+        `Plan drift detected: ${extra.length} file(s) outside plan scope_files: ${extra.join(', ')}. ` +
+        'Replan the task or pass --allow-plan-drift with --allow-plan-drift-reason to override.'
+    );
+
+    return {
+        status: 'REPLAN_REQUIRED',
+        plan_guided: true,
+        plan_sha256: digest,
+        extra_files: extra,
+        missing_files: missing,
+        matched_files: matched,
+        violations
+    };
+}

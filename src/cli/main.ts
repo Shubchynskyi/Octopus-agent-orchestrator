@@ -1551,6 +1551,8 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 '--output-filters-path': { key: 'outputFiltersPath', type: 'string' },
                 '--metrics-path': { key: 'metricsPath', type: 'string' },
                 '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+                '--allow-plan-drift': { key: 'allowPlanDrift', type: 'boolean' },
+                '--allow-plan-drift-reason': { key: 'allowPlanDriftReason', type: 'string' },
                 '--repo-root': { key: 'repoRoot', type: 'string' }
             };
             const { options } = parseOptions(gateArgv, defs);

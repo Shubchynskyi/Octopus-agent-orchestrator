@@ -104,8 +104,10 @@ import {
 import {
     validateTaskPlan,
     computeTaskPlanDigest,
-    isApprovedPlan
+    isApprovedPlan,
+    detectPlanDrift
 } from '../../schemas/task-plan';
+import type { PlanDriftResult } from '../../schemas/task-plan';
 import {
     buildNoOpArtifact,
     resolveNoOpArtifactPath
@@ -178,6 +180,8 @@ interface CompileGateCommandOptions {
     commandsPath?: string;
     preflightPath?: string;
     emitMetrics?: unknown;
+    allowPlanDrift?: unknown;
+    allowPlanDriftReason?: string;
 }
 
 interface EnterTaskModeCommandOptions {
@@ -1972,6 +1976,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     const compileCommandAudits: CommandPolicyAudit[] = [];
     const startedAt = Date.now();
     let compileOutputInitialized = false;
+    let planDriftResult: PlanDriftResult | null = null;
 
     try {
         const commandsPathValue = options.commandsPath
@@ -2035,7 +2040,55 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         if (!exceptionMessage && scopeViolations.length > 0) {
             exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = `Preflight scope drift detected. Re-run classify-change before compile gate. ${scopeViolations.join(' ')}`;
-        } else if (!exceptionMessage) {
+        }
+
+        // Plan drift detection: compare actual changed files against approved plan scope_files.
+        if (!exceptionMessage && taskModeEvidence.plan && taskModeEvidence.plan.plan_path) {
+            let loadedPlan: import('../../schemas/task-plan').TaskPlan | null = null;
+            let planLoadError: string | null = null;
+            try {
+                const planFilePath = gateHelpers.resolvePathInsideRepo(taskModeEvidence.plan.plan_path, repoRoot, { allowMissing: false });
+                if (!planFilePath || !fs.existsSync(planFilePath) || !fs.statSync(planFilePath).isFile()) {
+                    planLoadError = `Plan artifact not found at '${taskModeEvidence.plan.plan_path}'. Replan the task or remove plan metadata.`;
+                } else {
+                    const planJson = JSON.parse(fs.readFileSync(planFilePath, 'utf8'));
+                    const validated = validateTaskPlan(planJson);
+                    if (validated.task_id !== resolvedTaskId) {
+                        planLoadError = `Plan task_id '${validated.task_id}' does not match task '${resolvedTaskId}'.`;
+                    } else if (!isApprovedPlan(validated)) {
+                        planLoadError = `Plan status is '${validated.status}'; only approved plans enforce drift detection.`;
+                    } else {
+                        const digest = computeTaskPlanDigest(validated);
+                        if (taskModeEvidence.plan.plan_sha256 && digest !== taskModeEvidence.plan.plan_sha256) {
+                            planLoadError = `Plan integrity mismatch: task-mode sha256='${taskModeEvidence.plan.plan_sha256}' vs current='${digest}'. Plan may have been edited after approval.`;
+                        } else {
+                            loadedPlan = validated;
+                        }
+                    }
+                }
+            } catch (planError: unknown) {
+                planLoadError = `Plan load/parse failed: ${getErrorMessage(planError)}. Replan the task or remove plan metadata.`;
+            }
+
+            if (planLoadError) {
+                exitCode = EXIT_GATE_FAILURE;
+                exceptionMessage = planLoadError;
+            } else {
+                planDriftResult = detectPlanDrift({
+                    plan: loadedPlan,
+                    actualFiles: preflightContext.changed_files as string[],
+                    allowPlanDrift: parseBooleanOption(options.allowPlanDrift, false),
+                    allowPlanDriftReason: String(options.allowPlanDriftReason || '').trim() || undefined
+                });
+
+                if (planDriftResult.status === 'REPLAN_REQUIRED') {
+                    exitCode = EXIT_GATE_FAILURE;
+                    exceptionMessage = planDriftResult.violations.join(' ');
+                }
+            }
+        }
+
+        if (!exceptionMessage) {
             await emitMandatoryImplementationStartedEventAsync(orchestratorRoot, resolvedTaskId, {
                 preflight_path: gateHelpers.normalizePath(resolvedPreflightPath),
                 commands_path: normalizeOptionalPath(resolvedCommandsPath),
@@ -2151,6 +2204,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         exit_code: exceptionMessage ? exitCode : 0,
         command_policy_audits: compileCommandAudits,
         command_policy_warning_count: compileCommandAudits.reduce((sum, a) => sum + a.warning_count, 0),
+        plan_drift: planDriftResult,
         ...outputTelemetry
     };
 
@@ -2226,6 +2280,12 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         'COMPILE_GATE_PASSED',
         `CompileSummary: PASSED | duration_ms=${durationMs} | exit_code=0 | errors=${errorCount} | warnings=${warningCount}`
     ];
+    if (planDriftResult) {
+        outputLines.push(`PlanDrift: ${planDriftResult.status}`);
+        if (planDriftResult.status === 'PLAN_DRIFT') {
+            outputLines.push(`PlanDriftExtraFiles: ${planDriftResult.extra_files.join(', ')}`);
+        }
+    }
     if (compileOutputPath) {
         outputLines.push(`CompileOutputPath: ${gateHelpers.normalizePath(compileOutputPath)}`);
     }
