@@ -137,11 +137,11 @@ billing-platform/
 
 > Create a task for "Add late-payment fee calculation to InvoiceService".
 
-| ID | Status | Priority | Area | Title | Depth |
+| ID | Status | Priority | Area | Title | Profile |
 |---|---|---|---|---|---|
-| T-301 | 🟦 TODO | P1 | backend | Add late-payment fee calculation to InvoiceService | 3 |
+| T-301 | 🟦 TODO | P1 | backend | Add late-payment fee calculation to InvoiceService | strict |
 
-This task touches service logic, database queries, and monetary calculations — `depth=3` is appropriate.
+This task touches service logic, database queries, and monetary calculations — the `strict` profile (depth=3) is appropriate.
 
 ### Execute the Task
 
@@ -303,7 +303,7 @@ Removed:
 - **Output filters**: The `maven` and `gradle` profiles in `live/config/output-filters.json` handle build output compaction automatically.
 - **Skill packs**: `java-spring` adds Spring-specific review guidance. Pair with `data-database` if you have Flyway/Liquibase migrations.
 - **paths.json**: Add your project-specific source roots if the defaults (`src/main/java`, `src/test/java`) don't match. Trigger patterns for `db/migration/` are already included.
-- **Depth selection**: Use `depth=3` for tasks that touch database migrations, security-sensitive code, or cross-module logic. Use `depth=2` for standard feature work.
+- **Profile selection**: Use the `strict` profile (depth=3) for tasks that touch database migrations, security-sensitive code, or cross-module logic. Use `default` or `balanced` (depth=2) for standard feature work.
 - **Multi-module Maven**: If you have submodules, ensure the compile gate command in the agent rules points to the correct `mvn` invocation for your root POM.
 
 ---

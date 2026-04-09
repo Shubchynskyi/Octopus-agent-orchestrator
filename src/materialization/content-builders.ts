@@ -266,7 +266,50 @@ export function setTaskQueueRowsInManagedBlock(managedBlock: string, rows: strin
 }
 
 /**
+ * Detects whether a managed block uses the legacy `Depth` column header.
+ */
+export function hasLegacyDepthColumn(managedBlock: string): boolean {
+    return /\|\s*Depth\s*\|/i.test(managedBlock) && !/\|\s*Profile\s*\|/i.test(managedBlock);
+}
+
+/**
+ * Migrates a task row from the legacy `Depth` column to `Profile`.
+ * Numeric depth values (1, 2, 3) become `default`; the original depth
+ * is preserved in the Notes column as `requested_depth=<value>` when
+ * not already present.  Non-numeric values that look like valid profile
+ * names are retained as-is (they may be user-entered profile overrides).
+ */
+export function migrateDepthToProfileRow(row: string): string {
+    const cells = row.split('|');
+    // Expect at least 10 segments: empty + 9 columns + trailing empty from '| a | b | ... |'
+    if (cells.length < 10) return row;
+
+    const depthCell = cells[8].trim(); // column index 8 = Depth (0-based split: ['', ID, Status, ..., Depth, Notes, ''])
+    if (!depthCell) return row;
+
+    const numericDepth = /^[1-3]$/.test(depthCell);
+    const notesCell = cells[9] || '';
+
+    if (numericDepth) {
+        // Numeric depth → default, preserve original in Notes
+        cells[8] = ' default ';
+        if (!notesCell.includes('requested_depth')) {
+            const trimmedNotes = notesCell.trim();
+            const depthNote = `requested_depth=${depthCell}`;
+            cells[9] = trimmedNotes
+                ? ` ${depthNote}; ${trimmedNotes}`
+                : ` ${depthNote} `;
+        }
+    }
+    // Non-numeric values are kept as-is (may be valid profile names)
+
+    return cells.join('|');
+}
+
+/**
  * Builds a TASK.md managed block preserving existing queue rows.
+ * Migrates legacy Depth column values to Profile when the existing block
+ * uses the old header format.
  */
 export function buildTaskManagedBlockWithExistingQueue(templateContent: string, existingContent: string): string | null {
     const templateBlock = extractManagedBlockFromContent(templateContent, MANAGED_START, MANAGED_END);
@@ -275,8 +318,12 @@ export function buildTaskManagedBlockWithExistingQueue(templateContent: string, 
     const existingBlock = extractManagedBlockFromContent(existingContent, MANAGED_START, MANAGED_END);
     if (!existingBlock) return templateBlock;
 
-    const existingRows = getTaskQueueRowsFromManagedBlock(existingBlock);
+    let existingRows = getTaskQueueRowsFromManagedBlock(existingBlock);
     if (existingRows.length === 0) return templateBlock;
+
+    if (hasLegacyDepthColumn(existingBlock)) {
+        existingRows = existingRows.map(migrateDepthToProfileRow);
+    }
 
     return setTaskQueueRowsInManagedBlock(templateBlock, existingRows);
 }

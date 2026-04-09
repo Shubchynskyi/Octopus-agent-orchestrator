@@ -305,8 +305,8 @@ export function detectTaskViolations(targetRoot: string, canonicalEntrypoint: st
     var content = readTextFile(tp);
     var mb = extractManagedBlock(content);
     if (!mb) { violations.push('TASK.md managed block missing.'); return violations; }
-    if (!/\|\s*ID\s*\|\s*Status\s*\|\s*Priority\s*\|\s*Area\s*\|\s*Title\s*\|\s*Owner\s*\|\s*Updated\s*\|\s*Depth\s*\|\s*Notes\s*\|/.test(mb))
-        violations.push('TASK.md queue header must include `Depth` column.');
+    if (!/\|\s*ID\s*\|\s*Status\s*\|\s*Priority\s*\|\s*Area\s*\|\s*Title\s*\|\s*Owner\s*\|\s*Updated\s*\|\s*Profile\s*\|\s*Notes\s*\|/.test(mb))
+        violations.push('TASK.md queue header must include `Profile` column.');
     if (mb.includes('{{CANONICAL_ENTRYPOINT}}'))
         violations.push('TASK.md contains unresolved `{{CANONICAL_ENTRYPOINT}}` placeholder.');
     if (canonicalEntrypoint) {

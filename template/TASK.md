@@ -21,8 +21,8 @@ Task timeline log (per task): `Octopus-agent-orchestrator/runtime/task-events/<t
 Status cell format rule: keep canonical token, optionally prefixed by marker (for example `🟦 TODO`).
 
 ## Active Queue
-| ID | Status | Priority | Area | Title | Owner | Updated | Depth | Notes |
+| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |
 |---|---|---|---|---|---|---|---|---|
-| T-001 | 🟩 DONE | P1 | process | Verify orchestrator operation, full rule set, and workflow gates | unassigned | {{DEPLOYMENT_DATE}} | 2 | Completed during full orchestrator setup: install, verify, preflight classification, and review-gate checks. |
+| T-001 | 🟩 DONE | P1 | process | Verify orchestrator operation, full rule set, and workflow gates | unassigned | {{DEPLOYMENT_DATE}} | default | Completed during full orchestrator setup: install, verify, preflight classification, and review-gate checks. |
 <!-- Octopus-agent-orchestrator:managed-end -->
 

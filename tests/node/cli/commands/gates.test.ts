@@ -157,9 +157,9 @@ function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: s
 
 function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
-        '| ID | Status | Priority | Area | Title | Assignee | Updated | Depth | Notes |',
+        '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
-        `| ${taskId} | ${status} | P1 | test | Update app flow | unassigned | 2026-03-28 | 2 | fixture |`
+        `| ${taskId} | ${status} | P1 | test | Update app flow | unassigned | 2026-03-28 | default | fixture |`
     ].join('\n'), 'utf8');
 }
 

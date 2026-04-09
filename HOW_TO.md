@@ -115,6 +115,9 @@ Execute task T-001 depth=3
 | `depth=2` | Default for most tasks |
 | `depth=3` | High-risk, cross-module, security-sensitive work |
 
+Depth is derived at runtime from the active profile.
+The `TASK.md` `Profile` column controls which profile applies per task (`default` inherits the workspace active profile).
+
 Required gates apply at any depth.
 See **[docs/work-example.md](https://github.com/Shubchynskyi/Octopus-agent-orchestrator/blob/master/docs/work-example.md)** for a full task lifecycle walkthrough.
 

@@ -152,9 +152,9 @@ User asks the agent:
 
 The agent adds to `TASK.md`:
 
-| ID | Status | Priority | Area | Title | Depth |
+| ID | Status | Priority | Area | Title | Profile |
 |---|---|---|---|---|---|
-| T-101 | 🟦 TODO | P1 | backend | Add invoice PDF export endpoint | 2 |
+| T-101 | 🟦 TODO | P1 | backend | Add invoice PDF export endpoint | default |
 
 ### Execute the Task
 
@@ -212,7 +212,7 @@ IntegrityStatus: VALID
 
 The `TASK.md` row now reads:
 
-| T-101 | ✅ DONE | P1 | backend | Add invoice PDF export endpoint | 2 |
+| T-101 | ✅ DONE | P1 | backend | Add invoice PDF export endpoint | default |
 
 ---
 

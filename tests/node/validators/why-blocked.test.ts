@@ -13,7 +13,7 @@ import {
 // ── Helper ────────────────────────────────────────────────────────────────────
 
 function makeTaskMd(rows: string[]): string {
-    const header = '| ID | Status | Priority | Area | Title | Owner | Updated | Depth | Notes |';
+    const header = '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |';
     const sep    = '|---|---|---|---|---|---|---|---|---|';
     return `<!-- Octopus-agent-orchestrator:managed-start -->\n# TASK.md\n\n## Active Queue\n${header}\n${sep}\n${rows.join('\n')}\n<!-- Octopus-agent-orchestrator:managed-end -->\n`;
 }
@@ -37,7 +37,7 @@ test('getWhyBlocked returns no blocked tasks when all tasks are DONE', () => {
     try {
         fs.writeFileSync(
             path.join(tmpDir, 'TASK.md'),
-            makeTaskMd(['| T-001 | 🟩 DONE | P0 | area | Title | me | 2026-01-01 | 2 | Notes |']),
+            makeTaskMd(['| T-001 | 🟩 DONE | P0 | area | Title | me | 2026-01-01 | default | Notes |']),
             'utf8'
         );
 
@@ -55,7 +55,7 @@ test('getWhyBlocked detects BLOCKED task', () => {
     try {
         fs.writeFileSync(
             path.join(tmpDir, 'TASK.md'),
-            makeTaskMd(['| T-002 | 🟥 BLOCKED | P1 | area | Blocked task | me | 2026-01-01 | 2 | blocked_reason_code=EXTERNAL_DEPENDENCY |']),
+            makeTaskMd(['| T-002 | 🟥 BLOCKED | P1 | area | Blocked task | me | 2026-01-01 | default | blocked_reason_code=EXTERNAL_DEPENDENCY |']),
             'utf8'
         );
 
@@ -74,7 +74,7 @@ test('getWhyBlocked extracts blocked_reason_code from notes column', () => {
     try {
         fs.writeFileSync(
             path.join(tmpDir, 'TASK.md'),
-            makeTaskMd(['| T-003 | 🟥 BLOCKED | P2 | area | Some task | me | 2026-01-01 | 3 | blocked_reason_code=REVIEW_DEPENDENCY |']),
+            makeTaskMd(['| T-003 | 🟥 BLOCKED | P2 | area | Some task | me | 2026-01-01 | strict | blocked_reason_code=REVIEW_DEPENDENCY |']),
             'utf8'
         );
 
@@ -98,7 +98,7 @@ test('getWhyBlocked detects IN_PROGRESS task with missing timeline events', () =
         fs.mkdirSync(eventsDir, { recursive: true });
         fs.writeFileSync(
             path.join(tmpDir, 'TASK.md'),
-            makeTaskMd(['| T-010 | 🟨 IN_PROGRESS | P1 | area | Active task | me | 2026-01-01 | 2 | Notes |']),
+            makeTaskMd(['| T-010 | 🟨 IN_PROGRESS | P1 | area | Active task | me | 2026-01-01 | default | Notes |']),
             'utf8'
         );
 
@@ -134,7 +134,7 @@ test('getWhyBlocked returns empty in_progress_tasks when timeline is complete', 
         fs.mkdirSync(eventsDir, { recursive: true });
         fs.writeFileSync(
             path.join(tmpDir, 'TASK.md'),
-            makeTaskMd(['| T-011 | 🟨 IN_PROGRESS | P1 | area | Healthy task | me | 2026-01-01 | 2 | Notes |']),
+            makeTaskMd(['| T-011 | 🟨 IN_PROGRESS | P1 | area | Healthy task | me | 2026-01-01 | default | Notes |']),
             'utf8'
         );
 
@@ -172,7 +172,7 @@ test('getWhyBlocked surfaces stale task-event lock as blocking reason for matchi
         fs.mkdirSync(path.join(eventsDir, '.T-005.lock'), { recursive: true });
         fs.writeFileSync(
             path.join(tmpDir, 'TASK.md'),
-            makeTaskMd(['| T-005 | 🟨 IN_PROGRESS | P1 | area | Active task | me | 2026-01-01 | 2 | Notes |']),
+            makeTaskMd(['| T-005 | 🟨 IN_PROGRESS | P1 | area | Active task | me | 2026-01-01 | default | Notes |']),
             'utf8'
         );
         fs.writeFileSync(path.join(eventsDir, '.T-005.lock', 'owner.json'), JSON.stringify({
@@ -220,7 +220,7 @@ test('formatWhyBlockedResult renders BLOCKED task section', () => {
                 title: 'Test blocked task',
                 owner: 'me',
                 updated: '2026-01-01',
-                depth: '2',
+                profile: 'default',
                 notes: ''
             },
             blocking_reasons: [{
@@ -259,7 +259,7 @@ test('formatWhyBlockedResult renders STALLED task with missing events', () => {
                 title: 'Stalled task',
                 owner: 'me',
                 updated: '2026-01-01',
-                depth: '3',
+                profile: 'strict',
                 notes: ''
             },
             blocking_reasons: [{

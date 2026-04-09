@@ -339,6 +339,48 @@ test('detectTaskViolations catches missing TASK.md', () => {
     }
 });
 
+test('detectTaskViolations accepts Profile column header', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    try {
+        const taskContent = [
+            '<!-- Octopus-agent-orchestrator:managed-start -->',
+            '# TASK.md',
+            'Canonical instructions entrypoint for orchestration: `CLAUDE.md`.',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-001 | 🟩 DONE | P1 | area | task | me | 2026-01-01 | default | done |',
+            '<!-- Octopus-agent-orchestrator:managed-end -->'
+        ].join('\n');
+        fs.writeFileSync(path.join(tmpDir, 'TASK.md'), taskContent, 'utf8');
+        const violations = detectTaskViolations(tmpDir, 'CLAUDE.md');
+        assert.ok(!violations.some(v => v.includes('Profile')), 'Should accept Profile column');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectTaskViolations rejects legacy Depth column header', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    try {
+        const taskContent = [
+            '<!-- Octopus-agent-orchestrator:managed-start -->',
+            '# TASK.md',
+            'Canonical instructions entrypoint for orchestration: `CLAUDE.md`.',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Depth | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-001 | 🟩 DONE | P1 | area | task | me | 2026-01-01 | 2 | done |',
+            '<!-- Octopus-agent-orchestrator:managed-end -->'
+        ].join('\n');
+        fs.writeFileSync(path.join(tmpDir, 'TASK.md'), taskContent, 'utf8');
+        const violations = detectTaskViolations(tmpDir, 'CLAUDE.md');
+        assert.ok(violations.some(v => v.includes('Profile')), 'Should reject legacy Depth column');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('detectEntrypointViolations catches missing entrypoint', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
     try {

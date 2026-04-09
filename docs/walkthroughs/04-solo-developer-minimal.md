@@ -110,11 +110,11 @@ my-tool/
 
 > Create a task for "Add --verbose flag to CLI".
 
-| ID | Status | Priority | Area | Title | Depth |
+| ID | Status | Priority | Area | Title | Profile |
 |---|---|---|---|---|---|
-| T-501 | 🟦 TODO | P2 | cli | Add --verbose flag to CLI | 1 |
+| T-501 | 🟦 TODO | P2 | cli | Add --verbose flag to CLI | fast |
 
-Small, localized, low-risk — perfect for `depth=1`.
+Small, localized, low-risk — perfect for the `fast` profile (depth=1).
 
 ### Execute the Task
 

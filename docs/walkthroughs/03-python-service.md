@@ -157,9 +157,9 @@ order-service/
 
 > Create a task for "Add order cancellation endpoint with refund logic".
 
-| ID | Status | Priority | Area | Title | Depth |
+| ID | Status | Priority | Area | Title | Profile |
 |---|---|---|---|---|---|
-| T-401 | 🟦 TODO | P2 | backend | Add order cancellation endpoint with refund logic | 2 |
+| T-401 | 🟦 TODO | P2 | backend | Add order cancellation endpoint with refund logic | default |
 
 ### Execute the Task
 

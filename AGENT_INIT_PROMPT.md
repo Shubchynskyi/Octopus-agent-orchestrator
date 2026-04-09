@@ -150,7 +150,7 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
 - `Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md` exists.
 - `Octopus-agent-orchestrator/runtime/agent-init-state.json` exists and matches the finalized onboarding answers.
 - `Octopus-agent-orchestrator/live/USAGE.md` exists with usage instructions in `<assistant-language>`.
-- Root `TASK.md` contains `Depth` column in active queue.
+- Root `TASK.md` contains `Profile` column in active queue (`default` inherits the workspace active profile).
 - Provider-native bridge profiles exist and map back to canonical skills (`.github/agents/*.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`).
 - Copilot bridge profiles include specialist skills added after initialization by re-reading `live/docs/agent-rules/90-skill-catalog.md` and `live/config/review-capabilities.json`.
 - Task workflow supports per-task timeline logs at `Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl`.

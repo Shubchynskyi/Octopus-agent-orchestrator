@@ -11,6 +11,8 @@ import {
     getTaskQueueRowsFromManagedBlock,
     setTaskQueueRowsInManagedBlock,
     buildTaskManagedBlockWithExistingQueue,
+    hasLegacyDepthColumn,
+    migrateDepthToProfileRow,
     buildCanonicalManagedBlock,
     buildRedirectManagedBlock,
     buildCommitGuardManagedBlock,
@@ -54,10 +56,10 @@ describe('task queue operations', () => {
     const taskBlock = [
         MANAGED_START,
         '## Active Queue',
-        '| ID | Status | Depth |',
+        '| ID | Status | Profile |',
         '|---|---|---|',
-        '| T-001 | IN_PROGRESS | 2 |',
-        '| T-002 | BACKLOG | 1 |',
+        '| T-001 | IN_PROGRESS | default |',
+        '| T-002 | BACKLOG | fast |',
         '',
         '## Notes',
         MANAGED_END
@@ -102,6 +104,117 @@ describe('buildTaskManagedBlockWithExistingQueue', () => {
         const template = `${MANAGED_START}\nTemplate content\n${MANAGED_END}`;
         const result = buildTaskManagedBlockWithExistingQueue(template, '');
         assert.ok(result!.includes('Template content'));
+    });
+
+    it('migrates legacy Depth rows to Profile=default during rewrite', () => {
+        const template = [
+            MANAGED_START,
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-NEW | TODO | P1 | area | task | me | 2026-01-01 | default | new |',
+            MANAGED_END
+        ].join('\n');
+        const existing = [
+            MANAGED_START,
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Depth | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-001 | DONE | P1 | area | task | me | 2026-01-01 | 2 | notes |',
+            MANAGED_END
+        ].join('\n');
+        const result = buildTaskManagedBlockWithExistingQueue(template, existing);
+        assert.ok(result!.includes('Profile'));
+        assert.ok(result!.includes('default'));
+        assert.ok(!result!.includes('| 2 |'));
+        assert.ok(result!.includes('T-001'));
+    });
+
+    it('preserves existing notes when migrating Depth to Profile', () => {
+        const template = [
+            MANAGED_START,
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            MANAGED_END
+        ].join('\n');
+        const existing = [
+            MANAGED_START,
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Depth | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-002 | DONE | P1 | area | task | me | 2026-01-01 | 3 | existing notes |',
+            MANAGED_END
+        ].join('\n');
+        const result = buildTaskManagedBlockWithExistingQueue(template, existing);
+        assert.ok(result!.includes('default'));
+        assert.ok(result!.includes('requested_depth=3'));
+        assert.ok(result!.includes('existing notes'));
+    });
+
+    it('skips depth note injection when requested_depth already in notes', () => {
+        const template = [
+            MANAGED_START,
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            MANAGED_END
+        ].join('\n');
+        const existing = [
+            MANAGED_START,
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Depth | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-003 | DONE | P1 | area | task | me | 2026-01-01 | 2 | requested_depth=2; effective_depth=2 |',
+            MANAGED_END
+        ].join('\n');
+        const result = buildTaskManagedBlockWithExistingQueue(template, existing);
+        assert.ok(result!.includes('default'));
+        // Should not duplicate requested_depth
+        const matches = result!.match(/requested_depth/g);
+        assert.equal(matches!.length, 1);
+    });
+});
+
+describe('hasLegacyDepthColumn', () => {
+    it('returns true for old Depth header', () => {
+        assert.ok(hasLegacyDepthColumn('| ID | Status | Depth | Notes |'));
+    });
+
+    it('returns false for new Profile header', () => {
+        assert.ok(!hasLegacyDepthColumn('| ID | Status | Profile | Notes |'));
+    });
+
+    it('returns false when both Depth and Profile exist', () => {
+        assert.ok(!hasLegacyDepthColumn('| ID | Depth | Profile |'));
+    });
+});
+
+describe('migrateDepthToProfileRow', () => {
+    it('converts numeric depth to default', () => {
+        const row = '| T-001 | DONE | P1 | area | task | me | 2026-01-01 | 2 | notes |';
+        const result = migrateDepthToProfileRow(row);
+        assert.ok(result.includes('default'));
+        assert.ok(!result.includes('| 2 |'));
+    });
+
+    it('preserves non-numeric profile-like values as-is', () => {
+        const row = '| T-001 | DONE | P1 | area | task | me | 2026-01-01 | custom | notes |';
+        const result = migrateDepthToProfileRow(row);
+        assert.ok(result.includes('custom'), 'Non-numeric values should be preserved');
+        assert.ok(!result.includes('requested_depth'));
+    });
+
+    it('adds requested_depth to notes for numeric values', () => {
+        const row = '| T-001 | DONE | P1 | area | task | me | 2026-01-01 | 3 | some notes |';
+        const result = migrateDepthToProfileRow(row);
+        assert.ok(result.includes('requested_depth=3'));
+        assert.ok(result.includes('some notes'));
+    });
+
+    it('returns short rows unchanged', () => {
+        const row = '| T-001 | DONE |';
+        assert.equal(migrateDepthToProfileRow(row), row);
     });
 });
 

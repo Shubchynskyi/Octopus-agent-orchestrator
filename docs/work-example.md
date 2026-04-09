@@ -7,11 +7,11 @@ User asks:
 
 Agent splits it into subtasks in `TASK.md`:
 
-| ID | Status | Priority | Area | Title | Depth | Notes |
+| ID | Status | Priority | Area | Title | Profile | Notes |
 |---|---|---|---|---|---|---|
-| T-201 | 🟦 TODO | P1 | backend | Add invoice CSV export API and service | 3 | Requires runtime + API review path |
-| T-202 | 🟦 TODO | P1 | worker | Add async email delivery job for exported CSV | 3 | Requires security review for outbound attachment flow |
-| T-203 | 🟦 TODO | P2 | docs | Update docs/changelog and user-facing usage notes | 2 | Depends on T-201 and T-202 |
+| T-201 | 🟦 TODO | P1 | backend | Add invoice CSV export API and service | strict | Requires runtime + API review path |
+| T-202 | 🟦 TODO | P1 | worker | Add async email delivery job for exported CSV | strict | Requires security review for outbound attachment flow |
+| T-203 | 🟦 TODO | P2 | docs | Update docs/changelog and user-facing usage notes | default | Depends on T-201 and T-202 |
 
 ## Executing a Task
 
@@ -61,6 +61,9 @@ IntegrityStatus: VALID
 ```
 
 ### Depth Selection Guide
+
+Depth is derived at runtime from the active profile.
+The `TASK.md` `Profile` column controls which profile applies per task (`default` inherits the workspace active profile; explicit profile names override it).
 
 | Depth | Use When | Reviews | Context Loaded |
 |---|---|---|---|

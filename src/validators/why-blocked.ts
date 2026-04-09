@@ -12,7 +12,7 @@ export interface TaskStatus {
     title: string;
     owner: string;
     updated: string;
-    depth: string;
+    profile: string;
     notes: string;
 }
 
@@ -91,7 +91,7 @@ function parseTaskMdRow(row: string): TaskStatus | null {
         title: cells[4] || '',
         owner: cells[5] || '',
         updated: cells[6] || '',
-        depth: cells[7] || '',
+        profile: cells[7] || '',
         notes: cells[8] || ''
     };
 }
