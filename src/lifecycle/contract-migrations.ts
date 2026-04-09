@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathExists, readTextFile } from '../core/fs';
-import { TASK_MODE_RULE_SECTION_MIGRATIONS, RuleContractSectionMigration } from '../materialization/rule-contracts';
+import { getTaskModeRuleSectionMigrations, RuleContractSectionMigration } from '../materialization/rule-contracts';
 
 export interface ContractMigrationResult {
     appliedCount: number;
@@ -113,7 +113,7 @@ function applySectionMigration(rootPath: string, migration: RuleContractSectionM
 export function runContractMigrations(options: { rootPath: string }): ContractMigrationResult {
     const rootPath = path.resolve(options.rootPath);
     const appliedFiles = new Set<string>();
-    const orderedMigrations = [...TASK_MODE_RULE_SECTION_MIGRATIONS].sort((left, right) => {
+    const orderedMigrations = [...getTaskModeRuleSectionMigrations()].sort((left, right) => {
         if (left.liveRelativePath !== right.liveRelativePath) {
             return left.liveRelativePath.localeCompare(right.liveRelativePath);
         }

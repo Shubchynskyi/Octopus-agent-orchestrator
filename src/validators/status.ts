@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { StatusSnapshot as CliStatusSnapshot } from '../cli/commands/cli-helpers';
-import { DEFAULT_BUNDLE_NAME, DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH, DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../core/constants';
+import { resolveBundleName, resolveAgentInitStateRelativePath, resolveInitAnswersRelativePath } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import { isPathInsideRoot } from '../core/paths';
 import { validateInitAnswers } from '../schemas/init-answers';
@@ -77,7 +77,7 @@ function detectTimelineCodeChanged(bundlePath: string, taskId: string): boolean 
 
 export function resolveInitAnswersPath(targetRoot: string, initAnswersPath?: string): string {
     var candidate = String(initAnswersPath || '').trim();
-    if (!candidate) candidate = DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+    if (!candidate) candidate = resolveInitAnswersRelativePath();
     if (!path.isAbsolute(candidate)) candidate = path.join(targetRoot, candidate);
     var fullPath = path.resolve(candidate);
     if (!isPathInsideRoot(targetRoot, fullPath))
@@ -101,7 +101,7 @@ export function readInitAnswersSafe(targetRoot: string, initAnswersResolvedPath:
     } catch (err: unknown) { return { answers: null, error: getErrorMessage(err) }; }
 }
 
-export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = DEFAULT_INIT_ANSWERS_RELATIVE_PATH): StatusSnapshot {
+export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = resolveInitAnswersRelativePath()): StatusSnapshot {
     var resolvedTargetRoot = path.resolve(targetRoot);
     var bundlePath = getBundlePath(resolvedTargetRoot);
     var bundlePresent = pathExists(bundlePath) && fs.lstatSync(bundlePath).isDirectory();
@@ -112,7 +112,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
     const commandsContent = readUtf8IfExists(commandsRulePath);
     const missingProjectCommands = getMissingProjectCommands(commandsContent || '');
     var agentInitStateResult: AgentInitStateResult = bundlePresent
-        ? readAgentInitStateSafe(resolvedTargetRoot, DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH)
+        ? readAgentInitStateSafe(resolvedTargetRoot, resolveAgentInitStateRelativePath())
         : { statePath: path.join(bundlePath, 'runtime', 'agent-init-state.json'), state: null, error: null };
     var initAnswersResolvedPath;
     try { initAnswersResolvedPath = resolveInitAnswersPath(resolvedTargetRoot, initAnswersPath); }

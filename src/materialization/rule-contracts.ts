@@ -1,3 +1,5 @@
+import { resolveBundleName } from '../core/constants';
+
 export interface RuleContractSectionMigration {
     liveRelativePath: string;
     templateRelativePath: string;
@@ -5,23 +7,28 @@ export interface RuleContractSectionMigration {
     requiredSnippets: readonly string[];
 }
 
-export const TASK_MODE_RULE_SECTION_MIGRATIONS: readonly RuleContractSectionMigration[] = Object.freeze([
+let _cachedMigrations: readonly RuleContractSectionMigration[] | null = null;
+
+export function getTaskModeRuleSectionMigrations(): readonly RuleContractSectionMigration[] {
+    if (_cachedMigrations) return _cachedMigrations;
+    const bn = resolveBundleName();
+    _cachedMigrations = Object.freeze([
     Object.freeze({
-        liveRelativePath: 'Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md',
-        templateRelativePath: 'Octopus-agent-orchestrator/template/docs/agent-rules/40-commands.md',
+        liveRelativePath: `${bn}/live/docs/agent-rules/40-commands.md`,
+        templateRelativePath: `${bn}/template/docs/agent-rules/40-commands.md`,
         heading: '### Compile Gate (Mandatory)',
         requiredSnippets: Object.freeze([
             '### Compile Gate (Mandatory)',
-            'node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate'
+            `node ${bn}/bin/octopus.js gate compile-gate`
         ])
     }),
     Object.freeze({
-        liveRelativePath: 'Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md',
-        templateRelativePath: 'Octopus-agent-orchestrator/template/docs/agent-rules/40-commands.md',
+        liveRelativePath: `${bn}/live/docs/agent-rules/40-commands.md`,
+        templateRelativePath: `${bn}/template/docs/agent-rules/40-commands.md`,
         heading: '## Agent Gates',
         requiredSnippets: Object.freeze([
-            'node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode',
-            'node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack',
+            `node ${bn}/bin/octopus.js gate enter-task-mode`,
+            `node ${bn}/bin/octopus.js gate load-rule-pack`,
             '`classify-change` fails without rule-pack evidence',
             'Compile gate additionally validates post-preflight rule-pack evidence',
             '`required-reviews-check` additionally validates post-preflight rule-pack evidence',
@@ -34,8 +41,8 @@ export const TASK_MODE_RULE_SECTION_MIGRATIONS: readonly RuleContractSectionMigr
         ])
     }),
     Object.freeze({
-        liveRelativePath: 'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
-        templateRelativePath: 'Octopus-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md',
+        liveRelativePath: `${bn}/live/docs/agent-rules/80-task-workflow.md`,
+        templateRelativePath: `${bn}/template/docs/agent-rules/80-task-workflow.md`,
         heading: '## Mandatory Gate Contract',
         requiredSnippets: Object.freeze([
             'Task-mode entry command must pass before preflight or implementation:',
@@ -59,21 +66,21 @@ export const TASK_MODE_RULE_SECTION_MIGRATIONS: readonly RuleContractSectionMigr
         ])
     }),
     Object.freeze({
-        liveRelativePath: 'Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md',
-        templateRelativePath: 'Octopus-agent-orchestrator/template/docs/agent-rules/90-skill-catalog.md',
+        liveRelativePath: `${bn}/live/docs/agent-rules/90-skill-catalog.md`,
+        templateRelativePath: `${bn}/template/docs/agent-rules/90-skill-catalog.md`,
         heading: '## Preflight Gate (Mandatory)',
         requiredSnippets: Object.freeze([
             'Before preflight, enter task mode explicitly:',
-            'node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode',
+            `node ${bn}/bin/octopus.js gate enter-task-mode`,
             'record the baseline downstream rules that were actually opened',
-            'node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack',
+            `node ${bn}/bin/octopus.js gate load-rule-pack`,
             'After preflight, re-run `load-rule-pack --stage "POST_PREFLIGHT"`',
             'build-review-context --review-type "<review-type>" --depth "<1|2|3>"'
         ])
     }),
     Object.freeze({
-        liveRelativePath: 'Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md',
-        templateRelativePath: 'Octopus-agent-orchestrator/template/docs/agent-rules/90-skill-catalog.md',
+        liveRelativePath: `${bn}/live/docs/agent-rules/90-skill-catalog.md`,
+        templateRelativePath: `${bn}/template/docs/agent-rules/90-skill-catalog.md`,
         heading: '## Enforcement',
         requiredSnippets: Object.freeze([
             'Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.',
@@ -84,4 +91,6 @@ export const TASK_MODE_RULE_SECTION_MIGRATIONS: readonly RuleContractSectionMigr
             'Incomplete task timeline evidence is surfaced by `status` and `doctor`.'
         ])
     })
-]);
+    ]);
+    return _cachedMigrations;
+}

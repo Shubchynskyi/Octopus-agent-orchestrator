@@ -1,7 +1,7 @@
 import { normalizeLineEndings } from '../core/line-endings';
-import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { resolveBundleName } from '../core/constants';
 import { getManagedGitignoreEntries, getManagedGitignoreCleanupEntries } from './common';
-import { NODE_BUNDLE_CLI_COMMAND, NODE_GATE_COMMAND_PREFIX, NODE_HUMAN_COMMIT_COMMAND } from './command-constants';
+import { getNodeBundleCliCommand, getNodeGateCommandPrefix, getNodeHumanCommitCommand } from './command-constants';
 
 export const MANAGED_START = '<!-- Octopus-agent-orchestrator:managed-start -->';
 export const MANAGED_END = '<!-- Octopus-agent-orchestrator:managed-end -->';
@@ -9,8 +9,12 @@ export const COMMIT_GUARD_START = '# Octopus-agent-orchestrator:commit-guard-sta
 export const COMMIT_GUARD_END = '# Octopus-agent-orchestrator:commit-guard-end';
 export const GITIGNORE_MANAGED_COMMENT = '# Octopus-agent-orchestrator managed ignores';
 export const UNINSTALL_BACKUP_GITIGNORE_COMMENT = '# Backup artifacts created by Octopus Agent Orchestrator uninstall';
-export const UNINSTALL_BACKUP_GITIGNORE_ENTRY = `${DEFAULT_BUNDLE_NAME}-uninstall-backups/`;
-export const LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY = `${DEFAULT_BUNDLE_NAME}-uninstall-backups/**`;
+export function getUninstallBackupGitignoreEntry(): string {
+    return `${resolveBundleName()}-uninstall-backups/`;
+}
+export function getLegacyUninstallBackupGitignoreEntry(): string {
+    return `${resolveBundleName()}-uninstall-backups/**`;
+}
 export const COMMIT_GUARD_ENV_NAME = 'OCTOPUS_ALLOW_COMMIT';
 export const COMMIT_GUARD_EXTRA_MARKERS_ENV = 'OCTOPUS_AGENT_ENV_MARKERS';
 export const COMMIT_GUARD_AGENT_MARKERS = Object.freeze([
@@ -38,31 +42,36 @@ export const INSTALL_BACKUP_CANDIDATE_PATHS = Object.freeze([
     '.github/agents/infra-review.md', '.github/agents/dependency-review.md'
 ]);
 
-export const CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES = Object.freeze([
-    `Bash(${NODE_BUNDLE_CLI_COMMAND} *:*)`,
-    `Bash(cd * && ${NODE_BUNDLE_CLI_COMMAND} *:*)`,
+export function getClaudeOrchestratorAllowEntries(): readonly string[] {
+    return Object.freeze([
+    `Bash(${getNodeBundleCliCommand()} *:*)`,
+    `Bash(cd * && ${getNodeBundleCliCommand()} *:*)`,
     'Bash(npx octopus-agent-orchestrator *:*)',
     'Bash(cd * && npx octopus-agent-orchestrator *:*)',
     'Bash(cd * && git diff *:*)',
     'Bash(cd * && git log *:*)',
     'Bash(grep -n * | head * && echo * && grep -n * | head *:*)',
     'Bash(cd * && grep -n * | head * && echo * && grep -n * | head *:*)'
-]);
+    ]);
+}
 
-const ENTRYPOINT_RULE_LINKS = Object.freeze([
-    ['Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md', 'Core Rules'],
-    ['Octopus-agent-orchestrator/live/docs/agent-rules/10-project-context.md', 'Project Context'],
-    ['Octopus-agent-orchestrator/live/docs/agent-rules/15-project-memory.md', 'Project Memory Summary'],
-    ['Octopus-agent-orchestrator/live/docs/agent-rules/20-architecture.md', 'Architecture'],
-    ['Octopus-agent-orchestrator/live/docs/agent-rules/30-code-style.md', 'Code Style'],
-    ['Octopus-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md', 'Strict Coding Rules'],
-    ['Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md', 'Commands'],
-    ['Octopus-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md', 'Structure and Documentation'],
-    ['Octopus-agent-orchestrator/live/docs/agent-rules/60-operating-rules.md', 'Operating Rules'],
-    ['Octopus-agent-orchestrator/live/docs/agent-rules/70-security.md', 'Security'],
-    ['Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md', 'Task Workflow'],
-    ['Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md', 'Skill Catalog']
-]);
+function getEntrypointRuleLinks(): readonly (readonly [string, string])[] {
+    const bn = resolveBundleName();
+    return Object.freeze([
+    [`${bn}/live/docs/agent-rules/00-core.md`, 'Core Rules'],
+    [`${bn}/live/docs/agent-rules/10-project-context.md`, 'Project Context'],
+    [`${bn}/live/docs/agent-rules/15-project-memory.md`, 'Project Memory Summary'],
+    [`${bn}/live/docs/agent-rules/20-architecture.md`, 'Architecture'],
+    [`${bn}/live/docs/agent-rules/30-code-style.md`, 'Code Style'],
+    [`${bn}/live/docs/agent-rules/35-strict-coding-rules.md`, 'Strict Coding Rules'],
+    [`${bn}/live/docs/agent-rules/40-commands.md`, 'Commands'],
+    [`${bn}/live/docs/agent-rules/50-structure-and-docs.md`, 'Structure and Documentation'],
+    [`${bn}/live/docs/agent-rules/60-operating-rules.md`, 'Operating Rules'],
+    [`${bn}/live/docs/agent-rules/70-security.md`, 'Security'],
+    [`${bn}/live/docs/agent-rules/80-task-workflow.md`, 'Task Workflow'],
+    [`${bn}/live/docs/agent-rules/90-skill-catalog.md`, 'Skill Catalog']
+    ] as const);
+}
 
 interface TaskQueueTableRange {
     lines: string[];
@@ -165,7 +174,7 @@ function escapeRegex(text: string): string {
 
 function restoreEntrypointRuleLinks(content: string): string {
     let restored = String(content || '');
-    for (const [rulePath, label] of ENTRYPOINT_RULE_LINKS) {
+    for (const [rulePath, label] of getEntrypointRuleLinks()) {
         const plainBullet = new RegExp('^\\- \\`' + escapeRegex(rulePath) + '\\`$', 'gm');
         restored = restored.replace(plainBullet, `- [${label}](./${rulePath})`);
     }
@@ -326,9 +335,9 @@ export function buildRedirectManagedBlock(
         'Do not implement tasks directly without orchestration preflight and required review gates.',
         'Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.',
         'Treat `.agents/workflows/start-task.md` as the shared start-task router for root entrypoints and provider bridges; it routes to the canonical workflow and does not replace `80-task-workflow.md`.',
-        'After opening downstream workflow files, record them via `node bin/octopus.js gate load-rule-pack ...` in a self-hosted source checkout, or `node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack ...` inside a materialized/deployed workspace.',
-        'Before each required reviewer invocation, run `node bin/octopus.js gate build-review-context ...` in a self-hosted source checkout, or `node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context ...` inside a materialized/deployed workspace; completion for code-changing tasks expects review-skill telemetry from that step.',
-        'Ignored orchestration control-plane files (for example `TASK.md`, `Octopus-agent-orchestrator/runtime/**`, and `Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are expected local artifacts; never `git add -f` them unless the user explicitly asks to version orchestrator internals.',
+        `After opening downstream workflow files, record them via \`node bin/octopus.js gate load-rule-pack ...\` in a self-hosted source checkout, or \`node ${resolveBundleName()}/bin/octopus.js gate load-rule-pack ...\` inside a materialized/deployed workspace.`,
+        `Before each required reviewer invocation, run \`node bin/octopus.js gate build-review-context ...\` in a self-hosted source checkout, or \`node ${resolveBundleName()}/bin/octopus.js gate build-review-context ...\` inside a materialized/deployed workspace; completion for code-changing tasks expects review-skill telemetry from that step.`,
+        `Ignored orchestration control-plane files (for example \`TASK.md\`, \`${resolveBundleName()}/runtime/**\`, and \`${resolveBundleName()}/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.`,
         providerBridgeSection,
         MANAGED_END
     ].join('\r\n');
@@ -369,7 +378,7 @@ done
 if [ -n "$octopus_detected_agent_var" ]; then
   echo "Commit blocked: agent commit guard is enabled (detected env: $octopus_detected_agent_var)."
   echo "If this is a manual human commit from the same shell, use helper:"
-  echo "  ${NODE_HUMAN_COMMIT_COMMAND.replace(/"/g, '\\"')}"
+  echo "  ${getNodeHumanCommitCommand().replace(/"/g, '\\"')}"
   exit 1
 fi
 ${COMMIT_GUARD_END}`;
@@ -399,8 +408,8 @@ Required:
 5. Do not bypass gates, fake review artifacts, or use provider-default review flow outside Octopus.
 6. If any mandatory gate command fails, stop, keep the task blocked, and report the exact command, cwd, CLI path, and stderr.
 
-Canonical workflow skill: \`Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md\`
-Skill catalog: \`Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md\`
+Canonical workflow skill: \`${resolveBundleName()}/live/skills/orchestration/SKILL.md\`
+Skill catalog: \`${resolveBundleName()}/live/docs/agent-rules/90-skill-catalog.md\`
 Bridge path: \`${bridgePath}\`
 ${MANAGED_END}`.trim();
     }
@@ -412,7 +421,7 @@ Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
 
 Hard stop: first open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
 Do not implement tasks directly without orchestration preflight and required review gates.
-Ignored orchestration control-plane files (for example \`TASK.md\`, \`Octopus-agent-orchestrator/runtime/**\`, and \`Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
+Ignored orchestration control-plane files (for example \`TASK.md\`, \`${resolveBundleName()}/runtime/**\`, and \`${resolveBundleName()}/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
 This provider profile is a strict bridge to Octopus skills and the Node gate router.
 Treat \`.agents/workflows/start-task.md\` as the shared router for every provider surface; it routes to canonical orchestration and does not replace \`80-task-workflow.md\`.
 Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
@@ -422,15 +431,15 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 1. Read \`${canonicalFile}\` and its routing links before making changes.
 2. Read \`TASK.md\` and select/create a task row before implementation.
 3. Execute task workflow only in orchestrator mode: \`Execute task <task-id> depth=<1|2|3>\`.
-4. Enter task mode explicitly via \`node bin/octopus.js gate enter-task-mode ...\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} enter-task-mode ...\` inside a materialized/deployed workspace.
-5. Record baseline downstream rules explicitly via \`node bin/octopus.js gate load-rule-pack ...\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} load-rule-pack ...\` inside a materialized/deployed workspace.
-6. Run preflight classification before implementation via \`node bin/octopus.js gate classify-change ...\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} classify-change ...\` inside a materialized/deployed workspace.
-7. After preflight, refresh downstream rule-pack evidence via \`node bin/octopus.js gate load-rule-pack --stage "POST_PREFLIGHT" ...\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} load-rule-pack --stage "POST_PREFLIGHT" ...\` inside a materialized/deployed workspace.
-8. Run compile gate before review via \`node bin/octopus.js gate compile-gate ...\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} compile-gate ...\` inside a materialized/deployed workspace.
-9. Before each required review, run \`node bin/octopus.js gate build-review-context ...\` in a self-hosted source checkout, or \`${NODE_GATE_COMMAND_PREFIX} build-review-context ...\` inside a materialized/deployed workspace; that step auto-emits \`REVIEW_PHASE_STARTED\`, \`SKILL_SELECTED\`, and \`SKILL_REFERENCE_LOADED\`.
-10. Run required independent reviews and gates via \`node bin/octopus.js gate required-reviews-check ...\` in a self-hosted source checkout, or \`${NODE_GATE_COMMAND_PREFIX} required-reviews-check ...\` inside a materialized/deployed workspace; then \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
+4. Enter task mode explicitly via \`node bin/octopus.js gate enter-task-mode ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} enter-task-mode ...\` inside a materialized/deployed workspace.
+5. Record baseline downstream rules explicitly via \`node bin/octopus.js gate load-rule-pack ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} load-rule-pack ...\` inside a materialized/deployed workspace.
+6. Run preflight classification before implementation via \`node bin/octopus.js gate classify-change ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} classify-change ...\` inside a materialized/deployed workspace.
+7. After preflight, refresh downstream rule-pack evidence via \`node bin/octopus.js gate load-rule-pack --stage "POST_PREFLIGHT" ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} load-rule-pack --stage "POST_PREFLIGHT" ...\` inside a materialized/deployed workspace.
+8. Run compile gate before review via \`node bin/octopus.js gate compile-gate ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} compile-gate ...\` inside a materialized/deployed workspace.
+9. Before each required review, run \`node bin/octopus.js gate build-review-context ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} build-review-context ...\` inside a materialized/deployed workspace; that step auto-emits \`REVIEW_PHASE_STARTED\`, \`SKILL_SELECTED\`, and \`SKILL_REFERENCE_LOADED\`.
+10. Run required independent reviews and gates via \`node bin/octopus.js gate required-reviews-check ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} required-reviews-check ...\` inside a materialized/deployed workspace; then \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
 11. Update task status and artifacts in \`TASK.md\`.
-12. Log or inspect lifecycle events by task id via \`node bin/octopus.js gate log-task-event ...\` / \`task-events-summary\` in a self-hosted source checkout, or via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` / \`task-events-summary\` inside a materialized/deployed workspace.
+12. Log or inspect lifecycle events by task id via \`node bin/octopus.js gate log-task-event ...\` / \`task-events-summary\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} log-task-event ...\` / \`task-events-summary\` inside a materialized/deployed workspace.
 
 ## Reviewer Launch Mapping (Mandatory Delegation)
 - Delegation-capable providers must spawn each required reviewer as a fresh-context sub-agent; same-agent self-review is invalid when delegation is available.
@@ -442,23 +451,23 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 - Each review receipt must include \`reviewer_execution_mode\` (\`delegated_subagent\` or \`same_agent_fallback\`), \`reviewer_identity\`, and \`reviewer_fallback_reason\` when fallback mode is used.
 
 ## Skill Routing
-- Orchestration: \`Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md\`
-- Code review: \`Octopus-agent-orchestrator/live/skills/code-review/SKILL.md\`
-- DB review: \`Octopus-agent-orchestrator/live/skills/db-review/SKILL.md\`
-- Security review: \`Octopus-agent-orchestrator/live/skills/security-review/SKILL.md\`
-- Refactor review: \`Octopus-agent-orchestrator/live/skills/refactor-review/SKILL.md\`
+- Orchestration: \`${resolveBundleName()}/live/skills/orchestration/SKILL.md\`
+- Code review: \`${resolveBundleName()}/live/skills/code-review/SKILL.md\`
+- DB review: \`${resolveBundleName()}/live/skills/db-review/SKILL.md\`
+- Security review: \`${resolveBundleName()}/live/skills/security-review/SKILL.md\`
+- Refactor review: \`${resolveBundleName()}/live/skills/refactor-review/SKILL.md\`
 
 ## Dynamic Skill Discovery (Required)
-- Canonical skill list: \`Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md\`
-- Optional-skill capability flags: \`Octopus-agent-orchestrator/live/config/review-capabilities.json\`
-- Token-economy controls: \`Octopus-agent-orchestrator/live/config/token-economy.json\`
-- Output-filter profiles: \`Octopus-agent-orchestrator/live/config/output-filters.json\`
-- Include specialist skills added after initialization from \`Octopus-agent-orchestrator/live/skills/**\` when required by preflight and capability flags.
+- Canonical skill list: \`${resolveBundleName()}/live/docs/agent-rules/90-skill-catalog.md\`
+- Optional-skill capability flags: \`${resolveBundleName()}/live/config/review-capabilities.json\`
+- Token-economy controls: \`${resolveBundleName()}/live/config/token-economy.json\`
+- Output-filter profiles: \`${resolveBundleName()}/live/config/output-filters.json\`
+- Include specialist skills added after initialization from \`${resolveBundleName()}/live/skills/**\` when required by preflight and capability flags.
 
 ## Task Timeline Logging (Required)
-- Event logger: \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\`
-- Log file (per task): \`Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl\`
-- Aggregate log: \`Octopus-agent-orchestrator/runtime/task-events/all-tasks.jsonl\`
+- Event logger: \`${getNodeGateCommandPrefix()} log-task-event ...\`
+- Log file (per task): \`${resolveBundleName()}/runtime/task-events/<task-id>.jsonl\`
+- Aggregate log: \`${resolveBundleName()}/runtime/task-events/all-tasks.jsonl\`
 
 Bridge path for this provider: \`${bridgePath}\`.
 ${MANAGED_END}`.trim();
@@ -519,23 +528,23 @@ Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
 
 Hard stop: first open \`.github/agents/orchestrator.md\`, \`${canonicalFile}\`, and \`TASK.md\`.
 Do not implement tasks directly without orchestration preflight and required review gates.
-Ignored orchestration control-plane files (for example \`TASK.md\`, \`Octopus-agent-orchestrator/runtime/**\`, and \`Octopus-agent-orchestrator/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
+Ignored orchestration control-plane files (for example \`TASK.md\`, \`${resolveBundleName()}/runtime/**\`, and \`${resolveBundleName()}/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
 Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 
 ## Skill Bridge Contract
 - Use this profile only as a bridge to skill: \`${skillPath}\`
 - Required review selector: \`${reviewRequirement}\`
 - Capability flag gate: \`${capabilityFlag}\`
-- Re-read \`Octopus-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md\` before execution.
-- Re-read \`Octopus-agent-orchestrator/live/config/review-capabilities.json\` before execution.
-- Re-read \`Octopus-agent-orchestrator/live/config/token-economy.json\` before execution.
-- Re-read \`Octopus-agent-orchestrator/live/config/output-filters.json\` before execution.
-- Keep downstream rule-pack evidence current via \`${NODE_GATE_COMMAND_PREFIX} load-rule-pack ...\`; bridge execution is invalid without recorded rule-file loading.
-- Reviewer preparation must run \`${NODE_GATE_COMMAND_PREFIX} build-review-context --review-type "<review-type>" ...\` before verdict capture; completion for code-changing tasks validates the resulting review-skill telemetry.
+- Re-read \`${resolveBundleName()}/live/docs/agent-rules/90-skill-catalog.md\` before execution.
+- Re-read \`${resolveBundleName()}/live/config/review-capabilities.json\` before execution.
+- Re-read \`${resolveBundleName()}/live/config/token-economy.json\` before execution.
+- Re-read \`${resolveBundleName()}/live/config/output-filters.json\` before execution.
+- Keep downstream rule-pack evidence current via \`${getNodeGateCommandPrefix()} load-rule-pack ...\`; bridge execution is invalid without recorded rule-file loading.
+- Reviewer preparation must run \`${getNodeGateCommandPrefix()} build-review-context --review-type "<review-type>" ...\` before verdict capture; completion for code-changing tasks validates the resulting review-skill telemetry.
 - On GitHub Copilot CLI, spawn reviewer helper tasks via \`task\` tool with \`agent_type="general-purpose"\` and isolated context; same-agent self-review is invalid on this delegation-capable provider.
-- Honor specialist skills added after initialization under \`Octopus-agent-orchestrator/live/skills/**\`.
-- Log review invocation and outcomes via \`${NODE_GATE_COMMAND_PREFIX} log-task-event ...\` into task timeline.
-- Task timeline path (per task): \`Octopus-agent-orchestrator/runtime/task-events/<task-id>.jsonl\`.
+- Honor specialist skills added after initialization under \`${resolveBundleName()}/live/skills/**\`.
+- Log review invocation and outcomes via \`${getNodeGateCommandPrefix()} log-task-event ...\` into task timeline.
+- Task timeline path (per task): \`${resolveBundleName()}/runtime/task-events/<task-id>.jsonl\`.
 - Review verdicts and completion status are recorded only through orchestrator workflow.
 - Never mark task \`DONE\` from this profile; hand off to \`.github/agents/orchestrator.md\`.
 ${MANAGED_END}`.trim();
@@ -613,7 +622,7 @@ export function buildClaudeLocalSettingsContent(
     existingContent: string | null | undefined,
     enableOrchestratorAccess: boolean
 ): SettingsBuildResult {
-    const requiredAllowEntries = enableOrchestratorAccess ? [...CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES] : [];
+    const requiredAllowEntries = enableOrchestratorAccess ? [...getClaudeOrchestratorAllowEntries()] : [];
     let settingsMap: Record<string, unknown> = {};
     let needsUpdate = false;
     let parseMode: SettingsParseMode = 'default';
@@ -711,15 +720,15 @@ function normalizeUninstallBackupGitignoreLines(lines: string[]): string[] {
     for (const line of lines) {
         const trimmed = line.trim();
         const isBackupLine = trimmed === UNINSTALL_BACKUP_GITIGNORE_COMMENT ||
-            trimmed === UNINSTALL_BACKUP_GITIGNORE_ENTRY ||
-            trimmed === LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY;
+            trimmed === getUninstallBackupGitignoreEntry() ||
+            trimmed === getLegacyUninstallBackupGitignoreEntry();
         if (!isBackupLine) {
             normalizedLines.push(line);
             continue;
         }
 
         if (!emittedBackupEntry) {
-            normalizedLines.push(UNINSTALL_BACKUP_GITIGNORE_COMMENT, UNINSTALL_BACKUP_GITIGNORE_ENTRY);
+            normalizedLines.push(UNINSTALL_BACKUP_GITIGNORE_COMMENT, getUninstallBackupGitignoreEntry());
             emittedBackupEntry = true;
         }
     }
@@ -823,7 +832,7 @@ export function syncManagedBlockInContent(content: string | null | undefined, ma
  * where Octopus Agent Orchestrator is present.
  */
 export const IDE_EXCLUDED_DIRECTORIES: readonly string[] = Object.freeze([
-    'Octopus-agent-orchestrator',
+    resolveBundleName(),
     'dist',
     '.node-build',
     '.scripts-build',

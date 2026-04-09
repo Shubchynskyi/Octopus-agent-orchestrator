@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { DEFAULT_INIT_ANSWERS_RELATIVE_PATH, SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
+import { resolveInitAnswersRelativePath, SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
 import { pathExists, readTextFile } from '../../core/fs';
 import { getActiveAgentEntrypointFiles } from '../../materialization/common';
 import { getStatusSnapshot } from '../../validators/status';
@@ -346,7 +346,7 @@ export async function handleSetup(
         const promptedAnswers: SetupAnswers | null = canUseInteractivePrompts
             ? await collectSetupAnswersInteractively(
                 targetRoot,
-                options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+                options.initAnswersPath || resolveInitAnswersRelativePath(),
                 options
             )
             : null;
@@ -363,7 +363,7 @@ export async function handleSetup(
         }
 
         const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
-        const initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+        const initAnswersPath = options.initAnswersPath || resolveInitAnswersRelativePath();
         const fallbackAnswers = getSetupAnswerDefaults(targetRoot, initAnswersPath, options);
         const resolvedAnswers = promptedAnswers || fallbackAnswers;
         const assistantLanguage = resolvedAnswers.assistantLanguage;

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { DEFAULT_BUNDLE_NAME } from '../../core/constants';
+import { resolveBundleName } from '../../core/constants';
 import { redactPath, redactHostname, redactEnvObject } from '../../core/redaction';
 
 // ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ export function collectDebugEnvSnapshot(
     targetRoot: string,
     cliVersion: string
 ): DebugEnvSnapshot {
-    const bundlePath = path.join(targetRoot, DEFAULT_BUNDLE_NAME);
+    const bundlePath = path.join(targetRoot, resolveBundleName());
     const bundlePresent = fs.existsSync(bundlePath) && fs.statSync(bundlePath).isDirectory();
 
     let liveVersion: string | null = null;

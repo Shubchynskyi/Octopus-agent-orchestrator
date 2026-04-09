@@ -11,6 +11,12 @@ interface CliMainModule {
 const PACKAGE_NAME = 'octopus-agent-orchestrator';
 const DEFAULT_BUNDLE_NAME = 'Octopus-agent-orchestrator';
 
+function resolveBundleName(): string {
+    const envValue = process.env.OCTOPUS_BUNDLE_NAME;
+    if (envValue && envValue.trim()) return envValue.trim();
+    return DEFAULT_BUNDLE_NAME;
+}
+
 export function findPackageRoot(startDir: string): string {
     let current = path.resolve(startDir);
 
@@ -125,10 +131,11 @@ function findSourceCheckoutRoot(startDir: string): string | null {
 }
 
 function findDeployedBundleRoot(startDir: string): string | null {
+    const effectiveName = resolveBundleName();
     let current = path.resolve(startDir);
 
     while (true) {
-        const bundleRoot = path.join(current, DEFAULT_BUNDLE_NAME);
+        const bundleRoot = path.join(current, effectiveName);
         if (isOctopusPackageRoot(bundleRoot)) {
             return bundleRoot;
         }
@@ -222,7 +229,24 @@ function delegateToLocalCli(cliPath: string, argv: string[]): never {
     process.exit(1);
 }
 
+function extractBundleNameArg(argv: string[]): string | null {
+    for (let index = 0; index < argv.length; index += 1) {
+        const token = argv[index];
+        if (token === '--bundle-name' && index + 1 < argv.length) {
+            return argv[index + 1];
+        }
+        if (token.startsWith('--bundle-name=')) {
+            return token.slice('--bundle-name='.length);
+        }
+    }
+    return null;
+}
+
 export async function main(argv: string[] = process.argv.slice(2), cwd: string = process.cwd()): Promise<void> {
+    const bundleNameArg = extractBundleNameArg(argv);
+    if (bundleNameArg) {
+        process.env.OCTOPUS_BUNDLE_NAME = bundleNameArg;
+    }
     const packageRoot = findPackageRoot(__dirname);
     const delegatedCli = resolveDelegatedLauncherTarget(argv, cwd, __filename, packageRoot);
     if (delegatedCli) {

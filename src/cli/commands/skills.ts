@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { DEFAULT_BUNDLE_NAME } from '../../core/constants';
+import { resolveBundleName } from '../../core/constants';
 import {
     addSkillPack,
     listBuiltinSkillPacks,
@@ -46,7 +46,7 @@ function resolveBundleRoot(options: ParsedOptionsRecord): { targetRoot: string; 
     const targetRoot = normalizePathValue(typeof options.targetRoot === 'string' ? options.targetRoot : '.');
     const bundleRoot = typeof options.bundleRoot === 'string'
         ? normalizePathValue(options.bundleRoot)
-        : path.join(targetRoot, DEFAULT_BUNDLE_NAME);
+        : path.join(targetRoot, resolveBundleName());
     return { targetRoot, bundleRoot };
 }
 

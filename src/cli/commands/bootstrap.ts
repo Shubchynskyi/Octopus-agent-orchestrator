@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { DEFAULT_BUNDLE_NAME, SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
+import { DEFAULT_BUNDLE_NAME, resolveBundleName, SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
 import {
     acquireSourceRoot,
     deployFreshBundle,
@@ -91,7 +91,7 @@ export async function handleBootstrap(commandArgv: string[], packageJson: Packag
     const repoUrl = typeof options.repoUrl === 'string' ? options.repoUrl : undefined;
     const branch = typeof options.branch === 'string' ? options.branch : undefined;
 
-    const destinationPath = normalizePathValue(destinationOption || positionals[0] || DEFAULT_BUNDLE_NAME);
+    const destinationPath = normalizePathValue(destinationOption || positionals[0] || resolveBundleName());
     const source = await acquireSourceRoot(repoUrl, branch, packageRoot);
     try {
         deployFreshBundle(source.sourceRoot, destinationPath);

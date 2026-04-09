@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { resolveBundleName } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { validateInitAnswers, serializeInitAnswers } from '../schemas/init-answers';
@@ -94,8 +94,8 @@ function parseBooleanYesNo(value: unknown, fieldName: string): boolean {
 export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
     const {
         targetRoot,
-        bundleRoot = path.join(targetRoot, DEFAULT_BUNDLE_NAME),
-        initAnswersPath = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json'),
+        bundleRoot = path.join(targetRoot, resolveBundleName()),
+        initAnswersPath = path.join(resolveBundleName(), 'runtime', 'init-answers.json'),
         activeAgentFiles,
         projectRulesUpdated,
         skillsPrompted,

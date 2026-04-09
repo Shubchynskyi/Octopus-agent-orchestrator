@@ -10,6 +10,7 @@ import { assertValidTaskId } from '../gate-runtime/task-events';
 import { fileSha256, normalizePath, toPlainRecord } from './helpers';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 import { normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from './reviewer-routing';
+import { resolveBundleName } from '../core/constants';
 
 export const REVIEW_CONTRACTS = [
     ['code', 'REVIEW PASSED'],
@@ -455,7 +456,7 @@ export function validateZeroDiffForReviewGate(
             `Task '${taskId}' has zero-diff preflight (clean tree). ` +
             'Review gate cannot pass without produced changes. ' +
             'Either implement changes and re-run preflight, record an audited no-op artifact ' +
-            `('node Octopus-agent-orchestrator/bin/octopus.js gate record-no-op --task-id "${taskId}" --reason "..."'), ` +
+            `('node ${resolveBundleName()}/bin/octopus.js gate record-no-op --task-id "${taskId}" --reason "..."'), ` +
             'or set the task to BLOCKED.'
         ]
     };

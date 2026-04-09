@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathExists } from '../core/fs';
+import { resolveBundleName } from '../core/constants';
 import { scanTaskEventLocks, type TaskEventLockHealth } from '../gate-runtime/task-events';
 
 export interface TaskStatus {
@@ -233,7 +234,7 @@ function detectBlockingReasons(
         reasons.push({
             reason_code: 'TASK_MODE_NOT_ENTERED',
             description: 'enter-task-mode gate was never run for this task.',
-            remediation: 'Run: node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode --task-id "' + task.id + '" ...'
+            remediation: 'Run: node ' + resolveBundleName() + '/bin/octopus.js gate enter-task-mode --task-id "' + task.id + '" ...'
         });
     }
 
@@ -242,7 +243,7 @@ function detectBlockingReasons(
         reasons.push({
             reason_code: 'RULE_PACK_NOT_LOADED',
             description: 'load-rule-pack gate was not run after entering task mode.',
-            remediation: 'Run: node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack --task-id "' + task.id + '" --stage "TASK_ENTRY" --loaded-rule-file "<rule-file>"'
+            remediation: 'Run: node ' + resolveBundleName() + '/bin/octopus.js gate load-rule-pack --task-id "' + task.id + '" --stage "TASK_ENTRY" --loaded-rule-file "<rule-file>"'
         });
     }
 
@@ -269,7 +270,7 @@ function detectBlockingReasons(
         reasons.push({
             reason_code: 'COMPLETION_GATE_FAILED',
             description: 'Completion gate failed — lifecycle evidence or review artifacts incomplete.',
-            remediation: 'Run: node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate --task-id "' + task.id + '" and resolve each listed failure.'
+            remediation: 'Run: node ' + resolveBundleName() + '/bin/octopus.js gate completion-gate --task-id "' + task.id + '" and resolve each listed failure.'
         });
     }
 
@@ -352,7 +353,7 @@ function analyseTask(task: TaskStatus, bundlePath: string, lockObservations: Tas
 
 export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
     const resolvedRoot = path.resolve(targetRoot);
-    const bundlePath = path.join(resolvedRoot, 'Octopus-agent-orchestrator');
+    const bundlePath = path.join(resolvedRoot, resolveBundleName());
     const taskMdPath = path.join(resolvedRoot, 'TASK.md');
 
     const allTasks = parseTaskMd(taskMdPath);

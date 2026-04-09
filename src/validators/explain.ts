@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { pathExists } from '../core/fs';
+import { resolveBundleName } from '../core/constants';
 
 export interface ExplainEntry {
     id: string;
@@ -21,12 +22,17 @@ export interface ExplainResult {
  * Canonical remediation database for known failure IDs.
  * IDs are normalised to upper-case before lookup.
  */
-const EXPLAIN_DATABASE: readonly ExplainEntry[] = Object.freeze([
+let _cachedExplainDatabase: readonly ExplainEntry[] | null = null;
+
+function getExplainDatabase(): readonly ExplainEntry[] {
+    if (_cachedExplainDatabase) return _cachedExplainDatabase;
+    const bn = resolveBundleName();
+    _cachedExplainDatabase = Object.freeze([
     // ── Init / setup failures ─────────────────────────────────────────────
     {
         id: 'BUNDLE_MISSING',
         title: 'Deployed bundle not found',
-        description: 'The Octopus-agent-orchestrator bundle directory is missing from the target root.',
+        description: `The ${bn} bundle directory is missing from the target root.`,
         remediation: [
             "Run 'npx octopus-agent-orchestrator' or 'npx octopus-agent-orchestrator setup' to deploy the bundle.",
             "Ensure you are running commands from the correct target root (--target-root)."
@@ -122,7 +128,7 @@ const EXPLAIN_DATABASE: readonly ExplainEntry[] = Object.freeze([
         title: 'Project commands section is incomplete',
         description: 'The 40-commands.md file still contains placeholder project commands that need to be filled in.',
         remediation: [
-            "Open Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md.",
+            `Open ${bn}/live/docs/agent-rules/40-commands.md.`,
             "Replace placeholder entries in the 'Project Commands' section with actual commands.",
             "Run 'octopus doctor' again to verify after editing."
         ]
@@ -182,7 +188,7 @@ const EXPLAIN_DATABASE: readonly ExplainEntry[] = Object.freeze([
         title: 'Task mode was not explicitly entered',
         description: 'The enter-task-mode gate was not run for this task, so compile/review/completion gates will fail.',
         remediation: [
-            "Run: node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode --task-id \"<task-id>\" --entry-mode \"EXPLICIT_TASK_EXECUTION\" --requested-depth \"<1|2|3>\" --task-summary \"<summary>\"",
+            `Run: node ${bn}/bin/octopus.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<summary>"`,
             "Do this before any preflight or implementation work."
         ]
     },
@@ -191,7 +197,7 @@ const EXPLAIN_DATABASE: readonly ExplainEntry[] = Object.freeze([
         title: 'Rule pack evidence is missing',
         description: 'The load-rule-pack gate was not run, so downstream gates cannot prove that required rules were read.',
         remediation: [
-            "Run: node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack --task-id \"<task-id>\" --stage \"TASK_ENTRY\" --loaded-rule-file \"<rule-file>\"",
+            `Run: node ${bn}/bin/octopus.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY" --loaded-rule-file "<rule-file>"`,
             "Include all rule files that were actually opened at task entry."
         ]
     },
@@ -200,7 +206,7 @@ const EXPLAIN_DATABASE: readonly ExplainEntry[] = Object.freeze([
         title: 'Preflight classification artifact not found',
         description: 'The classify-change gate has not been run for this task.',
         remediation: [
-            "Run: node Octopus-agent-orchestrator/bin/octopus.js gate classify-change --changed-file \"<file>\" --task-intent \"<summary>\" --output-path \"Octopus-agent-orchestrator/runtime/reviews/<task-id>-preflight.json\"",
+            `Run: node ${bn}/bin/octopus.js gate classify-change --changed-file "<file>" --task-intent "<summary>" --output-path "${bn}/runtime/reviews/<task-id>-preflight.json"`,
             "Or use --use-staged in a dirty workspace."
         ]
     },
@@ -211,7 +217,7 @@ const EXPLAIN_DATABASE: readonly ExplainEntry[] = Object.freeze([
         remediation: [
             "Fix all TypeScript or build errors shown in the compile output.",
             "Run 'npm run build' locally to confirm the build succeeds.",
-            "Re-run: node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate --task-id \"<task-id>\" --commands-path \"Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md\""
+            `Re-run: node ${bn}/bin/octopus.js gate compile-gate --task-id "<task-id>" --commands-path "${bn}/live/docs/agent-rules/40-commands.md"`
         ]
     },
     {
@@ -219,9 +225,9 @@ const EXPLAIN_DATABASE: readonly ExplainEntry[] = Object.freeze([
         title: 'Required review gate failed',
         description: 'One or more required review verdicts are missing or returned FAILED.',
         remediation: [
-            "Check Octopus-agent-orchestrator/runtime/reviews/<task-id>-code.md (or -db.md, -security.md, -refactor.md) for findings.",
+            `Check ${bn}/runtime/reviews/<task-id>-code.md (or -db.md, -security.md, -refactor.md) for findings.`,
             "Fix all blocking findings.",
-            "Re-run the relevant reviewer skill and then run: node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check ..."
+            `Re-run the relevant reviewer skill and then run: node ${bn}/bin/octopus.js gate required-reviews-check ...`
         ]
     },
     {
@@ -229,7 +235,7 @@ const EXPLAIN_DATABASE: readonly ExplainEntry[] = Object.freeze([
         title: 'Completion gate failed',
         description: 'One or more completion gate conditions are not satisfied.',
         remediation: [
-            "Run: node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate --task-id \"<task-id>\" and read the failure list.",
+            `Run: node ${bn}/bin/octopus.js gate completion-gate --task-id "<task-id>" and read the failure list.`,
             "Common causes: missing lifecycle events, unresolved findings in review artifacts, missing doc-impact gate.",
             "Fix each listed issue and re-run the completion gate."
         ]
@@ -239,7 +245,7 @@ const EXPLAIN_DATABASE: readonly ExplainEntry[] = Object.freeze([
         title: 'Task timeline is incomplete',
         description: 'The task event log is missing one or more mandatory lifecycle events.',
         remediation: [
-            "Run: node Octopus-agent-orchestrator/bin/octopus.js gate task-events-summary --task-id \"<task-id>\" to see which events are missing.",
+            `Run: node ${bn}/bin/octopus.js gate task-events-summary --task-id "<task-id>" to see which events are missing.`,
             "Re-run the appropriate gate commands to emit the missing events.",
             "Do not manually backfill events unless recovery tooling explicitly requires it."
         ]
@@ -249,7 +255,7 @@ const EXPLAIN_DATABASE: readonly ExplainEntry[] = Object.freeze([
         title: 'Task timeline integrity check failed',
         description: 'The task event JSONL file has hash-chain violations indicating tampering or replay.',
         remediation: [
-            "Run: node Octopus-agent-orchestrator/bin/octopus.js gate task-events-summary --task-id \"<task-id>\" for details.",
+            `Run: node ${bn}/bin/octopus.js gate task-events-summary --task-id "<task-id>" for details.`,
             "Do not edit JSONL files manually.",
             "If the timeline is unrecoverable, mark the task BLOCKED with blocked_reason_code=TIMELINE_CORRUPT."
         ]
@@ -259,11 +265,13 @@ const EXPLAIN_DATABASE: readonly ExplainEntry[] = Object.freeze([
         title: 'Documentation impact gate not run',
         description: 'The doc-impact-gate was not executed before the completion gate.',
         remediation: [
-            "Run: node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate --task-id \"<task-id>\" --decision \"NO_DOC_UPDATES\" --behavior-changed false --changelog-updated false --rationale \"<why>\"",
+            `Run: node ${bn}/bin/octopus.js gate doc-impact-gate --task-id "<task-id>" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --rationale "<why>"`,
             "Or if docs were changed: --decision \"DOCS_UPDATED\" --behavior-changed true --changelog-updated true"
         ]
     }
-]);
+    ]);
+    return _cachedExplainDatabase;
+}
 
 function normalizeFailureId(rawId: string): string {
     return rawId.trim().toUpperCase().replace(/[-\s]+/g, '_');
@@ -271,7 +279,7 @@ function normalizeFailureId(rawId: string): string {
 
 function findSuggestions(normalizedId: string): string[] {
     const suggestions: string[] = [];
-    for (const entry of EXPLAIN_DATABASE) {
+    for (const entry of getExplainDatabase()) {
         if (entry.id.includes(normalizedId) || normalizedId.includes(entry.id.slice(0, 6))) {
             suggestions.push(entry.id);
         }
@@ -281,7 +289,7 @@ function findSuggestions(normalizedId: string): string[] {
 
 export function explainFailure(rawFailureId: string): ExplainResult {
     const normalizedId = normalizeFailureId(rawFailureId);
-    const entry = EXPLAIN_DATABASE.find(function (e) { return e.id === normalizedId; }) || null;
+    const entry = getExplainDatabase().find(function (e) { return e.id === normalizedId; }) || null;
 
     if (entry) {
         return { found: true, failureId: normalizedId, entry, suggestions: [] };
@@ -293,7 +301,7 @@ export function explainFailure(rawFailureId: string): ExplainResult {
 }
 
 export function listExplainIds(): string[] {
-    return EXPLAIN_DATABASE.map(function (e) { return e.id; });
+    return getExplainDatabase().map(function (e) { return e.id; });
 }
 
 export function formatExplainResult(result: ExplainResult): string {

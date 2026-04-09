@@ -1,4 +1,4 @@
-import { ALL_AGENT_ENTRYPOINT_FILES, SOURCE_OF_TRUTH_VALUES, SOURCE_TO_ENTRYPOINT_MAP } from '../core/constants';
+import { resolveBundleName, ALL_AGENT_ENTRYPOINT_FILES, SOURCE_OF_TRUTH_VALUES, SOURCE_TO_ENTRYPOINT_MAP } from '../core/constants';
 
 type SourceOfTruthValue = keyof typeof SOURCE_TO_ENTRYPOINT_MAP;
 
@@ -179,7 +179,7 @@ export function getLegacyManagedGitignoreEntries(): string[] {
  */
 export function getManagedGitignoreEntries(enableClaudeOrchestratorFullAccess = false): string[] {
     const selected = new Set<string>([
-        'Octopus-agent-orchestrator/',
+        resolveBundleName() + '/',
         'TASK.md',
         '.qwen/',
         SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
@@ -222,70 +222,70 @@ export function getGitHubSkillBridgeProfileDefinitions() {
         {
             relativePath: '.github/agents/reviewer.md',
             profileTitle: 'Reviewer Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md',
+            skillPath: resolveBundleName() + '/live/skills/orchestration/SKILL.md',
             reviewRequirement: 'Use preflight `required_reviews.*` flags from orchestrator.',
             capabilityFlag: 'always-on'
         },
         {
             relativePath: '.github/agents/code-review.md',
             profileTitle: 'Code Review Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/code-review/SKILL.md',
+            skillPath: resolveBundleName() + '/live/skills/code-review/SKILL.md',
             reviewRequirement: 'required_reviews.code=true',
             capabilityFlag: 'always-on'
         },
         {
             relativePath: '.github/agents/db-review.md',
             profileTitle: 'DB Review Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/db-review/SKILL.md',
+            skillPath: resolveBundleName() + '/live/skills/db-review/SKILL.md',
             reviewRequirement: 'required_reviews.db=true',
             capabilityFlag: 'always-on'
         },
         {
             relativePath: '.github/agents/security-review.md',
             profileTitle: 'Security Review Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/security-review/SKILL.md',
+            skillPath: resolveBundleName() + '/live/skills/security-review/SKILL.md',
             reviewRequirement: 'required_reviews.security=true',
             capabilityFlag: 'always-on'
         },
         {
             relativePath: '.github/agents/refactor-review.md',
             profileTitle: 'Refactor Review Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/refactor-review/SKILL.md',
+            skillPath: resolveBundleName() + '/live/skills/refactor-review/SKILL.md',
             reviewRequirement: 'required_reviews.refactor=true',
             capabilityFlag: 'always-on'
         },
         {
             relativePath: '.github/agents/api-review.md',
             profileTitle: 'API Review Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/api-contract-review/SKILL.md (or custom Octopus-agent-orchestrator/live/skills/api-review/SKILL.md when present)',
+            skillPath: `${resolveBundleName()}/live/skills/api-contract-review/SKILL.md (or custom ${resolveBundleName()}/live/skills/api-review/SKILL.md when present)`,
             reviewRequirement: 'required_reviews.api=true',
             capabilityFlag: 'review-capabilities.api=true'
         },
         {
             relativePath: '.github/agents/test-review.md',
             profileTitle: 'Test Review Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/testing-strategy/SKILL.md (or custom Octopus-agent-orchestrator/live/skills/test-review/SKILL.md when present)',
+            skillPath: `${resolveBundleName()}/live/skills/testing-strategy/SKILL.md (or custom ${resolveBundleName()}/live/skills/test-review/SKILL.md when present)`,
             reviewRequirement: 'required_reviews.test=true',
             capabilityFlag: 'review-capabilities.test=true'
         },
         {
             relativePath: '.github/agents/performance-review.md',
             profileTitle: 'Performance Review Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/performance-review/SKILL.md',
+            skillPath: resolveBundleName() + '/live/skills/performance-review/SKILL.md',
             reviewRequirement: 'required_reviews.performance=true',
             capabilityFlag: 'review-capabilities.performance=true'
         },
         {
             relativePath: '.github/agents/infra-review.md',
             profileTitle: 'Infra Review Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/devops-k8s/SKILL.md (or custom Octopus-agent-orchestrator/live/skills/infra-review/SKILL.md when present)',
+            skillPath: `${resolveBundleName()}/live/skills/devops-k8s/SKILL.md (or custom ${resolveBundleName()}/live/skills/infra-review/SKILL.md when present)`,
             reviewRequirement: 'required_reviews.infra=true',
             capabilityFlag: 'review-capabilities.infra=true'
         },
         {
             relativePath: '.github/agents/dependency-review.md',
             profileTitle: 'Dependency Review Bridge',
-            skillPath: 'Octopus-agent-orchestrator/live/skills/dependency-review/SKILL.md',
+            skillPath: resolveBundleName() + '/live/skills/dependency-review/SKILL.md',
             reviewRequirement: 'required_reviews.dependency=true',
             capabilityFlag: 'review-capabilities.dependency=true'
         }

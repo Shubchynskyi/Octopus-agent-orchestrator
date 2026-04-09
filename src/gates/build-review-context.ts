@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { resolveBundleName } from '../core/constants';
 import { buildReviewContextSections } from '../gate-runtime/review-context';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
 import { normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
@@ -74,7 +75,7 @@ export function getReviewSkillCandidates(reviewType: string): string[] {
 export function resolveReviewSkillId(reviewType: string, repoRoot: string): string {
     const rulesRoot = path.resolve(repoRoot);
     for (const candidate of getReviewSkillCandidates(reviewType)) {
-        const skillRoot = path.join(rulesRoot, 'Octopus-agent-orchestrator', 'live', 'skills', candidate);
+        const skillRoot = path.join(rulesRoot, resolveBundleName(), 'live', 'skills', candidate);
         const skillMdPath = path.join(skillRoot, 'SKILL.md');
         const skillJsonPath = path.join(skillRoot, 'skill.json');
         if (

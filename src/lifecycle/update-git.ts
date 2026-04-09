@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { resolveBundleName } from '../core/constants';
 import {
     DEFAULT_GIT_CLONE_TIMEOUT_MS,
     DEFAULT_GIT_TIMEOUT_MS,
@@ -260,7 +260,7 @@ export async function runUpdateFromGit(options: RunUpdateFromGitOptions) {
     const {
         targetRoot,
         bundleRoot,
-        initAnswersPath = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json'),
+        initAnswersPath = path.join(resolveBundleName(), 'runtime', 'init-answers.json'),
         repoUrl = DEFAULT_GIT_UPDATE_REPO_URL,
         branch = null,
         checkOnly = false,

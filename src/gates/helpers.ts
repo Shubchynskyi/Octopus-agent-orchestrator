@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { BOOLEAN_FALSE_VALUES, BOOLEAN_TRUE_VALUES, DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { BOOLEAN_FALSE_VALUES, BOOLEAN_TRUE_VALUES, DEFAULT_BUNDLE_NAME, resolveBundleName } from '../core/constants';
 
 export interface ResolvePathOptions {
     allowMissing?: boolean;
@@ -95,16 +95,17 @@ export function isOrchestratorSourceCheckout(repoRoot: string): boolean {
  * The orchestrator source checkout additionally protects root-level runtime sources.
  */
 export function getProtectedControlPlaneRoots(repoRoot: string): string[] {
+    const effectiveName = resolveBundleName();
     const roots = [
-        `${DEFAULT_BUNDLE_NAME}/src/bin`,
-        `${DEFAULT_BUNDLE_NAME}/src/cli`,
-        `${DEFAULT_BUNDLE_NAME}/src/gates`,
-        `${DEFAULT_BUNDLE_NAME}/src/gate-runtime`,
-        `${DEFAULT_BUNDLE_NAME}/src/lifecycle`,
-        `${DEFAULT_BUNDLE_NAME}/src/materialization`,
-        `${DEFAULT_BUNDLE_NAME}/bin`,
-        `${DEFAULT_BUNDLE_NAME}/dist`,
-        `${DEFAULT_BUNDLE_NAME}/live/docs/agent-rules`
+        `${effectiveName}/src/bin`,
+        `${effectiveName}/src/cli`,
+        `${effectiveName}/src/gates`,
+        `${effectiveName}/src/gate-runtime`,
+        `${effectiveName}/src/lifecycle`,
+        `${effectiveName}/src/materialization`,
+        `${effectiveName}/bin`,
+        `${effectiveName}/dist`,
+        `${effectiveName}/live/docs/agent-rules`
     ];
 
     if (isOrchestratorSourceCheckout(repoRoot)) {
@@ -283,7 +284,8 @@ export function evaluateProtectedControlPlaneManifest(
  */
 export function joinOrchestratorPath(repoRoot: string, relativePath: string): string {
     const repoRootResolved = path.resolve(repoRoot);
-    const deployedRoot = path.resolve(repoRootResolved, DEFAULT_BUNDLE_NAME);
+    const effectiveName = resolveBundleName();
+    const deployedRoot = path.resolve(repoRootResolved, effectiveName);
     const looksLikeBundleRoot = (candidatePath: string): boolean => (
         fs.existsSync(path.join(candidatePath, 'MANIFEST.md'))
         && fs.existsSync(path.join(candidatePath, 'VERSION'))
@@ -299,8 +301,8 @@ export function joinOrchestratorPath(repoRoot: string, relativePath: string): st
     }
 
     let normalizedRelativePath = String(relativePath || '').replace(/\\/g, '/').replace(/^\.\//, '');
-    if (normalizedRelativePath.toLowerCase().startsWith(`${DEFAULT_BUNDLE_NAME.toLowerCase()}/`)) {
-        normalizedRelativePath = normalizedRelativePath.slice(DEFAULT_BUNDLE_NAME.length + 1);
+    if (normalizedRelativePath.toLowerCase().startsWith(`${effectiveName.toLowerCase()}/`)) {
+        normalizedRelativePath = normalizedRelativePath.slice(effectiveName.length + 1);
     }
 
     if (!normalizedRelativePath.trim()) {
@@ -469,7 +471,7 @@ export function toStringArray(value: unknown, options: ToStringArrayOptions = {}
 export function resolveGitRoot(repoRoot: string): string {
     const resolved = path.resolve(repoRoot);
     if (fs.existsSync(path.join(resolved, '.git'))) return resolved;
-    const bundleCandidate = path.resolve(resolved, DEFAULT_BUNDLE_NAME);
+    const bundleCandidate = path.resolve(resolved, resolveBundleName());
     if (fs.existsSync(path.join(bundleCandidate, '.git'))) return bundleCandidate;
     return resolved;
 }

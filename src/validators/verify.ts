@@ -1,10 +1,10 @@
 import * as path from 'node:path';
-import { BOOLEAN_TRUE_VALUES, BOOLEAN_FALSE_VALUES } from '../core/constants';
+import { resolveBundleName, BOOLEAN_TRUE_VALUES, BOOLEAN_FALSE_VALUES } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import { isPathInsideRoot } from '../core/paths';
 import { getManagedGitignoreEntries } from '../materialization/common';
 import { validateSkillPacks, validateSkillsIndex } from '../runtime/skills';
-import { TASK_MODE_RULE_SECTION_MIGRATIONS } from '../materialization/rule-contracts';
+import { getTaskModeRuleSectionMigrations } from '../materialization/rule-contracts';
 import {
     PROJECT_COMMAND_PLACEHOLDERS,
     RULE_FILES,
@@ -194,23 +194,23 @@ export function readVerifyInitAnswers(targetRoot: string, initAnswersPath: strin
 
 export function detectCommandsViolations(targetRoot: string): string[] {
     var violations: string[] = [];
-    var cp = path.join(targetRoot, 'Octopus-agent-orchestrator/live/docs/agent-rules/40-commands.md');
+    var cp = path.join(targetRoot, resolveBundleName() + '/live/docs/agent-rules/40-commands.md');
     if (!pathExists(cp)) return violations;
     var content = readTextFile(cp);
     var req = [
-        'node Octopus-agent-orchestrator/bin/octopus.js gate enter-task-mode',
-        'node Octopus-agent-orchestrator/bin/octopus.js gate load-rule-pack',
+        `node ${resolveBundleName()}/bin/octopus.js gate enter-task-mode`,
+        `node ${resolveBundleName()}/bin/octopus.js gate load-rule-pack`,
         '### Compile Gate (Mandatory)',
-        'node Octopus-agent-orchestrator/bin/octopus.js gate classify-change',
-        'node Octopus-agent-orchestrator/bin/octopus.js gate compile-gate',
-        'node Octopus-agent-orchestrator/bin/octopus.js gate required-reviews-check',
-        'node Octopus-agent-orchestrator/bin/octopus.js gate doc-impact-gate',
-        'node Octopus-agent-orchestrator/bin/octopus.js gate completion-gate',
-        'node Octopus-agent-orchestrator/bin/octopus.js gate log-task-event',
-        'node Octopus-agent-orchestrator/bin/octopus.js gate task-events-summary',
-        'node Octopus-agent-orchestrator/bin/octopus.js gate build-scoped-diff',
-        'node Octopus-agent-orchestrator/bin/octopus.js gate build-review-context',
-        'node Octopus-agent-orchestrator/bin/octopus.js gate validate-manifest'
+        `node ${resolveBundleName()}/bin/octopus.js gate classify-change`,
+        `node ${resolveBundleName()}/bin/octopus.js gate compile-gate`,
+        `node ${resolveBundleName()}/bin/octopus.js gate required-reviews-check`,
+        `node ${resolveBundleName()}/bin/octopus.js gate doc-impact-gate`,
+        `node ${resolveBundleName()}/bin/octopus.js gate completion-gate`,
+        `node ${resolveBundleName()}/bin/octopus.js gate log-task-event`,
+        `node ${resolveBundleName()}/bin/octopus.js gate task-events-summary`,
+        `node ${resolveBundleName()}/bin/octopus.js gate build-scoped-diff`,
+        `node ${resolveBundleName()}/bin/octopus.js gate build-review-context`,
+        `node ${resolveBundleName()}/bin/octopus.js gate validate-manifest`
     ];
     for (var i=0;i<req.length;i++) {
         var alternatives = getCommandSnippetAlternatives(req[i]);
@@ -230,7 +230,7 @@ export function detectCommandsViolations(targetRoot: string): string[] {
 export function detectTaskModeRuleContractViolations(targetRoot: string): string[] {
     const violations: string[] = [];
 
-    for (const migration of TASK_MODE_RULE_SECTION_MIGRATIONS) {
+    for (const migration of getTaskModeRuleSectionMigrations()) {
         const fullPath = path.join(targetRoot, migration.liveRelativePath);
         if (!pathExists(fullPath)) {
             continue;
@@ -258,15 +258,15 @@ export function detectTaskModeRuleContractViolations(targetRoot: string): string
 
 function getCommandSnippetAlternatives(snippet: string): string[] {
     const normalizedSnippet = String(snippet || '');
-    const bundlePath = 'node Octopus-agent-orchestrator/bin/octopus.js';
-    if (!normalizedSnippet.includes(bundlePath)) {
+    const effectiveBundlePath = `node ${resolveBundleName()}/bin/octopus.js`;
+    if (!normalizedSnippet.includes(effectiveBundlePath)) {
         return [normalizedSnippet];
     }
 
     const sourcePath = 'node bin/octopus.js';
     return [
         normalizedSnippet,
-        normalizedSnippet.replace(bundlePath, sourcePath)
+        normalizedSnippet.replace(effectiveBundlePath, sourcePath)
     ];
 }
 
@@ -276,7 +276,7 @@ export function detectCoreRuleViolations(
     assistantBrevity: string | null
 ): string[] {
     var violations: string[] = [];
-    var cp = path.join(targetRoot, 'Octopus-agent-orchestrator/live/docs/agent-rules/00-core.md');
+    var cp = path.join(targetRoot, resolveBundleName() + '/live/docs/agent-rules/00-core.md');
     if (!pathExists(cp)) { violations.push('00-core.md missing; core contract validation failed.'); return violations; }
     var content = readTextFile(cp);
     if (!/^Respond in .+ for explanations and assistance\.$/m.test(content)) violations.push('00-core.md must define configured assistant language sentence.');
@@ -320,7 +320,8 @@ export function detectEntrypointViolations(targetRoot: string, canonicalEntrypoi
     var content = readTextFile(ep);
     if (!/^# Octopus Agent Orchestrator Rule Index$/m.test(content))
         violations.push(canonicalEntrypoint+' must contain canonical rule index content.');
-    var rl = content.match(/Octopus-agent-orchestrator\/live\/docs\/agent-rules\/[0-9]{2}[-a-z]+\.md/g);
+    var rulePathPattern = new RegExp(resolveBundleName().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\/live\\/docs\\/agent-rules\\/[0-9]{2}[-a-z]+\\.md', 'g');
+    var rl = content.match(rulePathPattern);
     var ul = rl ? Array.from(new Set(rl)) : [];
     if (ul.length < RULE_FILES.length)
         violations.push(canonicalEntrypoint+' has fewer rule links than expected. Found='+ul.length+', ExpectedAtLeast='+RULE_FILES.length);
@@ -357,7 +358,7 @@ export function detectQwenSettingsViolations(targetRoot: string, canonicalEntryp
 
 export function detectManifestContractViolations(targetRoot: string): string[] {
     var violations: string[] = [];
-    var mp = path.join(targetRoot, 'Octopus-agent-orchestrator/MANIFEST.md');
+    var mp = path.join(targetRoot, resolveBundleName() + '/MANIFEST.md');
     if (!pathExists(mp)) return violations;
     var content = readTextFile(mp);
     if (!content.includes('live/USAGE.md')) violations.push("MANIFEST.md must include 'live/USAGE.md'.");
@@ -372,14 +373,14 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
     var rp = buildRequiredPaths({ activeAgentFiles: iar.activeAgentFiles, claudeOrchestratorFullAccess: iar.claudeOrchestratorFullAccess });
     var mp = detectMissingPaths(targetRoot, rp);
     var vr = detectVersionViolations(targetRoot, sourceOfTruth, canonicalEntrypoint);
-    var rcv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/review-capabilities.json');
-    var pv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/paths.json');
-    var tev = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/token-economy.json');
-    var ofv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/output-filters.json');
-    var spv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/skill-packs.json');
-    var imv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/isolation-mode.json');
-    var ocv = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/octopus.config.json');
-    var six = detectManagedConfigViolations(targetRoot, 'Octopus-agent-orchestrator/live/config/skills-index.json');
+    var rcv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/review-capabilities.json');
+    var pv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/paths.json');
+    var tev = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/token-economy.json');
+    var ofv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/output-filters.json');
+    var spv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/skill-packs.json');
+    var imv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/isolation-mode.json');
+    var ocv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/octopus.config.json');
+    var six = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/skills-index.json');
     var rfr = detectRuleFileViolations(targetRoot);
     var tmv = detectTaskModeRuleContractViolations(targetRoot);
     var cv = detectCommandsViolations(targetRoot);
@@ -387,8 +388,8 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
     var tv = detectTaskViolations(targetRoot, canonicalEntrypoint);
     var ev = detectEntrypointViolations(targetRoot, canonicalEntrypoint);
     var qv = detectQwenSettingsViolations(targetRoot, canonicalEntrypoint);
-    var skillPackValidation = validateSkillPacks(path.join(targetRoot, 'Octopus-agent-orchestrator'));
-    var skillsIndexValidation = validateSkillsIndex(path.join(targetRoot, 'Octopus-agent-orchestrator'));
+    var skillPackValidation = validateSkillPacks(path.join(targetRoot, resolveBundleName()));
+    var skillsIndexValidation = validateSkillsIndex(path.join(targetRoot, resolveBundleName()));
     var ge: string[] = getManagedGitignoreEntries(iar.claudeOrchestratorFullAccess);
     var gm = detectGitignoreViolations(targetRoot, ge);
     var mv = detectManifestContractViolations(targetRoot);

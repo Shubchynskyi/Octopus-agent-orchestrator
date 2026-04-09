@@ -1,57 +1,65 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { DEFAULT_BUNDLE_NAME, SOURCE_TO_ENTRYPOINT_MAP, SOURCE_OF_TRUTH_VALUES } from '../core/constants';
+import { DEFAULT_BUNDLE_NAME, resolveBundleName, SOURCE_TO_ENTRYPOINT_MAP, SOURCE_OF_TRUTH_VALUES } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
+
+/**
+ * Build the required workspace paths for a given bundle name.
+ */
+export function getBaseRequiredPaths(bundleName: string): readonly string[] {
+    return Object.freeze([
+        'TASK.md',
+        `${bundleName}/.gitattributes`,
+        `${bundleName}/VERSION`,
+        `${bundleName}/package.json`,
+        `${bundleName}/bin/octopus.js`,
+        `${bundleName}/src`,
+        `${bundleName}/src/cli`,
+        `${bundleName}/src/materialization`,
+        `${bundleName}/src/validators`,
+        `${bundleName}/src/gates`,
+        `${bundleName}/src/lifecycle`,
+        `${bundleName}/AGENT_INIT_PROMPT.md`,
+        `${bundleName}/HOW_TO.md`,
+        `${bundleName}/MANIFEST.md`,
+        `${bundleName}/live/version.json`,
+        `${bundleName}/live/config/review-capabilities.json`,
+        `${bundleName}/live/config/paths.json`,
+        `${bundleName}/live/config/token-economy.json`,
+        `${bundleName}/live/config/output-filters.json`,
+        `${bundleName}/live/config/skill-packs.json`,
+        `${bundleName}/live/config/isolation-mode.json`,
+        `${bundleName}/live/config/skills-index.json`,
+        `${bundleName}/live/config/octopus.config.json`,
+        `${bundleName}/template/config/octopus.config.json`,
+        `${bundleName}/live/skills/README.md`,
+        `${bundleName}/live/docs/agent-rules/80-task-workflow.md`,
+        `${bundleName}/live/skills/code-review/skill.json`,
+        `${bundleName}/live/skills/db-review/skill.json`,
+        `${bundleName}/live/skills/dependency-review/SKILL.md`,
+        `${bundleName}/live/skills/dependency-review/skill.json`,
+        `${bundleName}/live/skills/orchestration/SKILL.md`,
+        `${bundleName}/live/skills/orchestration/skill.json`,
+        `${bundleName}/live/skills/orchestration-depth1/skill.json`,
+        `${bundleName}/live/skills/skill-builder/SKILL.md`,
+        `${bundleName}/live/skills/skill-builder/skill.json`,
+        `${bundleName}/live/skills/security-review/SKILL.md`,
+        `${bundleName}/live/skills/security-review/skill.json`,
+        `${bundleName}/live/skills/refactor-review/SKILL.md`,
+        `${bundleName}/live/skills/refactor-review/skill.json`,
+        `${bundleName}/live/init-report.md`,
+        `${bundleName}/live/project-discovery.md`,
+        `${bundleName}/live/source-inventory.md`,
+        `${bundleName}/live/USAGE.md`
+    ]);
+}
 
 /**
  * Required workspace paths that must exist after a full install.
  * Matches the deployed Node-only bundle surface.
+ * Uses the default bundle name for backwards compatibility.
  */
-export const BASE_REQUIRED_PATHS = Object.freeze([
-    'TASK.md',
-    'Octopus-agent-orchestrator/.gitattributes',
-    'Octopus-agent-orchestrator/VERSION',
-    'Octopus-agent-orchestrator/package.json',
-    'Octopus-agent-orchestrator/bin/octopus.js',
-    'Octopus-agent-orchestrator/src',
-    'Octopus-agent-orchestrator/src/cli',
-    'Octopus-agent-orchestrator/src/materialization',
-    'Octopus-agent-orchestrator/src/validators',
-    'Octopus-agent-orchestrator/src/gates',
-    'Octopus-agent-orchestrator/src/lifecycle',
-    'Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md',
-    'Octopus-agent-orchestrator/HOW_TO.md',
-    'Octopus-agent-orchestrator/MANIFEST.md',
-    'Octopus-agent-orchestrator/live/version.json',
-    'Octopus-agent-orchestrator/live/config/review-capabilities.json',
-    'Octopus-agent-orchestrator/live/config/paths.json',
-    'Octopus-agent-orchestrator/live/config/token-economy.json',
-    'Octopus-agent-orchestrator/live/config/output-filters.json',
-    'Octopus-agent-orchestrator/live/config/skill-packs.json',
-    'Octopus-agent-orchestrator/live/config/isolation-mode.json',
-    'Octopus-agent-orchestrator/live/config/skills-index.json',
-    'Octopus-agent-orchestrator/live/config/octopus.config.json',
-    'Octopus-agent-orchestrator/template/config/octopus.config.json',
-    'Octopus-agent-orchestrator/live/skills/README.md',
-    'Octopus-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
-    'Octopus-agent-orchestrator/live/skills/code-review/skill.json',
-    'Octopus-agent-orchestrator/live/skills/db-review/skill.json',
-    'Octopus-agent-orchestrator/live/skills/dependency-review/SKILL.md',
-    'Octopus-agent-orchestrator/live/skills/dependency-review/skill.json',
-    'Octopus-agent-orchestrator/live/skills/orchestration/SKILL.md',
-    'Octopus-agent-orchestrator/live/skills/orchestration/skill.json',
-    'Octopus-agent-orchestrator/live/skills/orchestration-depth1/skill.json',
-    'Octopus-agent-orchestrator/live/skills/skill-builder/SKILL.md',
-    'Octopus-agent-orchestrator/live/skills/skill-builder/skill.json',
-    'Octopus-agent-orchestrator/live/skills/security-review/SKILL.md',
-    'Octopus-agent-orchestrator/live/skills/security-review/skill.json',
-    'Octopus-agent-orchestrator/live/skills/refactor-review/SKILL.md',
-    'Octopus-agent-orchestrator/live/skills/refactor-review/skill.json',
-    'Octopus-agent-orchestrator/live/init-report.md',
-    'Octopus-agent-orchestrator/live/project-discovery.md',
-    'Octopus-agent-orchestrator/live/source-inventory.md',
-    'Octopus-agent-orchestrator/live/USAGE.md'
-]);
+export const BASE_REQUIRED_PATHS = getBaseRequiredPaths(DEFAULT_BUNDLE_NAME);
 
 /**
  * Standard rule files that must exist in live/docs/agent-rules.
@@ -132,6 +140,7 @@ export const BUNDLE_RUNTIME_INVENTORY_PATHS = Object.freeze([
 interface BuildRequiredPathsOptions {
     activeAgentFiles?: readonly string[];
     claudeOrchestratorFullAccess?: boolean;
+    bundleName?: string;
 }
 
 interface RuleFileViolations {
@@ -167,8 +176,8 @@ export function getCanonicalEntrypoint(sourceOfTruth: string): string | null {
 /**
  * Get the bundle path within a target root.
  */
-export function getBundlePath(targetRoot: string): string {
-    return path.join(targetRoot, DEFAULT_BUNDLE_NAME);
+export function getBundlePath(targetRoot: string, bundleName?: string): string {
+    return path.join(targetRoot, resolveBundleName(bundleName));
 }
 
 /**
@@ -177,11 +186,12 @@ export function getBundlePath(targetRoot: string): string {
 export function buildRequiredPaths(options: BuildRequiredPathsOptions): string[] {
     const activeAgentFiles = options.activeAgentFiles || [];
     const claudeOrchestratorFullAccess = options.claudeOrchestratorFullAccess || false;
+    const effectiveBundleName = resolveBundleName(options.bundleName);
 
-    const paths: string[] = [...BASE_REQUIRED_PATHS];
+    const paths: string[] = [...getBaseRequiredPaths(effectiveBundleName)];
 
     for (const ruleFile of RULE_FILES) {
-        paths.push(`Octopus-agent-orchestrator/live/docs/agent-rules/${ruleFile}`);
+        paths.push(`${effectiveBundleName}/live/docs/agent-rules/${ruleFile}`);
     }
 
     for (const file of activeAgentFiles) {
@@ -264,7 +274,7 @@ export function detectRuleFileViolations(targetRoot: string): RuleFileViolations
     const templatePlaceholderViolations: string[] = [];
 
     for (const ruleFile of RULE_FILES) {
-        const relativePath = `Octopus-agent-orchestrator/live/docs/agent-rules/${ruleFile}`;
+        const relativePath = `${resolveBundleName()}/live/docs/agent-rules/${ruleFile}`;
         const fullPath = path.join(targetRoot, relativePath);
         if (!pathExists(fullPath)) {
             continue;
@@ -329,7 +339,7 @@ export function detectSourceBundleParity(targetRoot: string): SourceBundleParity
         if (rootStat.mtimeMs > bundleStat.mtimeMs + 1000) {
             result.isStale = true;
             result.violations.push(
-                `Deployed bundle launcher 'Octopus-agent-orchestrator/bin/octopus.js' is older than source launcher 'bin/octopus.js'. ` +
+                `Deployed bundle launcher '${resolveBundleName()}/bin/octopus.js' is older than source launcher 'bin/octopus.js'. ` +
                 `Source was updated at ${rootStat.mtime.toISOString()} but bundle has ${bundleStat.mtime.toISOString()}.`
             );
         }
@@ -399,7 +409,7 @@ export function validateBundleInvariants(
     const violations: string[] = [];
 
     if (!pathExists(bundlePath)) {
-        violations.push(`Bundle directory '${DEFAULT_BUNDLE_NAME}' is missing.`);
+        violations.push(`Bundle directory '${path.basename(bundlePath)}' is missing.`);
         return { isValid: false, violations };
     }
 
@@ -454,15 +464,16 @@ export function detectVersionViolations(
     canonicalEntrypoint: string | null
 ): VersionViolationResult {
     const violations: string[] = [];
-    const bundleVersionPath = path.join(targetRoot, 'Octopus-agent-orchestrator', 'VERSION');
-    const liveVersionPath = path.join(targetRoot, 'Octopus-agent-orchestrator', 'live', 'version.json');
+    const bn = resolveBundleName();
+    const bundleVersionPath = path.join(targetRoot, bn, 'VERSION');
+    const liveVersionPath = path.join(targetRoot, bn, 'live', 'version.json');
 
     let bundleVersion: string | null = null;
 
     if (pathExists(bundleVersionPath)) {
         bundleVersion = readTextFile(bundleVersionPath).trim();
         if (!bundleVersion) {
-            violations.push('Octopus-agent-orchestrator/VERSION must not be empty.');
+            violations.push(`${bn}/VERSION must not be empty.`);
         }
     }
 
@@ -475,34 +486,34 @@ export function detectVersionViolations(
             }
             liveVersionObject = parsed as Record<string, unknown>;
         } catch {
-            violations.push('Octopus-agent-orchestrator/live/version.json must contain valid JSON.');
+            violations.push(`${bn}/live/version.json must contain valid JSON.`);
             return { violations, bundleVersion };
         }
 
         const liveVersion = liveVersionObject.Version ? String(liveVersionObject.Version).trim() : '';
         if (!liveVersion) {
-            violations.push('Octopus-agent-orchestrator/live/version.json must include non-empty Version.');
+            violations.push(`${bn}/live/version.json must include non-empty Version.`);
         } else if (bundleVersion && liveVersion !== bundleVersion) {
             violations.push(
-                `Octopus-agent-orchestrator/live/version.json Version '${liveVersion}' must match Octopus-agent-orchestrator/VERSION '${bundleVersion}'.`
+                `${bn}/live/version.json Version '${liveVersion}' must match ${bn}/VERSION '${bundleVersion}'.`
             );
         }
 
         const liveSourceOfTruth = liveVersionObject.SourceOfTruth ? String(liveVersionObject.SourceOfTruth).trim() : '';
         if (!liveSourceOfTruth) {
-            violations.push('Octopus-agent-orchestrator/live/version.json must include non-empty SourceOfTruth.');
+            violations.push(`${bn}/live/version.json must include non-empty SourceOfTruth.`);
         } else if (liveSourceOfTruth.toLowerCase() !== sourceOfTruth.toLowerCase()) {
             violations.push(
-                `Octopus-agent-orchestrator/live/version.json SourceOfTruth '${liveSourceOfTruth}' must match verification SourceOfTruth '${sourceOfTruth}'.`
+                `${bn}/live/version.json SourceOfTruth '${liveSourceOfTruth}' must match verification SourceOfTruth '${sourceOfTruth}'.`
             );
         }
 
         const liveCanonicalEntrypoint = liveVersionObject.CanonicalEntrypoint ? String(liveVersionObject.CanonicalEntrypoint).trim() : '';
         if (!liveCanonicalEntrypoint) {
-            violations.push('Octopus-agent-orchestrator/live/version.json must include non-empty CanonicalEntrypoint.');
+            violations.push(`${bn}/live/version.json must include non-empty CanonicalEntrypoint.`);
         } else if (canonicalEntrypoint && liveCanonicalEntrypoint !== canonicalEntrypoint) {
             violations.push(
-                `Octopus-agent-orchestrator/live/version.json CanonicalEntrypoint '${liveCanonicalEntrypoint}' must match expected '${canonicalEntrypoint}'.`
+                `${bn}/live/version.json CanonicalEntrypoint '${liveCanonicalEntrypoint}' must match expected '${canonicalEntrypoint}'.`
             );
         }
     }
@@ -564,21 +575,22 @@ export interface NestedBundleDuplicationResult {
  * to index two copies of the same codebase. Scans immediate children of the
  * deployed bundle directory for another Octopus-agent-orchestrator tree.
  */
-export function detectNestedBundleDuplication(targetRoot: string): NestedBundleDuplicationResult {
+export function detectNestedBundleDuplication(targetRoot: string, bundleName?: string): NestedBundleDuplicationResult {
     const duplicatePaths: string[] = [];
-    const bundlePath = getBundlePath(targetRoot);
+    const effectiveName = resolveBundleName(bundleName);
+    const bundlePath = getBundlePath(targetRoot, effectiveName);
 
     if (!pathExists(bundlePath)) {
         return { duplicatesFound: false, duplicatePaths };
     }
 
     // Check for nested bundle inside the deployed bundle
-    const nestedBundlePath = path.join(bundlePath, DEFAULT_BUNDLE_NAME);
+    const nestedBundlePath = path.join(bundlePath, effectiveName);
     if (pathExists(nestedBundlePath)) {
         const nestedLauncher = path.join(nestedBundlePath, 'bin', 'octopus.js');
         if (pathExists(nestedLauncher)) {
             duplicatePaths.push(
-                path.join(DEFAULT_BUNDLE_NAME, DEFAULT_BUNDLE_NAME).replace(/\\/g, '/')
+                path.join(effectiveName, effectiveName).replace(/\\/g, '/')
             );
         }
     }
@@ -590,7 +602,7 @@ export function detectNestedBundleDuplication(targetRoot: string): NestedBundleD
         const nestedNodeModules = path.join(bundlePath, 'node_modules');
         if (pathExists(nestedNodeModules)) {
             duplicatePaths.push(
-                (DEFAULT_BUNDLE_NAME + '/node_modules').replace(/\\/g, '/')
+                (effectiveName + '/node_modules').replace(/\\/g, '/')
             );
         }
     }

@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH } from '../core/constants';
+import { resolveAgentInitStateRelativePath } from '../core/constants';
 import { pathExists } from '../core/fs';
 import { readJsonFile, writeJsonFile } from '../core/json';
 
@@ -176,7 +176,7 @@ export function buildRefreshAgentInitState(options: BuildRefreshAgentInitStateOp
     });
 }
 
-export function getAgentInitStatePath(targetRoot: string, relativePath: string = DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH): string {
+export function getAgentInitStatePath(targetRoot: string, relativePath: string = resolveAgentInitStateRelativePath()): string {
     return path.isAbsolute(relativePath)
         ? relativePath
         : path.resolve(targetRoot, relativePath);
@@ -184,7 +184,7 @@ export function getAgentInitStatePath(targetRoot: string, relativePath: string =
 
 export function readAgentInitStateSafe(
     targetRoot: string,
-    relativePath: string = DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH
+    relativePath: string = resolveAgentInitStateRelativePath()
 ): AgentInitStateReadResult {
     const statePath = getAgentInitStatePath(targetRoot, relativePath);
     if (!pathExists(statePath)) {
@@ -213,7 +213,7 @@ export function readAgentInitStateSafe(
 export function writeAgentInitState(
     targetRoot: string,
     state: unknown,
-    relativePath: string = DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH
+    relativePath: string = resolveAgentInitStateRelativePath()
 ): string {
     const statePath = getAgentInitStatePath(targetRoot, relativePath);
     writeJsonFile(statePath, validateAgentInitState(state));

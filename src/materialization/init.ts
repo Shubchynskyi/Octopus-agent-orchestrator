@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
 import { readJsonFile } from '../core/json';
-import { ALL_AGENT_ENTRYPOINT_FILES } from '../core/constants';
+import { ALL_AGENT_ENTRYPOINT_FILES , resolveBundleName} from '../core/constants';
 import { writeProtectedControlPlaneManifest } from '../gates/helpers';
 import { syncReviewCapabilities, writeSkillsIndex } from '../runtime/skills';
 import {
@@ -20,7 +20,7 @@ import {
     applyAssistantDefaults,
     generateProjectMemorySummary
 } from './rule-materialization';
-import { NODE_HUMAN_COMMIT_COMMAND, NODE_INTERACTIVE_UPDATE_COMMAND, NODE_NON_INTERACTIVE_UPDATE_COMMAND } from './command-constants';
+import { getNodeHumanCommitCommand, getNodeInteractiveUpdateCommand, getNodeNonInteractiveUpdateCommand } from './command-constants';
 import { migrateContextRulesToProjectMemory, buildMigrationReportLines } from './project-memory-migration';
 import { withLifecycleOperationLock } from '../lifecycle/common';
 
@@ -541,8 +541,8 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         `Project: ${projectName}`,
         `Target root: ${normalized}`, '',
         '## Summary',
-        `- Rule files materialized in ${tick}Octopus-agent-orchestrator/live/docs/agent-rules${tick}: ${ruleFiles.length}`,
-        `- Support directories synced into ${tick}Octopus-agent-orchestrator/live${tick}: ${copiedSupportDirs}`,
+        `- Rule files materialized in ${tick}${resolveBundleName()}/live/docs/agent-rules${tick}: ${ruleFiles.length}`,
+        `- Support directories synced into ${tick}${resolveBundleName()}/live${tick}: ${copiedSupportDirs}`,
         '- Review capabilities config sync policy: preserve existing live values, normalize legacy keys/shapes, and fill missing keys from template.',
         `- Review capabilities config merge status: ${configMergeStatuses['review-capabilities'] || 'n/a'}`,
         '- Paths config sync policy: preserve existing live values, normalize legacy keys/shapes, and fill missing keys from template.',
@@ -581,7 +581,7 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
     lines.push('', '## Context Fill Policy');
     lines.push('- Project-context rules (`10/20/30/40/50/60`) prefer legacy `docs/agent-rules/*`, then existing `live` content, then template defaults.');
     lines.push('- All other rules prefer existing `live` content, then template defaults, then legacy docs fallback.');
-    lines.push(`- Selected source-of-truth entrypoint (${tick}${trimmedSoT}${tick}) is provided by installer and points to ${tick}Octopus-agent-orchestrator/live/docs/agent-rules/*${tick}.`);
+    lines.push(`- Selected source-of-truth entrypoint (${tick}${trimmedSoT}${tick}) is provided by installer and points to ${tick}${resolveBundleName()}/live/docs/agent-rules/*${tick}.`);
 
     return lines;
 }
@@ -589,7 +589,7 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
 function buildUsageLines(opts: BuildUsageOptions): string[] {
     const { lang, brevity, canonicalEntrypoint, enforceNoAutoCommit } = opts;
     const commitGuardLine = enforceNoAutoCommit
-        ? `Hard no-auto-commit guard is enabled. It blocks detected agent-session commits while normal human commits remain available; for intentional manual commits from the same agent shell use: \`${NODE_HUMAN_COMMIT_COMMAND}\`.`
+        ? `Hard no-auto-commit guard is enabled. It blocks detected agent-session commits while normal human commits remain available; for intentional manual commits from the same agent shell use: \`${getNodeHumanCommitCommand()}\`.`
         : 'Hard no-auto-commit guard is disabled.';
 
     return [
@@ -605,8 +605,8 @@ function buildUsageLines(opts: BuildUsageOptions): string[] {
         '- `depth=3`: high-risk or cross-cutting work.',
         '- If token economy mode is enabled, use `depth=1` only for small, well-localized tasks; default `depth=3` keeps full reviewer context while shared gate-output compaction still applies.', '',
         '## Update Workspace',
-        `- Interactive update: \`${NODE_INTERACTIVE_UPDATE_COMMAND}\``,
-        `- Non-interactive apply: \`${NODE_NON_INTERACTIVE_UPDATE_COMMAND}\``, '',
+        `- Interactive update: \`${getNodeInteractiveUpdateCommand()}\``,
+        `- Non-interactive apply: \`${getNodeNonInteractiveUpdateCommand()}\``, '',
         `Canonical instructions entrypoint for orchestration: \`${canonicalEntrypoint}\`.`,
         `Hard stop: first open \`${canonicalEntrypoint}\` and follow its routing links. Only then execute any task from \`TASK.md\`.`,
         'Orchestrator mode starts when task execution is requested from this file (`TASK.md`).',

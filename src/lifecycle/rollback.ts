@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { resolveBundleName } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import { validateInitAnswers } from '../schemas/init-answers';
 import { runInstall } from '../materialization/install';
@@ -77,11 +77,11 @@ function readVersionOrFallback(versionPath: string, fallbackValue: string = 'unk
 }
 
 export function getRollbackSnapshotsRoot(targetRoot: string): string {
-    return path.join(targetRoot, DEFAULT_BUNDLE_NAME, 'runtime', 'update-rollbacks');
+    return path.join(targetRoot, resolveBundleName(), 'runtime', 'update-rollbacks');
 }
 
 export function getBundleBackupsRoot(targetRoot: string): string {
-    return path.join(targetRoot, DEFAULT_BUNDLE_NAME, 'runtime', 'bundle-backups');
+    return path.join(targetRoot, resolveBundleName(), 'runtime', 'bundle-backups');
 }
 
 export function listRollbackSnapshotPaths(targetRoot: string): string[] {
@@ -136,7 +136,7 @@ function getRelativeRollbackPath(targetRoot: string, absolutePath: string): stri
 export function findSnapshotByVersion(targetRoot: string, targetVersion: string): string | null {
     const snapshots = listRollbackSnapshotPaths(targetRoot);
     for (const snapshotPath of snapshots) {
-        const versionPath = path.join(snapshotPath, DEFAULT_BUNDLE_NAME, 'VERSION');
+        const versionPath = path.join(snapshotPath, resolveBundleName(), 'VERSION');
         if (!pathExists(versionPath)) continue;
         const version = readTextFile(versionPath).trim();
         if (version && compareVersionStrings(version, targetVersion) === 0) {
@@ -161,7 +161,7 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
         sourcePath = null,
         packageSpec = null,
         trustOverride = false,
-        initAnswersPath = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json'),
+        initAnswersPath = path.join(resolveBundleName(), 'runtime', 'init-answers.json'),
         dryRun = false,
         skipVerify = false,
         skipManifestValidation = false,
@@ -170,7 +170,7 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
     } = options;
 
     const normalizedTarget = validateTargetRoot(targetRoot, bundleRoot);
-    const deployedBundleRoot = path.join(normalizedTarget, DEFAULT_BUNDLE_NAME);
+    const deployedBundleRoot = path.join(normalizedTarget, resolveBundleName());
     if (!pathExists(deployedBundleRoot)) {
         throw new Error(`Deployed bundle not found: ${deployedBundleRoot}`);
     }
@@ -198,12 +198,12 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
     const validated = validateInitAnswers(initAnswers);
 
     const timestamp = getTimestamp();
-    const rollbackReportRelativePath = `${DEFAULT_BUNDLE_NAME}/runtime/update-reports/rollback-to-version-${timestamp}.md`;
+    const rollbackReportRelativePath = `${resolveBundleName()}/runtime/update-reports/rollback-to-version-${timestamp}.md`;
     const rollbackReportPath = path.join(normalizedTarget, rollbackReportRelativePath);
-    const safetySnapshotRelativePath = `${DEFAULT_BUNDLE_NAME}/runtime/update-rollbacks/rollback-${timestamp}`;
+    const safetySnapshotRelativePath = `${resolveBundleName()}/runtime/update-rollbacks/rollback-${timestamp}`;
     const safetySnapshotPath = path.join(normalizedTarget, safetySnapshotRelativePath);
     const safetySnapshotRecordsRelativePath = `${safetySnapshotRelativePath}/${path.basename(getRollbackRecordsPath(safetySnapshotPath))}`;
-    const bundleSyncBackupRelativePath = `${DEFAULT_BUNDLE_NAME}/runtime/bundle-backups/${timestamp}`;
+    const bundleSyncBackupRelativePath = `${resolveBundleName()}/runtime/bundle-backups/${timestamp}`;
     const bundleSyncBackupPath = path.join(normalizedTarget, bundleSyncBackupRelativePath);
 
     let safetySnapshotCreated = false;
@@ -226,7 +226,7 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
     if (matchingSnapshot) {
         resolvedSourceType = 'snapshot';
         resolvedSourceReference = getRelativeRollbackPath(normalizedTarget, matchingSnapshot);
-        sourceRoot = path.join(matchingSnapshot, DEFAULT_BUNDLE_NAME);
+        sourceRoot = path.join(matchingSnapshot, resolveBundleName());
         sourceVersion = readVersionOrFallback(path.join(sourceRoot, 'VERSION'));
     } else if (sourcePath) {
         const resolvedSourcePath = path.resolve(String(sourcePath).trim());
@@ -350,10 +350,10 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
                 if (item === DEFERRED_VERSION_ITEM) continue;
                 const sourceItemPath = path.join(sourceRoot, item);
                 if (fs.existsSync(sourceItemPath)) {
-                    previewAffectedItems.push(`${DEFAULT_BUNDLE_NAME}/${item}`);
+                    previewAffectedItems.push(`${resolveBundleName()}/${item}`);
                 }
             }
-            previewAffectedItems.push(`${DEFAULT_BUNDLE_NAME}/${DEFERRED_VERSION_ITEM}`);
+            previewAffectedItems.push(`${resolveBundleName()}/${DEFERRED_VERSION_ITEM}`);
             syncStatus = 'SKIPPED_DRY_RUN';
         }
 
@@ -543,7 +543,7 @@ export function runSnapshotRollback(options: RunSnapshotRollbackOptions) {
     } = options;
 
     const normalizedTarget = validateTargetRoot(targetRoot, bundleRoot);
-    const deployedBundleRoot = path.join(normalizedTarget, DEFAULT_BUNDLE_NAME);
+    const deployedBundleRoot = path.join(normalizedTarget, resolveBundleName());
     const normalizedSnapshotPath = resolveRollbackSnapshotPath(normalizedTarget, snapshotPath);
 
     if (!pathExists(normalizedSnapshotPath)) {
@@ -560,11 +560,11 @@ export function runSnapshotRollback(options: RunSnapshotRollbackOptions) {
 
     const rollbackRecords = readRollbackRecords(normalizedSnapshotPath);
     const currentVersion = readVersionOrFallback(path.join(deployedBundleRoot, 'VERSION'));
-    const snapshotVersion = readVersionOrFallback(path.join(normalizedSnapshotPath, DEFAULT_BUNDLE_NAME, 'VERSION'));
+    const snapshotVersion = readVersionOrFallback(path.join(normalizedSnapshotPath, resolveBundleName(), 'VERSION'));
     const timestamp = getTimestamp();
-    const rollbackReportRelativePath = `${DEFAULT_BUNDLE_NAME}/runtime/update-reports/rollback-${timestamp}.md`;
+    const rollbackReportRelativePath = `${resolveBundleName()}/runtime/update-reports/rollback-${timestamp}.md`;
     const rollbackReportPath = path.join(normalizedTarget, rollbackReportRelativePath);
-    const safetySnapshotRelativePath = `${DEFAULT_BUNDLE_NAME}/runtime/update-rollbacks/rollback-${timestamp}`;
+    const safetySnapshotRelativePath = `${resolveBundleName()}/runtime/update-rollbacks/rollback-${timestamp}`;
     const safetySnapshotPath = path.join(normalizedTarget, safetySnapshotRelativePath);
     const safetySnapshotRecordsRelativePath = `${safetySnapshotRelativePath}/${path.basename(getRollbackRecordsPath(safetySnapshotPath))}`;
 

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { resolveBundleName } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import {
     DEFAULT_NPM_TIMEOUT_MS,
@@ -493,7 +493,7 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
     const {
         targetRoot,
         bundleRoot,
-        initAnswersPath = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json'),
+        initAnswersPath = path.join(resolveBundleName(), 'runtime', 'init-answers.json'),
         packageSpec = null,
         sourcePath = null,
         apply = false,
@@ -512,7 +512,7 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
     } = options;
 
     const normalizedTarget = validateTargetRoot(targetRoot, bundleRoot);
-    const deployedBundleRoot = path.join(normalizedTarget, DEFAULT_BUNDLE_NAME);
+    const deployedBundleRoot = path.join(normalizedTarget, resolveBundleName());
     if (!pathExists(deployedBundleRoot)) {
         throw new Error(`Deployed bundle not found: ${deployedBundleRoot}`);
     }

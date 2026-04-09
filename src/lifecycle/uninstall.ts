@@ -4,7 +4,7 @@ import {
     ALL_AGENT_ENTRYPOINT_FILES,
     BOOLEAN_TRUE_VALUES,
     BOOLEAN_FALSE_VALUES,
-    DEFAULT_BUNDLE_NAME
+    resolveBundleName
 } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import { detectLineEnding } from '../core/line-endings';
@@ -15,11 +15,11 @@ import {
     MANAGED_END,
     COMMIT_GUARD_START,
     COMMIT_GUARD_END,
-    CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES,
+     getClaudeOrchestratorAllowEntries,
     GITIGNORE_MANAGED_COMMENT,
-    LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY,
+    getLegacyUninstallBackupGitignoreEntry,
     UNINSTALL_BACKUP_GITIGNORE_COMMENT,
-    UNINSTALL_BACKUP_GITIGNORE_ENTRY
+    getUninstallBackupGitignoreEntry
 } from '../materialization/content-builders';
 import {
     copyPathRecursive,
@@ -433,7 +433,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
     const {
         targetRoot,
         bundleRoot,
-        initAnswersPath = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json'),
+        initAnswersPath = path.join(resolveBundleName(), 'runtime', 'init-answers.json'),
         dryRun = false,
         skipBackups = false,
         keepPrimaryEntrypoint,
@@ -443,7 +443,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
 
     const normalizedTarget = validateTargetRoot(targetRoot, bundleRoot);
     return withLifecycleOperationLock(normalizedTarget, 'uninstall', () => {
-    const orchestratorRoot = path.join(normalizedTarget, DEFAULT_BUNDLE_NAME);
+    const orchestratorRoot = path.join(normalizedTarget, resolveBundleName());
 
     // Resolve init answers path (allow missing)
     let initAnswersCandidatePath: string;
@@ -473,7 +473,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
     let rollbackRecords: RollbackRecord[] = [];
     let rollbackStatus = 'NOT_NEEDED';
     let currentPhase = 'INIT';
-    const journalRoot = path.join(normalizedTarget, `${DEFAULT_BUNDLE_NAME}-uninstall-journal`);
+    const journalRoot = path.join(normalizedTarget, `${resolveBundleName()}-uninstall-journal`);
 
     // Check for interrupted uninstall from a previous run
     if (!dryRun) {
@@ -496,7 +496,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
 
     function getBackupRoot(): string {
         if (!backupRoot) {
-            backupRoot = path.join(normalizedTarget, `${DEFAULT_BUNDLE_NAME}-uninstall-backups`, timestamp);
+            backupRoot = path.join(normalizedTarget, `${resolveBundleName()}-uninstall-backups`, timestamp);
         }
         return backupRoot;
     }
@@ -696,7 +696,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
                 .map((entry: unknown) => String(entry).trim())
             : [];
 
-        const managedSet = new Set<string>([...CLAUDE_ORCHESTRATOR_ALLOW_ENTRIES]);
+        const managedSet = new Set<string>([...getClaudeOrchestratorAllowEntries()]);
         const updatedAllowEntries = currentAllowEntries.filter((entry: string) => !managedSet.has(entry));
 
         if (updatedAllowEntries.length === currentAllowEntries.length) return;
@@ -762,8 +762,8 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
 
     function ensureUninstallBackupGitignoreEntries(): void {
         // A trailing-slash gitignore rule ignores the directory and everything inside it.
-        const ignoreEntry = UNINSTALL_BACKUP_GITIGNORE_ENTRY;
-        const legacyWildcardEntry = LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY;
+        const ignoreEntry = getUninstallBackupGitignoreEntry();
+        const legacyWildcardEntry = getLegacyUninstallBackupGitignoreEntry();
         const commentLine = UNINSTALL_BACKUP_GITIGNORE_COMMENT;
 
         const filePath = path.join(normalizedTarget, '.gitignore');
@@ -830,20 +830,20 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
     function removeBundleDirectory(): void {
         if (!fs.existsSync(orchestratorRoot) || !fs.lstatSync(orchestratorRoot).isDirectory()) return;
 
-        previewAffectedFiles.push(DEFAULT_BUNDLE_NAME + '/');
+        previewAffectedFiles.push(resolveBundleName() + '/');
         const keepRuntime = keepRuntimeArtifactsValue;
         const runtimePath = path.join(orchestratorRoot, 'runtime');
 
         if (keepRuntime && fs.existsSync(runtimePath) && fs.lstatSync(runtimePath).isDirectory()) {
-            backupItem(runtimePath, path.join(DEFAULT_BUNDLE_NAME, 'runtime'), true, true);
-            preservedRuntimePath = path.join(getBackupRoot(), DEFAULT_BUNDLE_NAME, 'runtime');
+            backupItem(runtimePath, path.join(resolveBundleName(), 'runtime'), true, true);
+            preservedRuntimePath = path.join(getBackupRoot(), resolveBundleName(), 'runtime');
         }
 
         // Preserve project-memory alongside runtime artifacts when requested
         const projectMemoryPath = path.join(orchestratorRoot, 'live', 'docs', 'project-memory');
         if (keepRuntime && fs.existsSync(projectMemoryPath) && fs.lstatSync(projectMemoryPath).isDirectory()) {
-            backupItem(projectMemoryPath, path.join(DEFAULT_BUNDLE_NAME, 'live', 'docs', 'project-memory'), true, true);
-            preservedProjectMemoryPath = path.join(getBackupRoot(), DEFAULT_BUNDLE_NAME, 'live', 'docs', 'project-memory');
+            backupItem(projectMemoryPath, path.join(resolveBundleName(), 'live', 'docs', 'project-memory'), true, true);
+            preservedProjectMemoryPath = path.join(getBackupRoot(), resolveBundleName(), 'live', 'docs', 'project-memory');
         }
 
         if (!dryRun) {

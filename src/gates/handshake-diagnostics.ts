@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { SOURCE_OF_TRUTH_VALUES, SOURCE_TO_ENTRYPOINT_MAP } from '../core/constants';
+import { SOURCE_OF_TRUTH_VALUES, SOURCE_TO_ENTRYPOINT_MAP , resolveBundleName} from '../core/constants';
 import { redactPath } from '../core/redaction';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import {
@@ -96,7 +96,7 @@ function resolveCliPath(repoRoot: string, isSourceCheckout: boolean): string {
     if (isSourceCheckout) {
         return 'node bin/octopus.js';
     }
-    return 'node Octopus-agent-orchestrator/bin/octopus.js';
+    return `node ${resolveBundleName()}/bin/octopus.js`;
 }
 
 export function resolveHandshakeArtifactPath(repoRoot: string, taskId: string, artifactPath = ''): string {

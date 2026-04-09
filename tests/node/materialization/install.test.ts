@@ -7,9 +7,9 @@ import * as os from 'node:os';
 import { runInstall } from '../../../src/materialization/install';
 import { getLifecycleOperationLockPath } from '../../../src/lifecycle/common';
 import {
-    LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY,
+    getLegacyUninstallBackupGitignoreEntry,
     UNINSTALL_BACKUP_GITIGNORE_COMMENT,
-    UNINSTALL_BACKUP_GITIGNORE_ENTRY
+    getUninstallBackupGitignoreEntry
 } from '../../../src/materialization/content-builders';
 
 function findRepoRoot() {
@@ -431,8 +431,8 @@ describe('runInstall', () => {
                 path.join(projectRoot, '.gitignore'),
                 [
                     'node_modules/',
-                    UNINSTALL_BACKUP_GITIGNORE_ENTRY,
-                    LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY,
+                    getUninstallBackupGitignoreEntry(),
+                    getLegacyUninstallBackupGitignoreEntry(),
                     '# Octopus-agent-orchestrator managed ignores',
                     'TASK.md'
                 ].join('\n'),
@@ -452,10 +452,10 @@ describe('runInstall', () => {
             const gitignore = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
             const lines = gitignore.split(/\r?\n/);
             assert.equal(lines.filter((line) => line === UNINSTALL_BACKUP_GITIGNORE_COMMENT).length, 1);
-            assert.equal(lines.filter((line) => line === UNINSTALL_BACKUP_GITIGNORE_ENTRY).length, 1);
-            assert.equal(lines.includes(LEGACY_UNINSTALL_BACKUP_GITIGNORE_ENTRY), false);
+            assert.equal(lines.filter((line) => line === getUninstallBackupGitignoreEntry()).length, 1);
+            assert.equal(lines.includes(getLegacyUninstallBackupGitignoreEntry()), false);
             assert.equal((gitignore.match(/# Octopus-agent-orchestrator managed ignores/g) || []).length, 1);
-            assert.ok(lines.indexOf(UNINSTALL_BACKUP_GITIGNORE_ENTRY) < lines.indexOf('# Octopus-agent-orchestrator managed ignores'));
+            assert.ok(lines.indexOf(getUninstallBackupGitignoreEntry()) < lines.indexOf('# Octopus-agent-orchestrator managed ignores'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

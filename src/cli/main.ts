@@ -9,9 +9,10 @@ import {
 import { assertValidTaskId, appendTaskEvent, appendTaskEventAsync } from '../gate-runtime/task-events';
 import { fileSha256 } from '../gate-runtime/hash';
 import {
-    DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+    resolveInitAnswersRelativePath,
     LIFECYCLE_COMMANDS,
-    SOURCE_OF_TRUTH_VALUES
+    SOURCE_OF_TRUTH_VALUES,
+    resolveBundleName
 } from '../core/constants';
 import { getAllShimmedGateNames } from '../compat/shim-registry';
 import {
@@ -322,7 +323,7 @@ function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: boolean 
                 return result;
             },
             manifestRunner(options) {
-                const manifestPath = path.join(options.targetRoot, 'Octopus-agent-orchestrator', 'MANIFEST.md');
+                const manifestPath = path.join(options.targetRoot, resolveBundleName(), 'MANIFEST.md');
                 const result = effectiveValidateManifest(manifestPath, options.targetRoot);
                 if (!result.passed) {
                     throw new Error(formatManifestResult(result));
@@ -390,7 +391,7 @@ async function handleInstall(commandArgv: string[], packageJson: PackageJsonLike
         const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
         const initAnswersPath = typeof options.initAnswersPath === 'string'
             ? options.initAnswersPath
-            : DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+            : resolveInitAnswersRelativePath();
         const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, getBundlePath(targetRoot), 'install');
         const installResult = runInstall({
             targetRoot,
@@ -439,7 +440,7 @@ function handleInit(commandArgv: string[], packageJson: PackageJsonLike): void {
     const bundlePath = ensureBundleExists(targetRoot, 'init');
     const initAnswersPath = typeof options.initAnswersPath === 'string'
         ? options.initAnswersPath
-        : DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+        : resolveInitAnswersRelativePath();
     const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'init');
 
     const initResult = runInit({
@@ -488,7 +489,7 @@ function handleStatus(commandArgv: string[], packageJson: PackageJsonLike): void
     ensureDirectoryExists(targetRoot, 'Target root');
     const snapshot = getStatusSnapshot(
         targetRoot,
-        typeof options.initAnswersPath === 'string' ? options.initAnswersPath : DEFAULT_INIT_ANSWERS_RELATIVE_PATH
+        typeof options.initAnswersPath === 'string' ? options.initAnswersPath : resolveInitAnswersRelativePath()
     );
     if (options.json === true) {
         console.log(formatStatusSnapshotJson(snapshot));
@@ -557,7 +558,7 @@ function handleDoctor(commandArgv: string[], packageJson: PackageJsonLike): void
     const bundlePath = ensureBundleExists(targetRoot, 'doctor');
     const initAnswersPath = typeof options.initAnswersPath === 'string'
         ? options.initAnswersPath
-        : DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+        : resolveInitAnswersRelativePath();
     const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'doctor');
     let activeAgentFilesList = answers.activeAgentFiles
         ? answers.activeAgentFiles.split(/[,;]+/).map((s: string) => s.trim()).filter(Boolean)
@@ -734,7 +735,7 @@ async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike)
 
     const initAnswersPath = typeof options.initAnswersPath === 'string'
         ? options.initAnswersPath
-        : DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+        : resolveInitAnswersRelativePath();
     const resolvedInitAnswersPath = path.resolve(targetRoot, initAnswersPath);
     const existingAnswers = readOptionalJsonFile(resolvedInitAnswersPath) || {};
 
@@ -874,7 +875,7 @@ async function handleUpdate(commandArgv: string[], packageJson: PackageJsonLike)
         bundleRoot: bundlePath,
         initAnswersPath: typeof options.initAnswersPath === 'string'
             ? options.initAnswersPath
-            : DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+            : resolveInitAnswersRelativePath(),
         packageSpec: typeof options.packageSpec === 'string' ? options.packageSpec : undefined,
         sourcePath: typeof options.sourcePath === 'string' ? options.sourcePath : undefined,
         apply: true,
@@ -940,7 +941,7 @@ async function handleUpdateGit(commandArgv: string[], packageJson: PackageJsonLi
         bundleRoot: bundlePath,
         initAnswersPath: typeof options.initAnswersPath === 'string'
             ? options.initAnswersPath
-            : DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+            : resolveInitAnswersRelativePath(),
         repoUrl: typeof options.repoUrl === 'string' ? options.repoUrl : undefined,
         branch: typeof options.branch === 'string' ? options.branch : undefined,
         checkOnly: options.checkOnly === true,
@@ -998,7 +999,7 @@ function handleUninstall(commandArgv: string[], packageJson: PackageJsonLike): v
         bundleRoot: bundlePath,
         initAnswersPath: typeof options.initAnswersPath === 'string'
             ? options.initAnswersPath
-            : DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+            : resolveInitAnswersRelativePath(),
         noPrompt: options.noPrompt === true,
         dryRun: options.dryRun === true,
         skipBackups: options.skipBackups === true,
@@ -1191,7 +1192,7 @@ function handleVerify(commandArgv: string[], packageJson: PackageJsonLike): void
     const bundlePath = ensureBundleExists(targetRoot, 'verify');
     const initAnswersPath = typeof options.initAnswersPath === 'string'
         ? options.initAnswersPath
-        : DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+        : resolveInitAnswersRelativePath();
     const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'verify');
     const sourceOfTruth = options.sourceOfTruth !== undefined
         ? normalizeSourceOfTruth(options.sourceOfTruth)
@@ -1248,7 +1249,7 @@ async function handleCheckUpdate(commandArgv: string[], packageJson: PackageJson
         bundleRoot: bundlePath,
         initAnswersPath: typeof options.initAnswersPath === 'string'
             ? options.initAnswersPath
-            : DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+            : resolveInitAnswersRelativePath(),
         packageSpec: typeof options.packageSpec === 'string' ? options.packageSpec : undefined,
         sourcePath: typeof options.sourcePath === 'string' ? options.sourcePath : undefined,
         apply: options.apply === true,
@@ -1310,7 +1311,7 @@ async function handleRollback(commandArgv: string[], packageJson: PackageJsonLik
         packageSpec: typeof options.packageSpec === 'string' ? options.packageSpec : undefined,
         initAnswersPath: typeof options.initAnswersPath === 'string'
             ? options.initAnswersPath
-            : DEFAULT_INIT_ANSWERS_RELATIVE_PATH,
+            : resolveInitAnswersRelativePath(),
         dryRun: options.dryRun === true
     }) as Record<string, unknown>;
 
@@ -1362,7 +1363,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             const options = rawOptions as ParsedOptionsRecord;
             const manifestPath = typeof options.manifestPath === 'string'
                 ? options.manifestPath
-                : path.join('Octopus-agent-orchestrator', 'MANIFEST.md');
+                : path.join(resolveBundleName(), 'MANIFEST.md');
             const result = validateManifest(manifestPath);
             console.log(options.compact === true ? formatManifestResultCompact(result) : formatManifestResult(result));
             if (!result.passed) {
@@ -1379,7 +1380,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             const vcOptions = rawOptions as ParsedOptionsRecord;
             const bundleRoot = typeof vcOptions.bundleRoot === 'string'
                 ? path.resolve(vcOptions.bundleRoot)
-                : path.resolve('Octopus-agent-orchestrator');
+                : path.resolve(resolveBundleName());
             const vcReport = validateAllConfigs(bundleRoot);
             console.log(vcOptions.compact === true
                 ? formatValidationReportCompact(vcReport)
@@ -2376,6 +2377,9 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
 
     const globalFlags = extractGlobalFlags(argv);
     applyNoColorFlag(globalFlags.noColor);
+    if (globalFlags.bundleName) {
+        process.env.OCTOPUS_BUNDLE_NAME = globalFlags.bundleName;
+    }
     const effectiveArgv = globalFlags.rest;
 
     const packageJson = readPackageJson(packageRoot);

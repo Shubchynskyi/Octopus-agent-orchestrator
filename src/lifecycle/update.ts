@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { resolveBundleName } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import { readJsonFile } from '../core/json';
 import { isPathInsideRoot } from '../core/paths';
@@ -130,21 +130,21 @@ export function getUpdateRollbackItems(rootPath: string, initAnswersResolvedPath
         '.antigravity/agents',
         '.gitignore',
         '.git/hooks/pre-commit',
-        'Octopus-agent-orchestrator/.gitattributes',
-        'Octopus-agent-orchestrator/bin',
-        'Octopus-agent-orchestrator/dist',
-        'Octopus-agent-orchestrator/live',
-        'Octopus-agent-orchestrator/live/docs/project-memory',
-        'Octopus-agent-orchestrator/package.json',
-        'Octopus-agent-orchestrator/src',
-        'Octopus-agent-orchestrator/template',
-        'Octopus-agent-orchestrator/README.md',
-        'Octopus-agent-orchestrator/HOW_TO.md',
-        'Octopus-agent-orchestrator/MANIFEST.md',
-        'Octopus-agent-orchestrator/AGENT_INIT_PROMPT.md',
-        'Octopus-agent-orchestrator/CHANGELOG.md',
-        'Octopus-agent-orchestrator/LICENSE',
-        'Octopus-agent-orchestrator/VERSION'
+        resolveBundleName() + '/.gitattributes',
+        resolveBundleName() + '/bin',
+        resolveBundleName() + '/dist',
+        resolveBundleName() + '/live',
+        resolveBundleName() + '/live/docs/project-memory',
+        resolveBundleName() + '/package.json',
+        resolveBundleName() + '/src',
+        resolveBundleName() + '/template',
+        resolveBundleName() + '/README.md',
+        resolveBundleName() + '/HOW_TO.md',
+        resolveBundleName() + '/MANIFEST.md',
+        resolveBundleName() + '/AGENT_INIT_PROMPT.md',
+        resolveBundleName() + '/CHANGELOG.md',
+        resolveBundleName() + '/LICENSE',
+        resolveBundleName() + '/VERSION'
     ];
 
     // Add the init answers file as a relative path
@@ -178,7 +178,7 @@ export function runUpdate(options: RunUpdateOptions) {
     const {
         targetRoot,
         bundleRoot,
-        initAnswersPath = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json'),
+        initAnswersPath = path.join(resolveBundleName(), 'runtime', 'init-answers.json'),
         dryRun = false,
         skipVerify = false,
         skipManifestValidation = false,
@@ -220,7 +220,7 @@ export function runUpdate(options: RunUpdateOptions) {
     }
 
     // Detect previous version from live/version.json
-    const liveVersionPath = path.join(normalizedTarget, DEFAULT_BUNDLE_NAME, 'live', 'version.json');
+    const liveVersionPath = path.join(normalizedTarget, resolveBundleName(), 'live', 'version.json');
     let existingLiveVersion: LiveVersionPayload | null = null;
     let previousVersion = 'unknown';
     let previousVersionSource = 'missing';
@@ -260,10 +260,10 @@ export function runUpdate(options: RunUpdateOptions) {
     const sourceOfTruth = validated.SourceOfTruth;
 
     const timestamp = getTimestamp();
-    const rollbackSnapshotRelativePath = `${DEFAULT_BUNDLE_NAME}/runtime/update-rollbacks/update-${timestamp}`;
+    const rollbackSnapshotRelativePath = `${resolveBundleName()}/runtime/update-rollbacks/update-${timestamp}`;
     const rollbackSnapshotPath = path.join(normalizedTarget, rollbackSnapshotRelativePath);
     const rollbackRecordsRelativePath = `${rollbackSnapshotRelativePath}/${path.basename(getRollbackRecordsPath(rollbackSnapshotPath))}`;
-    const updateReportRelativePath = `${DEFAULT_BUNDLE_NAME}/runtime/update-reports/update-${timestamp}.md`;
+    const updateReportRelativePath = `${resolveBundleName()}/runtime/update-reports/update-${timestamp}.md`;
     const updateReportPath = path.join(normalizedTarget, updateReportRelativePath);
 
     let rollbackSnapshotCreated = false;
@@ -398,7 +398,7 @@ export function runUpdate(options: RunUpdateOptions) {
 
             // T-040: Bundle invariant check (enforce consistency)
             currentStage = 'INVARIANT_CHECK';
-            const invariantResult = validateBundleInvariants(path.join(normalizedTarget, DEFAULT_BUNDLE_NAME), expectedInvariantPaths);
+            const invariantResult = validateBundleInvariants(path.join(normalizedTarget, resolveBundleName()), expectedInvariantPaths);
             if (!invariantResult.isValid) {
                 throw new Error(`Bundle invariant violation after update: ${invariantResult.violations.join('; ')}`);
             }
@@ -421,7 +421,7 @@ export function runUpdate(options: RunUpdateOptions) {
 
             // T-033: Automatic stale lock cleanup during update
             try {
-                cleanupStaleTaskEventLocks(path.join(normalizedTarget, DEFAULT_BUNDLE_NAME), { dryRun: false });
+                cleanupStaleTaskEventLocks(path.join(normalizedTarget, resolveBundleName()), { dryRun: false });
             } catch (lockError: unknown) {
                 // Log and continue
                 contractMigrationFiles.push(`Warning: Lock cleanup failed: ${getErrorMessage(lockError)}`);

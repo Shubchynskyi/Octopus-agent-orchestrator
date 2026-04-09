@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { SOURCE_OF_TRUTH_VALUES } from '../core/constants';
+import { SOURCE_OF_TRUTH_VALUES, resolveBundleName } from '../core/constants';
 import { getTaskModeEvidence } from './task-mode';
 
 export type ReviewerExecutionMode = 'delegated_subagent' | 'same_agent_fallback';
@@ -77,7 +77,7 @@ export function resolveReviewerRoutingPolicy(sourceOfTruth: unknown): ReviewerRo
 }
 
 export function readSourceOfTruthFromInitAnswers(repoRoot: string): string | null {
-    const initAnswersPath = path.join(path.resolve(repoRoot), 'Octopus-agent-orchestrator', 'runtime', 'init-answers.json');
+    const initAnswersPath = path.join(path.resolve(repoRoot), resolveBundleName(), 'runtime', 'init-answers.json');
     if (!fs.existsSync(initAnswersPath) || !fs.statSync(initAnswersPath).isFile()) {
         return null;
     }

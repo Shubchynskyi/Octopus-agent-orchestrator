@@ -15,7 +15,7 @@ import { applyAssistantDefaults } from './rule-materialization';
 import { runInstall } from './install';
 import { writeProtectedControlPlaneManifest } from '../gates/helpers';
 import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
-import { DEFAULT_BUNDLE_NAME } from '../core/constants';
+import { resolveBundleName } from '../core/constants';
 import { cleanupStaleTaskEventLocks } from '../gate-runtime/task-events';
 import { withLifecycleOperationLock } from '../lifecycle/common';
 
@@ -80,7 +80,7 @@ export function runReinit(options: ReinitOptions) {
     const {
         targetRoot,
         bundleRoot,
-        initAnswersPath = 'Octopus-agent-orchestrator/runtime/init-answers.json',
+        initAnswersPath = resolveBundleName() + '/runtime/init-answers.json',
         overrides = {},
         skipVerify = false,
         skipManifestValidation = false
@@ -229,7 +229,7 @@ export function runReinit(options: ReinitOptions) {
 
     // T-033: best-effort stale task-event lock cleanup so reinit recovers provider state without reinstall.
     try {
-        cleanupStaleTaskEventLocks(path.join(normalizedTarget, DEFAULT_BUNDLE_NAME), { dryRun: false });
+        cleanupStaleTaskEventLocks(path.join(normalizedTarget, resolveBundleName()), { dryRun: false });
     } catch {
         // Ignore lock cleanup failures here; reinit still updates the workspace state and bundle surface.
     }
@@ -237,7 +237,7 @@ export function runReinit(options: ReinitOptions) {
     const canonicalEntrypoint = getCanonicalEntrypointFile(resolvedSourceOfTruth);
 
     // T-040: Bundle invariant check (enforce consistency)
-    const invariantResult = validateBundleInvariants(path.join(normalizedTarget, DEFAULT_BUNDLE_NAME), expectedInvariantPaths);
+    const invariantResult = validateBundleInvariants(path.join(normalizedTarget, resolveBundleName()), expectedInvariantPaths);
     if (!invariantResult.isValid) {
         throw new Error(`Bundle invariant violation after reinit: ${invariantResult.violations.join('; ')}`);
     }

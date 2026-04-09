@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { redactHostname as redactHostnameValue } from '../core/redaction';
+import { resolveBundleName } from '../core/constants';
 
 // ---------------------------------------------------------------------------
 // Root boundary helpers
@@ -417,7 +418,7 @@ function writeLifecycleOperationLockMetadata(lockPath: string, targetRoot: strin
 
 export function getLifecycleOperationLockPath(targetRoot: string): string {
     const normalizedTarget = path.resolve(targetRoot);
-    return path.join(normalizedTarget, 'Octopus-agent-orchestrator', 'runtime', LIFECYCLE_OPERATION_LOCK_DIR_NAME);
+    return path.join(normalizedTarget, resolveBundleName(), 'runtime', LIFECYCLE_OPERATION_LOCK_DIR_NAME);
 }
 
 function acquireLifecycleOperationLock(targetRoot: string, operation: string): { release: () => void; telemetry: LifecycleLockTelemetry } {

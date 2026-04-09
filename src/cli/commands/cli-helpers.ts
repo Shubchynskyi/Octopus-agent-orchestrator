@@ -9,6 +9,7 @@ import {
     BOOLEAN_TRUE_VALUES,
     BREVITY_VALUES,
     DEFAULT_BUNDLE_NAME,
+    resolveBundleName,
     SOURCE_OF_TRUTH_VALUES
 } from '../../core/constants';
 import { getCanonicalEntrypointFile, normalizeAgentEntrypointToken as normalizeCommonAgentEntrypointToken } from '../../materialization/common';
@@ -144,20 +145,28 @@ export const COMMAND_SUMMARY = Object.freeze([
 
 export interface GlobalFlags {
     noColor: boolean;
+    bundleName: string | undefined;
     rest: string[];
 }
 
 export function extractGlobalFlags(argv: string[]): GlobalFlags {
     let noColor = false;
+    let bundleName: string | undefined;
     const rest: string[] = [];
-    for (const arg of argv) {
+    for (let i = 0; i < argv.length; i += 1) {
+        const arg = argv[i];
         if (arg === '--no-color') {
             noColor = true;
+        } else if (arg === '--bundle-name' && i + 1 < argv.length) {
+            bundleName = argv[i + 1];
+            i += 1;
+        } else if (arg.startsWith('--bundle-name=')) {
+            bundleName = arg.slice('--bundle-name='.length);
         } else {
             rest.push(arg);
         }
     }
-    return { noColor, rest };
+    return { noColor, bundleName, rest };
 }
 
 export function applyNoColorFlag(noColor: boolean): void {
@@ -483,8 +492,8 @@ export function resolvePathInsideRoot(
     return fullPath;
 }
 
-export function getBundlePath(targetRoot: string): string {
-    return path.join(targetRoot, DEFAULT_BUNDLE_NAME);
+export function getBundlePath(targetRoot: string, bundleName?: string): string {
+    return path.join(targetRoot, resolveBundleName(bundleName));
 }
 
 export function getAgentInitPromptPath(bundlePath: string): string {
@@ -522,9 +531,9 @@ function readVersionFileIfPresent(versionPath: string): string | null {
     return value || null;
 }
 
-export function resolveWorkspaceDisplayVersion(targetRoot: string, fallbackVersion?: string): string | null {
+export function resolveWorkspaceDisplayVersion(targetRoot: string, fallbackVersion?: string, bundleName?: string): string | null {
     const normalizedRoot = normalizePathValue(targetRoot);
-    const bundleVersion = readVersionFileIfPresent(path.join(normalizedRoot, DEFAULT_BUNDLE_NAME, 'VERSION'));
+    const bundleVersion = readVersionFileIfPresent(path.join(normalizedRoot, resolveBundleName(bundleName), 'VERSION'));
     if (bundleVersion) return bundleVersion;
     const rootVersion = readVersionFileIfPresent(path.join(normalizedRoot, 'VERSION'));
     if (rootVersion) return rootVersion;
@@ -914,7 +923,8 @@ export function printHelp(packageJson: PackageJsonLike): void {
             'Global options:',
             '  -h, --help                 Show this help message.',
             '  -v, --version              Show the package version.',
-            '      --no-color             Disable colored output (honors NO_COLOR env var).'
+            '      --no-color             Disable colored output (honors NO_COLOR env var).',
+            '      --bundle-name NAME     Override deployed bundle directory name (default: Octopus-agent-orchestrator; env: OCTOPUS_BUNDLE_NAME).'
         ],
         [
             'Shared lifecycle options:',
@@ -938,7 +948,7 @@ export function printHelp(packageJson: PackageJsonLike): void {
         ],
         [
             'Notes:',
-            `  - The default deployed bundle path is ${DEFAULT_BUNDLE_NAME}.`,
+            `  - The default deployed bundle path is ${DEFAULT_BUNDLE_NAME}. Override with --bundle-name or OCTOPUS_BUNDLE_NAME env var.`,
             '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
             '  - setup collects the 6 mandatory init answers, writes init-answers.json, and leaves final agent onboarding to AGENT_INIT_PROMPT.md.',
             '  - agent-init is the hard code-level gate that records active agent files, project-rule completion, skills prompt completion, and final verify/manifest PASS.',
@@ -990,7 +1000,8 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             'Global options:',
             '  -h, --help                 Show this help message.',
             '  -v, --version              Show the package version.',
-            '      --no-color             Disable colored output (honors NO_COLOR env var).'
+            '      --no-color             Disable colored output (honors NO_COLOR env var).',
+            '      --bundle-name NAME     Override deployed bundle directory name (default: Octopus-agent-orchestrator; env: OCTOPUS_BUNDLE_NAME).'
         ],
         [
             'Shared lifecycle options:',
@@ -1014,7 +1025,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
         ],
         [
             'Notes:',
-            `  - The default deployed bundle path is ${DEFAULT_BUNDLE_NAME}.`,
+            `  - The default deployed bundle path is ${DEFAULT_BUNDLE_NAME}. Override with --bundle-name or OCTOPUS_BUNDLE_NAME env var.`,
             '  - Running octopus with no arguments is safe: it prints status and help instead of bootstrapping.',
             '  - setup collects the 6 mandatory init answers, writes init-answers.json, and leaves final agent onboarding to AGENT_INIT_PROMPT.md.',
             '  - agent-init is the hard code-level gate that records active agent files, project-rule completion, skills prompt completion, and final verify/manifest PASS.',

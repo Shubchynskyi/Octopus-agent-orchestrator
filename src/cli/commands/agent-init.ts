@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { DEFAULT_BUNDLE_NAME, DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../../core/constants';
+import { resolveBundleName, resolveInitAnswersRelativePath } from '../../core/constants';
 import { runAgentInit } from '../../lifecycle/agent-init';
 import { getStatusSnapshot } from '../../validators/status';
 import {
@@ -75,10 +75,10 @@ export function handleAgentInit(commandArgv: string[], packageJson: PackageJsonL
     const targetRoot = normalizePathValue(typeof options.targetRoot === 'string' ? options.targetRoot : '.');
     const bundleRoot = typeof options.bundleRoot === 'string'
         ? normalizePathValue(options.bundleRoot)
-        : path.join(targetRoot, DEFAULT_BUNDLE_NAME);
+        : path.join(targetRoot, resolveBundleName());
     const initAnswersPath = typeof options.initAnswersPath === 'string'
         ? options.initAnswersPath
-        : DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+        : resolveInitAnswersRelativePath();
 
     console.log('OCTOPUS_AGENT_INIT');
     printBanner(packageJson, 'Finalize agent onboarding', 'Runs install answer-dependent refresh, verify, manifest validation, and writes agent-init state.', {

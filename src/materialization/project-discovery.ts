@@ -4,6 +4,7 @@ import * as childProcess from 'node:child_process';
 import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
 import { normalizeRelativePath } from '../core/paths';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
+import { resolveBundleName } from '../core/constants';
 
 interface StackSignal {
     name: string;
@@ -28,10 +29,14 @@ export interface ProjectDiscovery {
     sampleFiles: string[];
 }
 
-export const EXCLUDED_PATH_FRAGMENTS: readonly string[] = Object.freeze([
+const _BASE_EXCLUDED_PATH_FRAGMENTS = Object.freeze([
     '/.git/', '/node_modules/', '/.next/', '/dist/', '/build/',
-    '/target/', '/bin/', '/obj/', '/Octopus-agent-orchestrator/'
+    '/target/', '/bin/', '/obj/'
 ]);
+
+export function getExcludedPathFragments(): readonly string[] {
+    return [..._BASE_EXCLUDED_PATH_FRAGMENTS, `/${resolveBundleName()}/`];
+}
 
 export const STACK_SIGNALS: readonly StackSignal[] = Object.freeze([
     { name: 'Node.js or JavaScript', pattern: /(^|\/)package\.json$/ },
@@ -46,8 +51,15 @@ export const STACK_SIGNALS: readonly StackSignal[] = Object.freeze([
     { name: 'Containerization', pattern: /(^|\/)Dockerfile(\..+)?$|(^|\/)docker-compose(\.[^/]+)?\.ya?ml$/ }
 ]);
 
+const _STATIC_EXCLUDED_TOP_LEVEL_DIRS = ['.git', 'node_modules', 'dist', 'build', 'target', 'bin', 'obj'];
+
+export function getExcludedTopLevelDirs(): Set<string> {
+    return new Set([resolveBundleName(), ..._STATIC_EXCLUDED_TOP_LEVEL_DIRS]);
+}
+
+/** @deprecated Use {@link getExcludedTopLevelDirs} which respects configured bundle name. */
 export const EXCLUDED_TOP_LEVEL_DIRS = new Set([
-    'Octopus-agent-orchestrator', '.git', 'node_modules', 'dist', 'build', 'target', 'bin', 'obj'
+    resolveBundleName(), ..._STATIC_EXCLUDED_TOP_LEVEL_DIRS
 ]);
 
 /**
@@ -92,7 +104,7 @@ export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
         .filter((f: string) => {
             if (!f) return false;
             const wrapped = `/${f}/`;
-            return !EXCLUDED_PATH_FRAGMENTS.some((frag) => wrapped.includes(frag));
+            return !getExcludedPathFragments().some((frag) => wrapped.includes(frag));
         });
     const uniqueFiles: string[] = [...new Set(filteredFiles)].sort();
 
@@ -115,7 +127,7 @@ export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
     try {
         const entries = fs.readdirSync(targetRoot, { withFileTypes: true });
         topLevelDirectories = entries
-            .filter((e) => e.isDirectory() && !EXCLUDED_TOP_LEVEL_DIRS.has(e.name))
+            .filter((e) => e.isDirectory() && !getExcludedTopLevelDirs().has(e.name))
             .map((e) => e.name)
             .sort();
     } catch {
@@ -314,6 +326,6 @@ export function buildDiscoveryOverlaySection(discovery: ProjectDiscovery): strin
         `- Files considered: ${discovery.fileCount}`,
         `- Detected stacks: ${stacksText}`,
         `- Top-level directories: ${dirsText}`,
-        '- Full report: `Octopus-agent-orchestrator/live/project-discovery.md`'
+        `- Full report: \`${resolveBundleName()}/live/project-discovery.md\``
     ].join('\r\n');
 }

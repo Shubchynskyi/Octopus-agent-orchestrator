@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { DEFAULT_INIT_ANSWERS_RELATIVE_PATH, NODE_ENGINE_RANGE } from '../core/constants';
+import { resolveBundleName, resolveInitAnswersRelativePath, NODE_ENGINE_RANGE } from '../core/constants';
 import { pathExists } from '../core/fs';
 import {
     cleanupStaleTaskEventLocks,
@@ -123,13 +123,13 @@ export interface PermissionCheckEntry {
 }
 
 const CRITICAL_WRITABLE_RELATIVE_PATHS: readonly string[] = [
-    'Octopus-agent-orchestrator/runtime',
-    'Octopus-agent-orchestrator/live/config'
+    resolveBundleName() + '/runtime',
+    resolveBundleName() + '/live/config'
 ];
 
 const CRITICAL_READABLE_RELATIVE_PATHS: readonly string[] = [
-    'Octopus-agent-orchestrator/VERSION',
-    'Octopus-agent-orchestrator/MANIFEST.md'
+    resolveBundleName() + '/VERSION',
+    resolveBundleName() + '/MANIFEST.md'
 ];
 
 export function checkPermissions(targetRoot: string): PermissionCheckEvidence {
@@ -457,7 +457,7 @@ function scanTimelineEvidence(bundlePath: string): { evidence: TimelineEvidence[
 
 export function runDoctor(options: DoctorOptions): DoctorResult {
     var targetRoot = path.resolve(options.targetRoot);
-    var initAnswersPath = options.initAnswersPath || DEFAULT_INIT_ANSWERS_RELATIVE_PATH;
+    var initAnswersPath = options.initAnswersPath || resolveInitAnswersRelativePath();
     var bundlePath = getBundlePath(targetRoot);
 
     if (!pathExists(bundlePath)) {
