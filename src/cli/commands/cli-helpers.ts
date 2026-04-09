@@ -148,17 +148,25 @@ export const COMMAND_SUMMARY = Object.freeze([
 export interface GlobalFlags {
     noColor: boolean;
     bundleName: string | undefined;
+    offline: boolean;
+    forceNetwork: boolean;
     rest: string[];
 }
 
 export function extractGlobalFlags(argv: string[]): GlobalFlags {
     let noColor = false;
     let bundleName: string | undefined;
+    let offline = false;
+    let forceNetwork = false;
     const rest: string[] = [];
     for (let i = 0; i < argv.length; i += 1) {
         const arg = argv[i];
         if (arg === '--no-color') {
             noColor = true;
+        } else if (arg === '--offline') {
+            offline = true;
+        } else if (arg === '--force-network') {
+            forceNetwork = true;
         } else if (arg === '--bundle-name' && i + 1 < argv.length) {
             bundleName = argv[i + 1];
             i += 1;
@@ -168,7 +176,7 @@ export function extractGlobalFlags(argv: string[]): GlobalFlags {
             rest.push(arg);
         }
     }
-    return { noColor, bundleName, rest };
+    return { noColor, bundleName, offline, forceNetwork, rest };
 }
 
 export function applyNoColorFlag(noColor: boolean): void {
@@ -929,7 +937,9 @@ export function printHelp(packageJson: PackageJsonLike): void {
             '  -h, --help                 Show this help message.',
             '  -v, --version              Show the package version.',
             '      --no-color             Disable colored output (honors NO_COLOR env var).',
-            '      --bundle-name NAME     Override deployed bundle directory name (default: Octopus-agent-orchestrator; env: OCTOPUS_BUNDLE_NAME).'
+            '      --bundle-name NAME     Override deployed bundle directory name (default: Octopus-agent-orchestrator; env: OCTOPUS_BUNDLE_NAME).',
+            '      --offline              Block network-sensitive commands (env: OCTOPUS_OFFLINE=1).',
+            '      --force-network        Override --offline for a single invocation.'
         ],
         [
             'Shared lifecycle options:',
@@ -1009,7 +1019,9 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  -h, --help                 Show this help message.',
             '  -v, --version              Show the package version.',
             '      --no-color             Disable colored output (honors NO_COLOR env var).',
-            '      --bundle-name NAME     Override deployed bundle directory name (default: Octopus-agent-orchestrator; env: OCTOPUS_BUNDLE_NAME).'
+            '      --bundle-name NAME     Override deployed bundle directory name (default: Octopus-agent-orchestrator; env: OCTOPUS_BUNDLE_NAME).',
+            '      --offline              Block network-sensitive commands (env: OCTOPUS_OFFLINE=1).',
+            '      --force-network        Override --offline for a single invocation.'
         ],
         [
             'Shared lifecycle options:',

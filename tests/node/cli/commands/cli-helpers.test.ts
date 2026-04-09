@@ -912,6 +912,32 @@ test('extractGlobalFlags handles --no-color only', () => {
     assert.deepEqual(result.rest, []);
 });
 
+test('extractGlobalFlags extracts --offline flag', () => {
+    const result = extractGlobalFlags(['--offline', 'update', '--dry-run']);
+    assert.equal(result.offline, true);
+    assert.equal(result.forceNetwork, false);
+    assert.deepEqual(result.rest, ['update', '--dry-run']);
+});
+
+test('extractGlobalFlags extracts --force-network flag', () => {
+    const result = extractGlobalFlags(['--offline', '--force-network', 'update']);
+    assert.equal(result.offline, true);
+    assert.equal(result.forceNetwork, true);
+    assert.deepEqual(result.rest, ['update']);
+});
+
+test('extractGlobalFlags defaults offline and forceNetwork to false', () => {
+    const result = extractGlobalFlags(['status', '--json']);
+    assert.equal(result.offline, false);
+    assert.equal(result.forceNetwork, false);
+});
+
+test('extractGlobalFlags handles --offline at end of argv', () => {
+    const result = extractGlobalFlags(['check-update', '--offline']);
+    assert.equal(result.offline, true);
+    assert.deepEqual(result.rest, ['check-update']);
+});
+
 // ---------------------------------------------------------------------------
 // applyNoColorFlag
 // ---------------------------------------------------------------------------

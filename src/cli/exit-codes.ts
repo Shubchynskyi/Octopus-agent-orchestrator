@@ -27,6 +27,9 @@ export const EXIT_LOCK_CONTENTION = 5;
 /** Precondition not met (missing build output, missing artifact, stale bundle). */
 export const EXIT_PRECONDITION_FAILURE = 6;
 
+/** Offline mode blocked a network-sensitive command. */
+export const EXIT_OFFLINE_BLOCKED = 7;
+
 /** Signal-interrupted (128 + SIGINT=2). Already used by signal-handler. */
 export const EXIT_SIGNAL_INTERRUPT = 130;
 
@@ -61,6 +64,10 @@ const PRECONDITION_PATTERNS: ReadonlyArray<string | RegExp> = [
     /not found in PATH\b/
 ];
 
+const OFFLINE_BLOCKED_PATTERNS: ReadonlyArray<string | RegExp> = [
+    'offline mode is active'
+];
+
 const VALIDATION_PATTERNS: ReadonlyArray<string | RegExp> = [
     'Workspace doctor detected validation failures',
     /manifest.*DRIFT/i,
@@ -87,6 +94,7 @@ export function classifyErrorExitCode(error: unknown): number {
     const message = error instanceof Error ? error.message : String(error ?? '');
 
     if (matchesAny(message, LOCK_CONTENTION_PATTERNS)) return EXIT_LOCK_CONTENTION;
+    if (matchesAny(message, OFFLINE_BLOCKED_PATTERNS))  return EXIT_OFFLINE_BLOCKED;
     if (matchesAny(message, USAGE_PATTERNS))            return EXIT_USAGE_ERROR;
     if (matchesAny(message, PRECONDITION_PATTERNS))     return EXIT_PRECONDITION_FAILURE;
     if (matchesAny(message, VALIDATION_PATTERNS))       return EXIT_VALIDATION_FAILURE;
@@ -106,6 +114,7 @@ export function exitCodeLabel(code: number): string {
         case EXIT_VALIDATION_FAILURE:   return 'VALIDATION_FAILURE';
         case EXIT_LOCK_CONTENTION:      return 'LOCK_CONTENTION';
         case EXIT_PRECONDITION_FAILURE: return 'PRECONDITION_FAILURE';
+        case EXIT_OFFLINE_BLOCKED:      return 'OFFLINE_BLOCKED';
         case EXIT_SIGNAL_INTERRUPT:     return 'SIGNAL_INTERRUPT';
         default:                        return `EXIT_${code}`;
     }

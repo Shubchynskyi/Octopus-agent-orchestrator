@@ -9,6 +9,7 @@ import {
     EXIT_VALIDATION_FAILURE,
     EXIT_LOCK_CONTENTION,
     EXIT_PRECONDITION_FAILURE,
+    EXIT_OFFLINE_BLOCKED,
     EXIT_SIGNAL_INTERRUPT,
     classifyErrorExitCode,
     exitCodeLabel
@@ -26,6 +27,7 @@ test('exit code constants are stable', () => {
     assert.equal(EXIT_VALIDATION_FAILURE, 4);
     assert.equal(EXIT_LOCK_CONTENTION, 5);
     assert.equal(EXIT_PRECONDITION_FAILURE, 6);
+    assert.equal(EXIT_OFFLINE_BLOCKED, 7);
     assert.equal(EXIT_SIGNAL_INTERRUPT, 130);
 });
 
@@ -38,6 +40,7 @@ test('all exit codes are distinct', () => {
         EXIT_VALIDATION_FAILURE,
         EXIT_LOCK_CONTENTION,
         EXIT_PRECONDITION_FAILURE,
+        EXIT_OFFLINE_BLOCKED,
         EXIT_SIGNAL_INTERRUPT
     ];
     const unique = new Set(codes);
@@ -147,6 +150,24 @@ test('classifies missing tool in PATH as PRECONDITION_FAILURE', () => {
     );
 });
 
+test('classifies offline mode block as OFFLINE_BLOCKED', () => {
+    assert.equal(
+        classifyErrorExitCode(new Error(
+            'Command "update" requires network access but offline mode is active (source: --offline flag). Pass --force-network to override.'
+        )),
+        EXIT_OFFLINE_BLOCKED
+    );
+});
+
+test('classifies offline mode block via env as OFFLINE_BLOCKED', () => {
+    assert.equal(
+        classifyErrorExitCode(new Error(
+            'Command "check-update" requires network access but offline mode is active (source: OCTOPUS_OFFLINE environment variable). Pass --force-network to override.'
+        )),
+        EXIT_OFFLINE_BLOCKED
+    );
+});
+
 test('classifies doctor failures as VALIDATION_FAILURE', () => {
     assert.equal(
         classifyErrorExitCode(new Error('Workspace doctor detected validation failures.')),
@@ -182,6 +203,7 @@ test('exitCodeLabel returns human label for known codes', () => {
     assert.equal(exitCodeLabel(EXIT_VALIDATION_FAILURE), 'VALIDATION_FAILURE');
     assert.equal(exitCodeLabel(EXIT_LOCK_CONTENTION), 'LOCK_CONTENTION');
     assert.equal(exitCodeLabel(EXIT_PRECONDITION_FAILURE), 'PRECONDITION_FAILURE');
+    assert.equal(exitCodeLabel(EXIT_OFFLINE_BLOCKED), 'OFFLINE_BLOCKED');
     assert.equal(exitCodeLabel(EXIT_SIGNAL_INTERRUPT), 'SIGNAL_INTERRUPT');
 });
 

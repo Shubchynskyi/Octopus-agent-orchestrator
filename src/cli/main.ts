@@ -80,6 +80,7 @@ import { runUpdateFromGit } from '../lifecycle/update-git';
 import { runInit } from '../materialization/init';
 import { runInstall } from '../materialization/install';
 import { runReinit } from '../materialization/reinit';
+import { assertOfflinePolicy } from '../policy/offline-mode';
 import { handleAgentInit } from './commands/agent-init';
 import { handleBootstrap } from './commands/bootstrap';
 import {
@@ -2548,6 +2549,18 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
                 (parityResult.remediation ? `Fix: ${parityResult.remediation}` : 'Run "npm run build" then "npx octopus-agent-orchestrator setup".')
             );
         }
+    }
+
+    // T-060: Enforce offline / no-network policy for network-sensitive commands.
+    // Skip enforcement for --help / --version subcommand flags so introspection always works.
+    const isIntrospection = commandArgv.some(a => a === '--help' || a === '-h' || a === '--version' || a === '-v');
+    if (!isIntrospection) {
+        assertOfflinePolicy({
+            offlineFlag: globalFlags.offline,
+            offlineEnv: process.env.OCTOPUS_OFFLINE,
+            forceNetwork: globalFlags.forceNetwork,
+            commandName
+        });
     }
 
     switch (commandName) {
