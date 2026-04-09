@@ -12,10 +12,16 @@ import {
     buildDefaultRetentionPolicy,
     GC_ALLOWLIST,
     validateGcCategories,
+    loadStoragePolicy,
+    isGateReceipt,
+    compressFileGzip,
+    applyStoragePolicy,
     type CleanupOptions,
     type GcOptions,
     type GcResult,
-    type RetentionPolicy
+    type RetentionPolicy,
+    type ReviewArtifactStoragePolicy,
+    type StoragePolicyResult
 } from '../../../src/lifecycle/cleanup';
 
 function makeTmpDir(prefix: string): string {
@@ -833,5 +839,321 @@ describe('runGcWithLock', () => {
         });
         assert.equal(result.result, 'SUCCESS');
         assert.equal(result.dryRun, true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Review artifact storage policy tests
+// ---------------------------------------------------------------------------
+
+describe('loadStoragePolicy', () => {
+    let tmpDir: string;
+    let bundleRoot: string;
+
+    beforeEach(() => {
+        tmpDir = makeTmpDir('oao-storage-policy-');
+        bundleRoot = path.join(tmpDir, 'Octopus-agent-orchestrator');
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+    });
+
+    afterEach(() => {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    });
+
+    it('returns default policy when config file is missing', () => {
+        const policy = loadStoragePolicy(bundleRoot);
+        assert.equal(policy.retentionMode, 'full');
+        assert.equal(policy.compressAfterDays, 7);
+        assert.equal(policy.compressionFormat, 'gzip');
+        assert.equal(policy.preserveGateReceipts, true);
+        assert.ok(policy.gateReceiptSuffixes.length > 0);
+    });
+
+    it('loads custom retention_mode from config', () => {
+        const configPath = path.join(bundleRoot, 'live', 'config', 'review-artifact-storage.json');
+        fs.writeFileSync(configPath, JSON.stringify({
+            version: 1,
+            retention_mode: 'summary',
+            compress_after_days: 14,
+            compression_format: 'gzip',
+            preserve_gate_receipts: false,
+            gate_receipt_suffixes: ['-task-mode.json']
+        }));
+        const policy = loadStoragePolicy(bundleRoot);
+        assert.equal(policy.retentionMode, 'summary');
+        assert.equal(policy.compressAfterDays, 14);
+        assert.equal(policy.preserveGateReceipts, false);
+        assert.deepEqual(policy.gateReceiptSuffixes, ['-task-mode.json']);
+    });
+
+    it('falls back to defaults on invalid JSON', () => {
+        const configPath = path.join(bundleRoot, 'live', 'config', 'review-artifact-storage.json');
+        fs.writeFileSync(configPath, 'not-json');
+        const policy = loadStoragePolicy(bundleRoot);
+        assert.equal(policy.retentionMode, 'full');
+    });
+
+    it('falls back to full on invalid retention_mode', () => {
+        const configPath = path.join(bundleRoot, 'live', 'config', 'review-artifact-storage.json');
+        fs.writeFileSync(configPath, JSON.stringify({
+            version: 1,
+            retention_mode: 'invalid',
+            compress_after_days: 7,
+            compression_format: 'gzip',
+            preserve_gate_receipts: true,
+            gate_receipt_suffixes: ['-task-mode.json']
+        }));
+        const policy = loadStoragePolicy(bundleRoot);
+        assert.equal(policy.retentionMode, 'full');
+    });
+});
+
+describe('isGateReceipt', () => {
+    it('identifies gate receipt files by suffix', () => {
+        const suffixes = ['-task-mode.json', '-preflight.json', '-compile-gate.json'];
+        assert.equal(isGateReceipt('T-058-task-mode.json', suffixes), true);
+        assert.equal(isGateReceipt('T-058-preflight.json', suffixes), true);
+        assert.equal(isGateReceipt('T-058-code-review-context.json', suffixes), false);
+        assert.equal(isGateReceipt('T-058-scoped.diff', suffixes), false);
+    });
+});
+
+describe('compressFileGzip', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+        tmpDir = makeTmpDir('oao-compress-');
+    });
+
+    afterEach(() => {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    });
+
+    it('compresses a file and removes the original', () => {
+        const filePath = path.join(tmpDir, 'test.json');
+        fs.writeFileSync(filePath, '{"data": "test content for compression"}');
+        const gzPath = compressFileGzip(filePath);
+        assert.equal(gzPath, `${filePath}.gz`);
+        assert.ok(fs.existsSync(gzPath), 'compressed file should exist');
+        assert.ok(!fs.existsSync(filePath), 'original should be removed');
+        assert.ok(fs.statSync(gzPath).size > 0, 'compressed file should have content');
+    });
+});
+
+describe('applyStoragePolicy', () => {
+    let tmpDir: string;
+    let reviewsDir: string;
+
+    beforeEach(() => {
+        tmpDir = makeTmpDir('oao-storage-apply-');
+        reviewsDir = path.join(tmpDir, 'reviews');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+    });
+
+    afterEach(() => {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    });
+
+    function createArtifact(name: string, ageDays?: number): string {
+        const filePath = path.join(reviewsDir, name);
+        fs.writeFileSync(filePath, JSON.stringify({ artifact: name }));
+        if (ageDays !== undefined && ageDays > 0) {
+            const past = new Date(Date.now() - ageDays * 24 * 60 * 60 * 1000);
+            fs.utimesSync(filePath, past, past);
+        }
+        return filePath;
+    }
+
+    it('mode none removes non-receipt artifacts but preserves gate receipts', () => {
+        createArtifact('T-001-task-mode.json');
+        createArtifact('T-001-preflight.json');
+        createArtifact('T-001-code-review-context.json');
+        createArtifact('T-001-scoped.diff');
+
+        const policy: ReviewArtifactStoragePolicy = {
+            retentionMode: 'none',
+            compressAfterDays: 0,
+            compressionFormat: 'gzip',
+            preserveGateReceipts: true,
+            gateReceiptSuffixes: ['-task-mode.json', '-preflight.json']
+        };
+
+        const result = applyStoragePolicy(reviewsDir, policy, new Set());
+        assert.ok(result.preserved.includes('T-001-task-mode.json'));
+        assert.ok(result.preserved.includes('T-001-preflight.json'));
+        assert.ok(result.removed.includes('T-001-code-review-context.json'));
+        assert.ok(result.removed.includes('T-001-scoped.diff'), '.diff artifacts should be removed in none mode');
+    });
+
+    it('mode none with preserve_gate_receipts=false removes everything', () => {
+        createArtifact('T-002-task-mode.json');
+        createArtifact('T-002-code-review-context.json');
+
+        const policy: ReviewArtifactStoragePolicy = {
+            retentionMode: 'none',
+            compressAfterDays: 0,
+            compressionFormat: 'gzip',
+            preserveGateReceipts: false,
+            gateReceiptSuffixes: ['-task-mode.json']
+        };
+
+        const result = applyStoragePolicy(reviewsDir, policy, new Set());
+        assert.ok(result.removed.includes('T-002-task-mode.json'));
+        assert.ok(result.removed.includes('T-002-code-review-context.json'));
+        assert.equal(result.preserved.length, 0);
+    });
+
+    it('mode summary keeps only gate receipts', () => {
+        createArtifact('T-003-task-mode.json');
+        createArtifact('T-003-compile-gate.json');
+        createArtifact('T-003-code-review-context.json');
+        createArtifact('T-003-code-review.md');
+        createArtifact('T-003-code-scoped.diff');
+
+        const policy: ReviewArtifactStoragePolicy = {
+            retentionMode: 'summary',
+            compressAfterDays: 0,
+            compressionFormat: 'gzip',
+            preserveGateReceipts: true,
+            gateReceiptSuffixes: ['-task-mode.json', '-compile-gate.json']
+        };
+
+        const result = applyStoragePolicy(reviewsDir, policy, new Set());
+        assert.ok(result.preserved.includes('T-003-task-mode.json'));
+        assert.ok(result.preserved.includes('T-003-compile-gate.json'));
+        assert.ok(result.removed.includes('T-003-code-review-context.json'));
+        assert.ok(result.removed.includes('T-003-code-review.md'));
+        assert.ok(result.removed.includes('T-003-code-scoped.diff'), '.diff artifacts should be removed in summary mode');
+    });
+
+    it('mode full compresses old artifacts', () => {
+        createArtifact('T-004-task-mode.json', 10);
+        createArtifact('T-004-code-review-context.json', 10);
+        createArtifact('T-004-recent.json', 0);
+
+        const policy: ReviewArtifactStoragePolicy = {
+            retentionMode: 'full',
+            compressAfterDays: 7,
+            compressionFormat: 'gzip',
+            preserveGateReceipts: true,
+            gateReceiptSuffixes: ['-task-mode.json']
+        };
+
+        const result = applyStoragePolicy(reviewsDir, policy, new Set());
+        assert.ok(result.compressed.includes('T-004-task-mode.json'));
+        assert.ok(result.compressed.includes('T-004-code-review-context.json'));
+        assert.ok(result.preserved.includes('T-004-recent.json'));
+        assert.ok(fs.existsSync(path.join(reviewsDir, 'T-004-task-mode.json.gz')));
+    });
+
+    it('mode full with compression disabled preserves all', () => {
+        createArtifact('T-005-task-mode.json', 10);
+
+        const policy: ReviewArtifactStoragePolicy = {
+            retentionMode: 'full',
+            compressAfterDays: 0,
+            compressionFormat: 'gzip',
+            preserveGateReceipts: true,
+            gateReceiptSuffixes: ['-task-mode.json']
+        };
+
+        const result = applyStoragePolicy(reviewsDir, policy, new Set());
+        assert.equal(result.compressed.length, 0);
+        assert.ok(result.preserved.includes('T-005-task-mode.json'));
+    });
+
+    it('never touches artifacts for active tasks', () => {
+        createArtifact('T-006-task-mode.json');
+        createArtifact('T-006-code-review-context.json');
+
+        const policy: ReviewArtifactStoragePolicy = {
+            retentionMode: 'none',
+            compressAfterDays: 0,
+            compressionFormat: 'gzip',
+            preserveGateReceipts: false,
+            gateReceiptSuffixes: []
+        };
+
+        const result = applyStoragePolicy(reviewsDir, policy, new Set(['T-006']));
+        assert.equal(result.removed.length, 0);
+        assert.ok(result.preserved.includes('T-006-task-mode.json'));
+        assert.ok(result.preserved.includes('T-006-code-review-context.json'));
+    });
+
+    it('returns empty result for non-existent directory', () => {
+        const result = applyStoragePolicy(
+            path.join(tmpDir, 'nonexistent'),
+            { retentionMode: 'none', compressAfterDays: 0, compressionFormat: 'gzip', preserveGateReceipts: true, gateReceiptSuffixes: ['-task-mode.json'] },
+            new Set()
+        );
+        assert.equal(result.compressed.length, 0);
+        assert.equal(result.removed.length, 0);
+        assert.equal(result.preserved.length, 0);
+    });
+
+    it('records retentionMode in result', () => {
+        const result = applyStoragePolicy(reviewsDir, {
+            retentionMode: 'summary',
+            compressAfterDays: 0,
+            compressionFormat: 'gzip',
+            preserveGateReceipts: true,
+            gateReceiptSuffixes: ['-task-mode.json']
+        }, new Set());
+        assert.equal(result.retentionMode, 'summary');
+    });
+});
+
+describe('runGc with storage policy', () => {
+    let tmpDir: string;
+    let bundleRoot: string;
+    let runtimeDir: string;
+
+    beforeEach(() => {
+        tmpDir = makeTmpDir('oao-gc-storage-');
+        bundleRoot = path.join(tmpDir, 'Octopus-agent-orchestrator');
+        fs.mkdirSync(bundleRoot, { recursive: true });
+        fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '1.0.0\n');
+        runtimeDir = path.join(bundleRoot, 'runtime');
+        fs.mkdirSync(runtimeDir, { recursive: true });
+    });
+
+    afterEach(() => {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    });
+
+    it('applies storage policy when confirm=true', () => {
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.writeFileSync(path.join(reviewsDir, 'T-099-task-mode.json'), '{}');
+        fs.writeFileSync(path.join(reviewsDir, 'T-099-code-review-context.json'), '{}');
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            storagePolicy: {
+                retentionMode: 'summary',
+                compressAfterDays: 0,
+                compressionFormat: 'gzip',
+                preserveGateReceipts: true,
+                gateReceiptSuffixes: ['-task-mode.json']
+            },
+            retentionPolicy: { maxReviews: 1000, maxAgeDays: 365 }
+        });
+
+        assert.ok(result.storagePolicyResult);
+        assert.equal(result.storagePolicyResult.retentionMode, 'summary');
+        assert.ok(result.storagePolicyResult.preserved.includes('T-099-task-mode.json'));
+        assert.ok(result.storagePolicyResult.removed.includes('T-099-code-review-context.json'));
+    });
+
+    it('does not apply storage policy in dry-run mode', () => {
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: false
+        });
+
+        assert.equal(result.storagePolicyResult, undefined);
     });
 });

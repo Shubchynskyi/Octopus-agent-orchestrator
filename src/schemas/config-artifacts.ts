@@ -386,6 +386,73 @@ export function validateProfilesConfig(input: unknown): Record<string, unknown> 
     return normalized;
 }
 
+const VALID_RETENTION_MODES = new Set(['none', 'summary', 'full']);
+const VALID_COMPRESSION_FORMATS = new Set(['gzip']);
+
+export function validateReviewArtifactStorageConfig(input: unknown): Record<string, unknown> {
+    const raw = ensurePlainObject(input, 'review-artifact-storage');
+    const knownKeys = new Set([
+        'version',
+        'retention_mode',
+        'compress_after_days',
+        'compression_format',
+        'preserve_gate_receipts',
+        'gate_receipt_suffixes',
+        'privacy_notice'
+    ]);
+    const normalized = cloneUnknownProperties(raw, knownKeys);
+
+    normalized.version = normalizeInteger(raw.version, 'review-artifact-storage.version', { minimum: 1 });
+
+    const mode = normalizeNonEmptyString(raw.retention_mode, 'review-artifact-storage.retention_mode').toLowerCase();
+    if (!VALID_RETENTION_MODES.has(mode)) {
+        throw new Error(
+            `review-artifact-storage.retention_mode must be one of: ${[...VALID_RETENTION_MODES].join(', ')}.`
+        );
+    }
+    normalized.retention_mode = mode;
+
+    normalized.compress_after_days = normalizeInteger(
+        raw.compress_after_days,
+        'review-artifact-storage.compress_after_days',
+        { minimum: 0 }
+    );
+
+    const format = normalizeNonEmptyString(
+        raw.compression_format,
+        'review-artifact-storage.compression_format'
+    ).toLowerCase();
+    if (!VALID_COMPRESSION_FORMATS.has(format)) {
+        throw new Error(
+            `review-artifact-storage.compression_format must be one of: ${[...VALID_COMPRESSION_FORMATS].join(', ')}.`
+        );
+    }
+    normalized.compression_format = format;
+
+    normalized.preserve_gate_receipts = normalizeBooleanLike(
+        raw.preserve_gate_receipts,
+        'review-artifact-storage.preserve_gate_receipts'
+    );
+
+    const suffixes = normalizeStringArray(
+        raw.gate_receipt_suffixes,
+        'review-artifact-storage.gate_receipt_suffixes',
+        { allowScalar: true }
+    );
+
+    if (suffixes.length === 0) {
+        throw new Error('review-artifact-storage.gate_receipt_suffixes must not be empty.');
+    }
+
+    normalized.gate_receipt_suffixes = suffixes;
+
+    if (raw.privacy_notice !== undefined) {
+        normalized.privacy_notice = normalizeOptionalString(raw.privacy_notice) ?? '';
+    }
+
+    return normalized;
+}
+
 const MANAGED_CONFIG_VALIDATORS = Object.freeze({
     'review-capabilities': validateReviewCapabilitiesConfig,
     paths: validatePathsConfig,
@@ -393,7 +460,8 @@ const MANAGED_CONFIG_VALIDATORS = Object.freeze({
     'output-filters': validateOutputFiltersConfig,
     'skill-packs': validateSkillPacksConfig,
     'isolation-mode': validateIsolationModeConfig,
-    profiles: validateProfilesConfig
+    profiles: validateProfilesConfig,
+    'review-artifact-storage': validateReviewArtifactStorageConfig
 });
 
 function normalizeManagedConfigName(configName: unknown): string {

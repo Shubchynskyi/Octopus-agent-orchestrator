@@ -200,6 +200,30 @@ export const isolationModeSchema: Record<string, unknown> = Object.freeze({
     additionalProperties: false
 });
 
+export const REVIEW_ARTIFACT_RETENTION_MODES = ['none', 'summary', 'full'] as const;
+export type ReviewArtifactRetentionMode = typeof REVIEW_ARTIFACT_RETENTION_MODES[number];
+
+export const REVIEW_ARTIFACT_COMPRESSION_FORMATS = ['gzip'] as const;
+
+export const reviewArtifactStorageSchema: Record<string, unknown> = Object.freeze({
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    $id: 'octopus-agent-orchestrator/review-artifact-storage.schema.json',
+    title: 'Review Artifact Storage',
+    description: 'Retention modes and compression policy for review artifacts. Mode "none" reduces forensic reproducibility; mode "summary" keeps gate receipts only; mode "full" preserves everything subject to age/count retention.',
+    type: 'object',
+    properties: {
+        version:               { type: 'integer', minimum: 1 },
+        retention_mode:        { type: 'string', enum: [...REVIEW_ARTIFACT_RETENTION_MODES], description: 'Artifact retention: none = delete non-receipt artifacts, summary = keep gate receipts only, full = keep all.' },
+        compress_after_days:   { type: 'integer', minimum: 0, description: 'Compress artifacts older than N days. 0 disables compression.' },
+        compression_format:    { type: 'string', enum: [...REVIEW_ARTIFACT_COMPRESSION_FORMATS], description: 'Compression format for old artifacts.' },
+        preserve_gate_receipts: { type: 'boolean', description: 'When true, gate receipt artifacts are never deleted regardless of retention_mode.' },
+        gate_receipt_suffixes: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'File suffixes that identify gate receipt artifacts.' },
+        privacy_notice:        { type: 'string', description: 'Operator-facing notice explaining privacy/disk tradeoffs.' }
+    },
+    required: ['version', 'retention_mode', 'compress_after_days', 'compression_format', 'preserve_gate_receipts', 'gate_receipt_suffixes'],
+    additionalProperties: false
+});
+
 const REVIEW_POLICY_VALUE = {
     description: 'Review toggle: true = always, false = never, "auto" = trigger-based.',
     oneOf: [
@@ -332,11 +356,13 @@ export const octopusConfigSchema: Record<string, unknown> = Object.freeze({
                 'output-filters':      { type: 'string', minLength: 1 },
                 'skill-packs':         { type: 'string', minLength: 1 },
                 'isolation-mode':      { type: 'string', minLength: 1 },
-                profiles:              { type: 'string', minLength: 1 }
+                profiles:              { type: 'string', minLength: 1 },
+                'review-artifact-storage': { type: 'string', minLength: 1 }
             },
             required: [
                 'review-capabilities', 'token-economy', 'paths',
-                'output-filters', 'skill-packs', 'isolation-mode', 'profiles'
+                'output-filters', 'skill-packs', 'isolation-mode', 'profiles',
+                'review-artifact-storage'
             ],
             additionalProperties: false
         }
@@ -362,7 +388,8 @@ const CONFIG_SCHEMAS: readonly ConfigSchemaEntry[] = Object.freeze([
     { name: 'output-filters',      schema: outputFiltersSchema,      fileName: 'output-filters.json' },
     { name: 'skill-packs',         schema: skillPacksSchema,         fileName: 'skill-packs.json' },
     { name: 'isolation-mode',      schema: isolationModeSchema,      fileName: 'isolation-mode.json' },
-    { name: 'profiles',            schema: profilesSchema,           fileName: 'profiles.json' }
+    { name: 'profiles',            schema: profilesSchema,           fileName: 'profiles.json' },
+    { name: 'review-artifact-storage', schema: reviewArtifactStorageSchema, fileName: 'review-artifact-storage.json' }
 ]);
 
 export function getConfigSchemas(): readonly ConfigSchemaEntry[] {

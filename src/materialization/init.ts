@@ -253,7 +253,7 @@ export function runInit(options: RunInitOptions) {
     });
 
     // Handle managed config materialization (token-economy enabled flag)
-    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'isolation-mode', 'profiles', 'octopus.config'];
+    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'isolation-mode', 'profiles', 'review-artifact-storage', 'octopus.config'];
     const configMergeStatuses: Record<string, string> = {};
 
     for (const configName of managedConfigNames) {
@@ -370,6 +370,7 @@ export function runInit(options: RunInitOptions) {
         skillPacksConfigMergeStatus: configMergeStatuses['skill-packs'] || 'n/a',
         isolationModeConfigMergeStatus: configMergeStatuses['isolation-mode'] || 'n/a',
         profilesConfigMergeStatus: configMergeStatuses['profiles'] || 'n/a',
+        reviewArtifactStorageConfigMergeStatus: configMergeStatuses['review-artifact-storage'] || 'n/a',
         octopusConfigMergeStatus: configMergeStatuses['octopus.config'] || 'n/a',
         reviewCapabilitiesSync,
         skillsIndexPath,
@@ -558,6 +559,8 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         `- Isolation mode config merge status: ${configMergeStatuses['isolation-mode'] || 'n/a'}`,
         '- Profiles config sync policy: preserve existing live values and user profiles, fill missing keys from template.',
         `- Profiles config merge status: ${configMergeStatuses['profiles'] || 'n/a'}`,
+        '- Review artifact storage config sync policy: preserve existing live values, fill missing keys from template.',
+        `- Review artifact storage config merge status: ${configMergeStatuses['review-artifact-storage'] || 'n/a'}`,
         '- Octopus config sync policy: rewrite the canonical root manifest from template on every init/update.',
         `- Octopus config merge status: ${configMergeStatuses['octopus.config'] || 'n/a'}`,
         `- Assistant response language: ${lang}`,

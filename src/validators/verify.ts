@@ -380,6 +380,7 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
     var spv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/skill-packs.json');
     var imv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/isolation-mode.json');
     var prv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/profiles.json');
+    var rasv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/review-artifact-storage.json');
     var ocv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/octopus.config.json');
     var six = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/skills-index.json');
     var rfr = detectRuleFileViolations(targetRoot);
@@ -408,7 +409,7 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
         ruleFileViolations: rfr.ruleFileViolations.concat(tmv),
         templatePlaceholderViolations: rfr.templatePlaceholderViolations,
         commandsContractViolations: cv,
-        manifestContractViolations: mv.concat(imv, prv, ocv),
+        manifestContractViolations: mv.concat(imv, prv, rasv, ocv),
         coreRuleContractViolations: crv,
         entrypointContractViolations: ev,
         taskContractViolations: tv,

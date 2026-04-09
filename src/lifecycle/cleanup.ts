@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as zlib from 'node:zlib';
 import { DEFAULT_BUNDLE_NAME } from '../core/constants';
 import {
     LIFECYCLE_OPERATION_LOCK_DIR_NAME,
@@ -11,6 +12,188 @@ import {
     cleanupStaleTaskEventLocks,
     scanTaskEventLocks
 } from '../gate-runtime/task-events';
+import type { ReviewArtifactRetentionMode } from '../schemas/config-schemas';
+
+// ---------------------------------------------------------------------------
+// Review artifact storage policy
+// ---------------------------------------------------------------------------
+
+export type { ReviewArtifactRetentionMode };
+
+export interface ReviewArtifactStoragePolicy {
+    retentionMode: ReviewArtifactRetentionMode;
+    compressAfterDays: number;
+    compressionFormat: string;
+    preserveGateReceipts: boolean;
+    gateReceiptSuffixes: string[];
+}
+
+const DEFAULT_STORAGE_POLICY: ReviewArtifactStoragePolicy = {
+    retentionMode: 'full',
+    compressAfterDays: 7,
+    compressionFormat: 'gzip',
+    preserveGateReceipts: true,
+    gateReceiptSuffixes: [
+        '-task-mode.json',
+        '-preflight.json',
+        '-compile-gate.json',
+        '-completion-gate.json',
+        '-rule-pack.json',
+        '-handshake.json'
+    ]
+};
+
+export function loadStoragePolicy(bundleRoot: string): ReviewArtifactStoragePolicy {
+    const configPath = path.join(bundleRoot, 'live', 'config', 'review-artifact-storage.json');
+    if (!fs.existsSync(configPath)) {
+        return { ...DEFAULT_STORAGE_POLICY };
+    }
+    try {
+        const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        return {
+            retentionMode: validateRetentionMode(raw.retention_mode),
+            compressAfterDays: typeof raw.compress_after_days === 'number' && raw.compress_after_days >= 0
+                ? raw.compress_after_days
+                : DEFAULT_STORAGE_POLICY.compressAfterDays,
+            compressionFormat: raw.compression_format === 'gzip'
+                ? 'gzip'
+                : DEFAULT_STORAGE_POLICY.compressionFormat,
+            preserveGateReceipts: typeof raw.preserve_gate_receipts === 'boolean'
+                ? raw.preserve_gate_receipts
+                : DEFAULT_STORAGE_POLICY.preserveGateReceipts,
+            gateReceiptSuffixes: Array.isArray(raw.gate_receipt_suffixes)
+                ? raw.gate_receipt_suffixes.filter((s: unknown): s is string => typeof s === 'string' && s.length > 0)
+                : [...DEFAULT_STORAGE_POLICY.gateReceiptSuffixes]
+        };
+    } catch {
+        return { ...DEFAULT_STORAGE_POLICY };
+    }
+}
+
+function validateRetentionMode(value: unknown): ReviewArtifactRetentionMode {
+    if (value === 'none' || value === 'summary' || value === 'full') return value;
+    return 'full';
+}
+
+export function isGateReceipt(fileName: string, suffixes: string[]): boolean {
+    return suffixes.some(suffix => fileName.endsWith(suffix));
+}
+
+export function compressFileGzip(filePath: string): string {
+    const content = fs.readFileSync(filePath);
+    const compressed = zlib.gzipSync(content);
+    const compressedPath = `${filePath}.gz`;
+    const tmpPath = `${compressedPath}.tmp`;
+    // Write to temp file first, then rename for atomicity
+    fs.writeFileSync(tmpPath, compressed);
+    fs.renameSync(tmpPath, compressedPath);
+    // Only delete original after compressed file is safely written
+    fs.unlinkSync(filePath);
+    return compressedPath;
+}
+
+export interface StoragePolicyResult {
+    compressed: string[];
+    removed: string[];
+    preserved: string[];
+    retentionMode: ReviewArtifactRetentionMode;
+}
+
+/**
+ * Apply the review artifact storage policy to completed review artifacts.
+ * Returns which files were compressed, removed, or preserved.
+ */
+export function applyStoragePolicy(
+    reviewsDir: string,
+    policy: ReviewArtifactStoragePolicy,
+    activeTaskIds: Set<string>
+): StoragePolicyResult {
+    const result: StoragePolicyResult = {
+        compressed: [],
+        removed: [],
+        preserved: [],
+        retentionMode: policy.retentionMode
+    };
+
+    if (!fs.existsSync(reviewsDir)) return result;
+
+    let entries: string[];
+    try {
+        entries = fs.readdirSync(reviewsDir).sort();
+    } catch {
+        return result;
+    }
+
+    const now = Date.now();
+    const compressCutoffMs = policy.compressAfterDays > 0
+        ? policy.compressAfterDays * 24 * 60 * 60 * 1000
+        : 0;
+
+    for (const entry of entries) {
+        // Skip already-compressed and non-artifact files
+        if (!entry.endsWith('.json') && !entry.endsWith('.md') && !entry.endsWith('.diff')) continue;
+
+        const filePath = path.join(reviewsDir, entry);
+        const taskMatch = /^(T-\d+)-/.exec(entry);
+        if (!taskMatch) continue;
+
+        const taskId = taskMatch[1];
+
+        // Never touch artifacts for active tasks
+        if (activeTaskIds.has(taskId)) {
+            result.preserved.push(entry);
+            continue;
+        }
+
+        const receipt = isGateReceipt(entry, policy.gateReceiptSuffixes);
+
+        if (policy.retentionMode === 'none') {
+            if (policy.preserveGateReceipts && receipt) {
+                result.preserved.push(entry);
+            } else {
+                try {
+                    fs.unlinkSync(filePath);
+                    result.removed.push(entry);
+                } catch {
+                    result.preserved.push(entry);
+                }
+            }
+            continue;
+        }
+
+        if (policy.retentionMode === 'summary') {
+            if (receipt) {
+                result.preserved.push(entry);
+            } else {
+                try {
+                    fs.unlinkSync(filePath);
+                    result.removed.push(entry);
+                } catch {
+                    result.preserved.push(entry);
+                }
+            }
+            continue;
+        }
+
+        // retention_mode === 'full': compress old artifacts if configured
+        if (compressCutoffMs > 0) {
+            try {
+                const stat = fs.statSync(filePath);
+                if (now - stat.mtimeMs > compressCutoffMs) {
+                    compressFileGzip(filePath);
+                    result.compressed.push(entry);
+                    continue;
+                }
+            } catch {
+                // Skip unreadable
+            }
+        }
+
+        result.preserved.push(entry);
+    }
+
+    return result;
+}
 
 // ---------------------------------------------------------------------------
 // Retention policy defaults
@@ -80,6 +263,7 @@ export interface GcResult extends CleanupResult {
     staleLocksCleaned: number;
     isolationSandboxCleaned: boolean;
     categories: Record<string, { count: number; bytes: number }>;
+    storagePolicyResult?: StoragePolicyResult;
 }
 
 interface ProcessCleanupCandidatesResult {
@@ -647,6 +831,10 @@ export interface GcOptions {
     retentionPolicy?: Partial<RetentionPolicy>;
     /** Restrict gc to specific categories from GC_ALLOWLIST. */
     categories?: string[];
+    /** Optional storage policy override. When omitted, loaded from config. */
+    storagePolicy?: ReviewArtifactStoragePolicy;
+    /** Task IDs currently in progress (artifacts for these are never touched). */
+    activeTaskIds?: string[];
 }
 
 /**
@@ -770,6 +958,16 @@ export function runGc(options: GcOptions): GcResult {
         item => item.category === 'isolation-sandbox'
     );
 
+    // Apply review artifact storage policy when reviews category is in scope
+    const shouldApplyStoragePolicy = !filterCategories || filterCategories.has('reviews');
+    let storagePolicyResult: StoragePolicyResult | undefined;
+    if (shouldApplyStoragePolicy && confirm) {
+        const storagePolicy = options.storagePolicy ?? loadStoragePolicy(bundleRoot);
+        const activeIds = new Set(options.activeTaskIds ?? []);
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        storagePolicyResult = applyStoragePolicy(reviewsDir, storagePolicy, activeIds);
+    }
+
     return {
         targetRoot,
         dryRun,
@@ -781,7 +979,8 @@ export function runGc(options: GcOptions): GcResult {
         result: errors.length > 0 ? 'PARTIAL' : 'SUCCESS',
         staleLocksCleaned,
         isolationSandboxCleaned,
-        categories: buildCategorySummary(actionItems)
+        categories: buildCategorySummary(actionItems),
+        storagePolicyResult
     };
 }
 

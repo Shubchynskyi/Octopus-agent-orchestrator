@@ -8,6 +8,7 @@
     "output-filters": "output-filters.json",
     "skill-packs": "skill-packs.json",
     "isolation-mode": "isolation-mode.json",
-    "profiles": "profiles.json"
+    "profiles": "profiles.json",
+    "review-artifact-storage": "review-artifact-storage.json"
   }
 }

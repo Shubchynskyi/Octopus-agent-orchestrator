@@ -8,7 +8,8 @@ import {
     validateManagedConfigByName,
     validateOutputFiltersConfig,
     validateTokenEconomyConfig,
-    validateProfilesConfig
+    validateProfilesConfig,
+    validateReviewArtifactStorageConfig
 } from '../../../src/schemas/config-artifacts';
 
 function readTemplateConfig(configName: string): Record<string, unknown> {
@@ -228,4 +229,131 @@ test('validateProfilesConfig rejects unknown skills keys', () => {
             user_profiles: {}
         });
     }, /not a recognized skills key/);
+});
+
+// ---------------------------------------------------------------------------
+// validateReviewArtifactStorageConfig
+// ---------------------------------------------------------------------------
+
+test('validateReviewArtifactStorageConfig normalizes valid config', () => {
+    const input = {
+        version: 1,
+        retention_mode: 'summary',
+        compress_after_days: 14,
+        compression_format: 'gzip',
+        preserve_gate_receipts: true,
+        gate_receipt_suffixes: ['-task-mode.json', '-preflight.json'],
+        privacy_notice: 'Test notice.'
+    };
+    const result = validateReviewArtifactStorageConfig(input);
+    assert.equal(result.version, 1);
+    assert.equal(result.retention_mode, 'summary');
+    assert.equal(result.compress_after_days, 14);
+    assert.equal(result.compression_format, 'gzip');
+    assert.equal(result.preserve_gate_receipts, true);
+    assert.deepEqual(result.gate_receipt_suffixes, ['-task-mode.json', '-preflight.json']);
+    assert.equal(result.privacy_notice, 'Test notice.');
+});
+
+test('validateReviewArtifactStorageConfig accepts none mode', () => {
+    const result = validateReviewArtifactStorageConfig({
+        version: 1,
+        retention_mode: 'none',
+        compress_after_days: 0,
+        compression_format: 'gzip',
+        preserve_gate_receipts: false,
+        gate_receipt_suffixes: ['-task-mode.json']
+    });
+    assert.equal(result.retention_mode, 'none');
+    assert.equal(result.preserve_gate_receipts, false);
+});
+
+test('validateReviewArtifactStorageConfig accepts full mode', () => {
+    const result = validateReviewArtifactStorageConfig({
+        version: 1,
+        retention_mode: 'full',
+        compress_after_days: 7,
+        compression_format: 'gzip',
+        preserve_gate_receipts: true,
+        gate_receipt_suffixes: ['-task-mode.json']
+    });
+    assert.equal(result.retention_mode, 'full');
+});
+
+test('validateReviewArtifactStorageConfig rejects invalid retention_mode', () => {
+    assert.throws(() => {
+        validateReviewArtifactStorageConfig({
+            version: 1,
+            retention_mode: 'invalid',
+            compress_after_days: 7,
+            compression_format: 'gzip',
+            preserve_gate_receipts: true,
+            gate_receipt_suffixes: ['-task-mode.json']
+        });
+    }, /retention_mode must be one of/);
+});
+
+test('validateReviewArtifactStorageConfig rejects invalid compression_format', () => {
+    assert.throws(() => {
+        validateReviewArtifactStorageConfig({
+            version: 1,
+            retention_mode: 'full',
+            compress_after_days: 7,
+            compression_format: 'brotli',
+            preserve_gate_receipts: true,
+            gate_receipt_suffixes: ['-task-mode.json']
+        });
+    }, /compression_format must be one of/);
+});
+
+test('validateReviewArtifactStorageConfig rejects negative compress_after_days', () => {
+    assert.throws(() => {
+        validateReviewArtifactStorageConfig({
+            version: 1,
+            retention_mode: 'full',
+            compress_after_days: -1,
+            compression_format: 'gzip',
+            preserve_gate_receipts: true,
+            gate_receipt_suffixes: ['-task-mode.json']
+        });
+    }, /must be >= 0/);
+});
+
+test('validateReviewArtifactStorageConfig rejects empty gate_receipt_suffixes', () => {
+    assert.throws(() => {
+        validateReviewArtifactStorageConfig({
+            version: 1,
+            retention_mode: 'full',
+            compress_after_days: 7,
+            compression_format: 'gzip',
+            preserve_gate_receipts: true,
+            gate_receipt_suffixes: []
+        });
+    }, /must not be empty/);
+});
+
+test('validateReviewArtifactStorageConfig normalizes case of retention_mode', () => {
+    const result = validateReviewArtifactStorageConfig({
+        version: 1,
+        retention_mode: 'SUMMARY',
+        compress_after_days: 0,
+        compression_format: 'GZIP',
+        preserve_gate_receipts: true,
+        gate_receipt_suffixes: ['-task-mode.json']
+    });
+    assert.equal(result.retention_mode, 'summary');
+    assert.equal(result.compression_format, 'gzip');
+});
+
+test('validateReviewArtifactStorageConfig validates template config', () => {
+    const config = readTemplateConfig('review-artifact-storage');
+    const result = validateReviewArtifactStorageConfig(config);
+    assert.equal(result.retention_mode, 'full');
+    assert.equal(result.compress_after_days, 7);
+});
+
+test('validateManagedConfigByName handles review-artifact-storage', () => {
+    const config = readTemplateConfig('review-artifact-storage');
+    const result = validateManagedConfigByName('review-artifact-storage', config);
+    assert.equal(result.retention_mode, 'full');
 });
