@@ -145,6 +145,7 @@ import {
 import { handleOverview } from './commands/overview';
 import { handleSetup } from './commands/setup';
 import { handleSkills } from './commands/skills';
+import { handleProfile } from './commands/profile';
 import {
     classifyErrorExitCode,
     EXIT_GATE_FAILURE,
@@ -2405,7 +2406,7 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
         : effectiveArgv.slice(1);
 
     // T-034: Fail fast if the deployed bundle is stale vs source checkout
-    if (['gate', 'agent-init', 'skills'].includes(commandName)) {
+    if (['gate', 'agent-init', 'skills', 'profile'].includes(commandName)) {
         const parityResult = detectSourceBundleParity(normalizePathValue('.'));
         if (parityResult.isStale) {
             throw new Error(
@@ -2472,6 +2473,13 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
         case 'skills': {
             const result = handleSkills(commandArgv, packageJson);
             if (result && typeof result === 'object' && 'passed' in result && result.passed === false) {
+                process.exitCode = EXIT_VALIDATION_FAILURE;
+            }
+            return;
+        }
+        case 'profile': {
+            const profileResult = handleProfile(commandArgv, packageJson);
+            if (profileResult && profileResult.passed === false) {
                 process.exitCode = EXIT_VALIDATION_FAILURE;
             }
             return;

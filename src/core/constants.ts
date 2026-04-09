@@ -47,7 +47,8 @@ export const LIFECYCLE_COMMANDS: readonly string[] = Object.freeze([
     'update',
     'rollback',
     'cleanup',
-    'skills'
+    'skills',
+    'profile'
 ]);
 
 export const SOURCE_OF_TRUTH_VALUES: readonly string[] = Object.freeze([

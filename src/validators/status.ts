@@ -256,6 +256,22 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
         }
     }
 
+    // T-053: read active profile from profiles.json
+    var activeProfile: string | null = null;
+    if (bundlePresent) {
+        var profilesConfigPath = path.join(bundlePath, 'live', 'config', 'profiles.json');
+        if (pathExists(profilesConfigPath)) {
+            try {
+                var profilesRaw = JSON.parse(readTextFile(profilesConfigPath)) as Record<string, unknown>;
+                if (typeof profilesRaw.active_profile === 'string' && profilesRaw.active_profile.trim()) {
+                    activeProfile = profilesRaw.active_profile.trim();
+                }
+            } catch {
+                // profiles config read failure is non-fatal for status
+            }
+        }
+    }
+
     return {
         targetRoot: resolvedTargetRoot, bundlePath: bundlePath, initAnswersResolvedPath: initAnswersResolvedPath,
         initAnswersPathForDisplay: initAnswersPath, bundlePresent: bundlePresent, initAnswersPresent: initAnswersPresent,
@@ -271,6 +287,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
         agentInitializationPendingReason: agentInitializationPendingReason,
         agentInitializationComplete: agentInitializationComplete,
         readyForTasks: readyForTasks, recommendedNextCommand: recommendedNextCommand,
+        activeProfile: activeProfile,
         timelineTaskCount: timelineTaskCount,
         timelineHealthy: timelineHealthy,
         timelineWarnings: timelineWarnings,
@@ -297,6 +314,7 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
     lines.push('CollectedVia: '+(snapshot.collectedVia||'n/a'));
     if (snapshot.activeAgentFiles) lines.push('ActiveAgentFiles: '+snapshot.activeAgentFiles);
     lines.push('SourceOfTruth: '+(snapshot.sourceOfTruth||'n/a')+(snapshot.canonicalEntrypoint ? ' -> '+snapshot.canonicalEntrypoint : ''));
+    if (snapshot.activeProfile) lines.push('ActiveProfile: '+snapshot.activeProfile);
     lines.push('');
     lines.push('Workspace Stages');
     lines.push('  '+badge(snapshot.bundlePresent)+' Installed');
@@ -388,7 +406,8 @@ export function formatStatusSnapshotCompact(snapshot: StatusSnapshot): string {
     if (!snapshot.readyForTasks) {
         return formatStatusSnapshot(snapshot);
     }
-    return `OCTOPUS_STATUS: ready | source=${snapshot.sourceOfTruth || 'n/a'}`;
+    const profileSuffix = snapshot.activeProfile ? ` | profile=${snapshot.activeProfile}` : '';
+    return `OCTOPUS_STATUS: ready | source=${snapshot.sourceOfTruth || 'n/a'}${profileSuffix}`;
 }
 
 export function formatStatusSnapshotJson(snapshot: StatusSnapshot): string {

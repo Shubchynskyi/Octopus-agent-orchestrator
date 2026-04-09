@@ -81,6 +81,7 @@ export interface StatusSnapshot {
         violations: string[];
         remediation: string | null;
     };
+    activeProfile: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +137,7 @@ export const COMMAND_SUMMARY = Object.freeze([
     ['verify', 'Verify workspace layout'],
     ['check-update', 'Check for available updates'],
     ['skills', 'List, suggest, and manage optional skill packs'],
+    ['profile', 'List, use, create, delete, and validate workspace profiles'],
     ['gate', 'Run an agent gate (gate <name>)']
 ]);
 
@@ -832,6 +834,7 @@ export function printStatus(snapshot: StatusSnapshot, options?: { heading?: stri
     console.log(`CollectedVia: ${snapshot.collectedVia || 'n/a'}`);
     if (snapshot.activeAgentFiles) console.log(`ActiveAgentFiles: ${snapshot.activeAgentFiles}`);
     console.log(`SourceOfTruth: ${snapshot.sourceOfTruth || 'n/a'}${snapshot.canonicalEntrypoint ? ` -> ${snapshot.canonicalEntrypoint}` : ''}`);
+    if (snapshot.activeProfile) console.log(`ActiveProfile: ${snapshot.activeProfile}`);
     console.log('');
     console.log(bold('Workspace Stages'));
     console.log(`  ${getStageBadge(snapshot.bundlePresent)} Installed`);
@@ -917,6 +920,7 @@ export function printHelp(packageJson: PackageJsonLike): void {
             '  verify        Validate deployment consistency and rule contracts.',
             '  check-update  Compare current deployment with a newer npm package or local source.',
             '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
+            '  profile       List, use, create, delete, and validate workspace profiles.',
             '  gate          Run an agent gate or helper command.'
         ],
         [
@@ -994,6 +998,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  verify        Validate deployment consistency and rule contracts.',
             '  check-update  Compare current deployment with a newer npm package or local source.',
             '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
+            '  profile       List, use, create, delete, and validate workspace profiles.',
             '  gate          Run an agent gate or helper command.'
         ],
         [
