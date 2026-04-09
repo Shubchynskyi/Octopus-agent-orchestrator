@@ -48,8 +48,23 @@ export interface TaskAuditSummaryResult {
     changed_files_count: number;
     changed_lines_total: number;
     required_reviews: Record<string, boolean>;
+    scope_category: string | null;
+    profile_review_decisions: ProfileReviewDecisionSummary | null;
     evidence: EvidenceArtifact[];
     blockers: BlockerEntry[];
+}
+
+interface ProfileReviewDecisionSummary {
+    profile_name: string | null;
+    scope_category: string | null;
+    guardrails_active: boolean;
+    lightening_eligible: boolean;
+    safety_floors_applied: string[];
+    decisions: Array<{
+        review_type: string;
+        effective_value: boolean;
+        decision: string;
+    }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +305,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     let changedFilesCount = 0;
     let changedLinesTotal = 0;
     let requiredReviews: Record<string, boolean> = {};
+    let scopeCategory: string | null = null;
 
     const preflightPath = path.join(reviewsRoot, `${safeTaskId}-preflight.json`);
     const preflight = safeReadJson(preflightPath);
@@ -307,6 +323,59 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             for (const [key, val] of Object.entries(rr)) {
                 requiredReviews[key] = val === true;
             }
+        }
+        if (typeof preflight.scope_category === 'string') {
+            scopeCategory = preflight.scope_category;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 4b. Profile review decisions from task-mode artifact
+    // -----------------------------------------------------------------------
+    let profileReviewDecisions: ProfileReviewDecisionSummary | null = null;
+    const taskModePath = path.join(reviewsRoot, `${safeTaskId}-task-mode.json`);
+    const taskMode = safeReadJson(taskModePath);
+    if (taskMode && typeof taskMode.active_profile === 'string' && taskMode.active_profile) {
+        const decisions: Array<{ review_type: string; effective_value: boolean; decision: string }> = [];
+        // Extract profile review decisions from preflight if guardrail data is present
+        if (preflight && preflight.profile_guardrails && typeof preflight.profile_guardrails === 'object') {
+            const guardrails = preflight.profile_guardrails as Record<string, unknown>;
+            const rawDecisions = guardrails.decisions;
+            if (Array.isArray(rawDecisions)) {
+                for (const d of rawDecisions) {
+                    if (d && typeof d === 'object') {
+                        const dObj = d as Record<string, unknown>;
+                        decisions.push({
+                            review_type: String(dObj.review_type || ''),
+                            effective_value: dObj.effective_value === true,
+                            decision: String(dObj.decision || '')
+                        });
+                    }
+                }
+            }
+            const safetyFloors: string[] = [];
+            if (Array.isArray(guardrails.safety_floors_applied)) {
+                for (const f of guardrails.safety_floors_applied) {
+                    safetyFloors.push(String(f));
+                }
+            }
+            profileReviewDecisions = {
+                profile_name: String(taskMode.active_profile || ''),
+                scope_category: scopeCategory,
+                guardrails_active: guardrails.guardrails_active === true,
+                lightening_eligible: guardrails.lightening_eligible === true,
+                safety_floors_applied: safetyFloors,
+                decisions
+            };
+        } else {
+            profileReviewDecisions = {
+                profile_name: String(taskMode.active_profile || ''),
+                scope_category: scopeCategory,
+                guardrails_active: false,
+                lightening_eligible: false,
+                safety_floors_applied: [],
+                decisions
+            };
         }
     }
 
@@ -429,6 +498,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         changed_files_count: changedFilesCount,
         changed_lines_total: changedLinesTotal,
         required_reviews: requiredReviews,
+        scope_category: scopeCategory,
+        profile_review_decisions: profileReviewDecisions,
         evidence,
         blockers
     };
@@ -471,6 +542,36 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     if (activeReviews.length > 0) {
         lines.push('');
         lines.push(`RequiredReviews: ${activeReviews.join(', ')}`);
+    }
+
+    // Scope category
+    if (summary.scope_category) {
+        lines.push(`ScopeCategory: ${summary.scope_category}`);
+    }
+
+    // Profile review decisions
+    if (summary.profile_review_decisions) {
+        const prd = summary.profile_review_decisions;
+        lines.push('');
+        lines.push('ProfileReviewDecisions:');
+        if (prd.profile_name) lines.push(`  Profile: ${prd.profile_name}`);
+        if (prd.scope_category) lines.push(`  ScopeCategory: ${prd.scope_category}`);
+        lines.push(`  GuardrailsActive: ${prd.guardrails_active}`);
+        lines.push(`  LighteningEligible: ${prd.lightening_eligible}`);
+        if (prd.decisions.length > 0) {
+            for (const d of prd.decisions) {
+                const marker = d.decision === 'safety_floor_enforced' ? '[!]'
+                    : d.decision === 'lightened_by_profile' ? '[-]'
+                        : '[=]';
+                lines.push(`  ${marker} ${d.review_type}: ${d.effective_value} (${d.decision})`);
+            }
+        }
+        if (prd.safety_floors_applied.length > 0) {
+            lines.push('  SafetyFloors:');
+            for (const f of prd.safety_floors_applied) {
+                lines.push(`    - ${f}`);
+            }
+        }
     }
 
     // Evidence (always shown to expose expected artifact paths)

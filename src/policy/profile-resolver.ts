@@ -103,6 +103,8 @@ export interface EffectivePolicy {
     installed_packs: string[];
     paths: PathsConfig;
     safety_floors_applied: string[];
+    scope_category: string | null;
+    guardrail_diagnostics: ProfileGuardrailResult | null;
     resolution_sources: {
         profiles: string;
         review_capabilities: string;
@@ -117,15 +119,52 @@ export interface ResolveOptions {
     profileOverride?: string;
     /** Whether the task scope involves code changes (triggers safety floors). */
     isCodeChangingTask?: boolean;
+    /** Scope category from preflight classification. */
+    scopeCategory?: string;
 }
 
 // ---------------------------------------------------------------------------
 // Mandatory review safety floors for code-changing work
 // ---------------------------------------------------------------------------
 
+/**
+ * Safety floors enforced when the task scope involves code changes.
+ * These reviews are mandatory regardless of profile settings.
+ */
 const CODE_CHANGING_SAFETY_FLOORS: ReadonlyMap<string, boolean> = new Map([
-    ['code', true]
+    ['code', true],
+    ['security', true],
+    ['db', true],
+    ['refactor', true]
 ]);
+
+/**
+ * Scope categories that are eligible for profile-driven review lightening.
+ * Only these non-code categories allow profiles to relax mandatory reviews.
+ */
+const LIGHTENABLE_SCOPE_CATEGORIES = new Set(['docs-only', 'config-only', 'audit-only']);
+
+// ---------------------------------------------------------------------------
+// Profile review decision diagnostics
+// ---------------------------------------------------------------------------
+
+export interface ProfileReviewDecision {
+    review_type: string;
+    profile_wanted: boolean | 'auto';
+    effective_value: boolean;
+    decision: 'profile_override' | 'safety_floor_enforced' | 'capability_default' | 'lightened_by_profile';
+    reason: string;
+}
+
+export interface ProfileGuardrailResult {
+    scope_category: string;
+    is_code_changing_task: boolean;
+    profile_name: string;
+    guardrails_active: boolean;
+    lightening_eligible: boolean;
+    decisions: ProfileReviewDecision[];
+    safety_floors_applied: string[];
+}
 
 // ---------------------------------------------------------------------------
 // Config file loaders (read-only, never write)
@@ -261,6 +300,15 @@ export function getProfileSource(data: ProfilesData, name: string): 'built_in' |
  * - Profile `"auto"` defers to the review-capabilities config value.
  * - Capabilities not mentioned in the profile are passed through unchanged.
  * - After merge, safety floors are applied for code-changing tasks.
+ *
+ * Safety floors for code-changing tasks enforce:
+ * - `code: true` — mandatory code review
+ * - `security: true` — mandatory when trigger fires (enforced via 'auto' floor)
+ * - `db: true` — mandatory when trigger fires (enforced via 'auto' floor)
+ * - `refactor: true` — mandatory when trigger fires (enforced via 'auto' floor)
+ *
+ * For non-code scopes (docs-only, config-only, audit-only), profiles may relax
+ * reviews freely.
  */
 export function mergeReviewPolicy(
     profilePolicy: ProfileReviewPolicy,
@@ -297,6 +345,100 @@ export function mergeReviewPolicy(
     }
 
     return { merged, floorsApplied };
+}
+
+/**
+ * Apply profile guardrails with full diagnostics.
+ *
+ * Produces a decision record for each review type showing:
+ * - what the profile wanted
+ * - what the effective value is
+ * - why (safety floor, profile override, capability default, or lightened)
+ */
+export function applyProfileGuardrails(
+    profilePolicy: ProfileReviewPolicy,
+    capabilities: ReviewCapabilities,
+    scopeCategory: string,
+    profileName: string
+): ProfileGuardrailResult {
+    const isCodeChangingTask = !LIGHTENABLE_SCOPE_CATEGORIES.has(scopeCategory);
+    const lightEligible = LIGHTENABLE_SCOPE_CATEGORIES.has(scopeCategory);
+
+    const { merged, floorsApplied } = mergeReviewPolicy(profilePolicy, capabilities, isCodeChangingTask);
+
+    const decisions: ProfileReviewDecision[] = [];
+
+    for (const key of Object.keys(merged)) {
+        const profileValue = key in profilePolicy ? profilePolicy[key] : undefined;
+        const capabilityValue = capabilities[key] ?? false;
+        const effectiveValue = merged[key] === true;
+
+        let decision: ProfileReviewDecision['decision'];
+        let reason: string;
+
+        const wasFloored = floorsApplied.some((f) => f.startsWith(`${key}:`));
+
+        if (wasFloored) {
+            decision = 'safety_floor_enforced';
+            reason = `${key} review is mandatory for code-changing tasks; profile '${profileName}' wanted ${String(profileValue ?? 'auto')} but safety floor enforced true`;
+        } else if (profileValue === 'auto' || profileValue === undefined) {
+            decision = 'capability_default';
+            reason = `${key} review deferred to review-capabilities.json (${String(capabilityValue)})`;
+        } else if (profileValue === false && lightEligible && !effectiveValue) {
+            decision = 'lightened_by_profile';
+            reason = `${key} review lightened by profile '${profileName}' for ${scopeCategory} scope`;
+        } else {
+            decision = 'profile_override';
+            reason = `${key} review set to ${String(profileValue)} by profile '${profileName}'`;
+        }
+
+        decisions.push({
+            review_type: key,
+            profile_wanted: profileValue ?? 'auto',
+            effective_value: effectiveValue,
+            decision,
+            reason
+        });
+    }
+
+    return {
+        scope_category: scopeCategory,
+        is_code_changing_task: isCodeChangingTask,
+        profile_name: profileName,
+        guardrails_active: isCodeChangingTask,
+        lightening_eligible: lightEligible,
+        decisions,
+        safety_floors_applied: floorsApplied
+    };
+}
+
+/**
+ * Format profile guardrail result as compact diagnostic text.
+ */
+export function formatProfileGuardrailDiagnostics(result: ProfileGuardrailResult): string {
+    const lines: string[] = [];
+    lines.push('PROFILE_REVIEW_DECISIONS');
+    lines.push(`Profile: ${result.profile_name}`);
+    lines.push(`ScopeCategory: ${result.scope_category}`);
+    lines.push(`CodeChangingTask: ${result.is_code_changing_task}`);
+    lines.push(`GuardrailsActive: ${result.guardrails_active}`);
+    lines.push(`LighteningEligible: ${result.lightening_eligible}`);
+    lines.push('');
+    lines.push('Decisions:');
+    for (const d of result.decisions) {
+        const marker = d.decision === 'safety_floor_enforced' ? '[!]'
+            : d.decision === 'lightened_by_profile' ? '[-]'
+                : '[=]';
+        lines.push(`  ${marker} ${d.review_type}: ${d.effective_value} (${d.decision}) — ${d.reason}`);
+    }
+    if (result.safety_floors_applied.length > 0) {
+        lines.push('');
+        lines.push('SafetyFloors:');
+        for (const floor of result.safety_floors_applied) {
+            lines.push(`  - ${floor}`);
+        }
+    }
+    return lines.join('\n');
 }
 
 /**
@@ -365,7 +507,10 @@ export function resolveConfigPaths(bundleRoot: string): {
  * with the existing config files. Config files are never modified.
  *
  * Safety floors:
- * - For code-changing tasks, `code` review is always `true` regardless of profile.
+ * - For code-changing tasks, `code`, `security`, `db`, and `refactor`
+ *   reviews are always `true` regardless of profile.
+ * - For non-code scopes (docs-only, config-only, audit-only), profiles
+ *   may relax reviews.
  */
 export function resolveEffectivePolicy(
     bundleRoot: string,
@@ -388,7 +533,12 @@ export function resolveEffectivePolicy(
     }
 
     const profileSource = getProfileSource(profilesData, profileName)!;
-    const isCodeChangingTask = options.isCodeChangingTask !== false;
+
+    // Determine code-changing status from scope category or explicit flag
+    const scopeCategory = options.scopeCategory || null;
+    const isCodeChangingTask = scopeCategory
+        ? !LIGHTENABLE_SCOPE_CATEGORIES.has(scopeCategory)
+        : options.isCodeChangingTask !== false;
 
     const capabilities = loadReviewCapabilities(configPaths.reviewCapabilities);
     const tokenEconomyConfig = loadTokenEconomyConfig(configPaths.tokenEconomy);
@@ -406,6 +556,17 @@ export function resolveEffectivePolicy(
 
     const pathsConfig = loadPathsConfig(configPaths.paths);
 
+    // Build guardrail diagnostics when scope category is available
+    let guardrailDiagnostics: ProfileGuardrailResult | null = null;
+    if (scopeCategory) {
+        guardrailDiagnostics = applyProfileGuardrails(
+            entry.review_policy,
+            capabilities,
+            scopeCategory,
+            profileName
+        );
+    }
+
     return {
         profile_name: profileName,
         profile_source: profileSource,
@@ -416,6 +577,8 @@ export function resolveEffectivePolicy(
         installed_packs,
         paths: pathsConfig,
         safety_floors_applied: floorsApplied,
+        scope_category: scopeCategory,
+        guardrail_diagnostics: guardrailDiagnostics,
         resolution_sources: {
             profiles: configPaths.profiles,
             review_capabilities: configPaths.reviewCapabilities,
@@ -434,6 +597,9 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
     lines.push('EFFECTIVE_POLICY');
     lines.push(`Profile: ${policy.profile_name} (${policy.profile_source})`);
     lines.push(`Depth: ${policy.depth}`);
+    if (policy.scope_category) {
+        lines.push(`ScopeCategory: ${policy.scope_category}`);
+    }
     lines.push('');
 
     lines.push('ReviewPolicy:');
@@ -472,6 +638,11 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
         for (const floor of policy.safety_floors_applied) {
             lines.push(`  - ${floor}`);
         }
+    }
+
+    if (policy.guardrail_diagnostics) {
+        lines.push('');
+        lines.push(formatProfileGuardrailDiagnostics(policy.guardrail_diagnostics));
     }
 
     return lines.join('\n');

@@ -698,6 +698,8 @@ describe('gates/task-audit-summary', () => {
                 changed_files_count: 1,
                 changed_lines_total: 50,
                 required_reviews: { code: true, db: false },
+                scope_category: null,
+                profile_review_decisions: null,
                 evidence: [
                     { kind: 'task-mode', path: 'runtime/reviews/T-TEST-1-task-mode.json', exists: true, sha256: 'abc123' },
                     { kind: 'preflight', path: 'runtime/reviews/T-TEST-1-preflight.json', exists: false, sha256: null }
@@ -736,6 +738,8 @@ describe('gates/task-audit-summary', () => {
                 changed_files_count: 0,
                 changed_lines_total: 0,
                 required_reviews: {},
+                scope_category: null,
+                profile_review_decisions: null,
                 evidence: [],
                 blockers: []
             };

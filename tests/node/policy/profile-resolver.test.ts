@@ -19,6 +19,8 @@ import {
     resolveConfigPaths,
     formatEffectivePolicy,
     formatEffectivePolicyJson,
+    applyProfileGuardrails,
+    formatProfileGuardrailDiagnostics,
     type ProfileEntry,
     type ProfilesData,
     type ReviewCapabilities,
@@ -299,9 +301,14 @@ test('mergeReviewPolicy: safety floor forces code=true for code-changing tasks',
     const caps: ReviewCapabilities = { code: true, db: true, security: true, refactor: true, api: false, test: false, performance: false, infra: false, dependency: false };
     const { merged, floorsApplied } = mergeReviewPolicy(profile, caps, true);
     assert.equal(merged.code, true);
-    assert.equal(merged.db, false);
-    assert.ok(floorsApplied.length > 0);
-    assert.ok(floorsApplied[0].includes('code'));
+    assert.equal(merged.security, true);
+    assert.equal(merged.db, true);
+    assert.equal(merged.refactor, true);
+    assert.equal(floorsApplied.length, 4);
+    assert.ok(floorsApplied.some(f => f.includes('code')));
+    assert.ok(floorsApplied.some(f => f.includes('security')));
+    assert.ok(floorsApplied.some(f => f.includes('db')));
+    assert.ok(floorsApplied.some(f => f.includes('refactor')));
 });
 
 test('mergeReviewPolicy: no safety floor for non-code-changing tasks', () => {
@@ -322,8 +329,8 @@ test('mergeReviewPolicy: capabilities keys not in profile are passed through', (
     assert.equal(merged.infra, false);
 });
 
-test('mergeReviewPolicy: safety floor does not fire when code already true', () => {
-    const profile: ProfileReviewPolicy = { code: true, db: false, security: false, refactor: false };
+test('mergeReviewPolicy: safety floor does not fire when all floor keys already true', () => {
+    const profile: ProfileReviewPolicy = { code: true, db: true, security: true, refactor: true };
     const caps: ReviewCapabilities = { code: true, db: true, security: true, refactor: true, api: false, test: false, performance: false, infra: false, dependency: false };
     const { floorsApplied } = mergeReviewPolicy(profile, caps, true);
     assert.equal(floorsApplied.length, 0);
@@ -590,7 +597,7 @@ test('resolveEffectivePolicy: config token_economy numeric fields preserved', ()
     }
 });
 
-test('resolveEffectivePolicy: fast profile respects review capabilities', () => {
+test('resolveEffectivePolicy: fast profile respects review capabilities for non-code tasks', () => {
     const bundleRoot = makeTempBundle({
         reviewCapabilities: {
             code: true, db: false, security: true, refactor: true,
@@ -598,7 +605,7 @@ test('resolveEffectivePolicy: fast profile respects review capabilities', () => 
         }
     });
     try {
-        const policy = resolveEffectivePolicy(bundleRoot, { profileOverride: 'fast' });
+        const policy = resolveEffectivePolicy(bundleRoot, { profileOverride: 'fast', isCodeChangingTask: false });
         assert.equal(policy.review_policy.db, false);
         assert.equal(policy.review_policy.refactor, false);
         assert.equal(policy.review_policy.security, true);
@@ -819,4 +826,263 @@ test('mergeReviewPolicy: extra profile keys not in capabilities are included', (
     };
     const { merged } = mergeReviewPolicy(profile, caps, false);
     assert.equal(merged.custom_review, true);
+});
+
+// ---------------------------------------------------------------------------
+// Expanded safety floors (T-059)
+// ---------------------------------------------------------------------------
+
+test('mergeReviewPolicy: code-changing task enforces code+security+db+refactor safety floors', () => {
+    const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const { merged, floorsApplied } = mergeReviewPolicy(profile, caps, true);
+    assert.equal(merged.code, true, 'code must be true for code-changing tasks');
+    assert.equal(merged.security, true, 'security must be true for code-changing tasks');
+    assert.equal(merged.db, true, 'db must be true for code-changing tasks');
+    assert.equal(merged.refactor, true, 'refactor must be true for code-changing tasks');
+    assert.equal(floorsApplied.length, 4, 'all four floors should fire');
+});
+
+test('mergeReviewPolicy: non-code task allows profile to disable code/security/db/refactor', () => {
+    const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const { merged, floorsApplied } = mergeReviewPolicy(profile, caps, false);
+    assert.equal(merged.code, false, 'code can be disabled for non-code tasks');
+    assert.equal(merged.security, false, 'security can be disabled for non-code tasks');
+    assert.equal(merged.db, false, 'db can be disabled for non-code tasks');
+    assert.equal(merged.refactor, false, 'refactor can be disabled for non-code tasks');
+    assert.equal(floorsApplied.length, 0, 'no floors should fire');
+});
+
+test('mergeReviewPolicy: code-changing task does not override already-true values', () => {
+    const profile: ProfileReviewPolicy = { code: true, db: true, security: true, refactor: true };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const { merged, floorsApplied } = mergeReviewPolicy(profile, caps, true);
+    assert.equal(merged.code, true);
+    assert.equal(merged.security, true);
+    assert.equal(merged.db, true);
+    assert.equal(merged.refactor, true);
+    assert.equal(floorsApplied.length, 0, 'no floors needed when profile already enables them');
+});
+
+// ---------------------------------------------------------------------------
+// applyProfileGuardrails
+// ---------------------------------------------------------------------------
+
+test('applyProfileGuardrails: code scope triggers guardrails', () => {
+    const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'code', 'docs-only');
+    assert.equal(result.guardrails_active, true);
+    assert.equal(result.lightening_eligible, false);
+    assert.equal(result.is_code_changing_task, true);
+    const flooredDecisions = result.decisions.filter(d => d.decision === 'safety_floor_enforced');
+    assert.equal(flooredDecisions.length, 4, 'code+security+db+refactor should be floored');
+});
+
+test('applyProfileGuardrails: docs-only scope allows lightening', () => {
+    const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'docs-only', 'docs-only');
+    assert.equal(result.guardrails_active, false);
+    assert.equal(result.lightening_eligible, true);
+    assert.equal(result.is_code_changing_task, false);
+    const lightened = result.decisions.filter(d => d.decision === 'lightened_by_profile');
+    assert.ok(lightened.length >= 4, 'docs-only scope should lighten code/security/db/refactor');
+});
+
+test('applyProfileGuardrails: config-only scope allows lightening', () => {
+    const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'config-only', 'fast');
+    assert.equal(result.guardrails_active, false);
+    assert.equal(result.lightening_eligible, true);
+});
+
+test('applyProfileGuardrails: audit-only scope allows lightening', () => {
+    const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'audit-only', 'docs-only');
+    assert.equal(result.lightening_eligible, true);
+    assert.equal(result.guardrails_active, false);
+});
+
+test('applyProfileGuardrails: mixed scope triggers guardrails', () => {
+    const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'mixed', 'fast');
+    assert.equal(result.guardrails_active, true);
+    assert.equal(result.lightening_eligible, false);
+});
+
+test('applyProfileGuardrails: auto profile values show as capability_default', () => {
+    const profile: ProfileReviewPolicy = { code: 'auto', db: 'auto', security: 'auto', refactor: 'auto' };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'docs-only', 'balanced');
+    const capDefaults = result.decisions.filter(d => d.decision === 'capability_default');
+    assert.ok(capDefaults.length >= 4, 'auto values should show as capability_default');
+});
+
+// ---------------------------------------------------------------------------
+// formatProfileGuardrailDiagnostics
+// ---------------------------------------------------------------------------
+
+test('formatProfileGuardrailDiagnostics: includes all diagnostic fields', () => {
+    const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'code', 'docs-only');
+    const text = formatProfileGuardrailDiagnostics(result);
+    assert.ok(text.includes('PROFILE_REVIEW_DECISIONS'));
+    assert.ok(text.includes('Profile: docs-only'));
+    assert.ok(text.includes('ScopeCategory: code'));
+    assert.ok(text.includes('GuardrailsActive: true'));
+    assert.ok(text.includes('safety_floor_enforced'));
+    assert.ok(text.includes('SafetyFloors:'));
+});
+
+test('formatProfileGuardrailDiagnostics: shows lightened decisions for docs-only', () => {
+    const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'docs-only', 'docs-only');
+    const text = formatProfileGuardrailDiagnostics(result);
+    assert.ok(text.includes('LighteningEligible: true'));
+    assert.ok(text.includes('lightened_by_profile'));
+    assert.ok(!text.includes('SafetyFloors:'), 'no safety floors for docs-only');
+});
+
+// ---------------------------------------------------------------------------
+// resolveEffectivePolicy with scopeCategory
+// ---------------------------------------------------------------------------
+
+test('resolveEffectivePolicy: scopeCategory docs-only allows profile to disable code review', () => {
+    const bundleRoot = makeTempBundle({
+        profiles: {
+            version: 1,
+            active_profile: 'docs-only',
+            built_in_profiles: {
+                'docs-only': {
+                    description: 'Docs only.',
+                    depth: 1,
+                    review_policy: { code: false, db: false, security: false, refactor: false },
+                    token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: false, compact_reviewer_output: true },
+                    skills: { auto_suggest: false }
+                }
+            },
+            user_profiles: {}
+        }
+    });
+    try {
+        const policy = resolveEffectivePolicy(bundleRoot, { scopeCategory: 'docs-only' });
+        assert.equal(policy.review_policy.code, false, 'code review should be off for docs-only scope');
+        assert.equal(policy.review_policy.security, false, 'security review should be off for docs-only scope');
+        assert.equal(policy.safety_floors_applied.length, 0);
+        assert.ok(policy.guardrail_diagnostics !== null);
+        assert.equal(policy.guardrail_diagnostics!.lightening_eligible, true);
+        assert.equal(policy.scope_category, 'docs-only');
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy: scopeCategory code enforces safety floors even with docs-only profile', () => {
+    const bundleRoot = makeTempBundle({
+        profiles: {
+            version: 1,
+            active_profile: 'docs-only',
+            built_in_profiles: {
+                'docs-only': {
+                    description: 'Docs only.',
+                    depth: 1,
+                    review_policy: { code: false, db: false, security: false, refactor: false },
+                    token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: false, compact_reviewer_output: true },
+                    skills: { auto_suggest: false }
+                }
+            },
+            user_profiles: {}
+        }
+    });
+    try {
+        const policy = resolveEffectivePolicy(bundleRoot, { scopeCategory: 'code' });
+        assert.equal(policy.review_policy.code, true, 'code review must be enforced for code scope');
+        assert.equal(policy.review_policy.security, true, 'security must be enforced for code scope');
+        assert.equal(policy.review_policy.db, true, 'db must be enforced for code scope');
+        assert.equal(policy.review_policy.refactor, true, 'refactor must be enforced for code scope');
+        assert.equal(policy.safety_floors_applied.length, 4);
+        assert.ok(policy.guardrail_diagnostics !== null);
+        assert.equal(policy.guardrail_diagnostics!.guardrails_active, true);
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy: no guardrail diagnostics without scopeCategory', () => {
+    const bundleRoot = makeTempBundle({});
+    try {
+        const policy = resolveEffectivePolicy(bundleRoot);
+        assert.equal(policy.guardrail_diagnostics, null);
+        assert.equal(policy.scope_category, null);
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('formatEffectivePolicy: includes scope category and guardrail diagnostics', () => {
+    const bundleRoot = makeTempBundle({
+        profiles: {
+            version: 1,
+            active_profile: 'docs-only',
+            built_in_profiles: {
+                'docs-only': {
+                    description: 'Docs only.',
+                    depth: 1,
+                    review_policy: { code: false, db: false, security: false, refactor: false },
+                    token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: false, compact_reviewer_output: true },
+                    skills: { auto_suggest: false }
+                }
+            },
+            user_profiles: {}
+        }
+    });
+    try {
+        const policy = resolveEffectivePolicy(bundleRoot, { scopeCategory: 'docs-only' });
+        const text = formatEffectivePolicy(policy);
+        assert.ok(text.includes('ScopeCategory: docs-only'));
+        assert.ok(text.includes('PROFILE_REVIEW_DECISIONS'));
+        assert.ok(text.includes('LighteningEligible: true'));
+    } finally {
+        cleanUp(bundleRoot);
+    }
 });

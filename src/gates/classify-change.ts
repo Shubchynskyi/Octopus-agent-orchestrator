@@ -289,6 +289,134 @@ function matchesConfiguredRoot(pathValue: string, roots: string[], options: Matc
     return semanticCandidates.some((candidate) => matchesSemanticRoot(candidate, rootTokens));
 }
 
+// ---------------------------------------------------------------------------
+// Scope category classification
+// ---------------------------------------------------------------------------
+
+const DOC_LIKE_REGEXES = [
+    '\\.(md|mdx|txt|rst|adoc|asciidoc|textile)$',
+    '(^|/)docs?/',
+    '(^|/)README',
+    '(^|/)CHANGELOG',
+    '(^|/)LICENSE',
+    '(^|/)CONTRIBUTING',
+    '(^|/)SECURITY\\.md$',
+    '(^|/)NOTICE$',
+    '(^|/)TRADEMARKS',
+    '(^|/)CODEOWNERS$'
+];
+
+const CONFIG_LIKE_REGEXES = [
+    '\\.(json|ya?ml|toml|ini|cfg|conf|env|properties|xml)$',
+    '(^|/)\\.editorconfig$',
+    '(^|/)tsconfig',
+    '(^|/)jest\\.config',
+    '(^|/)vitest\\.config',
+    '(^|/)eslint',
+    '(^|/)prettier',
+    '(^|/)\\.github/workflows/',
+    '(^|/)Dockerfile',
+    '(^|/)docker-compose'
+];
+
+const AUDIT_ONLY_REGEXES = [
+    '(^|/)TASK\\.md$',
+    '(^|/)Octopus-agent-orchestrator/runtime/',
+    '(^|/)\\.agents/',
+    '(^|/)Octopus-agent-orchestrator/live/docs/agent-rules/',
+    '(^|/)Octopus-agent-orchestrator/live/config/',
+    '(^|/)Octopus-agent-orchestrator/live/docs/changes/'
+];
+
+// Pre-compiled regex arrays to avoid recompilation per file
+const DOC_LIKE_COMPILED = DOC_LIKE_REGEXES.map((p) => new RegExp(p, 'i'));
+const CONFIG_LIKE_COMPILED = CONFIG_LIKE_REGEXES.map((p) => new RegExp(p, 'i'));
+const AUDIT_ONLY_COMPILED = AUDIT_ONLY_REGEXES.map((p) => new RegExp(p, 'i'));
+
+function testPrecompiled(value: string, patterns: RegExp[]): boolean {
+    return patterns.some((re) => re.test(value));
+}
+
+export type ScopeCategory = 'code' | 'docs-only' | 'config-only' | 'audit-only' | 'mixed' | 'empty';
+
+/**
+ * Classify the scope category from changed files.
+ *
+ * Categories:
+ * - `code`: at least one code-like file under runtime roots
+ * - `docs-only`: all files match documentation patterns
+ * - `config-only`: all files match config/infra patterns (no code)
+ * - `audit-only`: all files are orchestrator control-plane artifacts
+ * - `mixed`: mix of code and non-code files
+ * - `empty`: no changed files
+ */
+export function classifyScopeCategory(
+    normalizedFiles: string[],
+    codeLikeRegexes: string[],
+    runtimeRoots: string[]
+): { category: ScopeCategory; reasons: string[] } {
+    if (normalizedFiles.length === 0) {
+        return { category: 'empty', reasons: ['no_changed_files'] };
+    }
+
+    const testMatch = (p: string, regexes: string[]) => matchAnyRegex(p, regexes, {
+        skipInvalidRegex: true,
+        caseInsensitive: true
+    });
+
+    let codeCount = 0;
+    let docCount = 0;
+    let configCount = 0;
+    let auditCount = 0;
+
+    for (const file of normalizedFiles) {
+        const isCode = testMatch(file, codeLikeRegexes)
+            && matchesConfiguredRoot(file, runtimeRoots, { allowNestedRoot: true });
+        const isDoc = testPrecompiled(file, DOC_LIKE_COMPILED);
+        const isConfig = testPrecompiled(file, CONFIG_LIKE_COMPILED);
+        const isAudit = testPrecompiled(file, AUDIT_ONLY_COMPILED);
+
+        if (isCode) codeCount++;
+        else if (isAudit) auditCount++;
+        else if (isDoc) docCount++;
+        else if (isConfig) configCount++;
+        else codeCount++; // unknown files default to code for safety
+    }
+
+    const total = normalizedFiles.length;
+    const reasons: string[] = [];
+
+    if (codeCount > 0) {
+        if (docCount > 0 || configCount > 0 || auditCount > 0) {
+            reasons.push(`code=${codeCount}`, `docs=${docCount}`, `config=${configCount}`, `audit=${auditCount}`);
+            return { category: 'mixed', reasons };
+        }
+        reasons.push(`code_files=${codeCount}`);
+        return { category: 'code', reasons };
+    }
+
+    if (auditCount === total) {
+        reasons.push(`audit_only_files=${auditCount}`);
+        return { category: 'audit-only', reasons };
+    }
+
+    if (docCount === total) {
+        reasons.push(`doc_only_files=${docCount}`);
+        return { category: 'docs-only', reasons };
+    }
+
+    if (configCount === total) {
+        reasons.push(`config_only_files=${configCount}`);
+        return { category: 'config-only', reasons };
+    }
+
+    // Mix of non-code categories (e.g., docs + config)
+    if (docCount > 0) reasons.push(`docs=${docCount}`);
+    if (configCount > 0) reasons.push(`config=${configCount}`);
+    if (auditCount > 0) reasons.push(`audit=${auditCount}`);
+    return { category: 'docs-only', reasons: [...reasons, 'all_non_code'] };
+}
+
 /**
  * Pure-logic classification of changed files.
  * Produces the canonical classify-change output shape.
@@ -401,9 +529,13 @@ export function classifyChange(options: ClassifyChangeOptions) {
     const requiredDependencyReview = dependencyTriggered && !!reviewCapabilities.dependency;
     const zeroDiffDetected = normalizedFiles.length === 0 && changedLinesTotal === 0;
 
+    const scopeClassification = classifyScopeCategory(normalizedFiles, codeLike, runtimeRoots);
+
     return {
         detection_source: detectionSource,
         mode,
+        scope_category: scopeClassification.category,
+        scope_category_reasons: scopeClassification.reasons,
         metrics: {
             classification_config_source: classificationConfig.source,
             classification_config_path: classificationConfig.config_path,

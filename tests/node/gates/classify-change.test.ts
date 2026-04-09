@@ -6,6 +6,7 @@ import * as path from 'node:path';
 
 import {
     classifyChange,
+    classifyScopeCategory,
     getDefaultClassificationConfig,
     getClassificationConfig,
     getReviewCapabilities
@@ -313,5 +314,93 @@ describe('gates/classify-change', () => {
                 fs.rmSync(repoRoot, { recursive: true, force: true });
             }
         });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// classifyScopeCategory (T-059)
+// ---------------------------------------------------------------------------
+
+describe('classifyScopeCategory', () => {
+    const codeLikeRegexes = ['\\.(ts|tsx|js|jsx|java|py|go)$'];
+    const runtimeRoots = ['src/', 'app/', 'packages/'];
+
+    it('classifies empty file list as empty', () => {
+        const result = classifyScopeCategory([], codeLikeRegexes, runtimeRoots);
+        assert.equal(result.category, 'empty');
+    });
+
+    it('classifies runtime code files as code', () => {
+        const result = classifyScopeCategory(['src/main.ts', 'src/utils.ts'], codeLikeRegexes, runtimeRoots);
+        assert.equal(result.category, 'code');
+    });
+
+    it('classifies doc-only changes as docs-only', () => {
+        const result = classifyScopeCategory(['README.md', 'docs/guide.md'], codeLikeRegexes, runtimeRoots);
+        assert.equal(result.category, 'docs-only');
+    });
+
+    it('classifies config-only changes as config-only', () => {
+        const result = classifyScopeCategory(['tsconfig.json', '.editorconfig'], codeLikeRegexes, runtimeRoots);
+        assert.equal(result.category, 'config-only');
+    });
+
+    it('classifies orchestrator control-plane files as audit-only', () => {
+        const result = classifyScopeCategory(
+            ['TASK.md', 'Octopus-agent-orchestrator/runtime/reviews/T-001-preflight.json'],
+            codeLikeRegexes,
+            runtimeRoots
+        );
+        assert.equal(result.category, 'audit-only');
+    });
+
+    it('classifies mixed code+docs as mixed', () => {
+        const result = classifyScopeCategory(['src/main.ts', 'README.md'], codeLikeRegexes, runtimeRoots);
+        assert.equal(result.category, 'mixed');
+    });
+
+    it('classifies code+config as mixed', () => {
+        const result = classifyScopeCategory(['src/main.ts', 'tsconfig.json'], codeLikeRegexes, runtimeRoots);
+        assert.equal(result.category, 'mixed');
+    });
+
+    it('classifies docs+config as docs-only (all_non_code)', () => {
+        const result = classifyScopeCategory(['README.md', 'tsconfig.json'], codeLikeRegexes, runtimeRoots);
+        assert.equal(result.category, 'docs-only');
+        assert.ok(result.reasons.includes('all_non_code'));
+    });
+
+    it('classifies CHANGELOG.md as docs-only', () => {
+        const result = classifyScopeCategory(['CHANGELOG.md'], codeLikeRegexes, runtimeRoots);
+        assert.equal(result.category, 'docs-only');
+    });
+
+    it('classifies unknown file types under runtime roots as code (safety default)', () => {
+        const result = classifyScopeCategory(['src/data.bin'], codeLikeRegexes, runtimeRoots);
+        assert.equal(result.category, 'code');
+    });
+
+    it('classifyChange output includes scope_category', () => {
+        const result = classifyChange({
+            normalizedFiles: ['src/main.ts'],
+            taskIntent: 'refactor',
+            changedLinesTotal: 10,
+            classificationConfig: makeConfig(),
+            reviewCapabilities: defaultCapabilities
+        });
+        assert.ok('scope_category' in result);
+        assert.ok('scope_category_reasons' in result);
+        assert.equal(result.scope_category, 'code');
+    });
+
+    it('classifyChange: docs-only files produce docs-only scope', () => {
+        const result = classifyChange({
+            normalizedFiles: ['README.md', 'docs/guide.md'],
+            taskIntent: 'update docs',
+            changedLinesTotal: 20,
+            classificationConfig: makeConfig(),
+            reviewCapabilities: defaultCapabilities
+        });
+        assert.equal(result.scope_category, 'docs-only');
     });
 });
