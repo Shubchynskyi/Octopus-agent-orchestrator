@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { redactHostname as redactHostnameValue } from '../core/redaction';
+import { redactHostname as redactHostnameValue, redactPath } from '../core/redaction';
 import { resolveBundleName } from '../core/constants';
 
 // ---------------------------------------------------------------------------
@@ -469,9 +469,11 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string): {
             const ownerPid = inspection.metadata.pid != null ? String(inspection.metadata.pid) : 'unknown';
             const ownerHost = redactHostnameValue(inspection.metadata.hostname) || 'unknown';
             const ownerOperation = inspection.metadata.operation || 'unknown';
+            const redactedTarget = redactPath(normalizedTarget, normalizedTarget);
+            const redactedLockPath = redactPath(lockPath, normalizedTarget);
             throw new Error(
-                `Another lifecycle operation is already running for '${normalizedTarget}' ` +
-                `(operation='${ownerOperation}', pid=${ownerPid}, host=${ownerHost}, lock='${lockPath}').`
+                `Another lifecycle operation is already running for '${redactedTarget}' ` +
+                `(operation='${ownerOperation}', pid=${ownerPid}, host=${ownerHost}, lock='${redactedLockPath}').`
             );
         }
     }

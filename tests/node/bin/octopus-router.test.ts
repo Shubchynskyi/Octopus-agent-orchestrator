@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { resolveDelegatedLauncherTarget } from '../../../src/bin/octopus';
+import { inferBundleNameFromPackageRoot, resolveDelegatedLauncherTarget } from '../../../src/bin/octopus';
 
 function writeFile(filePath: string, content: string): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -47,6 +47,30 @@ test('global launcher delegates to deployed bundle when workspace contains manag
         const workspaceRoot = path.join(tempRoot, 'workspace');
         const bundleRoot = path.join(workspaceRoot, 'Octopus-agent-orchestrator');
         const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'octopus-agent-orchestrator');
+        createOctopusPackageRoot(bundleRoot, '2.4.0');
+        createOctopusPackageRoot(globalPackageRoot, '2.3.0');
+
+        const delegatedCli = resolveDelegatedLauncherTarget(
+            ['status'],
+            workspaceRoot,
+            path.join(globalPackageRoot, 'bin', 'octopus.js'),
+            globalPackageRoot
+        );
+
+        assert.equal(delegatedCli, path.join(bundleRoot, 'bin', 'octopus.js'));
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('global launcher delegates to custom-named deployed bundle without explicit bundle-name override', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-router-custom-bundle-'));
+    try {
+        const workspaceRoot = path.join(tempRoot, 'workspace');
+        const bundleRoot = path.join(workspaceRoot, 'custom-bundle');
+        const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'octopus-agent-orchestrator');
+        fs.mkdirSync(workspaceRoot, { recursive: true });
+        writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
         createOctopusPackageRoot(bundleRoot, '2.4.0');
         createOctopusPackageRoot(globalPackageRoot, '2.3.0');
 
@@ -122,6 +146,33 @@ test('local deployed bundle launcher does not redirect to source checkout', () =
         );
 
         assert.equal(delegatedCli, null);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('inferBundleNameFromPackageRoot detects nested deployed bundle name', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-router-infer-bundle-'));
+    try {
+        const workspaceRoot = path.join(tempRoot, 'workspace');
+        const bundleRoot = path.join(workspaceRoot, 'custom-bundle');
+        fs.mkdirSync(workspaceRoot, { recursive: true });
+        writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
+        createOctopusPackageRoot(bundleRoot, '2.4.0');
+
+        assert.equal(inferBundleNameFromPackageRoot(bundleRoot), 'custom-bundle');
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('inferBundleNameFromPackageRoot returns null for source checkout roots', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-router-infer-source-'));
+    try {
+        const sourceRoot = path.join(tempRoot, 'repo');
+        createOctopusPackageRoot(sourceRoot, '2.4.0');
+
+        assert.equal(inferBundleNameFromPackageRoot(sourceRoot), null);
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }

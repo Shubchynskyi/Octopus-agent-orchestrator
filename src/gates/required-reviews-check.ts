@@ -233,7 +233,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                     }
                 }
 
-                // T-043: Authenticity hardening - Check for machine-verifiable receipt
+                // Authenticity hardening: check for machine-verifiable receipt.
                 const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
                 if (fs.existsSync(receiptPath)) {
                     try {
@@ -254,7 +254,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                         } else {
                             receiptValid = true;
                         }
-                        // T-044: Extract reviewer routing metadata from receipt
+                        // Extract reviewer routing metadata from the receipt.
                         if (receipt.reviewer_execution_mode) {
                             reviewerExecutionMode = normalizeReviewerExecutionMode(receipt.reviewer_execution_mode);
                             if (!reviewerExecutionMode) {
@@ -381,7 +381,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     };
 }
 
-// --- T-033: zero-diff noop guard for review gate ---
+// --- Zero-diff no-op guard for review gate ---
 
 export interface ZeroDiffReviewGuardResult {
     zero_diff_detected: boolean;

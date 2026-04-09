@@ -396,7 +396,7 @@ export function runUpdate(options: RunUpdateOptions) {
                 manifestStatus = 'SKIPPED_NO_RUNNER';
             }
 
-            // T-040: Bundle invariant check (enforce consistency)
+            // Bundle invariant check (enforce consistency).
             currentStage = 'INVARIANT_CHECK';
             const invariantResult = validateBundleInvariants(path.join(normalizedTarget, resolveBundleName()), expectedInvariantPaths);
             if (!invariantResult.isValid) {
@@ -419,7 +419,7 @@ export function runUpdate(options: RunUpdateOptions) {
                 ActiveAgentFiles: activeEntryFiles
             });
 
-            // T-033: Automatic stale lock cleanup during update
+            // Automatic stale lock cleanup during update.
             try {
                 cleanupStaleTaskEventLocks(path.join(normalizedTarget, resolveBundleName()), { dryRun: false });
             } catch (lockError: unknown) {

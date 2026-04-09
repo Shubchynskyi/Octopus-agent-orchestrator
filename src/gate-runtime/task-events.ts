@@ -1,5 +1,5 @@
 import { stringSha256 } from './hash';
-import { redactHostname as redactHostnameValue } from '../core/redaction';
+import { redactHostname as redactHostnameValue, redactPath } from '../core/redaction';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -350,8 +350,9 @@ function formatLockDiagnostic(lockPath: string, inspection: LockInspectionResult
     const ownerHostText = redactHostnameValue(inspection.metadata.hostname) || 'unknown';
     const createdAtText = inspection.metadata.created_at_utc || 'unknown';
     const staleReasonText = inspection.staleReason || 'none';
+    const redactedLockPath = redactLockPath(lockPath);
     return [
-        `Timed out acquiring file lock: ${lockPath}`,
+        `Timed out acquiring file lock: ${redactedLockPath}`,
         `waited_ms=${waitedMs}`,
         `timeout_ms=${timeoutMs}`,
         `lock_age_ms=${ageText}`,
@@ -419,6 +420,16 @@ interface LockWaitEntry {
     contention_level: LockContentionLevel;
     stale_recovered: boolean;
     stale_reason: 'owner_dead' | 'age_exceeded' | null;
+}
+
+function redactLockPath(lockPath: string): string {
+    const runtimeMarker = `${path.sep}runtime${path.sep}`;
+    const runtimeIndex = lockPath.lastIndexOf(runtimeMarker);
+    if (runtimeIndex >= 0) {
+        const orchestratorRoot = lockPath.slice(0, runtimeIndex);
+        return redactPath(lockPath, orchestratorRoot);
+    }
+    return redactPath(lockPath);
 }
 
 export function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): { handle: LockHandle; telemetry: AcquireLockTelemetry } {
@@ -504,7 +515,7 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
             const contentionLevel = classifyLockContention(retries, elapsedMs);
             if (contentionLevel !== 'none' && contentionLevel !== 'low') {
                 process.stderr.write(
-                    `CONTENTION_RESOLVED: lock=${lockPath}; retries=${retries}; elapsed_ms=${elapsedMs}; contention_level=${contentionLevel}; stale_recovered=${staleLockRecovered}\n`
+                    `CONTENTION_RESOLVED: lock=${redactLockPath(lockPath)}; retries=${retries}; elapsed_ms=${elapsedMs}; contention_level=${contentionLevel}; stale_recovered=${staleLockRecovered}\n`
                 );
             }
             return {
@@ -541,7 +552,7 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
                 const ownerPid = lastInspection.metadata.pid !== null ? String(lastInspection.metadata.pid) : 'unknown';
                 const ownerHost = redactHostnameValue(lastInspection.metadata.hostname) || 'unknown';
                 process.stderr.write(
-                    `WARNING: lock contention on ${lockPath} (retries=${retries}, elapsed_ms=${elapsedMs}, owner_pid=${ownerPid}, owner_host=${ownerHost})\n`
+                    `WARNING: lock contention on ${redactLockPath(lockPath)} (retries=${retries}, elapsed_ms=${elapsedMs}, owner_pid=${ownerPid}, owner_host=${ownerHost})\n`
                 );
             }
 
@@ -678,27 +689,51 @@ export function cleanupStaleTaskEventLocks(
 ): TaskEventLockCleanupResult {
     const dryRun = options.dryRun === true;
     const lockRoot = getTaskEventsRoot(orchestratorRoot);
+    const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
     const removableStaleLocks: string[] = [];
     const retainedLiveLocks: string[] = [];
     const removedLocks: string[] = [];
     const failedLocks: string[] = [];
     const warnings: string[] = [];
 
-    const inspection = scanTaskEventLocks(orchestratorRoot, options);
-    for (const lock of inspection.locks) {
-        if (lock.status === 'STALE') {
-            removableStaleLocks.push(lock.lock_name);
-            if (!dryRun) {
-                try {
-                    removeLockPath(path.join(lockRoot, lock.lock_name));
-                    removedLocks.push(lock.lock_name);
-                } catch (error: unknown) {
-                    failedLocks.push(lock.lock_name);
-                    warnings.push(`Failed to remove stale lock '${lock.lock_name}': ${getErrorMessage(error)}`);
-                }
+    for (const entryName of listTaskEventLockEntries(lockRoot)) {
+        const lockPath = path.join(lockRoot, entryName);
+        const inspection = inspectLock(lockPath, staleMs);
+        if (!inspection.exists) {
+            continue;
+        }
+
+        if (!inspection.staleReason) {
+            retainedLiveLocks.push(entryName);
+            continue;
+        }
+
+        removableStaleLocks.push(entryName);
+        if (dryRun) {
+            continue;
+        }
+
+        try {
+            const removalAttempt = tryRemoveStaleLock(lockPath, staleMs);
+            if (removalAttempt.removed) {
+                removedLocks.push(entryName);
+                continue;
             }
-        } else {
-            retainedLiveLocks.push(lock.lock_name);
+
+            const refreshed = inspectLock(lockPath, staleMs);
+            if (!refreshed.exists) {
+                continue;
+            }
+            if (!refreshed.staleReason) {
+                retainedLiveLocks.push(entryName);
+                continue;
+            }
+
+            failedLocks.push(entryName);
+            warnings.push(`Failed to remove stale lock '${entryName}': stale candidate changed before cleanup could claim it safely.`);
+        } catch (error: unknown) {
+            failedLocks.push(entryName);
+            warnings.push(`Failed to remove stale lock '${entryName}': ${getErrorMessage(error)}`);
         }
     }
 

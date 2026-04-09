@@ -90,6 +90,47 @@ function writePreflight(repoRoot: string, taskId: string, overrides: Record<stri
     return preflightPath;
 }
 
+function writeBudgetOutputFilters(repoRoot: string): string {
+    const outputFiltersPath = path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'output-filters.json');
+    fs.mkdirSync(path.dirname(outputFiltersPath), { recursive: true });
+    fs.writeFileSync(outputFiltersPath, JSON.stringify({
+        version: 2,
+        budget_profiles: {
+            enabled: true,
+            tiers: [
+                {
+                    label: 'tight',
+                    max_tokens: null,
+                    passthrough_ceiling_max_lines: 12,
+                    fail_tail_lines: 3,
+                    max_matches: 5,
+                    max_parser_lines: 6,
+                    truncate_line_max_chars: 160
+                }
+            ]
+        },
+        profiles: {
+            compile_success_console: {
+                description: 'Compile success telemetry',
+                operations: []
+            },
+            compile_failure_console_generic: {
+                description: 'Compile failure telemetry',
+                operations: []
+            },
+            review_gate_success_console: {
+                description: 'Review gate success telemetry',
+                operations: []
+            },
+            review_gate_failure_console: {
+                description: 'Review gate failure telemetry',
+                operations: []
+            }
+        }
+    }, null, 2), 'utf8');
+    return outputFiltersPath;
+}
+
 function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: string, verdict: string): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
@@ -123,7 +164,7 @@ function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: s
     const reviewContextText = JSON.stringify(reviewContext, null, 2);
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
 
-    // T-043: Authenticity hardening - Write verifiable receipt
+    // Authenticity hardening: write a verifiable receipt.
     const crypto = require('node:crypto');
     const artifactHash = crypto.createHash('sha256').update(content).digest('hex');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
@@ -657,6 +698,71 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('applies budget tiers to compile gate telemetry', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-budget';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            budget_forecast: {
+                task_id: taskId,
+                requested_depth: 1,
+                effective_depth: 1,
+                depth_escalated: false,
+                path_mode: 'FULL_PATH',
+                changed_files_count: 1,
+                changed_lines_total: 3,
+                required_reviews: ['code'],
+                review_budget_estimates: [],
+                total_estimated_review_tokens: 400,
+                compile_gate_estimated_tokens: 300,
+                total_forecast_tokens: 700,
+                token_economy_enabled: true,
+                token_economy_active_for_depth: true,
+                forecast_savings_estimate: 200,
+                effective_forecast_tokens: 500
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-budget.md');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'budget ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const taskModeResult = runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Budget telemetry check'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(taskModeResult.outputLines[0], 'TASK_MODE_ENTERED');
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(result.exitCode, 0);
+        assert.equal(evidence.status, 'PASSED');
+        assert.equal(evidence.selected_output_profile, 'compile_success_console');
+        assert.equal(evidence.selected_budget_tier, 'tight');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails compile gate when task mode entry evidence is missing', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901a';
@@ -752,7 +858,7 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
 
-        // T-043: Telemetry must be in the timeline, writeCleanReviewArtifact handles it
+        // Telemetry must be in the timeline; writeCleanReviewArtifact handles it.
 
         const result = runRequiredReviewsCheckCommand({
             repoRoot,
@@ -775,6 +881,77 @@ describe('cli/commands/gates', () => {
             && typeof event.details === 'object'
             && (event.details as Record<string, unknown>).new_status === 'IN_REVIEW'
         )));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('applies budget tiers to review gate telemetry', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-budget';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            budget_forecast: {
+                task_id: taskId,
+                requested_depth: 1,
+                effective_depth: 1,
+                depth_escalated: false,
+                path_mode: 'FULL_PATH',
+                changed_files_count: 1,
+                changed_lines_total: 3,
+                required_reviews: ['code'],
+                review_budget_estimates: [],
+                total_estimated_review_tokens: 400,
+                compile_gate_estimated_tokens: 300,
+                total_forecast_tokens: 700,
+                token_economy_enabled: true,
+                token_economy_active_for_depth: true,
+                forecast_savings_estimate: 200,
+                effective_forecast_tokens: 500
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-review-budget.md');
+        const outputFiltersPath = writeBudgetOutputFilters(repoRoot);
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'budget ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Budget telemetry check'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const result = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(result.exitCode, 0);
+        assert.equal(evidence.status, 'PASSED');
+        assert.equal(evidence.selected_budget_tier, 'tight');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -971,7 +1148,7 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(compileResult.exitCode, 0);
 
-        // T-033: review gate must FAIL when zero-diff preflight has no no-op artifact
+        // Review gate must fail when zero-diff preflight has no no-op artifact.
         const failedReviewResult = runRequiredReviewsCheckCommand({
             repoRoot,
             taskId,

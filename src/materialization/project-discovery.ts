@@ -41,7 +41,7 @@ export function getExcludedPathFragments(): readonly string[] {
 export const STACK_SIGNALS: readonly StackSignal[] = Object.freeze([
     { name: 'Node.js or JavaScript', pattern: /(^|\/)package\.json$/ },
     { name: 'TypeScript', pattern: /(^|\/)tsconfig(\.[^/]+)?\.json$/ },
-    { name: 'Java or JVM', pattern: /(^\/)(pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?)$/ },
+    { name: 'Java or JVM', pattern: /(^|\/)(pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?)$/ },
     { name: 'Python', pattern: /(^|\/)(?:pyproject\.toml|requirements(?:\.txt|-dev\.txt)?)$/ },
     { name: 'Go', pattern: /(^|\/)go\.mod$/ },
     { name: 'Rust', pattern: /(^|\/)Cargo\.toml$/ },

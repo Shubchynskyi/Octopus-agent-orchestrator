@@ -107,7 +107,7 @@ export function runReinit(options: ReinitOptions) {
         ? initAnswersPath
         : path.resolve(targetRoot, initAnswersPath);
 
-    // Read bundle version (T-033)
+    // Read bundle version from the deployed runtime.
     const bundleVersionPath = path.join(bundleRoot, 'VERSION');
     if (!pathExists(bundleVersionPath)) {
         throw new Error(`Bundle version file not found: ${bundleVersionPath}`);
@@ -228,7 +228,7 @@ export function runReinit(options: ReinitOptions) {
         autoAcceptRules: true
     }));
 
-    // T-033: best-effort stale task-event lock cleanup so reinit recovers provider state without reinstall.
+    // Best-effort stale task-event lock cleanup so reinit recovers provider state without reinstall.
     try {
         cleanupStaleTaskEventLocks(path.join(normalizedTarget, resolveBundleName()), { dryRun: false });
     } catch {
@@ -237,7 +237,7 @@ export function runReinit(options: ReinitOptions) {
 
     const canonicalEntrypoint = getCanonicalEntrypointFile(resolvedSourceOfTruth);
 
-    // T-040: Bundle invariant check (enforce consistency)
+    // Bundle invariant check (enforce consistency).
     const invariantResult = validateBundleInvariants(path.join(normalizedTarget, resolveBundleName()), expectedInvariantPaths);
     if (!invariantResult.isValid) {
         throw new Error(`Bundle invariant violation after reinit: ${invariantResult.violations.join('; ')}`);

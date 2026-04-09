@@ -134,14 +134,14 @@ describe('gates/build-review-context', () => {
             fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
                 SourceOfTruth: 'Qwen'
             }, null, 2), 'utf8');
-            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-044-preflight.json');
+            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-preflight.json');
             fs.writeFileSync(preflightPath, JSON.stringify({
-                task_id: 'T-044',
+                task_id: 'T-901',
                 required_reviews: { code: true }
             }, null, 2), 'utf8');
-            const taskModePath = resolveTaskModeArtifactPath(repoRoot, 'T-044', '');
+            const taskModePath = resolveTaskModeArtifactPath(repoRoot, 'T-901', '');
             fs.writeFileSync(taskModePath, JSON.stringify(buildTaskModeArtifact({
-                taskId: 'T-044',
+                taskId: 'T-901',
                 entryMode: 'EXPLICIT_TASK_EXECUTION',
                 requestedDepth: 3,
                 effectiveDepth: 3,
@@ -153,14 +153,14 @@ describe('gates/build-review-context', () => {
                 enabled: true,
                 enabled_depths: [1, 2]
             }, null, 2), 'utf8');
-            const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-044-code-review-context.json');
+            const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-code-review-context.json');
 
             const result = buildReviewContext({
                 reviewType: 'code',
                 depth: 3,
                 preflightPath,
                 tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
-                scopedDiffMetadataPath: path.join(orchestratorRoot, 'runtime', 'reviews', 'T-044-code-scoped.json'),
+                scopedDiffMetadataPath: path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-code-scoped.json'),
                 outputPath,
                 repoRoot
             });
@@ -178,14 +178,14 @@ describe('gates/build-review-context', () => {
             fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
                 SourceOfTruth: 'Qwen'
             }, null, 2), 'utf8');
-            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-044-preflight.json');
+            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-preflight.json');
             fs.writeFileSync(preflightPath, JSON.stringify({
-                task_id: 'T-044',
+                task_id: 'T-901',
                 required_reviews: { test: true }
             }, null, 2), 'utf8');
-            const taskModePath = resolveTaskModeArtifactPath(repoRoot, 'T-044', '');
+            const taskModePath = resolveTaskModeArtifactPath(repoRoot, 'T-901', '');
             fs.writeFileSync(taskModePath, JSON.stringify(buildTaskModeArtifact({
-                taskId: 'T-044',
+                taskId: 'T-901',
                 entryMode: 'EXPLICIT_TASK_EXECUTION',
                 requestedDepth: 3,
                 effectiveDepth: 3,
@@ -197,14 +197,14 @@ describe('gates/build-review-context', () => {
                 enabled: true,
                 enabled_depths: [1, 2]
             }, null, 2), 'utf8');
-            const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-044-test-review-context.json');
+            const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-test-review-context.json');
 
             const result = buildReviewContext({
                 reviewType: 'test',
                 depth: 3,
                 preflightPath,
                 tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
-                scopedDiffMetadataPath: path.join(orchestratorRoot, 'runtime', 'reviews', 'T-044-test-scoped.json'),
+                scopedDiffMetadataPath: path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-test-scoped.json'),
                 outputPath,
                 repoRoot
             });

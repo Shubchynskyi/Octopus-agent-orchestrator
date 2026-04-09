@@ -28,7 +28,7 @@ function findRepoRoot() {
     throw new Error('Cannot find repo root');
 }
 
-describe('Bundle Invariants (T-040)', () => {
+describe('Bundle invariants', () => {
     let repoRoot: string;
     let tmpDir: string;
     let bundle: string;

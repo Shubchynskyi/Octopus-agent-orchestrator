@@ -615,6 +615,46 @@ test('cleanupStaleTaskEventLocks handles mixed stale and active locks', () => {
     }
 });
 
+test('cleanupStaleTaskEventLocks does not remove a lock recreated after stale cleanup claims the old path', () => {
+    const tmp = mkTmpDir();
+    const orchRoot = path.join(tmp, 'orch');
+    const eventsRoot = path.join(orchRoot, 'runtime', 'task-events');
+    fs.mkdirSync(eventsRoot, { recursive: true });
+
+    const staleLock = path.join(eventsRoot, '.T-RACE.lock');
+    fs.mkdirSync(staleLock);
+    const oldTime = new Date(Date.now() - 5000);
+    fs.utimesSync(staleLock, oldTime, oldTime);
+
+    const realFs = require('node:fs');
+    const originalRenameSync = realFs.renameSync;
+    let recreated = false;
+    try {
+        realFs.renameSync = function (...args: any[]) {
+            const [fromPath, toPath] = args;
+            const result = originalRenameSync.apply(realFs, args);
+            if (!recreated && fromPath === staleLock && typeof toPath === 'string' && toPath.includes('.stale-')) {
+                recreated = true;
+                fs.mkdirSync(staleLock);
+                fs.writeFileSync(path.join(staleLock, 'owner.json'), JSON.stringify({
+                    pid: process.pid,
+                    hostname: os.hostname(),
+                    created_at_utc: new Date().toISOString()
+                }));
+            }
+            return result;
+        };
+
+        const result = cleanupStaleTaskEventLocks(orchRoot, { dryRun: false });
+        assert.ok(result.removed_locks.includes('.T-RACE.lock'));
+        assert.equal(result.failed_locks.length, 0);
+        assert.ok(fs.existsSync(staleLock), 'recreated live lock should survive stale cleanup');
+    } finally {
+        realFs.renameSync = originalRenameSync;
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // Metadata-write-failure cleanup
 // ---------------------------------------------------------------------------

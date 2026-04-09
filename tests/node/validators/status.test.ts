@@ -97,6 +97,32 @@ test('resolveInitAnswersPath throws for path escaping root', () => {
     }
 });
 
+test('getStatusSnapshot does not read init answers from outside target root', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    const outsidePath = path.join(os.tmpdir(), `status-outside-${Date.now()}.json`);
+    try {
+        fs.writeFileSync(outsidePath, JSON.stringify({
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Gemini',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_INTERACTIVE'
+        }), 'utf8');
+
+        const snapshot = getStatusSnapshot(tmpDir, outsidePath);
+        assert.equal(snapshot.initAnswersPresent, false);
+        assert.ok(snapshot.initAnswersError !== null);
+        assert.match(snapshot.initAnswersError!, /must resolve inside TargetRoot/i);
+        assert.notEqual(snapshot.initAnswersResolvedPath, outsidePath);
+        assert.equal(snapshot.sourceOfTruth, null);
+    } finally {
+        try { fs.rmSync(outsidePath, { force: true }); } catch { /* best-effort */ }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('getStatusSnapshot returns not-installed state for empty directory', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
     try {

@@ -75,6 +75,26 @@ test('buildTaskStats computes wall clock and gate counts from events', () => {
             timestamp_utc: '2026-04-05T10:00:00Z'
         });
         writeEvent(eventsRoot, 'T-100', {
+            event_type: 'RULE_PACK_LOADED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T10:01:00Z'
+        });
+        writeEvent(eventsRoot, 'T-100', {
+            event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T10:02:00Z'
+        });
+        writeEvent(eventsRoot, 'T-100', {
+            event_type: 'PREFLIGHT_CLASSIFIED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T10:03:00Z'
+        });
+        writeEvent(eventsRoot, 'T-100', {
+            event_type: 'REVIEW_PHASE_STARTED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T10:04:00Z'
+        });
+        writeEvent(eventsRoot, 'T-100', {
             event_type: 'COMPILE_GATE_PASSED',
             outcome: 'PASS',
             timestamp_utc: '2026-04-05T10:05:00Z'
@@ -82,7 +102,7 @@ test('buildTaskStats computes wall clock and gate counts from events', () => {
         writeEvent(eventsRoot, 'T-100', {
             event_type: 'COMPILE_GATE_FAILED',
             outcome: 'FAIL',
-            timestamp_utc: '2026-04-05T10:03:00Z'
+            timestamp_utc: '2026-04-05T10:06:00Z'
         });
         writeEvent(eventsRoot, 'T-100', {
             event_type: 'COMPLETION_GATE_PASSED',
@@ -91,9 +111,9 @@ test('buildTaskStats computes wall clock and gate counts from events', () => {
         });
 
         const stats = buildTaskStats('T-100', tmpDir, eventsRoot, reviewsRoot);
-        assert.equal(stats.events_count, 4);
+        assert.equal(stats.events_count, 8);
         assert.equal(stats.wall_clock_seconds, 600); // 10 minutes
-        assert.equal(stats.gate_pass_count, 3);
+        assert.equal(stats.gate_pass_count, 4);
         assert.equal(stats.gate_fail_count, 1);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -186,6 +206,11 @@ test('buildAggregateStats aggregates across multiple tasks', () => {
             timestamp_utc: '2026-04-05T10:00:00Z'
         });
         writeEvent(eventsRoot, 'T-001', {
+            event_type: 'RULE_PACK_LOADED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T10:01:00Z'
+        });
+        writeEvent(eventsRoot, 'T-001', {
             event_type: 'COMPLETION_GATE_PASSED',
             outcome: 'PASS',
             timestamp_utc: '2026-04-05T10:05:00Z'
@@ -193,9 +218,14 @@ test('buildAggregateStats aggregates across multiple tasks', () => {
 
         // Task 2
         writeEvent(eventsRoot, 'T-002', {
-            event_type: 'TASK_MODE_ENTERED',
+            event_type: 'REVIEW_PHASE_STARTED',
             outcome: 'PASS',
             timestamp_utc: '2026-04-06T09:00:00Z'
+        });
+        writeEvent(eventsRoot, 'T-002', {
+            event_type: 'PREFLIGHT_CLASSIFIED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-06T09:01:00Z'
         });
         writeEvent(eventsRoot, 'T-002', {
             event_type: 'COMPILE_GATE_FAILED',
@@ -205,8 +235,8 @@ test('buildAggregateStats aggregates across multiple tasks', () => {
 
         const agg = buildAggregateStats(tmpDir, eventsRoot, reviewsRoot);
         assert.equal(agg.tasks_analyzed, 2);
-        assert.equal(agg.total_events, 4);
-        assert.equal(agg.total_gate_pass, 3); // 2 TASK_MODE_ENTERED + 1 COMPLETION_GATE_PASSED
+        assert.equal(agg.total_events, 6);
+        assert.equal(agg.total_gate_pass, 3);
         assert.equal(agg.total_gate_fail, 1);
         assert.equal(agg.per_task.length, 2);
         assert.equal(agg.per_task[0].task_id, 'T-001');

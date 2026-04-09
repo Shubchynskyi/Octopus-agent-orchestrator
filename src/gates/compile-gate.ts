@@ -312,6 +312,7 @@ export function getPreflightContext(preflightPath: string, taskId: string) {
         changed_files: preflightChangedFiles,
         changed_files_count: preflightChangedFiles.length,
         changed_lines_total: changedLinesTotal,
-        changed_files_sha256: stringSha256(preflightChangedFiles.join('\n'))
+        changed_files_sha256: stringSha256(preflightChangedFiles.join('\n')),
+        budget_forecast: preflightObject.budget_forecast ?? null
     };
 }

@@ -58,21 +58,25 @@ in the GitHub repository.
 ## CODEOWNERS Integration
 
 The repository includes a `.github/CODEOWNERS` file whose path patterns
-mirror the orchestrator's local protected-path list.  When **Require
+mirror the orchestrator's local protected-path list. When **Require
 review from Code Owners** is enabled in branch protection, GitHub
 automatically requests reviews from the listed owners for any PR that
 touches those paths.
 
 ### Covered paths
 
-The CODEOWNERS file covers:
-
-- **Orchestrator runtime** — `Octopus-agent-orchestrator/bin/`,
-  `Octopus-agent-orchestrator/dist/`,
+- **Orchestrator runtime** — `runtime/`,
+  `Octopus-agent-orchestrator/runtime/`,
+  `live/docs/agent-rules/`,
   `Octopus-agent-orchestrator/live/docs/agent-rules/`,
+  `live/config/`,
   `Octopus-agent-orchestrator/live/config/`,
+  `live/skills/`,
   `Octopus-agent-orchestrator/live/skills/`
-- **Source checkout roots** — `src/`, `bin/`, `dist/`, `template/`
+- **Source checkout roots** — `src/`, `Octopus-agent-orchestrator/src/`,
+  `bin/`, `Octopus-agent-orchestrator/bin/`, `dist/`,
+  `Octopus-agent-orchestrator/dist/`, `template/`,
+  `Octopus-agent-orchestrator/template/`
 - **CI workflows** — `.github/workflows/`
 - **Security config** — `SECURITY.md`, `.gitleaks.toml`
 - **Agent entrypoints** — `.github/copilot-instructions.md`,
@@ -82,9 +86,10 @@ The CODEOWNERS file covers:
 
 ### Customising owners
 
-Replace the placeholder `@anthropic-team/orchestrator-maintainers` in
-`.github/CODEOWNERS` with your actual GitHub team handle or individual
-user handles.  Multiple owners can be listed space-separated:
+This checkout uses `@Shubchynskyi` in `.github/CODEOWNERS`. If you fork
+the repository, replace that owner handle with your actual GitHub team
+handle or individual user handles. Multiple owners can be listed
+space-separated:
 
 ```text
 src/   @your-org/core-team @your-username
@@ -116,7 +121,8 @@ bypasses or post-dates the local gate.
 ## Quick Setup Checklist
 
 1. [ ] Confirm `.github/CODEOWNERS` exists and paths are correct.
-2. [ ] Replace placeholder team handles with real owners.
+2. [ ] Confirm the owner handles in `.github/CODEOWNERS` match this
+   checkout or your fork's maintainers.
 3. [ ] Enable **Require pull request reviews before merging** on target branches.
 4. [ ] Enable **Require review from Code Owners**.
 5. [ ] Add the main CI workflow as a **required status check**.

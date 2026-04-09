@@ -8,7 +8,7 @@ import * as os from 'node:os';
 import { isTrivialReview } from '../../../src/gates/completion';
 import { checkRequiredReviews } from '../../../src/gates/required-reviews-check';
 
-describe('gates/authenticity (T-043)', () => {
+describe('gates/authenticity (T-900)', () => {
     describe('isTrivialReview', () => {
         it('returns true for very short content', () => {
             assert.equal(isTrivialReview('REVIEW PASSED'), true);
@@ -17,7 +17,7 @@ describe('gates/authenticity (T-043)', () => {
 
         it('returns true for boilerplate content with no findings/risks', () => {
             const content = `
-# Code Review T-043
+# Code Review T-900
 ## Summary
 This is a summary that is long enough to pass the initial length check but contains absolutely no implementation details, no code references, and no findings.
 ## Findings by Severity
@@ -32,7 +32,7 @@ REVIEW PASSED
 
         it('returns false for meaningful content with code references', () => {
             const content = `
-# Code Review T-043
+# Code Review T-900
 ## Summary
 The changes in \`src/gates/completion.ts\` correctly implement the triviality check.
 The logic handles word count and backtick detection.
@@ -49,7 +49,7 @@ REVIEW PASSED
 
         it('returns false for content with findings', () => {
             const content = `
-# Code Review T-043
+# Code Review T-900
 ## Summary
 I found some issues.
 ## Findings by Severity
@@ -97,13 +97,13 @@ REVIEW PASSED
         
         it('fails when verifiable receipt is missing for required review', () => {
             if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-            const artifactPath = path.join(tempDir, 'T-043-code.md');
+            const artifactPath = path.join(tempDir, 'T-900-code.md');
             fs.writeFileSync(artifactPath, '# Review\nREVIEW PASSED\n'.repeat(10));
 
             const options = {
                 validatedPreflight: {
                     errors: [],
-                    resolved_task_id: 'T-043',
+                    resolved_task_id: 'T-900',
                     required_reviews: { code: true } as any,
                     preflight_path: 'preflight.json',
                     preflight_hash: 'abc'
@@ -124,12 +124,12 @@ REVIEW PASSED
 
         it('fails when artifact hash mismatch with receipt', () => {
             const { artifactPath, receiptPath, reviewContextPath, reviewContextHash } = writeReviewArtifact(
-                'T-043-hash-mismatch-code',
+                'T-900-hash-mismatch-code',
                 '# Original Review\nREVIEW PASSED\n'.repeat(10)
             );
             const receipt = {
                 schema_version: 2,
-                task_id: 'T-043',
+                task_id: 'T-900',
                 review_type: 'code',
                 review_artifact_sha256: 'fake-hash',
                 review_context_sha256: reviewContextHash,
@@ -141,7 +141,7 @@ REVIEW PASSED
             const options = {
                 validatedPreflight: {
                     errors: [],
-                    resolved_task_id: 'T-043',
+                    resolved_task_id: 'T-900',
                     required_reviews: { code: true } as any,
                     preflight_path: 'preflight.json',
                     preflight_hash: 'abc'
@@ -165,7 +165,7 @@ REVIEW PASSED
         it('fails when task_id mismatch in receipt', () => {
             const content = '# Valid Review\nREVIEW PASSED\n'.repeat(10);
             const { artifactPath, receiptPath, reviewContextPath, reviewContextHash, artifactHash } = writeReviewArtifact(
-                'T-043-task-mismatch-code',
+                'T-900-task-mismatch-code',
                 content
             );
 
@@ -183,7 +183,7 @@ REVIEW PASSED
             const options = {
                 validatedPreflight: {
                     errors: [],
-                    resolved_task_id: 'T-043',
+                    resolved_task_id: 'T-900',
                     required_reviews: { code: true } as any,
                     preflight_path: 'preflight.json',
                     preflight_hash: 'abc'
@@ -210,26 +210,26 @@ REVIEW PASSED
                 reviewer_routing: {
                     source_of_truth: 'Codex',
                     actual_execution_mode: 'same_agent_fallback',
-                    reviewer_session_id: 'self:T-044',
+                    reviewer_session_id: 'self:T-901',
                     fallback_reason: 'manual fallback'
                 }
             };
-            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-044-codex-code', content, reviewContext);
+            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-901-codex-code', content, reviewContext);
             fs.writeFileSync(receiptPath, JSON.stringify({
                 schema_version: 2,
-                task_id: 'T-044',
+                task_id: 'T-901',
                 review_type: 'code',
                 review_artifact_sha256: artifactHash,
                 review_context_sha256: reviewContextHash,
                 reviewer_execution_mode: 'same_agent_fallback',
-                reviewer_identity: 'self:T-044',
+                reviewer_identity: 'self:T-901',
                 reviewer_fallback_reason: 'manual fallback'
             }));
 
             const result = checkRequiredReviews({
                 validatedPreflight: {
                     errors: [],
-                    resolved_task_id: 'T-044',
+                    resolved_task_id: 'T-901',
                     required_reviews: { code: true } as any,
                     preflight_path: 'preflight.json',
                     preflight_hash: 'abc'
@@ -259,10 +259,10 @@ REVIEW PASSED
                     reviewer_session_id: 'agent:reviewer-1'
                 }
             };
-            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-044-codex-pass-code', content, reviewContext);
+            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-901-codex-pass-code', content, reviewContext);
             fs.writeFileSync(receiptPath, JSON.stringify({
                 schema_version: 2,
-                task_id: 'T-044',
+                task_id: 'T-901',
                 review_type: 'code',
                 review_artifact_sha256: artifactHash,
                 review_context_sha256: reviewContextHash,
@@ -273,7 +273,7 @@ REVIEW PASSED
             const result = checkRequiredReviews({
                 validatedPreflight: {
                     errors: [],
-                    resolved_task_id: 'T-044',
+                    resolved_task_id: 'T-901',
                     required_reviews: { code: true } as any,
                     preflight_path: 'preflight.json',
                     preflight_hash: 'abc'
@@ -302,10 +302,10 @@ REVIEW PASSED
                     reviewer_session_id: 'agent:reviewer-1'
                 }
             };
-            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-044-invalid-mode-code', content, reviewContext);
+            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-901-invalid-mode-code', content, reviewContext);
             fs.writeFileSync(receiptPath, JSON.stringify({
                 schema_version: 2,
-                task_id: 'T-044',
+                task_id: 'T-901',
                 review_type: 'code',
                 review_artifact_sha256: artifactHash,
                 review_context_sha256: reviewContextHash,
@@ -316,7 +316,7 @@ REVIEW PASSED
             const result = checkRequiredReviews({
                 validatedPreflight: {
                     errors: [],
-                    resolved_task_id: 'T-044',
+                    resolved_task_id: 'T-901',
                     required_reviews: { code: true } as any,
                     preflight_path: 'preflight.json',
                     preflight_hash: 'abc'
@@ -346,10 +346,10 @@ REVIEW PASSED
                     reviewer_session_id: 'agent:reviewer-1'
                 }
             };
-            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-044-mismatched-identity-code', content, reviewContext);
+            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-901-mismatched-identity-code', content, reviewContext);
             fs.writeFileSync(receiptPath, JSON.stringify({
                 schema_version: 2,
-                task_id: 'T-044',
+                task_id: 'T-901',
                 review_type: 'code',
                 review_artifact_sha256: artifactHash,
                 review_context_sha256: reviewContextHash,
@@ -360,7 +360,7 @@ REVIEW PASSED
             const result = checkRequiredReviews({
                 validatedPreflight: {
                     errors: [],
-                    resolved_task_id: 'T-044',
+                    resolved_task_id: 'T-901',
                     required_reviews: { code: true } as any,
                     preflight_path: 'preflight.json',
                     preflight_hash: 'abc'
@@ -387,24 +387,24 @@ REVIEW PASSED
                 reviewer_routing: {
                     source_of_truth: 'Antigravity',
                     actual_execution_mode: 'same_agent_fallback',
-                    reviewer_session_id: 'self:T-044'
+                    reviewer_session_id: 'self:T-901'
                 }
             };
-            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-044-antigravity-code', content, reviewContext);
+            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-901-antigravity-code', content, reviewContext);
             fs.writeFileSync(receiptPath, JSON.stringify({
                 schema_version: 2,
-                task_id: 'T-044',
+                task_id: 'T-901',
                 review_type: 'code',
                 review_artifact_sha256: artifactHash,
                 review_context_sha256: reviewContextHash,
                 reviewer_execution_mode: 'same_agent_fallback',
-                reviewer_identity: 'self:T-044'
+                reviewer_identity: 'self:T-901'
             }));
 
             const result = checkRequiredReviews({
                 validatedPreflight: {
                     errors: [],
-                    resolved_task_id: 'T-044',
+                    resolved_task_id: 'T-901',
                     required_reviews: { code: true } as any,
                     preflight_path: 'preflight.json',
                     preflight_hash: 'abc'
@@ -431,24 +431,24 @@ REVIEW PASSED
                 reviewer_routing: {
                     source_of_truth: 'Qwen',
                     actual_execution_mode: 'same_agent_fallback',
-                    reviewer_session_id: 'self:T-044'
+                    reviewer_session_id: 'self:T-901'
                 }
             };
-            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-044-single-agent-code', content, reviewContext);
+            const { artifactPath, receiptPath, artifactHash, reviewContextHash } = writeReviewArtifact('T-901-single-agent-code', content, reviewContext);
             fs.writeFileSync(receiptPath, JSON.stringify({
                 schema_version: 2,
-                task_id: 'T-044',
+                task_id: 'T-901',
                 review_type: 'code',
                 review_artifact_sha256: artifactHash,
                 review_context_sha256: reviewContextHash,
                 reviewer_execution_mode: 'same_agent_fallback',
-                reviewer_identity: 'self:T-044'
+                reviewer_identity: 'self:T-901'
             }));
 
             const result = checkRequiredReviews({
                 validatedPreflight: {
                     errors: [],
-                    resolved_task_id: 'T-044',
+                    resolved_task_id: 'T-901',
                     required_reviews: { code: true } as any,
                     preflight_path: 'preflight.json',
                     preflight_hash: 'abc'
@@ -471,7 +471,7 @@ REVIEW PASSED
 
         it('fails when review-context artifact hash changes after receipt recording', () => {
             const content = '# Review\nValidated delegated routing enforcement with concrete file references.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
-            const { artifactPath, receiptPath, artifactHash } = writeReviewArtifact('T-044-context-hash-code', content);
+            const { artifactPath, receiptPath, artifactHash } = writeReviewArtifact('T-901-context-hash-code', content);
             const reviewContextContent = JSON.stringify({
                 reviewer_routing: {
                     source_of_truth: 'Codex',
@@ -485,7 +485,7 @@ REVIEW PASSED
 
             fs.writeFileSync(receiptPath, JSON.stringify({
                 schema_version: 2,
-                task_id: 'T-044',
+                task_id: 'T-901',
                 review_type: 'code',
                 review_artifact_sha256: artifactHash,
                 review_context_sha256: originalContextHash,
@@ -496,7 +496,7 @@ REVIEW PASSED
             const result = checkRequiredReviews({
                 validatedPreflight: {
                     errors: [],
-                    resolved_task_id: 'T-044',
+                    resolved_task_id: 'T-901',
                     required_reviews: { code: true } as any,
                     preflight_path: 'preflight.json',
                     preflight_hash: 'abc'
@@ -519,10 +519,10 @@ REVIEW PASSED
 
         it('fails when required review receipt is recorded without a review-context artifact', () => {
             const content = '# Review\nValidated delegated routing enforcement with concrete file references.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
-            const { artifactPath, receiptPath, artifactHash } = writeReviewArtifact('T-044-missing-context-code', content);
+            const { artifactPath, receiptPath, artifactHash } = writeReviewArtifact('T-901-missing-context-code', content);
             fs.writeFileSync(receiptPath, JSON.stringify({
                 schema_version: 2,
-                task_id: 'T-044',
+                task_id: 'T-901',
                 review_type: 'code',
                 review_artifact_sha256: artifactHash,
                 reviewer_execution_mode: 'delegated_subagent',
@@ -532,7 +532,7 @@ REVIEW PASSED
             const result = checkRequiredReviews({
                 validatedPreflight: {
                     errors: [],
-                    resolved_task_id: 'T-044',
+                    resolved_task_id: 'T-901',
                     required_reviews: { code: true } as any,
                     preflight_path: 'preflight.json',
                     preflight_hash: 'abc'

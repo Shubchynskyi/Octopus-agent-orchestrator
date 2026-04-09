@@ -642,7 +642,7 @@ export function validateReviewSkillEvidence(
                 }
             }
 
-            // T-043: Triviality check
+            // Triviality check.
             let artifactPath = (artifact as any).path;
             if (!artifactPath && timelinePath) {
                 artifactPath = path.join(path.dirname(timelinePath.replace('task-events', 'reviews')), `${path.basename(timelinePath, '.jsonl')}-${key}.md`);

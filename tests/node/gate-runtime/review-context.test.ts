@@ -306,7 +306,7 @@ test('buildReviewContextSections includes strip flags in header', () => {
 
 test('applyReviewerRoutingMetadata updates review-context routing fields and returns sha', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-review-context-'));
-    const contextPath = path.join(tempDir, 'T-044-code-review-context.json');
+    const contextPath = path.join(tempDir, 'T-901-code-review-context.json');
     fs.writeFileSync(contextPath, JSON.stringify({
         review_type: 'code',
         reviewer_routing: {

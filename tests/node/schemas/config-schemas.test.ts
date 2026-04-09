@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { EXIT_VALIDATION_FAILURE } from '../../../src/cli/exit-codes';
 
 import {
     getConfigSchemas,
@@ -491,7 +492,7 @@ test('gate validate-config fails against an invalid bundle root', () => {
         const result = spawnSync(process.execPath, [
             CLI_ENTRY, 'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'
         ], { cwd: NEUTRAL_CWD, encoding: 'utf8', timeout: 30_000 });
-        assert.notEqual(result.status, 0);
+        assert.equal(result.status, EXIT_VALIDATION_FAILURE);
         assert.ok((result.stdout + result.stderr).includes('CONFIG_VALIDATION_FAILED'));
     } finally {
         cleanupTempBundleRoot(tmpDir);

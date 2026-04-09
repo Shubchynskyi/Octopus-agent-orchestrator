@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
 import {
     EXIT_GENERAL_FAILURE,
+    EXIT_VALIDATION_FAILURE,
     EXIT_USAGE_ERROR
 } from '../../../src/cli/exit-codes';
 
@@ -48,6 +50,19 @@ function runCli(args: string[]) {
     return { exitCode: result.status, output: combined, stderr: result.stderr || '' };
 }
 
+function writeValidInitAnswersFixture(targetRoot: string): void {
+    const runtimeDir = path.join(targetRoot, 'Octopus-agent-orchestrator', 'runtime');
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    fs.writeFileSync(path.join(runtimeDir, 'init-answers.json'), JSON.stringify({
+        AssistantLanguage: 'English',
+        AssistantBrevity: 'concise',
+        SourceOfTruth: 'Claude',
+        EnforceNoAutoCommit: 'false',
+        ClaudeOrchestratorFullAccess: 'false',
+        TokenEconomyEnabled: 'true'
+    }), 'utf8');
+}
+
 // ---------------------------------------------------------------------------
 // Bootstrap failures still produce OCTOPUS_BOOTSTRAP_FAILED
 // ---------------------------------------------------------------------------
@@ -75,11 +90,41 @@ test('verify with invalid flag produces OCTOPUS_CLI_FAILED with EXIT_USAGE_ERROR
     assert.ok(!stderr.includes('OCTOPUS_BOOTSTRAP_FAILED'), 'Should not contain OCTOPUS_BOOTSTRAP_FAILED');
 });
 
+test('verify with validation failures returns EXIT_VALIDATION_FAILURE', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-verify-validation-'));
+    try {
+        fs.mkdirSync(path.join(tmpDir, 'Octopus-agent-orchestrator'), { recursive: true });
+        writeValidInitAnswersFixture(tmpDir);
+
+        const { exitCode, stderr } = runCli(['verify', '--target-root', tmpDir]);
+        assert.equal(exitCode, EXIT_VALIDATION_FAILURE);
+        assert.ok(stderr.includes('OCTOPUS_CLI_FAILED'));
+        assert.ok(stderr.includes('Workspace verification failed'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('gate with invalid gate name produces OCTOPUS_CLI_FAILED with EXIT_USAGE_ERROR', () => {
     const { exitCode, stderr } = runCli(['gate', 'nonexistent-gate']);
     assert.equal(exitCode, EXIT_USAGE_ERROR);
     assert.ok(stderr.includes('OCTOPUS_CLI_FAILED'), 'Expected OCTOPUS_CLI_FAILED in stderr');
     assert.ok(!stderr.includes('OCTOPUS_BOOTSTRAP_FAILED'), 'Should not contain OCTOPUS_BOOTSTRAP_FAILED');
+});
+
+test('gate validate-manifest returns EXIT_VALIDATION_FAILURE when manifest is invalid', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-manifest-validation-'));
+    try {
+        const manifestPath = path.join(tmpDir, 'MANIFEST.md');
+        fs.writeFileSync(manifestPath, '- ../escape.txt\n', 'utf8');
+
+        const { exitCode, stderr } = runCli(['gate', 'validate-manifest', '--manifest-path', manifestPath]);
+        assert.equal(exitCode, EXIT_VALIDATION_FAILURE);
+        assert.ok(stderr.includes('OCTOPUS_CLI_FAILED'));
+        assert.ok(stderr.includes('Manifest validation failed.'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 });
 
 test('uninstall with invalid flag produces OCTOPUS_CLI_FAILED with EXIT_USAGE_ERROR', () => {

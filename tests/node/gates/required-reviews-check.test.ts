@@ -87,7 +87,7 @@ describe('gates/required-reviews-check', () => {
         });
     });
 
-    describe('detectZeroDiffFromPreflight (T-033)', () => {
+    describe('detectZeroDiffFromPreflight (T-902)', () => {
         it('returns true for zero-diff preflight with guard block', () => {
             const preflight = {
                 changed_files: [],
@@ -136,13 +136,13 @@ describe('gates/required-reviews-check', () => {
         });
     });
 
-    describe('validateZeroDiffForReviewGate (T-033)', () => {
+    describe('validateZeroDiffForReviewGate (T-902)', () => {
         it('returns NOT_APPLICABLE when diff is present', () => {
             const preflight = {
                 changed_files: ['src/index.ts'],
                 metrics: { changed_lines_total: 10 }
             };
-            const result = validateZeroDiffForReviewGate(preflight, 'T-033', '/nonexistent-repo');
+            const result = validateZeroDiffForReviewGate(preflight, 'T-902', '/nonexistent-repo');
             assert.equal(result.zero_diff_detected, false);
             assert.equal(result.status, 'NOT_APPLICABLE');
             assert.equal(result.violations.length, 0);
@@ -154,12 +154,12 @@ describe('gates/required-reviews-check', () => {
                 metrics: { changed_lines_total: 0 },
                 zero_diff_guard: { zero_diff_detected: true, status: 'BASELINE_ONLY' }
             };
-            const result = validateZeroDiffForReviewGate(preflight, 'T-033', '/nonexistent-repo');
+            const result = validateZeroDiffForReviewGate(preflight, 'T-902', '/nonexistent-repo');
             assert.equal(result.zero_diff_detected, true);
             assert.equal(result.status, 'REQUIRES_DIFF_OR_NO_OP');
             assert.equal(result.violations.length, 1);
             assert.ok(result.violations[0].includes('zero-diff'));
-            assert.ok(result.violations[0].includes('T-033'));
+            assert.ok(result.violations[0].includes('T-902'));
         });
 
         it('violation message includes remediation options', () => {

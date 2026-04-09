@@ -1,46 +1,53 @@
-# CODEOWNERS — PR-time governance complement to local protected-path enforcement
+# CODEOWNERS - PR-time governance complement to local protected-path enforcement
 #
 # GitHub evaluates CODEOWNERS on every pull request and requires approval
 # from the listed owners before the PR can merge (when branch protection
-# is configured — see docs/branch-protection.md).
+# is configured - see docs/branch-protection.md).
 #
 # Paths mirror the orchestrator's local protected-path enforcement
 # (see docs/orchestrator-work-and-isolation.md § Protected Control-Plane
 # Paths) so that the same files guarded at task-completion time are also
 # guarded at PR-merge time.
 #
-# Replace @anthropic-team/orchestrator-maintainers with your actual
-# GitHub team or user handles.
+# This checkout uses the repository owner handle below. Forks should replace
+# it with the actual team or user handles that own the protected paths.
 
-# ── Orchestrator runtime and control plane ──────────────────────────
-Octopus-agent-orchestrator/bin/               @anthropic-team/orchestrator-maintainers
-Octopus-agent-orchestrator/dist/              @anthropic-team/orchestrator-maintainers
-Octopus-agent-orchestrator/live/docs/agent-rules/ @anthropic-team/orchestrator-maintainers
-Octopus-agent-orchestrator/live/config/       @anthropic-team/orchestrator-maintainers
-Octopus-agent-orchestrator/live/skills/       @anthropic-team/orchestrator-maintainers
+# -- Orchestrator runtime and control plane --
+runtime/                                   @Shubchynskyi
+Octopus-agent-orchestrator/runtime/        @Shubchynskyi
+live/docs/agent-rules/                     @Shubchynskyi
+Octopus-agent-orchestrator/live/docs/agent-rules/ @Shubchynskyi
+live/config/                               @Shubchynskyi
+Octopus-agent-orchestrator/live/config/    @Shubchynskyi
+live/skills/                               @Shubchynskyi
+Octopus-agent-orchestrator/live/skills/    @Shubchynskyi
 
-# ── Source checkout roots (when repo IS the orchestrator) ───────────
-src/                                          @anthropic-team/orchestrator-maintainers
-bin/                                          @anthropic-team/orchestrator-maintainers
-dist/                                         @anthropic-team/orchestrator-maintainers
-template/                                     @anthropic-team/orchestrator-maintainers
+# -- Source checkout roots (when repo is the orchestrator) --
+src/                                       @Shubchynskyi
+Octopus-agent-orchestrator/src/            @Shubchynskyi
+bin/                                       @Shubchynskyi
+Octopus-agent-orchestrator/bin/            @Shubchynskyi
+dist/                                      @Shubchynskyi
+Octopus-agent-orchestrator/dist/           @Shubchynskyi
+template/                                  @Shubchynskyi
+Octopus-agent-orchestrator/template/       @Shubchynskyi
 
-# ── CI / GitHub Actions workflows ──────────────────────────────────
-.github/workflows/                            @anthropic-team/orchestrator-maintainers
+# -- CI / GitHub Actions workflows --
+.github/workflows/                         @Shubchynskyi
 
-# ── Security-sensitive files ────────────────────────────────────────
-SECURITY.md                                   @anthropic-team/orchestrator-maintainers
-.gitleaks.toml                                @anthropic-team/orchestrator-maintainers
+# -- Security-sensitive files --
+SECURITY.md                                @Shubchynskyi
+.gitleaks.toml                             @Shubchynskyi
 
-# ── Agent entrypoints and bridges ───────────────────────────────────
-.github/copilot-instructions.md               @anthropic-team/orchestrator-maintainers
-.github/agents/                               @anthropic-team/orchestrator-maintainers
-.agents/                                      @anthropic-team/orchestrator-maintainers
-CLAUDE.md                                     @anthropic-team/orchestrator-maintainers
-AGENTS.md                                     @anthropic-team/orchestrator-maintainers
-GEMINI.md                                     @anthropic-team/orchestrator-maintainers
+# -- Agent entrypoints and bridges --
+.github/copilot-instructions.md            @Shubchynskyi
+.github/agents/                            @Shubchynskyi
+.agents/                                   @Shubchynskyi
+CLAUDE.md                                  @Shubchynskyi
+AGENTS.md                                  @Shubchynskyi
+GEMINI.md                                  @Shubchynskyi
 
-# ── Package metadata ────────────────────────────────────────────────
-package.json                                  @anthropic-team/orchestrator-maintainers
-package-lock.json                             @anthropic-team/orchestrator-maintainers
-tsconfig*.json                                @anthropic-team/orchestrator-maintainers
+# -- Package metadata --
+package.json                               @Shubchynskyi
+package-lock.json                          @Shubchynskyi
+tsconfig*.json                             @Shubchynskyi

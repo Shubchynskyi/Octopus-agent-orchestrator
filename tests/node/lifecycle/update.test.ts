@@ -780,7 +780,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('preserves ready checkpoints across update, stamps bundle version, and cleans stale task-event locks (T-033)', () => {
+    it('preserves ready checkpoints across update, stamps bundle version, and cleans stale task-event locks', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             const bundleVersion = fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim();

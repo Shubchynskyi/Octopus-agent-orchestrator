@@ -415,7 +415,7 @@ describe('runReinit', () => {
         }
     });
 
-    it('preserves ready agent-init checkpoints on version mismatch when answers are unchanged and cleans stale task-event locks (T-033)', () => {
+    it('preserves ready agent-init checkpoints on version mismatch when answers are unchanged and cleans stale task-event locks', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const answersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');

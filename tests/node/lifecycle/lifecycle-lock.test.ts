@@ -272,6 +272,35 @@ test('withLifecycleOperationLock does not reclaim orphaned lock within grace per
     }
 });
 
+test('withLifecycleOperationLock redacts absolute target and lock paths in contention errors', () => {
+    const tmp = mkTmpDir();
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            operation: 'blocker',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+
+        assert.throws(
+            () => withLifecycleOperationLock(tmp, 'should-fail', () => 'nope'),
+            function (error: unknown) {
+                assert.ok(error instanceof Error);
+                assert.ok(error.message.includes("Another lifecycle operation is already running for '.'"));
+                assert.ok(error.message.includes("lock='Octopus-agent-orchestrator/runtime/.lifecycle-operation.lock'"));
+                assert.ok(!error.message.includes(lockPath.replace(/\\/g, '/')));
+                return true;
+            }
+        );
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('withLifecycleOperationLock reclaims SIGKILL-orphaned lock with corrupt metadata after grace period', () => {
     const tmp = mkTmpDir();
     try {

@@ -56,6 +56,7 @@ export function formatTimestamp(value: unknown): string | null {
 export interface AuditCommandOptions {
     mode?: string;
     justification?: string;
+    suppressWarningsWithJustification?: boolean;
 }
 
 export interface CommandCompactnessAudit {
@@ -281,6 +282,7 @@ const NOISY_COMMAND_PATTERNS: ReadonlyArray<NoisyPattern> = [
 export function auditCommandCompactness(commandText: string, options: AuditCommandOptions = {}): CommandCompactnessAudit {
     const mode = options.mode || 'scan';
     const justification = options.justification || '';
+    const suppressWarningsWithJustification = options.suppressWarningsWithJustification !== false;
     const warnings: string[] = [];
     const matchedCategories: string[] = [];
 
@@ -290,7 +292,7 @@ export function auditCommandCompactness(commandText: string, options: AuditComma
 
     for (const { pattern, warning, category } of NOISY_COMMAND_PATTERNS) {
         if (pattern.test(commandText)) {
-            if (justification && justification.trim().length >= 10) continue;
+            if (suppressWarningsWithJustification && justification && justification.trim().length >= 10) continue;
             warnings.push(warning);
             if (!matchedCategories.includes(category)) {
                 matchedCategories.push(category);
@@ -316,7 +318,8 @@ export function auditCommandCompactness(commandText: string, options: AuditComma
 export function auditGateCommand(commandText: string, gateLabel: string): CommandCompactnessAudit {
     const result = auditCommandCompactness(commandText, {
         mode: 'gate',
-        justification: `Lifecycle-required gate command (${gateLabel})`
+        justification: `Lifecycle-required gate command (${gateLabel})`,
+        suppressWarningsWithJustification: false
     });
     return result;
 }
@@ -791,4 +794,3 @@ export function formatTaskEventsSummaryText(summary: TaskEventsSummaryResult, in
 
     return lines.join('\n');
 }
-

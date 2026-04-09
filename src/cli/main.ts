@@ -167,6 +167,21 @@ interface UpdateLifecycleResult extends Record<string, unknown> {
 
 let resolvedCommand: string | null = null;
 
+class ValidationFailureError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'ValidationFailureError';
+        Object.setPrototypeOf(this, ValidationFailureError.prototype);
+    }
+}
+
+function countStoragePolicyActions(storagePolicyResult: { removed: string[]; compressed: string[] } | undefined): number {
+    if (!storagePolicyResult) {
+        return 0;
+    }
+    return storagePolicyResult.removed.length + storagePolicyResult.compressed.length;
+}
+
 function getPackageRoot(): string {
     return path.resolve(__dirname, '..', '..', '..');
 }
@@ -252,7 +267,7 @@ function ensureBundleExists(targetRoot: string, commandName: string): string {
 
 function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: boolean | undefined) {
     return function runLifecycleFromCli(runnerOptions: CheckUpdateRunnerOptions): UpdateLifecycleResult {
-        // T-033: Try to use the NEW code from the bundle for materialization/lifecycle.
+        // Try to use the new code from the bundle for materialization/lifecycle.
         // This ensures that the update is applied using the TARGET version's logic.
         const bundleResolved = path.resolve(bundlePath);
         const targetUpdateModulePath = path.join(bundleResolved, 'dist', 'src', 'lifecycle', 'update.js');
@@ -1273,7 +1288,8 @@ function handleGc(commandArgv: string[], packageJson: PackageJsonLike): void {
     ]);
 
     const actionItems = gcResult.dryRun ? gcResult.skipped : gcResult.removed;
-    if (actionItems.length === 0 && gcResult.staleLocksCleaned === 0) {
+    const storagePolicyActions = countStoragePolicyActions(gcResult.storagePolicyResult);
+    if (actionItems.length === 0 && gcResult.staleLocksCleaned === 0 && storagePolicyActions === 0) {
         console.log(green('Nothing to clean up.'));
         return;
     }
@@ -1294,6 +1310,23 @@ function handleGc(commandArgv: string[], packageJson: PackageJsonLike): void {
             labelColor: cyan,
             valueColor: green
         });
+    }
+
+    if (gcResult.storagePolicyResult) {
+        const storageAction = gcResult.dryRun ? 'Would remove review artifacts:' : 'Removed review artifacts:';
+        if (gcResult.storagePolicyResult.removed.length > 0) {
+            printHighlightedPair(storageAction, String(gcResult.storagePolicyResult.removed.length), {
+                labelColor: cyan,
+                valueColor: green
+            });
+        }
+        const compressionAction = gcResult.dryRun ? 'Would compress review artifacts:' : 'Compressed review artifacts:';
+        if (gcResult.storagePolicyResult.compressed.length > 0) {
+            printHighlightedPair(compressionAction, String(gcResult.storagePolicyResult.compressed.length), {
+                labelColor: cyan,
+                valueColor: green
+            });
+        }
     }
 
     const freedLabel = gcResult.dryRun ? 'Would free' : 'Freed';
@@ -1353,7 +1386,7 @@ function handleVerify(commandArgv: string[], packageJson: PackageJsonLike): void
     });
     console.log(options.compact === true ? formatVerifyResultCompact(result) : formatVerifyResult(result));
     if (result.totalViolationCount > 0) {
-        throw new Error(`Workspace verification failed with ${result.totalViolationCount} violation(s).`);
+        throw new ValidationFailureError(`Workspace verification failed with ${result.totalViolationCount} violation(s).`);
     }
 }
 
@@ -1515,7 +1548,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
             const result = validateManifest(manifestPath);
             console.log(options.compact === true ? formatManifestResultCompact(result) : formatManifestResult(result));
             if (!result.passed) {
-                throw new Error('Manifest validation failed.');
+                throw new ValidationFailureError('Manifest validation failed.');
             }
             return;
         }
@@ -1534,7 +1567,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 ? formatValidationReportCompact(vcReport)
                 : formatValidationReport(vcReport));
             if (!vcReport.passed) {
-                throw new Error('Config validation failed.');
+                throw new ValidationFailureError('Config validation failed.');
             }
             return;
         }
@@ -2552,7 +2585,7 @@ export async function runCliMain(argv: string[] = process.argv.slice(2), package
         ? effectiveArgv
         : effectiveArgv.slice(1);
 
-    // T-034: Fail fast if the deployed bundle is stale vs source checkout
+    // Fail fast if the deployed bundle is stale vs source checkout.
     if (['gate', 'agent-init', 'skills', 'profile'].includes(commandName)) {
         const parityResult = detectSourceBundleParity(normalizePathValue('.'));
         if (parityResult.isStale) {
@@ -2662,6 +2695,12 @@ export async function runCliMainWithHandling(
     try {
         await runCliMain(argv, packageRoot);
     } catch (error: unknown) {
+        if (error instanceof Error && error.name === 'ValidationFailureError') {
+            console.error(getFailureMarker(resolvedCommand));
+            console.error(error.message);
+            process.exitCode = EXIT_VALIDATION_FAILURE;
+            return;
+        }
         console.error(getFailureMarker(resolvedCommand));
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = classifyErrorExitCode(error);

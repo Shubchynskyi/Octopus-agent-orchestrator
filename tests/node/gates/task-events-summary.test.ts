@@ -567,14 +567,17 @@ describe('gates/task-events-summary', () => {
     });
 
     describe('auditGateCommand', () => {
-        it('returns audit with gate mode and lifecycle justification', () => {
-            const result = auditGateCommand('npm run build', 'compile-gate');
+        it('returns audit with gate mode, lifecycle justification, and warnings for noisy commands', () => {
+            const result = auditGateCommand('git diff HEAD', 'compile-gate');
             assert.equal(result.mode, 'gate');
             assert.ok(result.justification.includes('compile-gate'));
+            assert.ok(result.warning_count > 0);
+            assert.ok(result.warnings.length > 0);
         });
-        it('suppresses warnings because gate justification is valid', () => {
+        it('records warnings for noisy gate commands', () => {
             const result = auditGateCommand('git diff HEAD', 'compile-gate');
-            assert.equal(result.warning_count, 0, 'gate commands should be excused by justification');
+            assert.ok(result.warning_count > 0, 'gate commands should still be audited');
+            assert.ok(result.warnings.length > 0);
         });
     });
 

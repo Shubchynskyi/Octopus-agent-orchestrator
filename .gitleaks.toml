@@ -13,13 +13,13 @@ title = "Octopus Agent Orchestrator — gitleaks config"
 [allowlist]
 description = "Project-wide false-positive suppressions"
 
-# Test fixtures, snapshots, and example/template placeholders are not secrets.
+# Generated runtime artifacts and the intentional redaction fixture are not secrets.
 paths = [
-  '''tests/.*''',
   '''testResults\.xml''',
+  '''runtime/.*''',
   '''Octopus-agent-orchestrator/runtime/.*''',
   '''\.node-build/.*''',
-  '''dist/.*''',
+  '''tests/node/core/redaction\.test\.ts''',
   '''node_modules/.*''',
 ]
 

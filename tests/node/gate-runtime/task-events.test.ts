@@ -604,6 +604,8 @@ test('appendTaskEvent timeout warning includes lock owner diagnostics', () => {
         assert.match(result!.warnings[0], /owner_pid=/);
         assert.match(result!.warnings[0], /owner_alive=yes/);
         assert.match(result!.warnings[0], /owner_metadata_status=ok/);
+        assert.ok(result!.warnings[0].includes('runtime/task-events/.T-TEST.lock'));
+        assert.ok(!result!.warnings[0].includes(lockPath.replace(/\\/g, '/')));
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }

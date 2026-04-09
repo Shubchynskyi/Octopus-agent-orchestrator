@@ -25,7 +25,7 @@ function findRepoRoot(startDir: string): string {
 const REPO_ROOT = findRepoRoot(__dirname);
 const CLI_PATH = path.join(REPO_ROOT, 'bin', 'octopus.js');
 
-test('CLI blocks task execution commands when bundle is stale (T-034)', () => {
+test('CLI blocks task execution commands when bundle is stale', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-fail-fast-'));
     try {
         // Setup a stale source checkout layout

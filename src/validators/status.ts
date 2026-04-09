@@ -115,12 +115,17 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
         ? readAgentInitStateSafe(resolvedTargetRoot, resolveAgentInitStateRelativePath())
         : { statePath: path.join(bundlePath, 'runtime', 'agent-init-state.json'), state: null, error: null };
     var initAnswersResolvedPath;
-    try { initAnswersResolvedPath = resolveInitAnswersPath(resolvedTargetRoot, initAnswersPath); }
-    catch (_error: unknown) { initAnswersResolvedPath = path.resolve(resolvedTargetRoot, initAnswersPath); }
+    var initAnswersResolveError: string | null = null;
+    try {
+        initAnswersResolvedPath = resolveInitAnswersPath(resolvedTargetRoot, initAnswersPath);
+    } catch (error: unknown) {
+        initAnswersResolveError = getErrorMessage(error);
+        initAnswersResolvedPath = resolveInitAnswersPath(resolvedTargetRoot);
+    }
     var initAnswersPresent = pathExists(initAnswersResolvedPath) && fs.lstatSync(initAnswersResolvedPath).isFile();
     var answersResult = initAnswersPresent ? readInitAnswersSafe(resolvedTargetRoot, initAnswersResolvedPath) : { answers: null, error: null };
     var answers = answersResult.answers;
-    var initAnswersError = answersResult.error;
+    var initAnswersError = initAnswersResolveError || answersResult.error;
     var collectedVia = answers ? (answers.CollectedVia || null) : null;
     var liveVersionPath = path.join(livePath, 'version.json');
     var liveVersion: LiveVersionPayload | null = null;
@@ -137,7 +142,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath: string = 
     var usagePresent = pathExists(usagePath) && fs.lstatSync(usagePath).isFile();
     var primaryInitializationComplete = bundlePresent && initAnswersPresent && !initAnswersError && livePresent && taskPresent && usagePresent;
 
-    // T-034: detect stale deployed bundle in self-hosted checkouts
+    // Detect stale deployed bundle in self-hosted checkouts.
     var parityResult = detectSourceBundleParity(resolvedTargetRoot);
 
     var agentInitializationPendingReason: CliStatusSnapshot['agentInitializationPendingReason'] = null;
@@ -321,7 +326,7 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
     lines.push('  '+badge(snapshot.primaryInitializationComplete)+' Primary initialization');
     lines.push('  '+badge(snapshot.agentInitializationComplete)+' Agent initialization');
 
-    // T-034: source-vs-bundle parity in status output
+    // Source-vs-bundle parity in status output.
     if (snapshot.parityResult.isSourceCheckout) {
         lines.push('  '+badge(!snapshot.parityResult.isStale)+' Source parity (Self-hosted)');
         if (snapshot.parityResult.isStale) {

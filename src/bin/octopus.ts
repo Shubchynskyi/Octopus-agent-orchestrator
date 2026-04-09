@@ -139,6 +139,10 @@ function findDeployedBundleRoot(startDir: string): string | null {
         if (isOctopusPackageRoot(bundleRoot)) {
             return bundleRoot;
         }
+        const inferredBundleRoot = findDeployedBundleRootInWorkspace(current, effectiveName);
+        if (inferredBundleRoot) {
+            return inferredBundleRoot;
+        }
 
         const parent = path.dirname(current);
         if (parent === current) {
@@ -146,6 +150,37 @@ function findDeployedBundleRoot(startDir: string): string | null {
         }
         current = parent;
     }
+}
+
+function findDeployedBundleRootInWorkspace(workspaceRoot: string, preferredName: string): string | null {
+    let entries: fs.Dirent[];
+    try {
+        entries = fs.readdirSync(workspaceRoot, { withFileTypes: true });
+    } catch {
+        return null;
+    }
+
+    let fallbackMatch: string | null = null;
+    for (const entry of entries) {
+        if (!entry.isDirectory()) {
+            continue;
+        }
+        if (entry.name === 'node_modules' || entry.name.startsWith('.')) {
+            continue;
+        }
+        const candidateRoot = path.join(workspaceRoot, entry.name);
+        if (!isOctopusPackageRoot(candidateRoot)) {
+            continue;
+        }
+        if (entry.name === preferredName) {
+            return candidateRoot;
+        }
+        if (fallbackMatch === null) {
+            fallbackMatch = candidateRoot;
+        }
+    }
+
+    return fallbackMatch;
 }
 
 function extractTargetRootArg(argv: string[], cwd: string): string | null {
@@ -242,12 +277,30 @@ function extractBundleNameArg(argv: string[]): string | null {
     return null;
 }
 
+export function inferBundleNameFromPackageRoot(packageRoot: string): string | null {
+    if (!packageRoot || isPackageInstalledUnderNodeModules(packageRoot)) {
+        return null;
+    }
+    const parentDir = path.dirname(path.resolve(packageRoot));
+    if (!fs.existsSync(path.join(parentDir, 'TASK.md'))) {
+        return null;
+    }
+    const inferredName = path.basename(packageRoot).trim();
+    return inferredName ? inferredName : null;
+}
+
 export async function main(argv: string[] = process.argv.slice(2), cwd: string = process.cwd()): Promise<void> {
     const bundleNameArg = extractBundleNameArg(argv);
     if (bundleNameArg) {
         process.env.OCTOPUS_BUNDLE_NAME = bundleNameArg;
     }
     const packageRoot = findPackageRoot(__dirname);
+    if (!process.env.OCTOPUS_BUNDLE_NAME) {
+        const inferredBundleName = inferBundleNameFromPackageRoot(packageRoot);
+        if (inferredBundleName) {
+            process.env.OCTOPUS_BUNDLE_NAME = inferredBundleName;
+        }
+    }
     const delegatedCli = resolveDelegatedLauncherTarget(argv, cwd, __filename, packageRoot);
     if (delegatedCli) {
         delegateToLocalCli(delegatedCli, argv);

@@ -92,9 +92,10 @@ repository root. It extends the gitleaks built-in ruleset (AWS keys, GCP
 credentials, GitHub/GitLab tokens, generic high-entropy secrets, private
 keys, and more) with project-specific allowlists:
 
-- **Test fixtures and runtime artifacts** — paths under `tests/`,
-  `Octopus-agent-orchestrator/runtime/`, `.node-build/`, `dist/`, and
-  `node_modules/` are excluded.
+- **Generated runtime artifacts and narrow known fixtures** — paths under
+  `runtime/`, `Octopus-agent-orchestrator/runtime/`, `.node-build/`,
+  `node_modules/`, `testResults.xml`, and the intentional
+  `tests/node/core/redaction.test.ts` fixture are excluded.
 - **Placeholder tokens** — lines matching patterns like `EXAMPLE_TOKEN`,
   `changeme`, or `dummy` are suppressed.
 
@@ -104,9 +105,9 @@ If gitleaks flags a legitimate false positive, add an entry to the
 `[allowlist]` section in `.gitleaks.toml`:
 
 ```toml
-# Suppress a known test fixture path
+# Suppress a single known-safe fixture path
 paths = [
-  '''tests/.*''',
+  '''tests/node/my-fixture.test.ts''',
   '''my-new-fixture/.*''',
 ]
 ```

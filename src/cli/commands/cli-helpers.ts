@@ -849,7 +849,7 @@ export function printStatus(snapshot: StatusSnapshot, options?: { heading?: stri
     console.log(`  ${getStageBadge(snapshot.primaryInitializationComplete, { warning: snapshot.bundlePresent && !snapshot.primaryInitializationComplete })} Primary initialization`);
     console.log(`  ${getStageBadge(snapshot.agentInitializationComplete, { warning: snapshot.primaryInitializationComplete && !snapshot.agentInitializationComplete })} Agent initialization`);
 
-    // T-034: source-vs-bundle parity in status output
+    // Source-vs-bundle parity in status output.
     if (snapshot.parityResult.isSourceCheckout) {
         console.log(`  ${getStageBadge(!snapshot.parityResult.isStale, { warning: snapshot.parityResult.isStale })} Source parity (Self-hosted)`);
         if (snapshot.parityResult.isStale) {

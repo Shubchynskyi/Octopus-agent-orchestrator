@@ -72,15 +72,11 @@ const REVIEW_CONTEXT_LABELS: Record<string, string> = {
     dependency: 'dependency review context'
 };
 
-// Gate event types used for pass/fail counting
+// Gate outcome event types used for pass/fail counting.
 const GATE_PASS_EVENTS = new Set([
-    'TASK_MODE_ENTERED',
     'RULE_PACK_LOADED',
-    'HANDSHAKE_DIAGNOSTICS_RECORDED',
-    'SHELL_SMOKE_PREFLIGHT_RECORDED',
     'PREFLIGHT_CLASSIFIED',
     'COMPILE_GATE_PASSED',
-    'REVIEW_PHASE_STARTED',
     'REVIEW_GATE_PASSED',
     'REVIEW_GATE_PASSED_WITH_OVERRIDE',
     'DOC_IMPACT_ASSESSED',
@@ -88,12 +84,12 @@ const GATE_PASS_EVENTS = new Set([
 ]);
 
 const GATE_FAIL_EVENTS = new Set([
+    'RULE_PACK_LOAD_FAILED',
     'PREFLIGHT_FAILED',
     'COMPILE_GATE_FAILED',
     'REVIEW_GATE_FAILED',
     'DOC_IMPACT_ASSESSMENT_FAILED',
-    'COMPLETION_GATE_FAILED',
-    'RULE_PACK_LOAD_FAILED'
+    'COMPLETION_GATE_FAILED'
 ]);
 
 // ---------------------------------------------------------------------------

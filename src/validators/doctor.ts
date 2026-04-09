@@ -549,7 +549,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
     try { manifestResult = validateManifest(manifestPath, targetRoot); }
     catch (err: unknown) { manifestError = getErrorMessage(err); }
 
-    // T-034: detect stale deployed bundle in self-hosted checkouts
+    // Detect stale deployed bundle in self-hosted checkouts.
     var parityResult = getSourceBundleParity(targetRoot);
 
     // T-004: scan task timelines for integrity and completeness
@@ -636,7 +636,7 @@ export function formatDoctorResult(result: DoctorResult): string {
     lines.push(formatVerifyResult(result.verifyResult));
     lines.push('');
 
-    // T-034: source-vs-bundle parity summary
+    // Source-vs-bundle parity summary.
     if (result.parityResult.isSourceCheckout) {
         lines.push('Source Parity (Self-hosted)');
         if (result.parityResult.isStale) {

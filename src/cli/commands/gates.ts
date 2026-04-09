@@ -411,6 +411,7 @@ interface ReviewEvidenceContext extends Record<string, unknown> {
     override_artifact: string | null;
     artifact_evidence: ReviewArtifactsAuditResult;
     zero_diff_guard?: unknown;
+    selected_budget_tier?: string | null;
     output_telemetry?: OutputTelemetry;
 }
 
@@ -477,6 +478,27 @@ function toCommandPolicyAuditSummary(audit: CommandPolicyAudit): CommandPolicyAu
 
 function toStringArray(value: unknown, options: gateHelpers.ToStringArrayOptions = {}): string[] {
     return gateHelpers.toStringArray(value, options);
+}
+
+function resolveBudgetTokensFromForecast(forecast: unknown): number | null {
+    if (!forecast || typeof forecast !== 'object') {
+        return null;
+    }
+    const record = forecast as Record<string, unknown>;
+    const totalForecastTokens = typeof record.total_forecast_tokens === 'number' && Number.isFinite(record.total_forecast_tokens)
+        ? record.total_forecast_tokens
+        : null;
+    const effectiveForecastTokens = typeof record.effective_forecast_tokens === 'number' && Number.isFinite(record.effective_forecast_tokens)
+        ? record.effective_forecast_tokens
+        : null;
+    const tokenEconomyActiveForDepth = record.token_economy_active_for_depth === true;
+    if (tokenEconomyActiveForDepth && effectiveForecastTokens != null) {
+        return effectiveForecastTokens;
+    }
+    if (totalForecastTokens != null) {
+        return totalForecastTokens;
+    }
+    return effectiveForecastTokens;
 }
 
 function resolveOrchestratorRoot(repoRoot: string): string {
@@ -2000,6 +2022,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     let exceptionMessage: string | null = null;
     let selectedCommandProfile: CompileCommandProfile | null = null;
     let selectedCommandIndex = 0;
+    let budgetTokensForOutputFilters: number | null = null;
     const compileOutputLines: string[] = [];
     const compileOutputChunks: string[] = [];
     const compileCommandAudits: CommandPolicyAudit[] = [];
@@ -2056,6 +2079,10 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before compile gate.`;
         }
+
+        budgetTokensForOutputFilters = resolveBudgetTokensFromForecast(
+            preflightContext ? (preflightContext as Record<string, unknown>).budget_forecast : null
+        );
 
         const scopeViolations: string[] = [];
         if (workspaceSnapshot.changed_files_sha256 !== preflightContext.changed_files_sha256) {
@@ -2181,6 +2208,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     const effectiveProfile = selectedCommandProfile || fallbackProfile;
     const selectedOutputProfile = exceptionMessage ? effectiveProfile.failure_profile : effectiveProfile.success_profile;
     const filteredOutput = applyOutputFilterProfile(compileOutputLines, outputFiltersPath, selectedOutputProfile, {
+        budgetTokens: budgetTokensForOutputFilters,
         context: {
             fail_tail_lines: failTailLines,
             command_filter_strategy: effectiveProfile.strategy,
@@ -2225,6 +2253,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         command_filter_strategy: effectiveProfile.strategy,
         command_profile_label: effectiveProfile.label,
         selected_output_profile: selectedOutputProfile,
+        selected_budget_tier: filteredOutput.budget_tier ?? null,
         selected_command_index: selectedCommandIndex,
         compile_output_lines: compileOutputLines.length,
         compile_output_warning_lines: warningCount,
@@ -2807,6 +2836,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
             ? preflightMetrics.changed_lines_total
             : 0
     };
+    const reviewBudgetTokens = resolveBudgetTokensFromForecast(preflight.budget_forecast);
 
     const resolvedTaskId = validatedPreflight.resolved_task_id;
     const metricsPath = options.metricsPath
@@ -2925,7 +2955,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         reviewPhaseMissingFromTimeline = timelineErrors.length === 0 && !timelineEventTypes.has('REVIEW_PHASE_STARTED');
     }
 
-    // T-033: zero-diff noop guard — block review gate when preflight is baseline-only
+    // Zero-diff no-op guard: block review gate when preflight is baseline-only.
     const zeroDiffGuard = validateZeroDiffForReviewGate(
         preflight,
         String(resolvedTaskId || ''),
@@ -3056,7 +3086,8 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         skip_reason: skipReason,
         override_artifact: normalizeOptionalPath(overrideArtifactPath),
         artifact_evidence: artifactEvidence,
-        zero_diff_guard: zeroDiffGuard
+        zero_diff_guard: zeroDiffGuard,
+        selected_budget_tier: null
     };
 
     const trustLevels = new Set<string>();
@@ -3078,7 +3109,9 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
             'Violations:',
             ...allViolations.map(function (item: string) { return `- ${item}`; })
         ];
-        const filteredFailureOutput = applyOutputFilterProfile(failureOutputLines, outputFiltersPath, 'review_gate_failure_console');
+        const filteredFailureOutput = applyOutputFilterProfile(failureOutputLines, outputFiltersPath, 'review_gate_failure_console', {
+            budgetTokens: reviewBudgetTokens
+        });
         const failureTelemetry = buildOutputTelemetry(failureOutputLines, filteredFailureOutput.lines, {
             filterMode: filteredFailureOutput.filter_mode,
             fallbackMode: filteredFailureOutput.fallback_mode,
@@ -3087,6 +3120,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
             parserStrategy: filteredFailureOutput.parser_strategy ?? undefined
         });
         const failureVisibleSavingsLine = formatVisibleSavingsLine(failureTelemetry);
+        reviewEvidenceContext.selected_budget_tier = filteredFailureOutput.budget_tier ?? null;
         reviewEvidenceContext.output_telemetry = failureTelemetry;
         writeReviewEvidence(reviewEvidencePath, resolvedTaskId, reviewEvidenceContext, 'FAILED', 'FAIL', allViolations);
 
@@ -3150,7 +3184,9 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
     if (artifactEvidence.compaction_warning_count > 0) {
         successOutputLines.push(`CompactionWarnings: ${artifactEvidence.compaction_warning_count}`);
     }
-    const filteredSuccessOutput = applyOutputFilterProfile(successOutputLines, outputFiltersPath, 'review_gate_success_console');
+    const filteredSuccessOutput = applyOutputFilterProfile(successOutputLines, outputFiltersPath, 'review_gate_success_console', {
+        budgetTokens: reviewBudgetTokens
+    });
     const successTelemetry = buildOutputTelemetry(successOutputLines, filteredSuccessOutput.lines, {
         filterMode: filteredSuccessOutput.filter_mode,
         fallbackMode: filteredSuccessOutput.fallback_mode,
@@ -3159,6 +3195,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         parserStrategy: filteredSuccessOutput.parser_strategy ?? undefined
     });
     const successVisibleSavingsLine = formatVisibleSavingsLine(successTelemetry);
+    reviewEvidenceContext.selected_budget_tier = filteredSuccessOutput.budget_tier ?? null;
     reviewEvidenceContext.output_telemetry = successTelemetry;
     writeReviewEvidence(reviewEvidencePath, resolvedTaskId, reviewEvidenceContext, 'PASSED', 'PASS', []);
 

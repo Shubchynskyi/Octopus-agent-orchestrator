@@ -21,6 +21,7 @@ describe('STACK_SIGNALS', () => {
         assert.ok(names.includes('Rust'));
         assert.ok(names.includes('.NET'));
         assert.ok(names.includes('TypeScript'));
+        assert.ok(names.includes('Java or JVM'));
     });
 });
 
@@ -54,6 +55,20 @@ describe('getProjectDiscovery', () => {
 
             const result = getProjectDiscovery(tmpDir);
             assert.ok(!result.detectedStacks.includes('Node.js or JavaScript'));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('detects Java or JVM projects from common root files', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oao-discovery-java-'));
+        try {
+            fs.writeFileSync(path.join(tmpDir, 'pom.xml'), '<project />');
+            fs.writeFileSync(path.join(tmpDir, 'build.gradle.kts'), '');
+
+            const result = getProjectDiscovery(tmpDir);
+            assert.ok(result.detectedStacks.includes('Java or JVM'));
+            assert.ok(result.stackEvidence.some((item) => item.name === 'Java or JVM'));
         } finally {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
