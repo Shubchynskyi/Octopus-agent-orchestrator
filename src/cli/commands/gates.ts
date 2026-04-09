@@ -809,6 +809,28 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         };
     }
 
+    // Resolve active profile (best-effort; failure is non-fatal)
+    let activeProfile: string | null = null;
+    let profileSource: 'built_in' | 'user' | null = null;
+    const profilesConfigPath = path.join(orchestratorRoot, 'live', 'config', 'profiles.json');
+    try {
+        if (fs.existsSync(profilesConfigPath) && fs.statSync(profilesConfigPath).isFile()) {
+            const profilesRaw = JSON.parse(fs.readFileSync(profilesConfigPath, 'utf8')) as Record<string, unknown>;
+            if (typeof profilesRaw.active_profile === 'string' && profilesRaw.active_profile.trim()) {
+                activeProfile = profilesRaw.active_profile.trim();
+                if (profilesRaw.built_in_profiles && typeof profilesRaw.built_in_profiles === 'object' &&
+                    Object.hasOwn(profilesRaw.built_in_profiles as Record<string, unknown>, activeProfile)) {
+                    profileSource = 'built_in';
+                } else if (profilesRaw.user_profiles && typeof profilesRaw.user_profiles === 'object' &&
+                    Object.hasOwn(profilesRaw.user_profiles as Record<string, unknown>, activeProfile)) {
+                    profileSource = 'user';
+                }
+            }
+        }
+    } catch {
+        // profiles read failure is non-fatal for task-mode entry
+    }
+
     const taskModeArtifact = buildTaskModeArtifact({
         taskId,
         entryMode: options.entryMode,
@@ -819,7 +841,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         provider: routingDecision.provider,
         routedTo: routingDecision.routedTo,
         actor: String(options.actor || 'orchestrator'),
-        plan: planMetadata
+        plan: planMetadata,
+        activeProfile,
+        profileSource
     });
     writeJsonArtifact(artifactPath, taskModeArtifact);
 
@@ -837,7 +861,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         effective_depth: taskModeArtifact.effective_depth,
         orchestrator_work: taskModeArtifact.orchestrator_work,
         actor: taskModeArtifact.actor,
-        plan_guided: !!taskModeArtifact.plan
+        plan_guided: !!taskModeArtifact.plan,
+        active_profile: taskModeArtifact.active_profile,
+        profile_source: taskModeArtifact.profile_source
     }, parseBooleanOption(options.emitMetrics, true));
 
     try {
@@ -861,7 +887,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 actor: taskModeArtifact.actor,
                 plan_guided: !!taskModeArtifact.plan,
                 plan_path: taskModeArtifact.plan?.plan_path ?? null,
-                plan_sha256: taskModeArtifact.plan?.plan_sha256 ?? null
+                plan_sha256: taskModeArtifact.plan?.plan_sha256 ?? null,
+                active_profile: taskModeArtifact.active_profile,
+                profile_source: taskModeArtifact.profile_source
             }
         );
     } catch (error: unknown) {
@@ -908,7 +936,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             `EffectiveDepth: ${taskModeArtifact.effective_depth}`,
             ...(routingDecision.provider ? [`Provider: ${routingDecision.provider}`] : []),
             ...(routingDecision.routedTo ? [`RoutedTo: ${routingDecision.routedTo}`] : []),
-            ...(taskModeArtifact.plan ? [`PlanGuided: true`, `PlanPath: ${taskModeArtifact.plan.plan_path}`] : [`PlanGuided: false`])
+            ...(taskModeArtifact.plan ? [`PlanGuided: true`, `PlanPath: ${taskModeArtifact.plan.plan_path}`] : [`PlanGuided: false`]),
+            ...(taskModeArtifact.active_profile ? [`ActiveProfile: ${taskModeArtifact.active_profile} (${taskModeArtifact.profile_source || 'unknown'})`] : [])
         ],
         exitCode: 0
     };

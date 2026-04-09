@@ -11,7 +11,8 @@ import {
     checkRuntimeMismatch,
     checkPermissions,
     checkPartialState,
-    checkRollbackHealth
+    checkRollbackHealth,
+    checkProfileHealth
 } from '../../../src/validators/doctor';
 import {
     writeProtectedControlPlaneManifest
@@ -50,7 +51,8 @@ const DEFAULT_NEW_EVIDENCE = {
         snapshot_count: 0,
         snapshots: [],
         violations: []
-    }
+    },
+    profileHealthEvidence: null
 };
 
 test('runDoctor throws for missing bundle', () => {
@@ -848,7 +850,8 @@ test('formatDoctorResult includes runtime compatibility section', () => {
             snapshot_count: 0,
             snapshots: [],
             violations: []
-        }
+        },
+        profileHealthEvidence: null
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -1202,7 +1205,8 @@ test('formatDoctorResult includes rollback snapshot section when snapshots exist
                 records_error: null
             }],
             violations: ['Snapshot update-20260401-100000: missing rollback-records.json']
-        }
+        },
+        profileHealthEvidence: null
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -1325,7 +1329,8 @@ test('formatDoctorResult shows partial-state section when sentinel detected', ()
             snapshot_count: 0,
             snapshots: [],
             violations: []
-        }
+        },
+        profileHealthEvidence: null
     };
 
     const output = formatDoctorResult(fakeResult);
@@ -1475,4 +1480,340 @@ test('formatDoctorResultCompact emits full output on failure', () => {
     const output = formatDoctorResultCompact(fakeResult);
     assert.ok(output.includes('Doctor: FAIL'), 'Compact failure must include full failure output');
     assert.ok(output.includes('MissingPathCount: 1'));
+});
+
+// ---------------------------------------------------------------------------
+// T-055: Profile health checks
+// ---------------------------------------------------------------------------
+
+test('checkProfileHealth returns NOT_CONFIGURED when profiles.json is absent', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-profile-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    fs.mkdirSync(path.join(bundlePath, 'live', 'config'), { recursive: true });
+
+    try {
+        const result = checkProfileHealth(tmpDir);
+        assert.equal(result.passed, false);
+        assert.equal(result.config_exists, false);
+        assert.equal(result.active_profile, null);
+        assert.equal(result.profile_source, null);
+        assert.equal(result.profile_count, 0);
+        assert.ok(result.violations.length > 0);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkProfileHealth passes for valid profiles.json with built-in active profile', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-profile-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    const configDir = path.join(bundlePath, 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: { description: 'Default', depth: 2 },
+            fast: { description: 'Fast', depth: 1 }
+        },
+        user_profiles: {}
+    }), 'utf8');
+
+    try {
+        const result = checkProfileHealth(tmpDir);
+        assert.equal(result.passed, true);
+        assert.equal(result.config_exists, true);
+        assert.equal(result.active_profile, 'balanced');
+        assert.equal(result.profile_source, 'built_in');
+        assert.equal(result.profile_count, 2);
+        assert.equal(result.violations.length, 0);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkProfileHealth passes for user-defined active profile', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-profile-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    const configDir = path.join(bundlePath, 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+        version: 1,
+        active_profile: 'my-custom',
+        built_in_profiles: { balanced: { description: 'Default', depth: 2 } },
+        user_profiles: { 'my-custom': { description: 'Custom', depth: 3 } }
+    }), 'utf8');
+
+    try {
+        const result = checkProfileHealth(tmpDir);
+        assert.equal(result.passed, true);
+        assert.equal(result.active_profile, 'my-custom');
+        assert.equal(result.profile_source, 'user');
+        assert.equal(result.profile_count, 2);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkProfileHealth fails when active profile does not match any defined profile', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-profile-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    const configDir = path.join(bundlePath, 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+        version: 1,
+        active_profile: 'nonexistent',
+        built_in_profiles: { balanced: { description: 'Default', depth: 2 } },
+        user_profiles: {}
+    }), 'utf8');
+
+    try {
+        const result = checkProfileHealth(tmpDir);
+        assert.equal(result.passed, false);
+        assert.equal(result.config_exists, true);
+        assert.equal(result.active_profile, 'nonexistent');
+        assert.equal(result.profile_source, null);
+        assert.ok(result.violations.some(v => v.includes('does not match')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkProfileHealth fails when no active_profile is set', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-profile-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    const configDir = path.join(bundlePath, 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+        version: 1,
+        active_profile: '',
+        built_in_profiles: { balanced: { description: 'Default', depth: 2 } },
+        user_profiles: {}
+    }), 'utf8');
+
+    try {
+        const result = checkProfileHealth(tmpDir);
+        assert.equal(result.passed, false);
+        assert.ok(result.violations.some(v => v.includes('no active_profile')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkProfileHealth fails when no built-in profiles exist', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-profile-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    const configDir = path.join(bundlePath, 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+        version: 1,
+        active_profile: 'custom',
+        built_in_profiles: {},
+        user_profiles: { custom: { description: 'Only user', depth: 2 } }
+    }), 'utf8');
+
+    try {
+        const result = checkProfileHealth(tmpDir);
+        assert.equal(result.passed, false);
+        assert.ok(result.violations.some(v => v.includes('built-in profile')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('checkProfileHealth fails for invalid JSON', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-profile-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    const configDir = path.join(bundlePath, 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'profiles.json'), '{ broken json', 'utf8');
+
+    try {
+        const result = checkProfileHealth(tmpDir);
+        assert.equal(result.passed, false);
+        assert.equal(result.config_exists, true);
+        assert.ok(result.violations.some(v => v.includes('invalid JSON')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('formatDoctorResult shows profile health section for healthy profile', () => {
+    const fakeResult = {
+        passed: true,
+        targetRoot: '/tmp/test',
+        verifyResult: {
+            passed: true, targetRoot: '/tmp/test', sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md', bundleVersion: '1.0.0', requiredPathsChecked: 10,
+            violations: {
+                missingPaths: [], initAnswersContractViolations: [], versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [], pathsContractViolations: [],
+                tokenEconomyContractViolations: [], outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [], skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [], templatePlaceholderViolations: [], commandsContractViolations: [],
+                manifestContractViolations: [], coreRuleContractViolations: [], entrypointContractViolations: [],
+                taskContractViolations: [], qwenSettingsViolations: [], skillsIndexContractViolations: [],
+                skillPackContractViolations: [], gitignoreMissing: []
+            }, totalViolationCount: 0
+        },
+        manifestResult: { passed: true, manifestPath: '/tmp/test/MANIFEST.md', entriesChecked: 5, duplicates: [], diagnostics: [] },
+        manifestError: null,
+        timelineEvidence: [], timelineWarnings: [],
+        lockHealth: { lock_root: '/tmp/test', subsystem_scope_note: 'note', locks: [], active_count: 0, stale_count: 0 },
+        lockCleanup: null,
+        parityResult: { isSourceCheckout: false, isStale: false, violations: [], rootVersion: null, bundleVersion: null, remediation: null },
+        providerComplianceResult: null,
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
+        protectedManifestEvidence: null,
+        ...DEFAULT_NEW_EVIDENCE,
+        profileHealthEvidence: {
+            passed: true,
+            active_profile: 'balanced',
+            profile_source: 'built_in' as const,
+            config_path: '/tmp/test/Octopus-agent-orchestrator/live/config/profiles.json',
+            config_exists: true,
+            profile_count: 4,
+            violations: []
+        }
+    };
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Profile Health'));
+    assert.ok(output.includes('ActiveProfile: balanced'));
+    assert.ok(output.includes('ProfileSource: built_in'));
+    assert.ok(output.includes('ProfileCount: 4'));
+    assert.ok(output.includes('Status: HEALTHY'));
+});
+
+test('formatDoctorResult shows NOT_CONFIGURED when profiles config absent', () => {
+    const fakeResult = {
+        passed: true,
+        targetRoot: '/tmp/test',
+        verifyResult: {
+            passed: true, targetRoot: '/tmp/test', sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md', bundleVersion: '1.0.0', requiredPathsChecked: 10,
+            violations: {
+                missingPaths: [], initAnswersContractViolations: [], versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [], pathsContractViolations: [],
+                tokenEconomyContractViolations: [], outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [], skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [], templatePlaceholderViolations: [], commandsContractViolations: [],
+                manifestContractViolations: [], coreRuleContractViolations: [], entrypointContractViolations: [],
+                taskContractViolations: [], qwenSettingsViolations: [], skillsIndexContractViolations: [],
+                skillPackContractViolations: [], gitignoreMissing: []
+            }, totalViolationCount: 0
+        },
+        manifestResult: { passed: true, manifestPath: '/tmp/test/MANIFEST.md', entriesChecked: 5, duplicates: [], diagnostics: [] },
+        manifestError: null,
+        timelineEvidence: [], timelineWarnings: [],
+        lockHealth: { lock_root: '/tmp/test', subsystem_scope_note: 'note', locks: [], active_count: 0, stale_count: 0 },
+        lockCleanup: null,
+        parityResult: { isSourceCheckout: false, isStale: false, violations: [], rootVersion: null, bundleVersion: null, remediation: null },
+        providerComplianceResult: null,
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
+        protectedManifestEvidence: null,
+        ...DEFAULT_NEW_EVIDENCE,
+        profileHealthEvidence: {
+            passed: false,
+            active_profile: null,
+            profile_source: null,
+            config_path: '/tmp/test/Octopus-agent-orchestrator/live/config/profiles.json',
+            config_exists: false,
+            profile_count: 0,
+            violations: ['Profiles config not found']
+        }
+    };
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Profile Health'));
+    assert.ok(output.includes('Status: NOT_CONFIGURED'));
+});
+
+test('formatDoctorResultCompact includes profile suffix for healthy profile', () => {
+    const fakeResult = {
+        passed: true,
+        targetRoot: '/tmp/test',
+        verifyResult: {
+            passed: true, targetRoot: '/tmp/test', sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md', bundleVersion: '1.0.0', requiredPathsChecked: 10,
+            violations: {
+                missingPaths: [], initAnswersContractViolations: [], versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [], pathsContractViolations: [],
+                tokenEconomyContractViolations: [], outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [], skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [], templatePlaceholderViolations: [], commandsContractViolations: [],
+                manifestContractViolations: [], coreRuleContractViolations: [], entrypointContractViolations: [],
+                taskContractViolations: [], qwenSettingsViolations: [], skillsIndexContractViolations: [],
+                skillPackContractViolations: [], gitignoreMissing: []
+            }, totalViolationCount: 0
+        },
+        manifestResult: { passed: true, manifestPath: '/tmp/test/MANIFEST.md', entriesChecked: 5, duplicates: [], diagnostics: [] },
+        manifestError: null,
+        timelineEvidence: [], timelineWarnings: [],
+        lockHealth: { lock_root: '/tmp/test', subsystem_scope_note: 'note', locks: [], active_count: 0, stale_count: 0 },
+        lockCleanup: null,
+        parityResult: { isSourceCheckout: false, isStale: false, violations: [], rootVersion: null, bundleVersion: null, remediation: null },
+        providerComplianceResult: null,
+        nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
+        protectedManifestEvidence: null,
+        ...DEFAULT_NEW_EVIDENCE,
+        profileHealthEvidence: {
+            passed: true,
+            active_profile: 'strict',
+            profile_source: 'built_in' as const,
+            config_path: '/tmp/test/profiles.json',
+            config_exists: true,
+            profile_count: 3,
+            violations: []
+        }
+    };
+
+    const output = formatDoctorResultCompact(fakeResult);
+    assert.ok(output.includes('profile=strict'));
+});
+
+test('runDoctor includes profile health evidence when profiles.json exists', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-profile-int-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    const configDir = path.join(bundlePath, 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(bundlePath, 'MANIFEST.md'), '- bin/octopus.js\n- package.json\n', 'utf8');
+    fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: { balanced: { description: 'Default', depth: 2 } },
+        user_profiles: {}
+    }), 'utf8');
+
+    try {
+        const result = runDoctor({ targetRoot: tmpDir, sourceOfTruth: 'Claude' });
+        assert.ok(result.profileHealthEvidence !== null);
+        assert.equal(result.profileHealthEvidence!.passed, true);
+        assert.equal(result.profileHealthEvidence!.active_profile, 'balanced');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('runDoctor fails when profiles.json has dangling active_profile', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-profile-fail-'));
+    const bundlePath = path.join(tmpDir, 'Octopus-agent-orchestrator');
+    const configDir = path.join(bundlePath, 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(bundlePath, 'MANIFEST.md'), '- bin/octopus.js\n- package.json\n', 'utf8');
+    fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+        version: 1,
+        active_profile: 'nonexistent',
+        built_in_profiles: { balanced: { description: 'Default', depth: 2 } },
+        user_profiles: {}
+    }), 'utf8');
+
+    try {
+        const result = runDoctor({ targetRoot: tmpDir, sourceOfTruth: 'Claude' });
+        assert.ok(result.profileHealthEvidence !== null);
+        assert.equal(result.profileHealthEvidence!.passed, false);
+        assert.equal(result.passed, false, 'doctor should fail when profile config has violations');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 });

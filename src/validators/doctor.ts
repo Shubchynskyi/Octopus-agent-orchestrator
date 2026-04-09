@@ -334,6 +334,74 @@ export function checkRollbackHealth(targetRoot: string): RollbackHealthEvidence 
     };
 }
 
+// ---------------------------------------------------------------------------
+// Profile health check
+// ---------------------------------------------------------------------------
+
+export interface ProfileHealthEvidence {
+    passed: boolean;
+    active_profile: string | null;
+    profile_source: 'built_in' | 'user' | null;
+    config_path: string;
+    config_exists: boolean;
+    profile_count: number;
+    violations: string[];
+}
+
+export function checkProfileHealth(targetRoot: string): ProfileHealthEvidence {
+    const bundlePath = getBundlePath(targetRoot);
+    const configPath = path.join(bundlePath, 'live', 'config', 'profiles.json');
+    const violations: string[] = [];
+    let activeProfile: string | null = null;
+    let profileSource: 'built_in' | 'user' | null = null;
+    let profileCount = 0;
+    let configExists = false;
+
+    if (!pathExists(configPath)) {
+        violations.push('Profiles config not found: ' + configPath.replace(/\\/g, '/'));
+        return { passed: false, active_profile: null, profile_source: null, config_path: configPath.replace(/\\/g, '/'), config_exists: false, profile_count: 0, violations };
+    }
+    configExists = true;
+
+    try {
+        const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+        const builtIn = raw.built_in_profiles && typeof raw.built_in_profiles === 'object' && !Array.isArray(raw.built_in_profiles)
+            ? raw.built_in_profiles as Record<string, unknown> : {};
+        const user = raw.user_profiles && typeof raw.user_profiles === 'object' && !Array.isArray(raw.user_profiles)
+            ? raw.user_profiles as Record<string, unknown> : {};
+        profileCount = Object.keys(builtIn).length + Object.keys(user).length;
+
+        if (typeof raw.active_profile !== 'string' || !raw.active_profile.trim()) {
+            violations.push('Profiles config has no active_profile set.');
+        } else {
+            activeProfile = raw.active_profile.trim();
+            if (Object.hasOwn(builtIn, activeProfile)) {
+                profileSource = 'built_in';
+            } else if (Object.hasOwn(user, activeProfile)) {
+                profileSource = 'user';
+            } else {
+                violations.push('Active profile \'' + activeProfile + '\' does not match any defined profile.');
+            }
+        }
+
+        if (Object.keys(builtIn).length === 0) {
+            violations.push('At least one built-in profile is required.');
+        }
+    } catch (err: unknown) {
+        violations.push('Profiles config is invalid JSON: ' + getErrorMessage(err));
+    }
+
+    return {
+        passed: violations.length === 0,
+        active_profile: activeProfile,
+        profile_source: profileSource,
+        config_path: configPath.replace(/\\/g, '/'),
+        config_exists: configExists,
+        profile_count: profileCount,
+        violations
+    };
+}
+
 interface TimelineEvidence {
     task_id: string;
     timeline_path: string;
@@ -364,6 +432,7 @@ interface DoctorResult {
     permissionEvidence: PermissionCheckEvidence;
     partialStateEvidence: PartialStateEvidence;
     rollbackHealthEvidence: RollbackHealthEvidence;
+    profileHealthEvidence: ProfileHealthEvidence | null;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -524,12 +593,21 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
     // T-012: rollback snapshot health
     var rollbackHealthEvidence = checkRollbackHealth(targetRoot);
 
+    // T-055: profile health check
+    var profileHealthEvidence: ProfileHealthEvidence | null = null;
+    try {
+        profileHealthEvidence = checkProfileHealth(targetRoot);
+    } catch {
+        // profile health check failure is non-fatal
+    }
+
     var manifestPassed = manifestResult ? manifestResult.passed : false;
     var compliancePassed = providerComplianceResult === null || providerComplianceResult.passed;
     var protectedManifestOk = protectedManifestEvidence === null
         || protectedManifestEvidence.status === 'MATCH'
         || protectedManifestEvidence.status === 'MISSING';
-    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed && !nestedBundleDuplication.duplicatesFound && protectedManifestOk && runtimeMismatchEvidence.passed && permissionEvidence.passed && partialStateEvidence.passed && rollbackHealthEvidence.passed;
+    var profileHealthOk = profileHealthEvidence === null || !profileHealthEvidence.config_exists || profileHealthEvidence.passed;
+    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed && !nestedBundleDuplication.duplicatesFound && protectedManifestOk && runtimeMismatchEvidence.passed && permissionEvidence.passed && partialStateEvidence.passed && rollbackHealthEvidence.passed && profileHealthOk;
 
     return {
         passed: passed,
@@ -548,7 +626,8 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         runtimeMismatchEvidence: runtimeMismatchEvidence,
         permissionEvidence: permissionEvidence,
         partialStateEvidence: partialStateEvidence,
-        rollbackHealthEvidence: rollbackHealthEvidence
+        rollbackHealthEvidence: rollbackHealthEvidence,
+        profileHealthEvidence: profileHealthEvidence
     };
 }
 
@@ -737,6 +816,25 @@ export function formatDoctorResult(result: DoctorResult): string {
         lines.push('');
     }
 
+    // T-055: profile health
+    if (result.profileHealthEvidence) {
+        lines.push('Profile Health');
+        if (result.profileHealthEvidence.config_exists) {
+            lines.push('  ActiveProfile: ' + (result.profileHealthEvidence.active_profile || 'none'));
+            if (result.profileHealthEvidence.profile_source) {
+                lines.push('  ProfileSource: ' + result.profileHealthEvidence.profile_source);
+            }
+            lines.push('  ProfileCount: ' + result.profileHealthEvidence.profile_count);
+            lines.push('  Status: ' + (result.profileHealthEvidence.passed ? 'HEALTHY' : 'DEGRADED'));
+            for (const pv of result.profileHealthEvidence.violations) {
+                lines.push('  - ' + pv);
+            }
+        } else {
+            lines.push('  Status: NOT_CONFIGURED');
+        }
+        lines.push('');
+    }
+
     if (result.passed) { lines.push('Doctor: PASS'); lines.push('Next: Execute task T-001 depth=2'); }
     else { lines.push('Doctor: FAIL'); lines.push('Resolve listed issues and rerun doctor.'); }
     return lines.join('\n');
@@ -753,7 +851,10 @@ export function formatDoctorResultCompact(result: DoctorResult): string {
     const manifestStatus = result.manifestResult
         ? (result.manifestResult.passed ? 'PASS' : 'FAIL')
         : (result.manifestError ? 'ERROR' : 'SKIPPED');
-    return `Doctor: PASS | verify=PASS | manifest=${manifestStatus}`;
+    const profileSuffix = result.profileHealthEvidence && result.profileHealthEvidence.active_profile
+        ? ` | profile=${result.profileHealthEvidence.active_profile}`
+        : '';
+    return `Doctor: PASS | verify=PASS | manifest=${manifestStatus}${profileSuffix}`;
 }
 
 export function formatDoctorResultJson(result: DoctorResult): string {

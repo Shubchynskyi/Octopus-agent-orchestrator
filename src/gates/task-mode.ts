@@ -45,6 +45,8 @@ export interface TaskModeArtifact {
     routed_to: string | null;
     actor: string;
     plan: TaskModePlanMetadata | null;
+    active_profile: string | null;
+    profile_source: 'built_in' | 'user' | null;
 }
 
 export interface BuildTaskModeArtifactOptions {
@@ -58,6 +60,8 @@ export interface BuildTaskModeArtifactOptions {
     routedTo?: string | null;
     actor?: string;
     plan?: TaskModePlanMetadata | null;
+    activeProfile?: string | null;
+    profileSource?: 'built_in' | 'user' | null;
 }
 
 export interface TaskModeEvidenceResult {
@@ -76,6 +80,8 @@ export interface TaskModeEvidenceResult {
     provider: string | null;
     routed_to: string | null;
     plan: TaskModePlanMetadata | null;
+    active_profile: string | null;
+    profile_source: string | null;
 }
 
 export function normalizeTaskModeEntryMode(value: unknown): TaskModeEntryMode {
@@ -157,7 +163,9 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         provider: String(options.provider || '').trim() || null,
         routed_to: String(options.routedTo || '').trim() || null,
         actor,
-        plan
+        plan,
+        active_profile: String(options.activeProfile || '').trim() || null,
+        profile_source: options.profileSource || null
     };
 }
 
@@ -177,7 +185,9 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         orchestrator_work: null,
         provider: null,
         routed_to: null,
-        plan: null
+        plan: null,
+        active_profile: null,
+        profile_source: null
     };
 
     if (!taskId) {
@@ -224,6 +234,10 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
             result.plan = { plan_path: planPath, plan_sha256: planSha256, plan_summary: planSummary };
         }
     }
+
+    // Extract optional profile metadata
+    result.active_profile = String(artifactObject.active_profile || '').trim() || null;
+    result.profile_source = String(artifactObject.profile_source || '').trim() || null;
 
     const requestedDepth = artifactObject.requested_depth;
     if (typeof requestedDepth === 'number' && Number.isInteger(requestedDepth)) {

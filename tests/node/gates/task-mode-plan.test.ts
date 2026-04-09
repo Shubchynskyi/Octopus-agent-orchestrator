@@ -514,3 +514,135 @@ test('freeform detection: artifact without plan implies freeform execution', () 
     });
     assert.equal(artifact.plan, null, 'plan should be null for freeform mode');
 });
+
+// ---------------------------------------------------------------------------
+// T-055: Profile metadata in task-mode artifact
+// ---------------------------------------------------------------------------
+
+test('buildTaskModeArtifact includes activeProfile and profileSource when provided', () => {
+    const artifact = buildTaskModeArtifact({
+        taskId: 'T-100',
+        entryMode: 'EXPLICIT_TASK_EXECUTION',
+        requestedDepth: 2,
+        effectiveDepth: 2,
+        taskSummary: 'Profile-aware task',
+        activeProfile: 'strict',
+        profileSource: 'built_in'
+    });
+    assert.equal(artifact.active_profile, 'strict');
+    assert.equal(artifact.profile_source, 'built_in');
+});
+
+test('buildTaskModeArtifact sets profile fields to null when not provided', () => {
+    const artifact = buildTaskModeArtifact({
+        taskId: 'T-100',
+        entryMode: 'EXPLICIT_TASK_EXECUTION',
+        requestedDepth: 2,
+        effectiveDepth: 2,
+        taskSummary: 'No profile task'
+    });
+    assert.equal(artifact.active_profile, null);
+    assert.equal(artifact.profile_source, null);
+});
+
+test('buildTaskModeArtifact normalises empty profile strings to null', () => {
+    const artifact = buildTaskModeArtifact({
+        taskId: 'T-100',
+        entryMode: 'EXPLICIT_TASK_EXECUTION',
+        requestedDepth: 2,
+        effectiveDepth: 2,
+        taskSummary: 'Empty profile',
+        activeProfile: '  ',
+        profileSource: null
+    });
+    assert.equal(artifact.active_profile, null);
+    assert.equal(artifact.profile_source, null);
+});
+
+test('getTaskModeEvidence reads profile metadata from artifact', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'Octopus-agent-orchestrator', 'runtime', 'reviews');
+        fs.mkdirSync(bundleDir, { recursive: true });
+        const artifactPath = path.join(bundleDir, 'T-100-task-mode.json');
+        const artifact = buildTaskModeArtifact({
+            taskId: 'T-100',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Profile metadata round-trip',
+            activeProfile: 'fast',
+            profileSource: 'built_in'
+        });
+        fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2));
+
+        const evidence = getTaskModeEvidence(tmpDir, 'T-100');
+        assert.equal(evidence.evidence_status, 'PASS');
+        assert.equal(evidence.active_profile, 'fast');
+        assert.equal(evidence.profile_source, 'built_in');
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('getTaskModeEvidence returns null profile fields when absent', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'Octopus-agent-orchestrator', 'runtime', 'reviews');
+        fs.mkdirSync(bundleDir, { recursive: true });
+        const artifactPath = path.join(bundleDir, 'T-100-task-mode.json');
+        const artifact = buildTaskModeArtifact({
+            taskId: 'T-100',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'No profile metadata'
+        });
+        fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2));
+
+        const evidence = getTaskModeEvidence(tmpDir, 'T-100');
+        assert.equal(evidence.evidence_status, 'PASS');
+        assert.equal(evidence.active_profile, null);
+        assert.equal(evidence.profile_source, null);
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('runEnterTaskModeCommand banner includes ActiveProfile when profile is set', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'Octopus-agent-orchestrator');
+        const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+        const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+        const configDir = path.join(bundleDir, 'live', 'config');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+            version: 1,
+            active_profile: 'strict',
+            built_in_profiles: { strict: { description: 'Strict', depth: 3 } },
+            user_profiles: {}
+        }), 'utf8');
+
+        const result = runEnterTaskModeCommand({
+            repoRoot: tmpDir,
+            taskId: 'T-100',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Profile banner test',
+            emitMetrics: false
+        });
+        assert.equal(result.exitCode, 0);
+        assert.ok(result.outputLines.some(l => l.includes('ActiveProfile: strict')));
+
+        const artifactPath = path.join(reviewsDir, 'T-100-task-mode.json');
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.equal(artifact.active_profile, 'strict');
+        assert.equal(artifact.profile_source, 'built_in');
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
