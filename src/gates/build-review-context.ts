@@ -6,6 +6,7 @@ import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-run
 import { normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
 import { resolveGateExecutionPath, resolveGateExecutionPathPosix } from './isolation-sandbox';
 import { readRuntimeReviewerProvider, resolveReviewerRoutingPolicy } from './reviewer-routing';
+import { getTaskModeEvidence } from './task-mode';
 
 /**
  * Rule pack configuration by review type.
@@ -187,6 +188,26 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     const taskId = String(preflight.task_id || '').trim() || null;
     const sourceOfTruth = readRuntimeReviewerProvider(repoRoot, taskId);
     const reviewerRoutingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth);
+
+    // Read plan metadata from task-mode evidence (optional, never blocks)
+    let planMetadata: { plan_guided: boolean; plan_path: string | null; plan_sha256: string | null; plan_summary: string | null } = {
+        plan_guided: false,
+        plan_path: null,
+        plan_sha256: null,
+        plan_summary: null
+    };
+    if (taskId) {
+        const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId);
+        if (taskModeEvidence.plan) {
+            planMetadata = {
+                plan_guided: true,
+                plan_path: taskModeEvidence.plan.plan_path,
+                plan_sha256: taskModeEvidence.plan.plan_sha256,
+                plan_summary: taskModeEvidence.plan.plan_summary
+            };
+        }
+    }
+
     const stripExamplesFlag = parseBool(tokenConfig.strip_examples);
     const stripCodeBlocksFlag = parseBool(tokenConfig.strip_code_blocks);
     const scopedDiffsFlag = parseBool(tokenConfig.scoped_diffs);
@@ -320,7 +341,8 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
             reviewer_session_id: null as string | null,
             fallback_reason: null as string | null,
             note: reviewerRoutingPolicy.note
-        }
+        },
+        plan: planMetadata
     };
 
     withReviewArtifactLock(outputPath, () => {

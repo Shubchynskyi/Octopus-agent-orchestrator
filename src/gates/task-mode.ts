@@ -24,6 +24,12 @@ const TASK_MODE_ENTRY_MODE_ALIASES = Object.freeze({
     created: 'TASK_CREATED_FROM_REQUEST'
 } satisfies Record<string, TaskModeEntryMode>);
 
+export interface TaskModePlanMetadata {
+    plan_path: string;
+    plan_sha256: string;
+    plan_summary: string;
+}
+
 export interface TaskModeArtifact {
     timestamp_utc: string;
     event_source: 'enter-task-mode';
@@ -38,6 +44,7 @@ export interface TaskModeArtifact {
     provider: string | null;
     routed_to: string | null;
     actor: string;
+    plan: TaskModePlanMetadata | null;
 }
 
 export interface BuildTaskModeArtifactOptions {
@@ -50,6 +57,7 @@ export interface BuildTaskModeArtifactOptions {
     provider?: string | null;
     routedTo?: string | null;
     actor?: string;
+    plan?: TaskModePlanMetadata | null;
 }
 
 export interface TaskModeEvidenceResult {
@@ -67,6 +75,7 @@ export interface TaskModeEvidenceResult {
     orchestrator_work: boolean | null;
     provider: string | null;
     routed_to: string | null;
+    plan: TaskModePlanMetadata | null;
 }
 
 export function normalizeTaskModeEntryMode(value: unknown): TaskModeEntryMode {
@@ -127,6 +136,13 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
     }
 
     const actor = String(options.actor || 'orchestrator').trim() || 'orchestrator';
+    const plan = options.plan && options.plan.plan_path && options.plan.plan_sha256 && options.plan.plan_summary
+        ? {
+            plan_path: options.plan.plan_path,
+            plan_sha256: options.plan.plan_sha256,
+            plan_summary: options.plan.plan_summary
+        }
+        : null;
     return {
         timestamp_utc: new Date().toISOString(),
         event_source: 'enter-task-mode',
@@ -140,7 +156,8 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         orchestrator_work: !!options.orchestratorWork,
         provider: String(options.provider || '').trim() || null,
         routed_to: String(options.routedTo || '').trim() || null,
-        actor
+        actor,
+        plan
     };
 }
 
@@ -159,7 +176,8 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         task_summary: null,
         orchestrator_work: null,
         provider: null,
-        routed_to: null
+        routed_to: null,
+        plan: null
     };
 
     if (!taskId) {
@@ -194,6 +212,18 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     result.orchestrator_work = typeof artifactObject.orchestrator_work === 'boolean' ? artifactObject.orchestrator_work : null;
     result.provider = String(artifactObject.provider || '').trim() || null;
     result.routed_to = String(artifactObject.routed_to || '').trim() || null;
+
+    // Extract optional plan metadata
+    const rawPlan = artifactObject.plan;
+    if (rawPlan && typeof rawPlan === 'object' && !Array.isArray(rawPlan)) {
+        const planObj = rawPlan as Record<string, unknown>;
+        const planPath = String(planObj.plan_path || '').trim();
+        const planSha256 = String(planObj.plan_sha256 || '').trim();
+        const planSummary = String(planObj.plan_summary || '').trim();
+        if (planPath && planSha256 && planSummary) {
+            result.plan = { plan_path: planPath, plan_sha256: planSha256, plan_summary: planSummary };
+        }
+    }
 
     const requestedDepth = artifactObject.requested_depth;
     if (typeof requestedDepth === 'number' && Number.isInteger(requestedDepth)) {

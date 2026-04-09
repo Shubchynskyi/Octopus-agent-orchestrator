@@ -1287,6 +1287,14 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         enforcement_level: 'hard_block'
     };
 
+    // Plan metadata from task-mode evidence (informational, never blocks)
+    const planEvidence = {
+        plan_guided: !!taskModeEvidence.plan,
+        plan_path: taskModeEvidence.plan?.plan_path ?? null,
+        plan_sha256: taskModeEvidence.plan?.plan_sha256 ?? null,
+        plan_summary: taskModeEvidence.plan?.plan_summary ?? null
+    };
+
     const status = errors.length > 0 ? 'FAILED' : 'PASSED';
     const outcome = errors.length > 0 ? 'FAIL' : 'PASS';
 
@@ -1308,6 +1316,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         stage_sequence_evidence: stageSequence,
         reviewer_routing_enforcement: reviewerRoutingEnforcement,
         zero_diff_evidence: zeroDiffEvidence,
+        plan: planEvidence,
         isolation_mode_warnings: isolationWarnings,
         violations: errors
     };
@@ -1332,6 +1341,14 @@ export function formatCompletionGateResult(result: Record<string, unknown>): str
     }
     if (trustLevels.size > 0) {
         lines.push(`TrustStatus: ${Array.from(trustLevels).join(', ')}`);
+    }
+
+    const plan = result.plan as Record<string, unknown> | undefined;
+    if (plan) {
+        lines.push(`PlanGuided: ${!!plan.plan_guided}`);
+        if (plan.plan_guided && plan.plan_path) {
+            lines.push(`PlanPath: ${plan.plan_path}`);
+        }
     }
 
     if (Array.isArray(result.violations) && result.violations.length > 0) {

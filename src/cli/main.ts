@@ -1423,6 +1423,7 @@ async function handleGate(commandArgv: string[]): Promise<void> {
                 '--provider': { key: 'provider', type: 'string' },
                 '--routed-to': { key: 'routedTo', type: 'string' },
                 '--actor': { key: 'actor', type: 'string' },
+                '--plan-path': { key: 'planPath', type: 'string' },
                 '--artifact-path': { key: 'artifactPath', type: 'string' },
                 '--metrics-path': { key: 'metricsPath', type: 'string' },
                 '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },

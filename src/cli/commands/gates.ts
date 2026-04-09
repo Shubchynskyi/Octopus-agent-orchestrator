@@ -98,8 +98,14 @@ import {
     getTaskModeEvidence,
     getTaskModeEvidenceViolations,
     parseTaskModeDepth,
-    resolveTaskModeArtifactPath
+    resolveTaskModeArtifactPath,
+    type TaskModePlanMetadata
 } from '../../gates/task-mode';
+import {
+    validateTaskPlan,
+    computeTaskPlanDigest,
+    isApprovedPlan
+} from '../../schemas/task-plan';
 import {
     buildNoOpArtifact,
     resolveNoOpArtifactPath
@@ -185,6 +191,7 @@ interface EnterTaskModeCommandOptions {
     provider?: unknown;
     routedTo?: unknown;
     actor?: unknown;
+    planPath?: string;
     artifactPath?: string;
     metricsPath?: string;
     emitMetrics?: unknown;
@@ -770,6 +777,34 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
     const artifactPath = resolveTaskModeArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
     const routingDecision = readRoutingDecision(repoRoot, options.provider, options.routedTo);
+
+    // Resolve optional plan metadata
+    let planMetadata: TaskModePlanMetadata | null = null;
+    const rawPlanPath = String(options.planPath || '').trim();
+    if (rawPlanPath) {
+        const resolvedPlanPath = gateHelpers.resolvePathInsideRepo(rawPlanPath, repoRoot, { allowMissing: false });
+        if (!resolvedPlanPath || !fs.existsSync(resolvedPlanPath) || !fs.statSync(resolvedPlanPath).isFile()) {
+            throw new Error(`PlanPath not found or not a file: '${rawPlanPath}'.`);
+        }
+        const planJson = JSON.parse(fs.readFileSync(resolvedPlanPath, 'utf8'));
+        const validated = validateTaskPlan(planJson);
+        if (validated.task_id !== taskId) {
+            throw new Error(`Plan task_id '${validated.task_id}' does not match --task-id '${taskId}'.`);
+        }
+        if (!isApprovedPlan(validated)) {
+            throw new Error(`Plan status is '${validated.status}'; only approved plans can be attached at task-mode entry.`);
+        }
+        const digest = computeTaskPlanDigest(validated);
+        if (validated.plan_sha256 && validated.plan_sha256 !== digest) {
+            throw new Error(`Plan plan_sha256 mismatch: embedded '${validated.plan_sha256}' vs computed '${digest}'.`);
+        }
+        planMetadata = {
+            plan_path: gateHelpers.normalizePath(resolvedPlanPath),
+            plan_sha256: digest,
+            plan_summary: validated.goal
+        };
+    }
+
     const taskModeArtifact = buildTaskModeArtifact({
         taskId,
         entryMode: options.entryMode,
@@ -779,7 +814,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         orchestratorWork: parseBooleanOption(options.orchestratorWork, false),
         provider: routingDecision.provider,
         routedTo: routingDecision.routedTo,
-        actor: String(options.actor || 'orchestrator')
+        actor: String(options.actor || 'orchestrator'),
+        plan: planMetadata
     });
     writeJsonArtifact(artifactPath, taskModeArtifact);
 
@@ -796,7 +832,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         requested_depth: taskModeArtifact.requested_depth,
         effective_depth: taskModeArtifact.effective_depth,
         orchestrator_work: taskModeArtifact.orchestrator_work,
-        actor: taskModeArtifact.actor
+        actor: taskModeArtifact.actor,
+        plan_guided: !!taskModeArtifact.plan
     }, parseBooleanOption(options.emitMetrics, true));
 
     try {
@@ -805,7 +842,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             taskModeArtifact.task_id,
             'TASK_MODE_ENTERED',
             'PASS',
-            `Task mode entered via ${taskModeArtifact.entry_mode}.`,
+            taskModeArtifact.plan
+                ? `Task mode entered via ${taskModeArtifact.entry_mode} (plan-guided).`
+                : `Task mode entered via ${taskModeArtifact.entry_mode}.`,
             {
                 artifact_path: normalizeOptionalPath(artifactPath),
                 entry_mode: taskModeArtifact.entry_mode,
@@ -815,7 +854,10 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 orchestrator_work: taskModeArtifact.orchestrator_work,
                 provider: taskModeArtifact.provider,
                 routed_to: taskModeArtifact.routed_to,
-                actor: taskModeArtifact.actor
+                actor: taskModeArtifact.actor,
+                plan_guided: !!taskModeArtifact.plan,
+                plan_path: taskModeArtifact.plan?.plan_path ?? null,
+                plan_sha256: taskModeArtifact.plan?.plan_sha256 ?? null
             }
         );
     } catch (error: unknown) {
@@ -832,7 +874,10 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         effective_depth: taskModeArtifact.effective_depth,
         task_summary: taskModeArtifact.task_summary,
         provider: taskModeArtifact.provider,
-        routed_to: taskModeArtifact.routed_to
+        routed_to: taskModeArtifact.routed_to,
+        plan_guided: !!taskModeArtifact.plan,
+        plan_path: taskModeArtifact.plan?.plan_path ?? null,
+        plan_sha256: taskModeArtifact.plan?.plan_sha256 ?? null
     });
 
     const previousStatus = readTaskQueueStatus(repoRoot, taskModeArtifact.task_id);
@@ -858,7 +903,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             `RequestedDepth: ${taskModeArtifact.requested_depth}`,
             `EffectiveDepth: ${taskModeArtifact.effective_depth}`,
             ...(routingDecision.provider ? [`Provider: ${routingDecision.provider}`] : []),
-            ...(routingDecision.routedTo ? [`RoutedTo: ${routingDecision.routedTo}`] : [])
+            ...(routingDecision.routedTo ? [`RoutedTo: ${routingDecision.routedTo}`] : []),
+            ...(taskModeArtifact.plan ? [`PlanGuided: true`, `PlanPath: ${taskModeArtifact.plan.plan_path}`] : [`PlanGuided: false`])
         ],
         exitCode: 0
     };
